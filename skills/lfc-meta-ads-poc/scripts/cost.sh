@@ -4,7 +4,7 @@
 # (POC objective 3): per day and SKU, then totals split into the free-tier SKU (LAKEFLOW_CONNECT_FREE_USAGE, $0) and
 # billed DBUs, and the average per day. Compare the billed monthly figure (average x 30) with the Fivetran invoice for
 # the same connector.
-#   The free tier is a daily DBU allowance per workspace (the pricing page states 100), shared by every managed connector
+#   The free tier is a daily DBU allowance per workspace, shared by every managed connector
 #   in it: the free share one pipeline gets depends on what else runs there. The last section shows the workspace's
 #   free-tier DBUs per day and how many pipelines shared them; days that all end on the same round number are capped. The cost is list price; discounts and commitments are not applied.
 #   Billing rows arrive hours after use: check the next day for a full day.
