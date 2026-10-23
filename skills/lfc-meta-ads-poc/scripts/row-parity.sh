@@ -15,7 +15,7 @@
 # still move inside the attribution window (lookback, 7 days by default) on both sides: compare closed days.
 # Exit 1 when any pair is under target.
 set -euo pipefail
-[ $# -ge 1 ] || { sed -n 2,18p "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n 2,16p "$0"; exit 2; }
 PROFILE=$1; shift
 FT="" LFC="" FROM="" TO="" METRICS=spend,impressions TARGET=99 WH="" REPORTS=() OBJECTS=()
 while [ $# -gt 0 ]; do
@@ -23,13 +23,13 @@ while [ $# -gt 0 ]; do
     --fivetran) FT=$2; shift ;; --lfc) LFC=$2; shift ;; --from) FROM=$2; shift ;; --to) TO=$2; shift ;;
     --report) REPORTS+=("$2"); shift ;; --object) OBJECTS+=("$2"); shift ;; --metrics) METRICS=$2; shift ;;
     --target) TARGET=$2; shift ;; --warehouse) WH=$2; shift ;;
-    *) sed -n 2,18p "$0"; exit 2 ;;
+    *) sed -n 2,16p "$0"; exit 2 ;;
   esac
   shift
 done
 . "$(dirname "$0")/lib.sh"
 [[ $FROM =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && $TO =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "--from and --to are YYYY-MM-DD" >&2; exit 2; }
-[[ $METRICS =~ ^[a-z0-9_,]+$ && $TARGET =~ ^[0-9]+(\.[0-9]+)?$ ]] || { sed -n 2,18p "$0"; exit 2; }
+[[ $METRICS =~ ^[a-z0-9_,]+$ && $TARGET =~ ^[0-9]+(\.[0-9]+)?$ ]] || { sed -n 2,16p "$0"; exit 2; }
 [ ${#REPORTS[@]} -gt 0 ] || [ ${#OBJECTS[@]} -gt 0 ] || { echo "nothing to compare: give --report or --object" >&2; exit 2; }
 ftq=$(ident "$FT") lfq=$(ident "$LFC")
 low=$TARGET high=$(jq -n "200 - $TARGET")

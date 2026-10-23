@@ -5,14 +5,14 @@
 # "<pipeline name> schedule". The docs recommend no more often than hourly during the Beta (Meta rate limits).
 # --paused creates it with the schedule paused. Prints the job link and id.
 set -euo pipefail
-[ $# -ge 2 ] || { sed -n 2,7p "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n 2,6p "$0"; exit 2; }
 PROFILE=$1 PIPE=$2; shift 2
 CRON="0 0 6 * * ?" TZONE=America/New_York EMAIL="" NAME="" PAUSE=UNPAUSED
 while [ $# -gt 0 ]; do
   case $1 in
     --cron) CRON=$2; shift ;; --tz) TZONE=$2; shift ;; --email) EMAIL=$2; shift ;; --name) NAME=$2; shift ;;
     --paused) PAUSE=PAUSED ;;
-    *) sed -n 2,7p "$0"; exit 2 ;;
+    *) sed -n 2,6p "$0"; exit 2 ;;
   esac
   shift
 done

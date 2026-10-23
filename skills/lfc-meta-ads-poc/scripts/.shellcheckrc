@@ -1,0 +1,2 @@
+# PROFILE and WH are set here and read by lib.sh, which every script sources
+disable=SC2034

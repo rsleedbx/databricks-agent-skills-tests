@@ -70,6 +70,10 @@ $S/pipeline.sh $P --connection $CONN --account $ACCT --catalog $CAT --schema $SC
   --start-date 2026-06-01 --lookback 7
 ```
 
+Add `ad_accounts` to `--tables` for the ad account details (Fivetran's `account_history`): it isn't in the docs' object list, and it lists every ad account the connection's Meta user can see, so the script reads it from source schema `default` (with the `act_` id as its source schema the table fails with `TABLE_OR_VIEW_NOT_FOUND`).
+
+`--lookback` sets `custom_insights_lookback_window` on every insights table, and where a table has no `action_attribution_windows` it also sets Meta's attribution to `<N>d_click,1d_view` (the reference's "attribution fallback"). Without either, Meta uses the ad account's default attribution. Set `action_attribution_windows` in each custom report to match the Fivetran report.
+
 `--dry-run` prints the JSON instead. Rerunning with the same `--name` updates the pipeline. The create API takes the fields at the top level (`name`, `catalog`, `schema`, `ingestion_definition`); a body nested under `"pipeline": {...}` (the bundle layout) is refused with `unknown field: pipeline` and `name must be set`.
 
 ## 3. Run, schedule, watch
@@ -81,7 +85,7 @@ $S/schedule.sh $P <pipeline-id> --email you@example.com          # daily 06:00 A
 $S/report.sh $P <pipeline-id> --days 7 --sla 08:00 --tz America/New_York --tables
 ```
 
-`report.sh` prints one line per update (start, end, minutes, state, cause, error classes with counts), each table's last status and rows written, and the SLA per day: `met (completed at 05:58)` when an update completed by the SLA time that day, `MISSED` otherwise. Error classes come from the bracketed codes in the update's WARN and ERROR events, so Meta's rate-limit codes show the moment they occur; a rate limit that the connector's retries absorbed leaves no error.
+`report.sh` prints one line per update (start, end, minutes, state, cause, error classes with counts), each table's last status and rows written (`-` when the event has no row metric, which is common in the API's events; `--counts` adds each table's current row count from SQL), and the SLA per day: `met (completed at 05:58)` when an update completed by the SLA time that day, `MISSED` otherwise. Error classes come from the bracketed codes in the update's WARN and ERROR events, so Meta's rate-limit codes show the moment they occur; a rate limit that the connector's retries absorbed leaves no error.
 
 After a failed update the pipeline starts a retry of its own (cause `RETRY_ON_FAILURE`); `run.sh` says so. A table that fails on every run (a rejected custom report) fails both, every scheduled run: fix or remove it.
 
@@ -135,10 +139,10 @@ AWS workspace (us-west-2), serverless, Unity Catalog; runtime DBR 18.3, image `d
 | Custom report `country` + `publisher_platform` (with and without attribution windows) | Tested: table FAILED, `META_ADS_SOURCE_API_ERROR`; the update FAILED and a `RETRY_ON_FAILURE` update followed |
 | Custom reports: no breakdown; `country`; `publisher_platform`; `publisher_platform` + `platform_position`; campaign level `age` + `gender` with `1d_click` | Tested: completed |
 | Custom report with `hourly_stats_aggregated_by_advertiser_time_zone` | Tested: completed; whether rows come back hourly needs an account with spend |
-| `ad_accounts` as a source table (not in the docs' list) | Tested: `TABLE_OR_VIEW_NOT_FOUND` on this runtime |
+| `ad_accounts` as a source table (not in the docs' list) | Tested: with the ad account as source schema, `TABLE_OR_VIEW_NOT_FOUND`; with source schema `default`, completed, one row per ad account the Meta user sees |
 | Pipeline create body nested under `pipeline` | Tested: refused |
 | Job from `schedule.sh`, run once | Tested: update with cause `JOB_TASK`, completed |
-| `schema-diff.py` with a reviewed mapping, against the live LFC landing and Fivetran's documented schema | Tested: no stale rows; type differences on ids |
+| `schema-diff.py` with a reviewed mapping, against the live LFC landing (with `ad_accounts`) and Fivetran's documented schema | Tested: no stale rows; type differences on ids; 2 Fivetran tables the mapping doesn't cover |
 | `row-parity.sh` | Tested on mock tables: a day at 98 % flagged, exit 1 |
 | `cost.sh` | Tested on a pipeline with billing history; new pipelines show nothing until billing arrives |
 

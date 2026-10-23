@@ -16,7 +16,7 @@ The scripts of [lfc-meta-ads-poc](../skills/lfc-meta-ads-poc/SKILL.md), one per 
 | Insights pipeline: `ad_insights`, 3 prebuilt reports, 2 custom reports | pass |
 | Custom report with breakdowns `country` + `publisher_platform` | fail: `META_ADS_SOURCE_API_ERROR` (Meta trace id only), with or without attribution windows; then a `RETRY_ON_FAILURE` update |
 | Custom reports: no breakdown, `country`, `publisher_platform`, `publisher_platform` + `platform_position`, campaign `age` + `gender`, an hourly breakdown | pass (hourly rows unverified) |
-| `ad_accounts` as a source table | fail: `TABLE_OR_VIEW_NOT_FOUND` |
+| `ad_accounts` as a source table | with the ad account as source schema: `TABLE_OR_VIEW_NOT_FOUND`; with source schema `default`: pass |
 | Create body nested under `pipeline` | refused: `unknown field: pipeline`, `name must be set` |
 | Scheduled job, run once | pass: update cause `JOB_TASK` |
 | Schema diff, reviewed mapping vs live landing and Fivetran's documented schema | pass: no stale rows; ids `bigint` vs `string`; 2 Fivetran tables missing from the mapping |
@@ -30,6 +30,8 @@ The scripts of [lfc-meta-ads-poc](../skills/lfc-meta-ads-poc/SKILL.md), one per 
 - `run.sh` exits 1 on a failed update and says when the pipeline retried it by itself; `probe.sh` follows the update it started, not the retry.
 - `cost.sh` reads the workspace's free-tier use from the workspace id, not from the pipeline's billing rows (none yet for a new pipeline), and doesn't assume the allowance.
 - `schema.sh` leaves out the pipelines' `event_log_*` tables.
+- `pipeline.sh` reads `ad_accounts` from source schema `default`.
+- `report.sh` and `probe.sh` print `rows=-` when a flow_progress event has no row metric (the API's events had none, even for a table that got a row); `report.sh --counts` reads the counts from SQL.
 
 ## Not tested
 

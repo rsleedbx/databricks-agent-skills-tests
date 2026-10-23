@@ -5,6 +5,8 @@
 # Creates (or updates, when a pipeline of that name exists) a Meta Ads ingestion pipeline and its destination schema.
 #
 #   --tables        source tables (default: the 8 documented objects). Objects, prebuilt reports and ad_insights mix freely.
+#                   ad_accounts (every ad account the connection's Meta user can see) is read from source schema
+#                   "default", not the ad account.
 #   --scd2          tables to keep as SCD type 2 (history); the docs allow it for ads, ad_sets and campaigns only.
 #   --custom-report one custom_report object: its destination table and a JSON file holding custom_report_options
 #                   (level, breakdowns, action_breakdowns, time_increment, action_report_time,
@@ -15,7 +17,7 @@
 #   --dry-run       print the pipeline JSON and stop
 # Prints the pipeline id on stdout's last line and the pipeline and schema links.
 set -euo pipefail
-[ $# -ge 1 ] || { sed -n 2,17p "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n 2,18p "$0"; exit 2; }
 PROFILE=$1; shift
 CONN="" ACCT="" CAT="" SCH="" NAME="" START="" LOOK="" DRY=0 SCD2=""
 TABLES="campaigns,ad_sets,ads,ad_images,ad_creatives,ad_videos,custom_audiences,custom_conversions"
@@ -26,7 +28,7 @@ while [ $# -gt 0 ]; do
     --schema) SCH=$2; shift ;; --name) NAME=$2; shift ;; --tables) TABLES=$2; shift ;; --scd2) SCD2=$2; shift ;;
     --custom-report) CUSTOM+=("$2"); shift ;; --start-date) START=$2; shift ;; --lookback) LOOK=$2; shift ;;
     --dry-run) DRY=1 ;;
-    *) sed -n 2,17p "$0"; exit 2 ;;
+    *) sed -n 2,18p "$0"; exit 2 ;;
   esac
   shift
 done
@@ -48,7 +50,8 @@ objects='[]'
 IFS=, read -ra TL <<<"$TABLES"
 for t in "${TL[@]}"; do
   [[ $t =~ ^[a-z0-9_]+$ ]] || { echo "bad table name: $t" >&2; exit 2; }
-  o=$(jq -n --arg a "$ACCT" --arg t "$t" --arg c "$CAT" --arg s "$SCH" \
+  src=$ACCT; [ "$t" = ad_accounts ] && src=default   # the accounts the Meta user sees: source schema "default"
+  o=$(jq -n --arg a "$src" --arg t "$t" --arg c "$CAT" --arg s "$SCH" \
     '{table: {source_schema: $a, source_table: $t, destination_catalog: $c, destination_schema: $s}}')
   if [[ ,$SCD2, == *,$t,* ]]; then o=$(jq '.table.table_configuration = {scd_type: "SCD_TYPE_2"}' <<<"$o"); fi
   if is_insights "$t"; then

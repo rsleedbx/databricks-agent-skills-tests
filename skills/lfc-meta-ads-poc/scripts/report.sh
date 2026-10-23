@@ -3,27 +3,29 @@
 # Freshness and reliability of a pipeline's updates (POC objectives 1 and 4), from the pipeline's own API:
 #   one line per update: start and end (local to --tz, default America/New_York), duration, state, cause;
 #   the error classes found in its ERROR and WARN events, counted ([META_ADS_RATE_LIMIT_EXCEEDED] and the like);
-#   with --tables (on by default for --update): each table's last status and rows written in that update.
+#   with --tables (on by default for --update): each table's last status and rows written in that update (the
+#   flow_progress metric; "-" when the event has none, as the API's events often don't); --counts adds each table's
+#   row count now, from a SQL warehouse (--warehouse, or the first running one).
 # Then the SLA per day: met when an update COMPLETED that day at or before --sla (default 08:00), with the time of the
 # last such update; MISSED otherwise (a day with updates but none completed by then). Then updates by state, and error
 # classes with counts.
 # --days defaults to 7. Events come from /api/2.0/pipelines/<id>/events (INFO, WARN, ERROR; the API keeps 30 days or so
 # of history on a busy pipeline); updates from /api/2.0/pipelines/<id>/updates.
 set -euo pipefail
-[ $# -ge 2 ] || { sed -n 2,11p "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n 2,13p "$0"; exit 2; }
 PROFILE=$1 PIPE=$2; shift 2
-UPD="" DAYS=7 SLA=08:00 TZONE=America/New_York TABLES=0
+UPD="" DAYS=7 SLA=08:00 TZONE=America/New_York TABLES=0 COUNTS=0 WH=""
 while [ $# -gt 0 ]; do
   case $1 in
     --update) UPD=$2; TABLES=1; shift ;; --days) DAYS=$2; shift ;; --sla) SLA=$2; shift ;; --tz) TZONE=$2; shift ;;
-    --tables) TABLES=1 ;;
-    *) sed -n 2,11p "$0"; exit 2 ;;
+    --tables) TABLES=1 ;; --counts) TABLES=1 COUNTS=1 ;; --warehouse) WH=$2; shift ;;
+    *) sed -n 2,13p "$0"; exit 2 ;;
   esac
   shift
 done
 . "$(dirname "$0")/lib.sh"
 uuid "$PIPE"
-[[ $DAYS =~ ^[0-9]+$ && $SLA =~ ^[0-9]{2}:[0-9]{2}$ ]] || { sed -n 2,11p "$0"; exit 2; }
+[[ $DAYS =~ ^[0-9]+$ && $SLA =~ ^[0-9]{2}:[0-9]{2}$ ]] || { sed -n 2,13p "$0"; exit 2; }
 W=$(mktemp -d); trap 'rm -rf "${W:?}"' EXIT
 
 # updates, newest first, back to the window (or to the one asked for)
@@ -72,7 +74,7 @@ jq --slurpfile ev "$W/ev.json" '
               status: .details.flow_progress.status,
               rows: (.details.flow_progress.metrics.num_output_rows // null)}]
              | group_by(.flow) | map({flow: .[0].flow, status: (max_by(.ts).status),
-                 rows: ([.[].rows | select(. != null)] | add)}))
+                 rows: ([.[].rows | select(. != null)] | if length == 0 then null else add end)}))
   })' "$W/sel.json" > "$W/rep.json"
 
 loc() { [ -z "$1" ] || [ "$1" = null ] && { echo "-"; return; }
@@ -100,7 +102,11 @@ sort "$W/days.tsv" | awk -F'\t' '{d[$1]=d[$1]; if ($2 == 1 && $3 > t[$1]) t[$1] 
   done
 if [ $TABLES = 1 ]; then
   echo; echo "tables (last status, rows written) per update:"
-  jq -r '.[] | .update_id[0:8] as $u | .tables[] | "  \($u)  \(.flow)  \(.status)  rows=\(.rows // 0)"' "$W/rep.json"
+  jq -r '.[] | .update_id[0:8] as $u | .tables[] | [$u, .flow, .status, (.rows // "-")] | @tsv' "$W/rep.json" |
+  while IFS=$'\t' read -r u f st r; do
+    n=""; [ $COUNTS = 0 ] || n="  count=$(sql "SELECT count(*) FROM $(ident "$f")" 2>/dev/null || echo "?")"
+    echo "  $u  $f  $st  rows=$r$n"
+  done
 fi
 echo; echo "summary: $(jq -r 'group_by(.state) | map("\(.[0].state)=\(length)") | join(" ")' "$W/rep.json")"
 echo "error classes: $(jq -r '[.[].errors | to_entries[]] | group_by(.key) | map("\(.[0].key)x\(map(.value) | add)") | join(" ") | if . == "" then "none" else . end' "$W/rep.json")"
