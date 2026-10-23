@@ -1,0 +1,15 @@
+# Fivetran Facebook Ads table -> Lakeflow Connect Meta Ads table, for the standard objects.
+# Fivetran names: https://fivetran.com/docs/connectors/applications/facebook-ads/connector-schema
+# LFC names: https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/meta-ads-concepts#connector-data-model
+# Fivetran keeps history (one row per version) in *_history tables; LFC keeps the current row (SCD type 1) unless the
+# pipeline sets SCD type 2 for ads, ad_sets or campaigns. Reports: pair each Fivetran custom report with the LFC
+# custom_report destination_table (or prebuilt report) built with the same level, breakdowns and attribution.
+fivetran_table	lfc_table
+ad_history	ads
+ad_set_history	ad_sets
+campaign_history	campaigns
+creative_history	ad_creatives
+ad_image_history	ad_images
+ad_video_history	ad_videos
+custom_audience_history	custom_audiences
+custom_conversion_history	custom_conversions

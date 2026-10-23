@@ -1,0 +1,36 @@
+# 2026-10-23: Meta Ads POC kit, tested on a test ad account
+
+The scripts of [lfc-meta-ads-poc](../skills/lfc-meta-ads-poc/SKILL.md), one per POC objective (ingestion by a morning SLA, schema parity with Fivetran, cost, rate limits and reliability), run end to end against a Meta Ads connection. Records: `results/runs/2026-10-23-meta-ads-poc.jsonl`.
+
+## Environment
+
+- Workspace: AWS us-west-2, serverless, Unity Catalog, default managed catalog; the Meta Ads Beta preview on.
+- Runtime: DBR 18.3, channel CURRENT, image `dlt:18.3.8` (`dlt-release-dp-20261015`).
+- Source: a Meta Ads connection (OAuth U2M, created in Catalog Explorer) to a test ad account with no campaigns. Every table landed empty: row counts and metrics were checked on mock tables only.
+
+## Results
+
+| Case | Outcome |
+|---|---|
+| Objects pipeline: the 8 documented objects; `ads`, `ad_sets`, `campaigns` SCD type 2 | pass; `__START_AT` and `__END_AT` on the SCD type 2 tables |
+| Insights pipeline: `ad_insights`, 3 prebuilt reports, 2 custom reports | pass |
+| Custom report with breakdowns `country` + `publisher_platform` | fail: `META_ADS_SOURCE_API_ERROR` (Meta trace id only), with or without attribution windows; then a `RETRY_ON_FAILURE` update |
+| Custom reports: no breakdown, `country`, `publisher_platform`, `publisher_platform` + `platform_position`, campaign `age` + `gender`, an hourly breakdown | pass (hourly rows unverified) |
+| `ad_accounts` as a source table | fail: `TABLE_OR_VIEW_NOT_FOUND` |
+| Create body nested under `pipeline` | refused: `unknown field: pipeline`, `name must be set` |
+| Scheduled job, run once | pass: update cause `JOB_TASK` |
+| Schema diff, reviewed mapping vs live landing and Fivetran's documented schema | pass: no stale rows; ids `bigint` vs `string`; 2 Fivetran tables missing from the mapping |
+| Row parity on mock tables | pass: the 98 % day flagged |
+| Cost | partial: works on a pipeline with billing history; the new pipelines had none yet |
+
+## What changed in the kit because of the run
+
+- `pipeline.sh` warns about breakdown sets Meta doesn't list ([meta-breakdowns.tsv](../skills/lfc-meta-ads-poc/references/meta-breakdowns.tsv)); `probe.sh` tries custom report definitions in a throwaway pipeline, since the failure names no breakdown.
+- `report.sh` judges the SLA per day (did an update complete by the SLA time), not per update.
+- `run.sh` exits 1 on a failed update and says when the pipeline retried it by itself; `probe.sh` follows the update it started, not the retry.
+- `cost.sh` reads the workspace's free-tier use from the workspace id, not from the pipeline's billing rows (none yet for a new pipeline), and doesn't assume the allowance.
+- `schema.sh` leaves out the pipelines' `event_log_*` tables.
+
+## Not tested
+
+Data from an ad account with spend: rows, the lookback re-read, real rate limits, hourly rows. A live Fivetran landing.

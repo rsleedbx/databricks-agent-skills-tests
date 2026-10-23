@@ -1,0 +1,30 @@
+# Breakdown sets Meta's Insights API accepts together (breakdowns only; action breakdowns such as action_type go in
+# action_breakdowns). One set per line, names sorted and comma-joined; "-" is no breakdown. pipeline.sh warns when a
+# custom report asks for a set not listed here, because Meta rejects such a request and the pipeline only reports
+# META_ADS_SOURCE_API_ERROR with a Facebook trace id.
+# Sources:
+#   meta     Meta "Combining breakdowns": https://developers.facebook.com/docs/marketing-api/insights/breakdowns/
+#            ("Due to storage constraints, only some permutations of breakdowns are available.")
+#   prebuilt the Lakeflow Connect prebuilt reports, fixed sets that run:
+#            https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/meta-ads-reference#available-prebuilt-reports
+#   tested   ran on a test ad account (see SKILL.md, "How it was tested")
+breakdowns	source
+-	meta,prebuilt,tested
+age	meta,prebuilt
+gender	meta,prebuilt
+age,gender	meta,prebuilt
+country	meta,prebuilt,tested
+region	meta,prebuilt
+comscore_market	prebuilt
+device_platform	prebuilt
+publisher_platform	meta,prebuilt,tested
+device_platform,publisher_platform	prebuilt
+impression_device	meta
+impression_device,publisher_platform	meta
+platform_position,publisher_platform	meta
+impression_device,platform_position,publisher_platform	meta
+product_id	meta,prebuilt
+app_id,skan_conversion_id	meta
+hourly_stats_aggregated_by_advertiser_time_zone	meta
+hourly_stats_aggregated_by_audience_time_zone	meta
+# Rejected on the test account: country,publisher_platform (with and without attribution windows).

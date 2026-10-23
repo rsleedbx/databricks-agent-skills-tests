@@ -1,0 +1,15 @@
+{
+  "level": "ad",
+  "breakdowns": [
+    "publisher_platform"
+  ],
+  "action_breakdowns": [
+    "action_type"
+  ],
+  "time_increment": "1",
+  "action_report_time": "mixed",
+  "action_attribution_windows": [
+    "7d_click",
+    "1d_view"
+  ]
+}
