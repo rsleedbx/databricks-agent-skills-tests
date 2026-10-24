@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cost.sh <profile> <pipeline-id>[,<pipeline-id>...] [--since YYYY-MM-DD] [--warehouse <id>]
-# DBUs and list-price cost of the POC pipelines, from system.billing.usage joined to system.billing.list_prices
-# (POC objective 3): per day and SKU, then totals split into the free-tier SKU (LAKEFLOW_CONNECT_FREE_USAGE, $0) and
+# DBUs and list-price cost of one or more pipelines, from system.billing.usage joined to system.billing.list_prices:
+# per day and SKU, then totals split into the free-tier SKU (LAKEFLOW_CONNECT_FREE_USAGE, $0) and
 # billed DBUs, and the average per day and 30 times it.
 #   The free tier is a daily DBU allowance per workspace, shared by every managed connector
 #   in it: the free share one pipeline gets depends on what else runs there. The last section shows the workspace's

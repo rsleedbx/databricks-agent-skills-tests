@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """schema-diff.py --lfc lfc.tsv [--fivetran fivetran.tsv] (--mapping map.yaml | --tables-map tables.tsv) [--out diff.tsv]
 
-Maps the Lakeflow Connect landing to the Fivetran schema, column by column (POC objective 2).
+Maps the Lakeflow Connect landing to the Fivetran schema, column by column.
 
 Inputs are schema.sh exports (table, column, type, position). The pairing comes from one of:
   --mapping     a reviewed column mapping: YAML or JSON with a `mappings:` list of rows
@@ -18,7 +18,7 @@ Prints a summary per table pair and these findings; --out writes every column as
                       mapping is wrong): re-review that row
   not in Fivetran     the mapping names a Fivetran column the live Fivetran table doesn't have (Fivetran schema
                       differs: column blocking, another connector version)
-Tables in the mapping but not in an export are listed once and skipped (not ingested in this POC).
+Tables in the mapping but not in an export are listed once and skipped (not ingested in this landing).
 """
 import argparse
 import csv

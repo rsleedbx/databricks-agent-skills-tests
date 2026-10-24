@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cleanup.sh <profile> [--pipeline <id>]... [--job <id>]... [--drop-schema <catalog>.<schema>] [--yes]
-# Ends a POC: deletes the jobs, then the pipelines (a managed ingestion pipeline's streaming tables go with it), then
+# Deletes the jobs, then the pipelines (a managed ingestion pipeline's streaming tables go with it), then
 # optionally the destination schema with whatever is left in it. Prints what it will delete and asks first unless --yes.
 set -euo pipefail
 [ $# -ge 2 ] || { sed -n 2,4p "$0"; exit 2; }

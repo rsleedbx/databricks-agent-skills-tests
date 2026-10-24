@@ -2,12 +2,12 @@
 """fivetran-doc-schema.py [<connector-schema.md URL or file>] > fivetran-doc.tsv
 
 The Fivetran Facebook Ads tables and columns as Fivetran documents them, in schema.sh's TSV format (table, column,
-type, position), for schema-diff.py --fivetran before the customer's own Fivetran schema is exported. Default source:
+type, position), for schema-diff.py --fivetran before a live Fivetran schema is exported. Default source:
 https://fivetran.com/docs/connectors/applications/facebook-ads/connector-schema.md
 
 Fivetran types become the Databricks types Fivetran writes (Long -> bigint, Instant -> timestamp, Json -> string, ...),
-so type differences show; unknown types pass through lower-cased. The customer's export (schema.sh on their Fivetran
-schema) is the real reference: column blocking, connector version and history mode change what lands.
+so type differences show; unknown types pass through lower-cased. An export of a live Fivetran landing (schema.sh) is the
+reference where one exists: column blocking, connector version and history mode change what lands.
 """
 import re
 import sys

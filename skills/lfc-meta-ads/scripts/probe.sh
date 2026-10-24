@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # probe.sh <profile> --connection <name> --account <act_id> --catalog <c> --schema <probe_schema>
 #          [--days <n>] [--keep] <custom_report_options.json>...
-# Tries custom report definitions before they go into the POC pipeline: one throwaway pipeline "<schema>_probe" with
+# Tries custom report definitions before they go into a pipeline: one throwaway pipeline "<schema>_probe" with
 # one custom_report per file (destination table cr_<file name>), over the last --days days (default 7), one update,
 # then a line per report: COMPLETED (rows when the event has them), or FAILED with the error class and Meta's trace id.
 # Meta rejects some breakdown combinations, and the pipeline then fails with META_ADS_SOURCE_API_ERROR; the probe finds

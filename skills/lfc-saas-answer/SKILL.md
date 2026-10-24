@@ -46,8 +46,8 @@ Copy quotes from `--find` output, never from a summary: a paraphrased quote fail
 2. For each behavior those pages rest on (allocations, deletes, timestamps, pagination, permissions, token lifetime), find the vendor page, add the fact to `references/vendor/<connector>.yaml` with `--find`, and run the check.
 3. Add the connector's row to the table above.
 
-## Connector POC kits
+## Connector scripts
 
 | Connector | Kit |
 |---|---|
-| Meta Ads | [lfc-meta-ads-poc](../lfc-meta-ads-poc/SKILL.md): pipelines, custom report probe, schedule, SLA and rate-limit report, mapping to the Fivetran schema, row counts, cost |
+| Meta Ads | [lfc-meta-ads](../lfc-meta-ads/SKILL.md): pipelines, custom report probe, schedule, update report, mapping to the Fivetran schema, row counts, cost |

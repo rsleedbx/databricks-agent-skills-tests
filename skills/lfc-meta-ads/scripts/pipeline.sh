@@ -33,7 +33,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 . "$(dirname "$0")/lib.sh"
-for v in CONN ACCT CAT SCH NAME; do [ -n "${!v}" ] || { echo "missing --$(tr A-Z a-z <<<"$v")" >&2; sed -n 2,4p "$0"; exit 2; }; done
+for v in CONN ACCT CAT SCH NAME; do [ -n "${!v}" ] || { echo "missing --$(tr A-Z a-z <<<"$v")" >&2; sed -n 2,18p "$0"; exit 2; }; done
 [[ $ACCT =~ ^act_[0-9]+$ ]] || { echo "--account is the ad account id with its act_ prefix, e.g. act_1234567890" >&2; exit 2; }
 [[ -z $START || $START =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "--start-date is YYYY-MM-DD" >&2; exit 2; }
 [[ -z $LOOK || $LOOK =~ ^[0-9]+$ ]] || { echo "--lookback is a number of days" >&2; exit 2; }
@@ -73,7 +73,7 @@ for cr in "${CUSTOM[@]}"; do
   objects=$(jq --argjson o "$o" '. + [$o]' <<<"$objects")
 done
 n=$(jq length <<<"$objects")
-[ "$n" -le 10 ] || echo "note: $n objects in one pipeline; for Meta Ads keep fewer (rate limits), split into more pipelines" >&2
+[ "$n" -le 250 ] || { echo "$n objects: the docs' maximum per pipeline is 250; split them into more pipelines" >&2; exit 2; }
 spec=$(jq -n --arg n "$NAME" --arg c "$CAT" --arg s "$SCH" --arg conn "$CONN" --argjson o "$objects" \
   '{name: $n, catalog: $c, schema: $s, ingestion_definition: {connection_name: $conn, objects: $o}}')
 if [ $DRY = 1 ]; then echo "$spec"; exit 0; fi

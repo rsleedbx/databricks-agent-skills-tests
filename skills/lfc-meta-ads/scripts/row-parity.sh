@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # row-parity.sh <profile> --fivetran <cat.schema> --lfc <cat.schema> --from YYYY-MM-DD --to YYYY-MM-DD
 #               [--report <ft_table>[:<date_col>]=<lfc_table>[:<date_col>]]... [--object <ft_table>=<lfc_table>]...
-#               [--metrics spend,impressions] [--target 99] [--warehouse <id>]
+#               [--metrics spend,impressions] [--target <pct>] [--warehouse <id>]
 # Rows and metrics per day on the Lakeflow Connect landing and an existing Fivetran landing, mapped table to table,
-# from SQL on both (for a POC row-completeness target, --target).
+# from SQL on both.
 #   --report  a report table pair, compared per day over [--from, --to]: rows, and the sum of each --metrics column
 #             (default spend,impressions) on both sides, then LFC as a percentage of Fivetran. Date columns default
 #             to date (Fivetran) and date_start (LFC). Pair a Fivetran custom report with the LFC custom_report or
@@ -12,13 +12,13 @@
 #   --object  an object table pair (ad_history=ads, campaign_history=campaigns, ...): distinct ids on both sides.
 #             Fivetran keeps one row per version, LFC one per object (SCD type 1) or per version (SCD type 2), so
 #             distinct id is the comparable count.
-# A pair is OK when every percentage is within --target (default 99) and 100 + (100 - target); rows for recent days can
-# still move inside the attribution window (lookback, 7 days by default) on both sides: compare closed days.
-# Exit 1 when any pair is under target.
+# With --target <pct>, a pair is OK when every percentage is within <pct> and 100 + (100 - <pct>), and the script exits 1
+# when one isn't. Rows for recent days can still move inside the lookback (7 days by default) on both landings: count
+# closed days.
 set -euo pipefail
 [ $# -ge 1 ] || { sed -n 2,17p "$0"; exit 2; }
 PROFILE=$1; shift
-FT="" LFC="" FROM="" TO="" METRICS=spend,impressions TARGET=99 WH="" REPORTS=() OBJECTS=()
+FT="" LFC="" FROM="" TO="" METRICS=spend,impressions TARGET="" WH="" REPORTS=() OBJECTS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --fivetran) FT=$2; shift ;; --lfc) LFC=$2; shift ;; --from) FROM=$2; shift ;; --to) TO=$2; shift ;;
@@ -30,10 +30,10 @@ while [ $# -gt 0 ]; do
 done
 . "$(dirname "$0")/lib.sh"
 [[ $FROM =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && $TO =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "--from and --to are YYYY-MM-DD" >&2; exit 2; }
-[[ $METRICS =~ ^[a-z0-9_,]+$ && $TARGET =~ ^[0-9]+(\.[0-9]+)?$ ]] || { sed -n 2,17p "$0"; exit 2; }
+[[ $METRICS =~ ^[a-z0-9_,]+$ ]] && [[ -z $TARGET || $TARGET =~ ^[0-9]+(\.[0-9]+)?$ ]] || { sed -n 2,17p "$0"; exit 2; }
 [ ${#REPORTS[@]} -gt 0 ] || [ ${#OBJECTS[@]} -gt 0 ] || { echo "nothing to compare: give --report or --object" >&2; exit 2; }
 ftq=$(ident "$FT") lfq=$(ident "$LFC")
-low=$TARGET high=$(jq -n "200 - $TARGET")
+low=${TARGET:-0} high=$([ -n "$TARGET" ] && jq -n "200 - $TARGET" || echo 1e18)
 bad=0
 pct() { jq -rn --arg a "$1" --arg b "$2" 'if ($a|tonumber? // 0) == 0 then (if ($b|tonumber? // 0) == 0 then "100" else "-" end)
   else (($b|tonumber) / ($a|tonumber) * 1000 | round / 10 | tostring) end'; }
@@ -66,14 +66,14 @@ for pr in "${REPORTS[@]}"; do
     done
     echo "$line"
   done <<<"$out"
-  [ $pair_ok = 1 ] && echo "  OK (all within $low-$high %)" || { echo "  UNDER TARGET"; bad=1; }
+  if [ -n "$TARGET" ]; then [ $pair_ok = 1 ] && echo "  OK (all within $low-$high %)" || { echo "  UNDER TARGET"; bad=1; }; fi
 done
 
 for pr in "${OBJECTS[@]}"; do
   ft_t=${pr%%=*} lf_t=${pr#*=}
   out=$(sql "SELECT (SELECT count(DISTINCT id) FROM $ftq.$(ident "$ft_t")), (SELECT count(DISTINCT id) FROM $lfq.$(ident "$lf_t"))") || { bad=1; continue; }
   IFS=$'\t' read -r a b <<<"$out"; p=$(pct "$a" "$b")
-  if ok "$p"; then s=OK; else s="UNDER TARGET"; bad=1; fi
+  s=""; if [ -n "$TARGET" ]; then if ok "$p"; then s=OK; else s="UNDER TARGET"; bad=1; fi; fi
   echo "object $ft_t -> $lf_t: distinct ids $a/$b $p%  $s"
 done
 exit $bad

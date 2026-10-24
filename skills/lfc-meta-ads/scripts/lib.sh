@@ -1,5 +1,5 @@
 # shellcheck shell=bash disable=SC2034
-# lib.sh: shared helpers for the Meta Ads POC scripts. Source it after setting PROFILE (and WH for SQL).
+# lib.sh: shared helpers for the Meta Ads scripts. Source it after setting PROFILE (and WH for SQL).
 #   dbx <args>     databricks CLI with --profile, retried on connection failures (reads and idempotent calls only)
 #   sql <stmt>     rows as TSV from a SQL warehouse ($WH; picked by pick_wh when empty); exit 1 with the error on stderr
 #   link <what> <path>   prints "<what>: <host><path>"

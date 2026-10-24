@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# schedule.sh <profile> <pipeline-id> [--cron "<quartz>"] [--tz <zone>] [--email a@x,b@y] [--name <job>] [--paused]
+# schedule.sh <profile> <pipeline-id> --cron "<quartz>" [--tz <zone>] [--email a@x,b@y] [--name <job>] [--paused]
 # Creates (or resets, when a job of that name exists) a Lakeflow Job that runs the pipeline on a schedule and emails on
-# failure. Defaults: daily at 06:00 America/New_York ("0 0 6 * * ?"), two hours ahead of an 08:00 SLA; job name
+# failure. --cron is a Quartz expression ("0 0 6 * * ?" is daily at 06:00); --tz defaults to UTC; the job name to
 # "<pipeline name> schedule". The docs recommend no more often than hourly during the Beta (Meta rate limits).
 # --paused creates it with the schedule paused. Prints the job link and id.
 set -euo pipefail
 [ $# -ge 2 ] || { sed -n 2,6p "$0"; exit 2; }
 PROFILE=$1 PIPE=$2; shift 2
-CRON="0 0 6 * * ?" TZONE=America/New_York EMAIL="" NAME="" PAUSE=UNPAUSED
+CRON="" TZONE=UTC EMAIL="" NAME="" PAUSE=UNPAUSED
 while [ $# -gt 0 ]; do
   case $1 in
     --cron) CRON=$2; shift ;; --tz) TZONE=$2; shift ;; --email) EMAIL=$2; shift ;; --name) NAME=$2; shift ;;
@@ -18,6 +18,7 @@ while [ $# -gt 0 ]; do
 done
 . "$(dirname "$0")/lib.sh"
 uuid "$PIPE"
+[ -n "$CRON" ] || { echo "--cron is required" >&2; sed -n 2,6p "$0"; exit 2; }
 [ -n "$NAME" ] || NAME="$(dbx pipelines get "$PIPE" -o json | jq -r .name) schedule"
 settings=$(jq -n --arg n "$NAME" --arg p "$PIPE" --arg c "$CRON" --arg z "$TZONE" --arg e "$EMAIL" --arg s "$PAUSE" '{
   name: $n,
