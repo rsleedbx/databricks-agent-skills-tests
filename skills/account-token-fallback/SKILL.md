@@ -16,6 +16,7 @@ Three scripts in [`scripts/`](scripts/):
 S=skills/account-token-fallback/scripts
 bash $S/profiles-check.sh --verify                 # every workspace profile: ok, covered, or needs-login, with the fix
 CFG=$(bash $S/ws-token.sh <profile>) && [ -n "$CFG" ] && export DATABRICKS_CONFIG_FILE=$CFG    # one profile
+CFG=$(bash $S/ws-token.sh new-ws --host https://<new-workspace>) && export DATABRICKS_CONFIG_FILE=$CFG   # no profile yet
 bash $S/add-account.sh <account-id> <aws|azure|gcp>   # add an account profile, the standard way
 ```
 
@@ -28,6 +29,7 @@ One `databricks auth profiles -o json` (it validates every profile, a few second
 - **Its own login works:** prints nothing; keep using `~/.databrickscfg`.
 - **It has expired:** on Azure, tries the Azure CLI token (and, when the workspace is in another Entra tenant, which the error names, that tenant if `az` is logged in to it); then each account profile with the same `account_id`. The first token the workspace accepts goes into a one-profile config file (mode 600, under `$TMPDIR`) named after the workspace profile, and the script prints its path. With `DATABRICKS_CONFIG_FILE` pointing at it, `--profile <profile>` keeps working, so skills and test sessions that pass `--profile` need no change.
 - **Nothing works:** exits 1 and says which login to run.
+- **A workspace you have no profile for yet** (one just created in an account you're logged in to): `ws-token.sh <name> --host <workspace URL> [--account-id <id>]` mints the same way and writes the config file with `<name>` as its profile. Without `--account-id` it tries each account profile on the workspace's cloud until the workspace accepts a token.
 
 `run.sh` calls it before the first session, and `bin/run_matrix.sh` again before the compute readback, so a matrix run doesn't stop at an expired workspace login.
 
