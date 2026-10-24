@@ -169,7 +169,7 @@ For complex engines or multiple database versions:
 
 1. **Format the data disk as XFS first**, mounted at `/var/lib/containers`: run `scripts/disk-setup.sh` as `references/disk-setup.md` shows right after the VM is created. It finds the disk by its stable path (not `/dev/sdb`, which on Azure is usually the temporary disk), never wipes a disk that already has a filesystem, and checks for XFS with `ftype=1`. Don't install Podman until it prints `OK`.
 2. Install Podman and run the containers with `sudo` (rootful), so images and volumes are stored on the XFS disk: see `references/install-podman.md` for container examples (Oracle, DB2, Informix, MySQL, PostgreSQL, SQL Server).
-3. **Large test databases:** don't populate one per person. Pull a shared master from object storage once, then clone it per test with XFS reflinks (instant), and throw the clone away or save it back: see `references/master-snapshots.md`. To leave the master in object storage and branch it in place (no full pull, a small local cache), use JuiceFS: `references/juicefs-branches.md`. Per-engine owners, clean stops and measured times: `references/engine-masters.md`.
+3. **Large test databases:** don't populate one per person. Pull a shared master from object storage once, then clone it per test with XFS reflinks (instant), and throw the clone away or save it back: see `references/master-snapshots.md`. To leave the master in object storage and branch it in place (no full pull, a small local cache), use JuiceFS: `references/juicefs-branches.md`. Per-engine owners, clean stops and measured times: `references/engine-masters.md`. For several people on one VM, each with their own database from a master (one running at a time, parked ones in object storage): `scripts/slot.sh`, `references/shared-vm-slots.md`.
 
 ### More SQL Server containers for parallel tests
 
@@ -291,7 +291,7 @@ Builds, fills, uploads and benchmarks take minutes to hours. Run each as a syste
 - **Parent skill**: [lfc-source-setup](../lfc-source-setup/SKILL.md) — engine-specific configuration
 - **VM creation**: [azure-vm.md](references/azure-vm.md), [aws-vm.md](references/aws-vm.md), [gcp-vm.md](references/gcp-vm.md)
 - **Database install**: [install-native.md](references/install-native.md), [install-podman.md](references/install-podman.md)
-- **Reusable master database**: [master-snapshots.md](references/master-snapshots.md) (rclone pull + XFS reflink clones), [juicefs-branches.md](references/juicefs-branches.md) (JuiceFS branches in object storage), [engine-masters.md](references/engine-masters.md) (per engine, with `scripts/branch-test.sh`)
+- **Reusable master database**: [master-snapshots.md](references/master-snapshots.md) (rclone pull + XFS reflink clones), [juicefs-branches.md](references/juicefs-branches.md) (JuiceFS branches in object storage), [engine-masters.md](references/engine-masters.md) (per engine, with `scripts/branch-test.sh`), [shared-vm-slots.md](references/shared-vm-slots.md) (one database per person on a shared VM, `scripts/slot.sh`, `scripts/slot-ssh.sh`)
 - **Disk sizing**: [disk-io-limits.md](references/disk-io-limits.md) — each cloud's disk and VM I/O limits, how to tell a load is disk-bound, and what lifts it (an Azure 128 GiB P10 is a 500-IOPS disk)
 - **Configuration**: [configure-lfc.md](references/configure-lfc.md)
 - **Lifecycle**: [lifecycle.md](references/lifecycle.md)
