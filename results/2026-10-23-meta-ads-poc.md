@@ -1,6 +1,6 @@
 # 2026-10-23: Meta Ads POC kit, tested on a test ad account
 
-The scripts of [lfc-meta-ads-poc](../skills/lfc-meta-ads-poc/SKILL.md), one per POC objective (ingestion by a morning SLA, schema parity with Fivetran, cost, rate limits and reliability), run end to end against a Meta Ads connection. Records: `results/runs/2026-10-23-meta-ads-poc.jsonl`.
+The scripts of [lfc-meta-ads-poc](../skills/lfc-meta-ads-poc/SKILL.md), one per POC objective (ingestion by a morning SLA, mapping to the Fivetran schema, cost, rate limits and reliability), run end to end against a Meta Ads connection. Records: `results/runs/2026-10-23-meta-ads-poc.jsonl`.
 
 ## Environment
 
@@ -19,7 +19,7 @@ The scripts of [lfc-meta-ads-poc](../skills/lfc-meta-ads-poc/SKILL.md), one per 
 | `ad_accounts` as a source table | with the ad account as source schema: `TABLE_OR_VIEW_NOT_FOUND`; with source schema `default`: pass |
 | Create body nested under `pipeline` | refused: `unknown field: pipeline`, `name must be set` |
 | Scheduled job, run once | pass: update cause `JOB_TASK` |
-| Schema diff, reviewed mapping vs live landing and Fivetran's documented schema | pass: no stale rows; ids `bigint` vs `string`; 2 Fivetran tables missing from the mapping |
+| Schema diff: reviewed mapping, live landing, Fivetran's documented schema | pass: no stale rows; ids `bigint` (Fivetran) and `string` (LFC); 2 Fivetran tables missing from the mapping |
 | Row parity on mock tables | pass: the 98 % day flagged |
 | Cost | partial: works on a pipeline with billing history; the new pipelines had none yet |
 

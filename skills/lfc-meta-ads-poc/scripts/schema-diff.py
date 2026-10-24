@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """schema-diff.py --lfc lfc.tsv [--fivetran fivetran.tsv] (--mapping map.yaml | --tables-map tables.tsv) [--out diff.tsv]
 
-Compares the Lakeflow Connect landing with the Fivetran one, column by column (POC objective 2).
+Maps the Lakeflow Connect landing to the Fivetran schema, column by column (POC objective 2).
 
 Inputs are schema.sh exports (table, column, type, position). The pairing comes from one of:
   --mapping     a reviewed column mapping: YAML or JSON with a `mappings:` list of rows
@@ -12,7 +12,7 @@ Inputs are schema.sh exports (table, column, type, position). The pairing comes 
 
 Prints a summary per table pair and these findings; --out writes every column as TSV (fivetran, lfc, finding, types):
   same / renamed      paired and both present (types shown when they differ: type change for downstream SQL)
-  fivetran only       a Fivetran column with no LFC pair (downstream code that reads it needs another source or a change)
+  fivetran only       a Fivetran column with no LFC pair
   lfc only            an LFC column with no Fivetran pair
   mapping stale       the mapping pairs a column that the live LFC table doesn't have (connector changed, or the
                       mapping is wrong): re-review that row

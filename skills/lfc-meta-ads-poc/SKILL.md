@@ -1,21 +1,25 @@
 ---
 name: lfc-meta-ads-poc
-description: "Scripts for a Lakeflow Connect Meta Ads proof of concept that replaces Fivetran: create the pipelines (objects, ad_insights, prebuilt and custom reports, SCD type 2), probe custom report definitions before using them, schedule them for a morning SLA, report freshness, failures and Meta rate-limit errors per update and per day, compare the landed schema and the row counts with Fivetran's, and read the DBU cost from system billing. Tested end to end on a workspace with a Meta Ads connection."
+description: "Scripts for a Lakeflow Connect Meta Ads proof of concept: create the pipelines (objects, ad_insights, prebuilt and custom reports, SCD type 2), probe custom report definitions before using them, schedule them for a morning SLA, report freshness, failures and Meta rate-limit errors per update and per day, map the landed tables and columns to the Fivetran schema and count rows on both landings, and read the DBU cost from system billing. Tested end to end on a workspace with a Meta Ads connection."
 parent: lfc-saas-answer
 ---
 
-# Meta Ads POC: Lakeflow Connect in place of Fivetran
+# Meta Ads POC with Lakeflow Connect
 
-A Meta Ads POC usually has four objectives. Each one has a script here:
+A Meta Ads POC usually has four objectives. Each one has a script here. Where the customer already lands Meta data with Fivetran, the scripts map the Lakeflow Connect tables to that schema.
 
 | Objective | Evidence the POC needs | Script |
 |---|---|---|
 | 1. Ingest objects, prebuilt and custom reports, daily by the SLA | pipelines that complete; the time each day's last good update ended | [pipeline.sh](scripts/pipeline.sh), [probe.sh](scripts/probe.sh), [schedule.sh](scripts/schedule.sh), [run.sh](scripts/run.sh), [report.sh](scripts/report.sh) |
-| 2. Schema parity with Fivetran | tables, columns and types on both sides, through a reviewed column mapping; rows per day | [schema.sh](scripts/schema.sh), [schema-diff.py](scripts/schema-diff.py), [fivetran-doc-schema.py](scripts/fivetran-doc-schema.py), [row-parity.sh](scripts/row-parity.sh) |
-| 3. Cost against the Fivetran invoice | DBUs per day split into free tier and billed, at list price | [cost.sh](scripts/cost.sh) |
+| 2. Map to the Fivetran schema | tables, columns and types on both landings, through a reviewed column mapping; rows per day | [schema.sh](scripts/schema.sh), [schema-diff.py](scripts/schema-diff.py), [fivetran-doc-schema.py](scripts/fivetran-doc-schema.py), [row-parity.sh](scripts/row-parity.sh) |
+| 3. Cost | DBUs per day split into free tier and billed, at list price | [cost.sh](scripts/cost.sh) |
 | 4. Rate limits and reliability | error classes per update (`META_ADS_RATE_LIMIT_EXCEEDED`, `META_ADS_REQUESTED_DATA_LIMIT_EXCEEDED`, ...), failed and retried updates | [report.sh](scripts/report.sh) |
 
 Every script takes the CLI profile first, prints its usage when run without arguments, and prints the workspace link of every pipeline, job and schema it creates. They need the Databricks CLI, `jq`, and `python3` for the two Python scripts. The SQL ones use a SQL warehouse (`--warehouse <id>`; otherwise the first running serverless one).
+
+## Wording: neutral, facts only
+
+The customer may keep other tools, replace them, or run both: that's their decision, not this kit's. So the scripts, this page and anything written from them describe the other tool only by what it lands (tables, columns, types, rows) and map Lakeflow Connect to it. No "replace", "migrate off", "instead of", "win", or one product "against" or "vs" another, no comparison with another vendor's price, and no advice on which components to keep. Measured facts on both landings, side by side, are fine.
 
 ## What Lakeflow Connect does for you, and what you specify
 
@@ -89,7 +93,7 @@ $S/report.sh $P <pipeline-id> --days 7 --sla 08:00 --tz America/New_York --table
 
 After a failed update the pipeline starts a retry of its own (cause `RETRY_ON_FAILURE`); `run.sh` says so. A table that fails on every run (a rejected custom report) fails both, every scheduled run: fix or remove it.
 
-## 4. Schema and row parity
+## 4. Map to the Fivetran schema, count rows
 
 ```bash
 $S/schema.sh $P $CAT.$SCH > lfc.tsv                           # the LFC landing
@@ -112,7 +116,7 @@ $S/row-parity.sh $P --fivetran <ft_cat>.<ft_schema> --lfc $CAT.$SCH --from 2026-
   --report <fivetran_report>=custom_report_country --object ad_history=ads --object campaign_history=campaigns
 ```
 
-Each day shows rows, `spend` and `impressions` on both sides and LFC as a percentage of Fivetran; a pair is OK within 99 to 101 % (`--target`). Objects compare distinct ids, since Fivetran's history tables hold several rows per object.
+Each day shows rows, `spend` and `impressions` on both landings and the Lakeflow Connect figure as a percentage of the Fivetran one; a pair is OK within 99 to 101 % (`--target`, set it to the POC's own target). Objects compare distinct ids, since Fivetran's history tables hold several rows per object.
 
 ## 5. Cost
 
@@ -120,7 +124,7 @@ Each day shows rows, `spend` and `impressions` on both sides and LFC as a percen
 $S/cost.sh $P <objects-pipeline-id>,<insights-pipeline-id> --since 2026-10-01
 ```
 
-DBUs per day and SKU, the totals split into the free-tier SKU (`LAKEFLOW_CONNECT_FREE_USAGE`) and billed DBUs at list price, the daily average and 30 times it, for the comparison with the Fivetran invoice. The free tier is a daily allowance per workspace shared by every managed connector there, so a pipeline's free share depends on what else runs in the workspace; the last section shows the workspace's free-tier DBUs per day and how many pipelines shared them. Billing rows arrive hours after a run.
+DBUs per day and SKU, the totals split into the free-tier SKU (`LAKEFLOW_CONNECT_FREE_USAGE`) and billed DBUs at list price, the daily average and 30 times it. The free tier is a daily allowance per workspace shared by every managed connector there, so a pipeline's free share depends on what else runs in the workspace; the last section shows the workspace's free-tier DBUs per day and how many pipelines shared them. Billing rows arrive hours after a run.
 
 ## 6. Clean up
 

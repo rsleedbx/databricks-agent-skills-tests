@@ -2,19 +2,18 @@
 # cost.sh <profile> <pipeline-id>[,<pipeline-id>...] [--since YYYY-MM-DD] [--warehouse <id>]
 # DBUs and list-price cost of the POC pipelines, from system.billing.usage joined to system.billing.list_prices
 # (POC objective 3): per day and SKU, then totals split into the free-tier SKU (LAKEFLOW_CONNECT_FREE_USAGE, $0) and
-# billed DBUs, and the average per day. Compare the billed monthly figure (average x 30) with the Fivetran invoice for
-# the same connector.
+# billed DBUs, and the average per day and 30 times it.
 #   The free tier is a daily DBU allowance per workspace, shared by every managed connector
 #   in it: the free share one pipeline gets depends on what else runs there. The last section shows the workspace's
 #   free-tier DBUs per day and how many pipelines shared them; days that all end on the same round number are capped. The cost is list price; discounts and commitments are not applied.
 #   Billing rows arrive hours after use: check the next day for a full day.
 # --since defaults to 30 days ago. Needs SELECT on system.billing.
 set -euo pipefail
-[ $# -ge 2 ] || { sed -n 2,11p "$0"; exit 2; }
+[ $# -ge 2 ] || { sed -n 2,10p "$0"; exit 2; }
 PROFILE=$1 PIPES=$2; shift 2
 SINCE="" WH=""
 while [ $# -gt 0 ]; do
-  case $1 in --since) SINCE=$2; shift ;; --warehouse) WH=$2; shift ;; *) sed -n 2,11p "$0"; exit 2 ;; esac
+  case $1 in --since) SINCE=$2; shift ;; --warehouse) WH=$2; shift ;; *) sed -n 2,10p "$0"; exit 2 ;; esac
   shift
 done
 . "$(dirname "$0")/lib.sh"
