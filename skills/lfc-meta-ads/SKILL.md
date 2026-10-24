@@ -93,9 +93,9 @@ After a failed update the pipeline starts a retry of its own (cause `RETRY_ON_FA
 $S/report.sh $P <pipeline-id> --days 7 --tz <zone> --tables [--counts] [--by HH:MM]
 ```
 
-- **One line per update:** start, end, minutes, state, cause, and error classes with counts. The error classes are the bracketed codes in the update's WARN and ERROR events (`META_ADS_RATE_LIMIT_EXCEEDED`, `META_ADS_REQUESTED_DATA_LIMIT_EXCEEDED`, ...). A rate limit the connector's retries absorbed leaves no error event.
+- **One line per update:** start, end, minutes, state, cause, and error classes with counts. The error classes are the bracketed codes in the update's WARN and ERROR events (`META_ADS_RATE_LIMIT_EXCEEDED`, `META_ADS_REQUESTED_DATA_LIMIT_EXCEEDED`, ...). An error event without a bracketed code isn't counted (the update's state still shows FAILED). A rate limit the connector's retries absorbed leaves no error event.
 - **`--tables`:** each table's last status and rows written. `-` means the event has no row metric, which is common in the API's events; `--counts` adds each table's current row count from SQL.
-- **`--by HH:MM`:** one line per day, saying whether an update completed by that time of day.
+- **`--by HH:MM`:** one line per day: yes if any update completed by that time of day, even when a later one failed.
 
 ## Map to the Fivetran schema
 
@@ -161,10 +161,3 @@ The test environment:
 | `cost.sh` | Tested on a pipeline with billing history; new pipelines show nothing until billing arrives |
 
 Not tested: data from an ad account with spend (row counts, lookback re-reads, a real rate limit), a live Fivetran landing.
-
-## Trade-offs
-
-- **Probe in a throwaway pipeline.** A rejected custom report shows up in a minute, and no other pipeline's update fails; the cost is creating and deleting a pipeline for each probe.
-- **Errors from bracketed codes in event messages.** No connector internals are needed, and new codes show up without a script change; a message without a bracketed code is counted only through its update's state.
-- **`--by` per day, not per update.** With more than one update a day, the line says whether any completed by that time; a later failed update doesn't change it.
-- **Cost at list price.** The USD figure is DBUs times `system.billing.list_prices`.
