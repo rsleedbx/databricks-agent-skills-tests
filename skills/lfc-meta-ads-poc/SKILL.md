@@ -17,10 +17,6 @@ A Meta Ads POC usually has four objectives. Each one has a script here. Where th
 
 Every script takes the CLI profile first, prints its usage when run without arguments, and prints the workspace link of every pipeline, job and schema it creates. They need the Databricks CLI, `jq`, and `python3` for the two Python scripts. The SQL ones use a SQL warehouse (`--warehouse <id>`; otherwise the first running serverless one).
 
-## Wording: neutral, facts only
-
-The customer may keep other tools, replace them, or run both: that's their decision, not this kit's. So the scripts, this page and anything written from them describe the other tool only by what it lands (tables, columns, types, rows) and map Lakeflow Connect to it. No "replace", "migrate off", "instead of", "win", or one product "against" or "vs" another, no comparison with another vendor's price, and no advice on which components to keep. Measured facts on both landings, side by side, are fine.
-
 ## What Lakeflow Connect does for you, and what you specify
 
 | Lakeflow Connect does | You specify |

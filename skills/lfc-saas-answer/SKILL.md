@@ -46,10 +46,6 @@ Copy quotes from `--find` output, never from a summary: a paraphrased quote fail
 2. For each behavior those pages rest on (allocations, deletes, timestamps, pagination, permissions, token lifetime), find the vendor page, add the fact to `references/vendor/<connector>.yaml` with `--find`, and run the check.
 3. Add the connector's row to the table above.
 
-## Wording: neutral, facts only
-
-Customers often run Lakeflow Connect next to other ingestion tools, and which ones they keep is their call. Every skill, script and result here describes another tool only by what it lands (tables, columns, types, rows, behavior) and maps Lakeflow Connect to it: "map to the Fivetran schema", not "replace Fivetran". No "replace", "migrate off", "instead of", "win", or one product "against" or "vs" another, no comparison with another vendor's price, and no advice on which components to keep.
-
 ## Connector POC kits
 
 | Connector | Kit |
