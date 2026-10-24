@@ -167,4 +167,4 @@ Not tested: data from an ad account with spend (row counts, lookback re-reads, a
 - **Probe in a throwaway pipeline.** A rejected custom report shows up in a minute, and no other pipeline's update fails; the cost is creating and deleting a pipeline for each probe.
 - **Errors from bracketed codes in event messages.** No connector internals are needed, and new codes show up without a script change; a message without a bracketed code is counted only through its update's state.
 - **`--by` per day, not per update.** With more than one update a day, the line says whether any completed by that time; a later failed update doesn't change it.
-- **Cost at list price.** Discounts and commitments aren't in system billing's list prices, so the figure is the list price only.
+- **Cost at list price.** The USD figure is DBUs times `system.billing.list_prices`.

@@ -5,7 +5,7 @@
 # billed DBUs, and the average per day and 30 times it.
 #   The free tier is a daily DBU allowance per workspace, shared by every managed connector
 #   in it: the free share one pipeline gets depends on what else runs there. The last section shows the workspace's
-#   free-tier DBUs per day and how many pipelines shared them; days that all end on the same round number are capped. The cost is list price; discounts and commitments are not applied.
+#   free-tier DBUs per day and how many pipelines shared them. The USD figure is DBUs times system.billing.list_prices.
 #   Billing rows arrive hours after use: check the next day for a full day.
 # --since defaults to 30 days ago. Needs SELECT on system.billing.
 set -euo pipefail
