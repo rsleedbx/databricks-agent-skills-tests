@@ -56,7 +56,7 @@ $S/probe.sh $P --connection $CONN --account $ACCT --catalog $CAT --schema ${SCH}
 #   cr_report2  FAILED  META_ADS_SOURCE_API_ERROR  Meta trace id <trace-id>
 ```
 
-[references/meta-breakdowns.tsv](references/meta-breakdowns.tsv) lists the combinations Meta publishes and those the prebuilt reports use; `pipeline.sh` warns about any other. `country` with `publisher_platform` is not in Meta's list, and it failed; each of them alone completed.
+[references/meta-breakdowns.tsv](references/meta-breakdowns.tsv) lists the combinations Meta publishes and those the prebuilt reports use; `pipeline.sh` warns about any other. `country` with `publisher_platform` is not in Meta's list, and it failed; each of them alone completed. Sets marked `tested` there completed, including the hourly breakdown `hourly_stats_aggregated_by_advertiser_time_zone` (`time_increment` has no hourly value).
 
 A custom report's columns are fixed: `impressions`, `clicks`, `spend`, `reach`, `actions`, `action_values`, plus the ids, the dates, `insight_id`, `breakdown_hash` and the breakdown columns. `custom_report_options` has no field list; other metrics (video, ROAS, `cpm`) are in the prebuilt reports (the reference lists each one's metric set) or `ad_insights`.
 
@@ -93,7 +93,7 @@ After a failed update the pipeline starts a retry of its own (cause `RETRY_ON_FA
 $S/report.sh $P <pipeline-id> --days 7 --tz <zone> --tables [--counts] [--by HH:MM]
 ```
 
-- **One line per update:** start, end, minutes, state, cause, and error classes with counts. The error classes are the bracketed codes in the update's WARN and ERROR events (`META_ADS_RATE_LIMIT_EXCEEDED`, `META_ADS_REQUESTED_DATA_LIMIT_EXCEEDED`, ...). An error event without a bracketed code isn't counted (the update's state still shows FAILED). A rate limit the connector's retries absorbed leaves no error event.
+- **One line per update:** start, end, minutes, state, cause (`API_CALL` from `run.sh`, `JOB_TASK` from a job, `RETRY_ON_FAILURE` from the pipeline), and error classes with counts. The error classes are the bracketed codes in the update's WARN and ERROR events (`META_ADS_RATE_LIMIT_EXCEEDED`, `META_ADS_REQUESTED_DATA_LIMIT_EXCEEDED`, ...). An error event without a bracketed code isn't counted (the update's state still shows FAILED). A rate limit the connector's retries absorbed leaves no error event.
 - **`--tables`:** each table's last status and rows written. `-` means the event has no row metric, which is common in the API's events; `--counts` adds each table's current row count from SQL.
 - **`--by HH:MM`:** one line per day: yes if any update completed by that time of day, even when a later one failed.
 
@@ -137,27 +137,3 @@ $S/cost.sh $P <pipeline-id>[,<pipeline-id>...] --since <YYYY-MM-DD>
 ```bash
 $S/cleanup.sh $P --job <job-id> --pipeline <id> --pipeline <id> --drop-schema $CAT.$SCH   # asks first; --yes to skip
 ```
-
-## How it was tested
-
-The test environment:
-
-- AWS workspace (us-west-2), serverless, Unity Catalog.
-- Runtime DBR 18.3, image `dlt:18.3.8` (`dlt-release-dp-20261015`).
-- A Meta Ads connection (OAuth U2M) to a test ad account with no campaigns. Every table landed empty, so row counts were checked on mock tables only.
-
-| Case | Result |
-|---|---|
-| 8 documented objects, `ads`/`ad_sets`/`campaigns` as SCD type 2 | Tested end to end: completed; SCD type 2 tables have `__START_AT`, `__END_AT` |
-| `ad_insights` + 3 prebuilt reports + 2 custom reports (`country`; `publisher_platform`) | Tested end to end: completed |
-| Custom report `country` + `publisher_platform` (with and without attribution windows) | Tested: table FAILED, `META_ADS_SOURCE_API_ERROR`; the update FAILED and a `RETRY_ON_FAILURE` update followed |
-| Custom reports: no breakdown; `country`; `publisher_platform`; `publisher_platform` + `platform_position`; campaign level `age` + `gender` with `1d_click` | Tested: completed |
-| Custom report with `hourly_stats_aggregated_by_advertiser_time_zone` | Tested: completed; whether rows come back hourly needs an account with spend |
-| `ad_accounts` as a source table (not in the docs' list) | Tested: with the ad account as source schema, `TABLE_OR_VIEW_NOT_FOUND`; with source schema `default`, completed, one row per ad account the Meta user sees |
-| Pipeline create body nested under `pipeline` | Tested: refused |
-| Job from `schedule.sh`, run once | Tested: update with cause `JOB_TASK`, completed |
-| `schema-diff.py` with a column mapping, against the live landing (with `ad_accounts`) and Fivetran's documented schema | Tested: no stale rows; type differences on ids; 2 Fivetran tables the mapping doesn't cover |
-| `row-parity.sh` | Tested on mock tables: a day at 98 % marked UNDER TARGET with `--target 99`, exit 1 |
-| `cost.sh` | Tested on a pipeline with billing history; new pipelines show nothing until billing arrives |
-
-Not tested: data from an ad account with spend (row counts, lookback re-reads, a real rate limit), a live Fivetran landing.

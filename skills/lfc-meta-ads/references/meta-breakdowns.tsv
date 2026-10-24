@@ -7,12 +7,12 @@
 #            ("Due to storage constraints, only some permutations of breakdowns are available.")
 #   prebuilt the Lakeflow Connect prebuilt reports, fixed sets that run:
 #            https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/meta-ads-reference#available-prebuilt-reports
-#   tested   ran on a test ad account (see SKILL.md, "How it was tested")
+#   tested   a custom report with this set completed
 breakdowns	source
 -	meta,prebuilt,tested
 age	meta,prebuilt
 gender	meta,prebuilt
-age,gender	meta,prebuilt
+age,gender	meta,prebuilt,tested
 country	meta,prebuilt,tested
 region	meta,prebuilt
 comscore_market	prebuilt
@@ -21,10 +21,10 @@ publisher_platform	meta,prebuilt,tested
 device_platform,publisher_platform	prebuilt
 impression_device	meta
 impression_device,publisher_platform	meta
-platform_position,publisher_platform	meta
-impression_device,platform_position,publisher_platform	meta
+platform_position,publisher_platform	meta,tested
+impression_device,platform_position,publisher_platform	meta,tested
 product_id	meta,prebuilt
 app_id,skan_conversion_id	meta
-hourly_stats_aggregated_by_advertiser_time_zone	meta
+hourly_stats_aggregated_by_advertiser_time_zone	meta,tested
 hourly_stats_aggregated_by_audience_time_zone	meta
 # Rejected on the test account: country,publisher_platform (with and without attribution windows).
