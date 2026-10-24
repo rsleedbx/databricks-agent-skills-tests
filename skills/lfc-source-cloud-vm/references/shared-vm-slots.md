@@ -41,6 +41,17 @@ A clone of a master uses the master's admin env file (`$SECRETS/<engine>.env`, t
 
 ## Set up (once per VM)
 
+`scripts/slot-vm-setup.sh` does steps 1 and 2 on a new Ubuntu 24.04 VM with a blank data disk, as root, from a folder holding it, `disk-setup.sh`, `slot.sh` and `slot-ssh.sh`. First write `/etc/juicefs/azure.env` (the connection string, [juicefs-branches.md](juicefs-branches.md), "Access"), then:
+
+```bash
+VOLUME=<volume> BUCKET=https://<container>.core.windows.net HOST=<public IP> SLOT_SETTINGS='MAX_PER_OWNER=0' \
+  bash slot-vm-setup.sh
+```
+
+It installs podman, fuse3, jq and JuiceFS, formats the data disk as XFS at `/var/lib/containers`, starts Redis for the metadata on 127.0.0.1, formats the volume if it's new and mounts it at boot. Safe to rerun. With `META_URL` (for example `postgres://<role>@<host>:5432/<database>?sslmode=require`, password as `META_PASSWORD` in `azure.env`), the metadata is in that store, with no Redis on the VM: it outlives the VM, and several VMs can each keep their volume's metadata in one managed Postgres (a database per volume). Put masters in `/mnt/jfs/masters` (`tpc-master.sh`, or a copy with `tar --numeric-owner`, which keeps the engines' uids) and their admin env files in `/root/lfc-src`.
+
+By hand:
+
 1. JuiceFS mounted at `/mnt/jfs` ([juicefs-branches.md](juicefs-branches.md)), started at boot after its Redis (systemd unit below), and the masters in `/mnt/jfs/masters`.
 2. The scripts and the user people log in as:
 

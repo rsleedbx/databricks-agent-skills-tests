@@ -149,7 +149,7 @@ case $CMD in
       fi
       P=$(field "$M" port)
       podman rm -f "$C" >/dev/null 2>&1 || true
-      podman run -d --name "$C" --label lfc-slot.owner="$OWNER" --label lfc-slot.name="$N" "${RUNOPTS[@]}" \
+      podman run -d -q --name "$C" --label lfc-slot.owner="$OWNER" --label lfc-slot.name="$N" "${RUNOPTS[@]}" \
         --env-file "$STATE/$OWNER/$N.env" -p "$P:$CPORT" -v "$D:$MNT:Z" "$IMAGE" "${ARGS[@]}" >/dev/null 9>&-   # the container must not inherit the lock
       for _ in $(seq 1 90); do ready "$C" "$E" && break; sleep 2; done
       ready "$C" "$E" || die "$E in $C didn't answer in 3 minutes: podman logs $C"

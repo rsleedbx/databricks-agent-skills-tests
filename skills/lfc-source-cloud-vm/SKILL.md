@@ -291,7 +291,7 @@ Builds, fills, uploads and benchmarks take minutes to hours. Run each as a syste
 - **Parent skill**: [lfc-source-setup](../lfc-source-setup/SKILL.md) — engine-specific configuration
 - **VM creation**: [azure-vm.md](references/azure-vm.md), [aws-vm.md](references/aws-vm.md), [gcp-vm.md](references/gcp-vm.md)
 - **Database install**: [install-native.md](references/install-native.md), [install-podman.md](references/install-podman.md)
-- **Reusable master database**: [master-snapshots.md](references/master-snapshots.md) (rclone pull + XFS reflink clones), [juicefs-branches.md](references/juicefs-branches.md) (JuiceFS branches in object storage), [engine-masters.md](references/engine-masters.md) (per engine, with `scripts/branch-test.sh`), [shared-vm-slots.md](references/shared-vm-slots.md) (one database per person on a shared VM, `scripts/slot.sh`, `scripts/slot-ssh.sh`)
+- **Reusable master database**: [master-snapshots.md](references/master-snapshots.md) (rclone pull + XFS reflink clones), [juicefs-branches.md](references/juicefs-branches.md) (JuiceFS branches in object storage), [engine-masters.md](references/engine-masters.md) (per engine, with `scripts/branch-test.sh`), [shared-vm-slots.md](references/shared-vm-slots.md) (one database per person on a shared VM, `scripts/slot.sh`, `scripts/slot-ssh.sh`; a new VM set up by `scripts/slot-vm-setup.sh`)
 - **Disk sizing**: [disk-io-limits.md](references/disk-io-limits.md) — each cloud's disk and VM I/O limits, how to tell a load is disk-bound, and what lifts it (an Azure 128 GiB P10 is a 500-IOPS disk)
 - **Configuration**: [configure-lfc.md](references/configure-lfc.md)
 - **Lifecycle**: [lifecycle.md](references/lifecycle.md)
