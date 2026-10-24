@@ -12,7 +12,7 @@
 #                   (level, breakdowns, action_breakdowns, time_increment, action_report_time,
 #                   action_attribution_windows). Repeat for more reports. Examples: ../references/custom-report-*.json
 #   --start-date    meta_ads_options.start_date for ad_insights, prebuilt and custom reports (default: connector's,
-#                   36 months back; a shorter range makes the first run faster and lighter on Meta's rate limits)
+#                   36 months back; a shorter range reads fewer days from Meta's Insights API on the first run)
 #   --lookback      meta_ads_options.custom_insights_lookback_window in days (connector default 7)
 #   --dry-run       print the pipeline JSON and stop
 # Prints the pipeline id on stdout's last line and the pipeline and schema links.
