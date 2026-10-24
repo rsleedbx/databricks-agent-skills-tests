@@ -1,6 +1,6 @@
 ---
 name: lfc-meta-ads
-description: "Scripts for Lakeflow Connect Meta Ads pipelines: create them (objects, ad_insights, prebuilt and custom reports, SCD type 2, ad_accounts), try custom report definitions in a throwaway pipeline, schedule them, list each update's timing, table status and error classes, map the landed tables and columns to the Fivetran schema, count rows and metrics per day on two landings, read the DBU cost from system billing, and remove what they created. Tested on a workspace with a Meta Ads connection."
+description: "Scripts for Lakeflow Connect Meta Ads pipelines: create them (objects, ad_insights, prebuilt and custom reports, SCD type 2, ad_accounts), try custom report definitions in a throwaway pipeline, schedule them, list each update's timing, table status and error classes, map the landed tables and columns to the Fivetran schema, count rows and metrics per day on two landings, read the DBU cost from system billing, and remove what they created."
 parent: lfc-saas-answer
 ---
 
@@ -107,7 +107,7 @@ python3 $S/schema-diff.py --lfc lfc.tsv --fivetran ft.tsv --mapping <column-mapp
 python3 $S/schema-diff.py --lfc lfc.tsv --fivetran ft.tsv --tables-map $S/../references/fivetran-tables.tsv --out diff.tsv
 ```
 
-With a column mapping (rows `{fivetran: table.column, lfc: table.column or null, status, method}`), the diff counts per table pair: same, renamed, Fivetran only, LFC only, type differs. It flags mapping rows the live tables contradict (`mapping stale`, `not in Fivetran`, exit 1). Without one, `--tables-map` pairs the standard tables and matches columns by name. What the test landings showed:
+With a column mapping (rows `{fivetran: table.column, lfc: table.column or null, status, method}`), the diff counts per table pair: same, renamed, Fivetran only, LFC only, type differs. It flags mapping rows the live tables contradict (`mapping stale`, `not in Fivetran`, exit 1). Without one, `--tables-map` pairs the standard tables and matches columns by name. What to expect:
 
 - Fivetran keeps `*_history` tables (a row per version) and child tables for nested fields (`ad_conversion`, `creative_*`, `lookalike_*`); Lakeflow Connect keeps nested fields as arrays or strings in the parent table.
 - Ids: Fivetran's schema has `id`, `account_id`, `campaign_id` as `bigint`; Lakeflow Connect lands them as `string`. A join across the two needs a cast.
