@@ -70,7 +70,9 @@ login_sql() {   # engine, password: the Lakeflow Connect login with replication 
   case $1 in
     postgres) printf "DO \$\$BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='lfc_user') THEN CREATE ROLE lfc_user LOGIN REPLICATION; END IF; END\$\$;\nALTER ROLE lfc_user WITH LOGIN REPLICATION PASSWORD '%s';\nGRANT pg_read_all_data TO lfc_user;\n" "$p" ;;
     mysql) printf "CREATE USER IF NOT EXISTS 'lfc_user'@'%%' IDENTIFIED BY '%s';\nALTER USER 'lfc_user'@'%%' IDENTIFIED BY '%s';\nGRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'lfc_user'@'%%';\n" "$p" "$p" ;;
-    sqlserver) printf "IF SUSER_ID('lfc_user') IS NULL CREATE LOGIN [lfc_user] WITH PASSWORD = N'%s', CHECK_POLICY = OFF; ELSE ALTER LOGIN [lfc_user] WITH PASSWORD = N'%s', CHECK_POLICY = OFF;\n" "$p" "$p" ;;
+    sqlserver) printf "IF SUSER_ID('lfc_user') IS NULL CREATE LOGIN [lfc_user] WITH PASSWORD = N'%s', CHECK_POLICY = OFF; ELSE ALTER LOGIN [lfc_user] WITH PASSWORD = N'%s', CHECK_POLICY = OFF;\n" "$p" "$p"
+               # a user in every user database, with the read rights the other engines' logins have
+               printf "%s\n" "DECLARE @d sysname, @s nvarchar(max); DECLARE c CURSOR LOCAL FOR SELECT name FROM sys.databases WHERE database_id > 4 AND state_desc = 'ONLINE'; OPEN c; FETCH c INTO @d; WHILE @@FETCH_STATUS = 0 BEGIN SET @s = N'USE ' + QUOTENAME(@d) + N'; IF USER_ID(''lfc_user'') IS NULL CREATE USER [lfc_user] FOR LOGIN [lfc_user]; ALTER ROLE db_datareader ADD MEMBER [lfc_user]; GRANT VIEW DATABASE STATE, VIEW DEFINITION TO [lfc_user];'; EXEC (@s); FETCH c INTO @d; END;" ;;
   esac
 }
 all_metas() { find "$STATE" -mindepth 2 -maxdepth 2 -name '*.json' 2>/dev/null; }

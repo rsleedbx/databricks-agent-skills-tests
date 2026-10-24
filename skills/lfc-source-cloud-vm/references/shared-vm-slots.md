@@ -25,7 +25,7 @@ Engines: `postgres` (16), `mysql` (8.4), `sqlserver` (2022). A master works with
 {"name":"pg1","engine":"postgres","host":"203.0.113.10","port":30000,"user":"lfc_user","password":"...","container":"lfc-slot-alice-pg1","state":"running"}
 ```
 
-`lfc_user` is created on every start, with the rights Lakeflow Connect reads with: Postgres `LOGIN REPLICATION` and `pg_read_all_data`; MySQL `SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT`; SQL Server a login (databases and CDC are enabled per test). The engines start with CDC settings: Postgres `wal_level=logical`; MySQL `binlog_format=ROW`, `binlog_row_image=FULL`; SQL Server Agent on.
+`lfc_user` is created on every start, with the rights Lakeflow Connect reads with: Postgres `LOGIN REPLICATION` and `pg_read_all_data`; MySQL `SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT`; SQL Server a login and, in every user database, a user in `db_datareader` with `VIEW DATABASE STATE` and `VIEW DEFINITION` (a database made later gets it at the next start; CDC is enabled per test). The engines start with CDC settings: Postgres `wal_level=logical`; MySQL `binlog_format=ROW`, `binlog_row_image=FULL`; SQL Server Agent on.
 
 ## Limits
 
