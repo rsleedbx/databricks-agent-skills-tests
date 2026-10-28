@@ -27,6 +27,10 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `skills/lfc-connection-sync/scripts/inventory.sh` <profile>...: every UC connection in each workspace, one tab-separated line each:
 - `skills/lfc-connection-sync/scripts/sync.sh` <targets.tsv>: create or update one UC connection per row, in each row's workspace. Idempotent: rerun after a fix.
 
+## lfc-downstream-history
+
+- `skills/lfc-downstream-history/scripts/sqlserver-history-snapshot.sh` SCD type 2 history of an SCD type 1 destination table from periodic snapshots (history-snapshot.py: AUTO CDC FROM SNA...
+
 ## lfc-meta-ads
 
 - `skills/lfc-meta-ads/scripts/cleanup.sh` <profile> [--pipeline <id>]... [--job <id>]... [--drop-schema <catalog>.<schema>] [--yes] Deletes the jobs, then the ...
