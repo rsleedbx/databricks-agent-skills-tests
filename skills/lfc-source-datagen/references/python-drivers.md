@@ -94,7 +94,7 @@ Db2 and Informix are slow on TPC-E: at SF 0.1, 433 s and 1,650 s, against 45 s o
 | CockroachDB | A leading-zero string casts to an integer as octal: `'0008'::bigint` fails, `CAST('0320' AS BIGINT)` is 208. TPC-E's `lfc:n={CAST(tx_id AS BIGINT)}` tags make the probes wrong, and a second round re-inserts keys (`taxrate_pkey`) | The planner's text-key cast strips leading zeros (fixed in `engines/postgres.py`); the tag itself is `ddl.py`'s CockroachDB output and isn't fixed yet |
 | CockroachDB | One 600,000-row INSERT with its foreign-key checks ran 12 minutes without committing a row | `--rows 50000` (TPC-H SF 1 at about 2.0M rows a minute on the shared VM, 2026-10-28) |
 | Informix | The developer image refuses a 30 GB dbspace (`Demo Version limits exceeded`); 1 GB is accepted. The chunk file must exist, owner `informix`, mode 660 | Size the dbspace to the demo's limit: the SF 0.1 master holds all six workloads (13.0M rows) in 1 GB; SF 1 (about 110M rows) doesn't fit |
-| Db2 | `CREATE DATABASE` fails with `SQL0293N` in the community image (11.5.9) on the shared VM, on XFS and in the container's own filesystem | Not solved; the instance user can write the data path, and direct I/O and `fallocate` work |
+| Db2 | `CREATE DATABASE` fails with `SQL0293N` on a disk with 4096-byte logical sectors (Azure Premium SSD v2's default): Db2's 512-byte direct-I/O writes get `EINVAL` | `db2set DB2_4K_DEVICE_SUPPORT=ON`, restart the instance, then create the database (lfc-source-cloud-vm `references/disk-setup.md`, "Logical sector size"); `slot.sh` and `tpc-master.sh` do it |
 
 `ddl.py`'s own sqlglot gotchas for the two new dialects are listed in **lfc-source-statschema**.
 

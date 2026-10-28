@@ -85,7 +85,7 @@ engine() {
     mariadb)  IMAGE=docker.io/library/mariadb:11.4 MNT=/var/lib/mysql CPORT=3306
               ARGS=(--log-bin --server-id=1 --binlog-format=ROW --binlog-row-image=FULL --binlog-expire-logs-seconds=604800)
               RUNOPTS=() ;;
-    # Db2 Community: --privileged; the image makes LFCDB at its first start; lfc_user is an OS user (Db2 checks the OS password)
+    # Db2 Community: --privileged; db2_db makes LFCDB after the image's setup; lfc_user is an OS user (Db2 checks the OS password)
     db2)      IMAGE=icr.io/db2_community/db2:11.5.9.0 MNT=/database CPORT=50000 DBNAME=LFCDB WAIT=900
               ARGS=() RUNOPTS=(--privileged) ;;
     # Informix Developer: the server writes its data and config volumes as informix (:U), the config one a folder under the
@@ -130,12 +130,21 @@ probe() {   # the query that says the engine answers (Oracle: once its PDB is op
     *) echo "SELECT 1;" ;;
   esac
 }
+# db2_db <container>: LFCDB with 4 KB-aligned I/O. A data disk with 4096-byte logical sectors (Azure Premium SSD v2's
+# default) refuses Db2's 512-byte direct-I/O writes (pwrite EINVAL: SQL0293N on CREATE DATABASE), so the image doesn't
+# make the database (no DBNAME): this sets DB2_4K_DEVICE_SUPPORT=ON (kept in the instance home), restarts the instance
+# once and creates it. An existing LFCDB (a clone, or a slot made before) is left as it is.
+db2_db() {
+  podman exec "$1" su - db2inst1 -c 'db2 list db directory 2>/dev/null | grep -q "= LFCDB$" && exit 0
+    db2set DB2_4K_DEVICE_SUPPORT=ON && { db2stop force; db2start; } >/dev/null 2>&1; db2 create database LFCDB >/dev/null' 9>&-
+}
 ready() {
   # grep -c reads all of the log: with pipefail, grep -q's early exit would make podman logs fail (SIGPIPE)
   if [ "$2" = oracle ]; then   # the image restarts the database after its first-start setup and then prints this line
     [ "$(podman logs "$1" 2>&1 | grep -c 'DATABASE IS READY TO USE')" -gt 0 ] || return 1
   elif [ "$2" = db2 ]; then    # Db2's setup (instance, then the database) runs after the start; the image logs its end
     [ "$(podman logs "$1" 2>&1 | grep -cF '(*) Setup has completed')" -gt 0 ] || return 1
+    db2_db "$1" >/dev/null 2>&1 || return 1
   fi
   probe "$2" | PROBE_TIMEOUT=30 sql "$1" "$2" >/dev/null 2>&1
 }
@@ -274,7 +283,7 @@ case $CMD in
             sqlserver) printf 'ACCEPT_EULA=Y\nMSSQL_SA_PASSWORD=%s\n' "$(pw)" ;;
             oracle) printf 'ORACLE_PASSWORD=%s\n' "$(pw)" ;;
             mariadb) printf 'MARIADB_ROOT_PASSWORD=%s\n' "$(pw)" ;;
-            db2) printf 'LICENSE=accept\nDB2INSTANCE=db2inst1\nDB2INST1_PASSWORD=%s\nDBNAME=LFCDB\nBLU=false\nENABLE_ORACLE_COMPATIBILITY=false\nPERSISTENT_HOME=true\nARCHIVE_LOGS=false\nAUTOCONFIG=false\nSAMPLEDB=false\n' "$(pw)" ;;
+            db2) printf 'LICENSE=accept\nDB2INSTANCE=db2inst1\nDB2INST1_PASSWORD=%s\nBLU=false\nENABLE_ORACLE_COMPATIBILITY=false\nPERSISTENT_HOME=true\nARCHIVE_LOGS=false\nAUTOCONFIG=false\nSAMPLEDB=false\n' "$(pw)" ;;
             informix) printf 'LICENSE=accept\nINFORMIX_PASSWORD=%s\n' "$(pw)" ;;
             cockroachdb|yugabytedb) ;;   # insecure: no password
           esac > "$STATE/$OWNER/$N.env"

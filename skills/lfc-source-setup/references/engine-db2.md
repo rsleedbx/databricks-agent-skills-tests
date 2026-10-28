@@ -76,6 +76,7 @@ Db2 SQL Replication requires activation on tables and publishing to a replicatio
 ## Gotchas
 
 - **OS user requirement:** Every Db2 user must have a corresponding OS user. Automate via `podman exec useradd`.
+- **4096-byte-sector disks (Azure Premium SSD v2, Ultra Disk):** `CREATE DATABASE` fails with `SQL0293N Error accessing a table space container.`: Db2 writes 512 bytes with direct I/O and the disk refuses it (`db2diag.log`: `pwrite`, `OSERR: EINVAL`). Run `db2set DB2_4K_DEVICE_SUPPORT=ON`, `db2stop force`, `db2start`, then `CREATE DATABASE`; or put the database on a 512-byte-sector disk. Check the disk with `blockdev --getss <device>`. Details: lfc-source-cloud-vm `references/disk-setup.md`, "Logical sector size".
 - **No cloud managed services:** Db2 CE is self-managed only.
 - **Limited CDC tooling:** SQL Replication is less mature than MySQL/PostgreSQL binlog or Oracle LogMiner.
 - **Query-based fallback:** LFC may use full-table scans + timestamp columns for "CDC" instead of true change streams.

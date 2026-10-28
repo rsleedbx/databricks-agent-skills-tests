@@ -128,12 +128,15 @@ Q
            ddl_ok $1 || return 1
            ORACLE=$SQ DIR=$DG/oracle SESSIONS=$SESSIONS bash $DG/fill.sh ora $S; }
   finish() { for w in $WL; do printf "EXEC DBMS_STATS.GATHER_SCHEMA_STATS('%s')\n" $(echo $w | tr a-z A-Z) | $SQ; done; podman stop -t 120 $C > /dev/null; } ;;
-db2)   # Db2 Community: the image makes LFCDB at its first start; fill.py fills each schema (the Db2 planner isn't SQL)
+db2)   # Db2 Community: LFCDB made after the image's setup with 4 KB-aligned I/O (a 4096-byte-sector disk refuses Db2's
+       # 512-byte direct-I/O writes: SQL0293N); fill.py fills each schema (the Db2 planner isn't SQL)
   install -m 600 /dev/null $W/pw; sed -n 's/^DB2INST1_PASSWORD=//p' $SECRETS/$E.env > $W/pw
-  podman run -d --name $C --label lfc.engine=$E --label lfc.purpose=tpc-master --label lfc.master=$NAME --privileged --env-file $SECRETS/$E.env -v $M:/database:Z -p 127.0.0.1:$HP:50000 \
+  podman run -d --name $C --label lfc.engine=$E --label lfc.purpose=tpc-master --label lfc.master=$NAME --privileged --env-file $SECRETS/$E.env -e DBNAME= -e PERSISTENT_HOME=true -v $M:/database:Z -p 127.0.0.1:$HP:50000 \
     icr.io/db2_community/db2:11.5.9.0 > /dev/null
   db2_ok() { [ "$(podman logs $C 2>&1 | grep -cF '(*) Setup has completed')" -gt 0 ] && echo "SELECT 1 FROM SYSIBM.SYSDUMMY1;" | $PYC; }
   PYC="$PY $DG/python/sq.py db2 --host 127.0.0.1 --port $HP --user db2inst1 --database LFCDB --password-file $W/pw"
+  setup_ok() { [ "$(podman logs $C 2>&1 | grep -cF '(*) Setup has completed')" -gt 0 ]; }; wait_for setup_ok
+  podman exec $C su - db2inst1 -c 'db2set DB2_4K_DEVICE_SUPPORT=ON && { db2stop force; db2start; } >/dev/null 2>&1; db2 create database LFCDB' > /dev/null || exit 1
   wait_for db2_ok
   printf '%s\n' "CALL SYSPROC.ADMIN_CMD('UPDATE DB CFG FOR LFCDB USING PCKCACHESZ 16384');" "CALL SYSPROC.ADMIN_CMD('UPDATE DB CFG FOR LFCDB USING LOGSECOND 200');" | $PYC > /dev/null || exit 1
   load() { local S=$(echo $1 | tr a-z A-Z)
