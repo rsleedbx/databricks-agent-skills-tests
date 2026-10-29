@@ -20,6 +20,7 @@ Check what's covered with `uv run scripts/recall.py --coverage` (test × engine)
 | Credentials on the connection | `setup.credentials` | `password` (in the connection), `uc-secret-akv` (Azure Key Vault secret, referenced from a UC connection), `uc-secret-aws-sm` (AWS Secrets Manager, referenced) | password only |
 | Network path | `setup.network` | `public-ip` (firewall to serverless and classic egress), `private-network-gateway` ([announcement](https://www.databricks.com/blog/introducing-private-network-gateway)), `privatelink`, `vpc-peering` | public IP only |
 | Change-log CDC (Zerobus) | `setup.producer`, `setup.bronze`, `setup.silver` | producer `debezium-server-zerobus` / `kafka-connect-zerobus`; bronze `shared` / `fanout` / `per-table`; silver `pipeline-auto-cdc` / `merge-job` / `none` (`zerobus-debezium-test`) | CockroachDB, empty TPC-mix tables: pipeline to 1000, MERGE to 4000; 8000 over UC's tables per schema; one producer to about 100-250 tables |
+| Kafka into Delta (Lakeflow Connect) | `test: load`, `setup.route`, `setup.broker`, `setup.pipeline`, `setup.runtime`, `compute` | route `lfc-kafka`; broker Azure Event Hubs (Kafka endpoint; throughput units, partitions); pipeline serverless, continuous, channel `PREVIEW`, value `VARIANT` (`lfc-kafka-freshness-test`) | Azure FEVM centralus: one 15-minute run with a 10x burst, Zerobus and Kafka from one producer |
 | Who ran it | `setup.contributor` | a GitHub handle or team name, never an email | |
 
 ## Planned
