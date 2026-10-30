@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # keep-catalogs.sh <profile> [--connection N]... [catalog]...: set the RemoveAfter tag on test catalogs and connections to a month out.
 #   Some workspaces tag a catalog that has no RemoveAfter tag with a date a couple of weeks out and delete it on that
-#   date. This sets RemoveAfter to today + 1 month (KEEP_UNTIL=YYYY-MM-DD for another date) on each catalog named, and
+#   date. This sets RemoveAfter to today + 1 month (KEEP_UNTIL=YYYY-MM-DD for another date; KEEP_FROM=YYYY-MM-DD counts
+#   the month from that day) on each catalog named, and
 #   with --connection N on connection N and every foreign catalog made from it. It never moves a later date earlier.
 #   One line per catalog (a connection's line says connection): kept (already later), set or updated, or failed with the CLI's error; none for a --connection
 #   with no foreign catalog. Exit 1 if any failed (a failed catalogs list too).
@@ -12,7 +13,7 @@ P=${1:?usage: keep-catalogs.sh <profile> [--connection N]... [catalog]...}; shif
 CONNS=(); CATS=()   # CATS: "<entity type> <name>"
 while [ $# -gt 0 ]; do case $1 in --connection) CONNS+=("${2:?--connection needs a name}"); shift 2;; -*) echo "unknown $1"; exit 2;; *) CATS+=("catalogs $1"); shift;; esac; done
 # a month out; Jan 31 -> Feb 28 (day 0 of the month mktime rolled into), as date -v+1m does
-UNTIL=${KEEP_UNTIL:-$(jq -rn 'now | gmtime as $t | ($t | .[1] += 1 | mktime | gmtime) as $n
+UNTIL=${KEEP_UNTIL:-$(jq -rn --arg f "${KEEP_FROM:-}" '(if $f == "" then now else $f + "T12:00:00Z" | fromdate end) | gmtime as $t | ($t | .[1] += 1 | mktime | gmtime) as $n
   | (if $n[2] != $t[2] then $n | .[2] = 0 else $n end) | mktime | strftime("%F")')}
 bad=0
 if [ ${#CONNS[@]} -gt 0 ]; then

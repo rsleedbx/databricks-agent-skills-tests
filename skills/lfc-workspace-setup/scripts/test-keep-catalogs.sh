@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-keep-catalogs.sh: checks keep-catalogs.sh against a fake databricks CLI (no workspace): which catalogs a
-#   --connection picks (the connection and its foreign catalogs), the never-earlier rule, set/update/fail, a failed catalogs list. One PASS/FAIL line per check; exit 1 on any FAIL.
+#   --connection picks (the connection and its foreign catalogs), the never-earlier rule, the month-out default (month ends, leap years), set/update/fail, a failed catalogs list. One PASS/FAIL line per check; exit 1 on any FAIL.
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fail=0
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
@@ -37,6 +37,10 @@ run denied fresh
 ok "failed create: exit 1, the others still run" '[ $rc = 1 ] && [[ "$out" == *"failed  denied: Error: PERMISSION_DENIED"* ]] && [[ "$out" == *"set     fresh"* ]]'
 run --connection z
 ok "connection with no foreign catalog: none" '[ $rc = 0 ] && [[ "$out" == *"none    foreign catalogs of z"* ]] && [[ "$out" == *"set     connection z"* ]]'
+for d in 2026-01-31:2026-02-28 2028-01-31:2028-02-29 2026-12-31:2027-01-31 2026-03-31:2026-04-30 2026-05-15:2026-06-15; do
+  : > "$T/calls"; out=$(FT=$T PATH="$T/bin:$PATH" KEEP_FROM=${d%:*} bash "$S/keep-catalogs.sh" p fresh)
+  ok "month out from ${d%:*}: ${d#*:}" '[[ "$out" == "set     fresh RemoveAfter=${d#*:}" ]]'
+done
 echo '{"not": "a list"}' > "$T/list"; run --connection a
 ok "listing not a JSON list: failed, exit 1" '[ $rc = 1 ] && [[ "$out" == "failed  foreign catalogs of a: "* ]]'
 touch "$T/list-fails"; run --connection a fresh
