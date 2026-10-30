@@ -14,14 +14,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 . "$(dirname "$0")/lib.sh"
-for p in "${PIPES[@]}"; do uuid "$p"; echo "pipeline $p: $(dbx pipelines get "$p" -o json | jq -r .name)"; done
-for j in "${JOBS[@]}"; do [[ $j =~ ^[0-9]+$ ]] || { echo "job id is a number: $j" >&2; exit 2; }; echo "job $j: $(dbx jobs get "$j" -o json | jq -r .settings.name)"; done
+for p in ${PIPES[@]+"${PIPES[@]}"}; do uuid "$p"; echo "pipeline $p: $(dbx pipelines get "$p" -o json | jq -r .name)"; done
+for j in ${JOBS[@]+"${JOBS[@]}"}; do [[ $j =~ ^[0-9]+$ ]] || { echo "job id is a number: $j" >&2; exit 2; }; echo "job $j: $(dbx jobs get "$j" -o json | jq -r .settings.name)"; done
 if [ -n "$SCH" ]; then
   [[ $SCH =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]] || { echo "want <catalog>.<schema>: $SCH" >&2; exit 2; }
   [[ ${SCH#*.} != default && ${SCH#*.} != information_schema ]] || { echo "refusing to drop $SCH" >&2; exit 2; }
   echo "schema $SCH: $(dbx tables list "${SCH%%.*}" "${SCH#*.}" -o json | jq -r 'map(.name) | join(", ")')"
 fi
 if [ $YES = 0 ]; then read -r -p "delete all of the above? [y/N] " a; [ "$a" = y ] || exit 1; fi
-for j in "${JOBS[@]}"; do dbx jobs delete "$j" && echo "deleted job $j"; done
-for p in "${PIPES[@]}"; do dbx pipelines delete "$p" && echo "deleted pipeline $p"; done
+for j in ${JOBS[@]+"${JOBS[@]}"}; do dbx jobs delete "$j" && echo "deleted job $j"; done
+for p in ${PIPES[@]+"${PIPES[@]}"}; do dbx pipelines delete "$p" && echo "deleted pipeline $p"; done
 [ -z "$SCH" ] || { dbx schemas delete "$SCH" --force && echo "dropped schema $SCH"; }

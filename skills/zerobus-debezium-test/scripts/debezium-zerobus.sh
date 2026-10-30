@@ -76,7 +76,7 @@ NSRC=${NSRC:-1}; case $NSRC in *[!0-9]*|""|0) echo "NSRC: 1 or more"; exit 2;; e
 # BRONZE_SHARDS=K, cdc_log_s<k>; silver reads its own), or per-table (the producers write cdc_log_<table> themselves:
 # the Kafka route only; a new table then needs its bronze table and the producer's routing first, so it isn't how
 # tables are added without stopping). ON_DRIFT: record (silver keeps flowing and records drift; the default) or fail.
-EMPTY=${EMPTY:-0}; FKS=${FKS:-1}; ROUNDS=${ROUNDS:-$(case ${SOURCE:-crdb} in mssql|oracle|db2|informix) echo 3;; *) echo 5;; esac)}; PIPES=${PIPES:-1}
+EMPTY=${EMPTY:-0}; FKS=${FKS:-1}; ROUNDS=${ROUNDS:-$(case ${SOURCE:-crdb} in (mssql|oracle|db2|informix) echo 3;; (*) echo 5;; esac)}; PIPES=${PIPES:-1}
 APP=${APP:-}; [ -n "$APP" ] && { [ "$APP" = mautic ] || { echo "APP: mautic only so far"; exit 2; }; ROUNDS=app; MODEL=$APP; }
 # ROUNDS=3: rounds 1 to 3 (changes, a producer restart, every version checked), no schema changes: for a source whose
 # change capture needs more than an ALTER to follow one (SQL Server's and Db2's capture instances)
@@ -199,7 +199,7 @@ fi
 GOLD_FILE=$HERE/../models/$MODEL-gold.sql; [ -f "$GOLD_FILE" ] || GOLD_FILE=
 SF=${SF:-0.001}
 # msql ...: model-sql.py on the model (the rounds' changes); msel <table> ...: its select on the source's current schema
-SQLD=$(case $SOURCE in crdb) echo crdb;; mysql) echo mysql;; mssql) echo mssql;; oracle) echo oracle;; db2) echo db2;; informix) echo informix;; *) echo pg;; esac)
+SQLD=$(case $SOURCE in (crdb) echo crdb;; (mysql) echo mysql;; (mssql) echo mssql;; (oracle) echo oracle;; (db2) echo db2;; (informix) echo informix;; (*) echo pg;; esac)
 # fold <name>: a model's name as the source keeps it and its change log carries it (Oracle: upper case)
 fold() { case $SQLD in oracle|db2) echo "$1" | tr a-z A-Z;; informix) echo "$1" | tr A-Z a-z;; *) echo "$1";; esac; }
 # MPFX: what model-sql.py qualifies a table with: the database (CockroachDB, MySQL) or schema (YugabyteDB, PostgreSQL)
@@ -227,18 +227,18 @@ case $CLOUD in azure) ZB="https://$WS_ID.zerobus.$REGION.azuredatabricks.net";; 
 WAREHOUSE=${WAREHOUSE:-$(dbx warehouses list -o json | yq '[.[] | select(.enable_serverless_compute)][0].id')}; export WAREHOUSE
 vm 'command -v podman >/dev/null' || { echo "no Podman on $HOSTDESC"; exit 2; }
 E=$(date +%s); S=${PREFIX}_${SOURCE}_${MODEL}_dbz_$E; NET=$SOURCE-dbz-$E; SRCC=$PREFIX-$SOURCE-$E; DBZ=$PREFIX-debezium-$E; RD=/tmp/dbz-$SOURCE-$E
-SQR=$(case $SOURCE in db2|informix) echo "$PREFIX-sq-$E";; esac)   # Db2, Informix: the client container (sq.py)
+SQR=$(case $SOURCE in (db2|informix) echo "$PREFIX-sq-$E";; esac)   # Db2, Informix: the client container (sq.py)
 T="\`$CATALOG\`.$S"
 # per source i: SDB (database), DESTP (destination prefix), TNS (T in ns, silver's sequence for its snapshot), THLC and
 # TUS (T for the snapshot reads), DBZC (its Debezium Server; Kafka Connect runs every source's connector in one worker)
 declare -a SDB DESTP TNS THLC TUS DBZC
 for i in $(seq 1 "$NSRC"); do SDB[$i]=$MODEL$i; DBZC[$i]=$([ "$i" = 1 ] && echo "$DBZ" || echo "$PREFIX-debezium$i-$E")
-  DESTP[$i]=$SOURCE$i.$(case $SOURCE in crdb) echo public;; mssql) echo "${SDB[$i]}.dbo";; oracle|db2) fold "${SDB[$i]}";; informix) echo informix;; *) echo "${SDB[$i]}";; esac); done
+  DESTP[$i]=$SOURCE$i.$(case $SOURCE in (crdb) echo public;; (mssql) echo "${SDB[$i]}.dbo";; (oracle|db2) fold "${SDB[$i]}";; (informix) echo informix;; (*) echo "${SDB[$i]}";; esac); done
 declare -a APPC; for i in $(seq 1 "$NSRC"); do APPC[$i]=$PREFIX-$APP-web$i-$E; done   # APP: each source's web container
 DBZS=$([ "$SINK" = kafka ] && echo "$DBZ" || echo "${DBZC[*]}")   # every producer container
 use() { # use <i>: the source the next commands are for
   I=$1; SRC_DB=${SDB[$1]}; DEST_PREFIX=${DESTP[$1]}; case $SOURCE in crdb|mssql|informix) ;; oracle|db2) SRC_SCHEMA=$(fold "$SRC_DB");; *) SRC_SCHEMA=$SRC_DB;; esac
-  MPFX=$(case $SOURCE in mssql) echo dbo;; oracle|db2) echo "$SRC_SCHEMA";; *) echo "$SRC_DB";; esac)
+  MPFX=$(case $SOURCE in (mssql) echo dbo;; (oracle|db2) echo "$SRC_SCHEMA";; (*) echo "$SRC_DB";; esac)
   T_NS=${TNS[$1]:-}; T_HLC=${THLC[$1]:-}; T_US=${TUS[$1]:-}; :; }
 use 1
 echo "run $E: schema $CATALOG.$S, VM containers $SRCC and $DBZS; $NSRC source database(s), bronze $BRONZE, drift $ON_DRIFT"
@@ -299,7 +299,7 @@ esac
 # coverage record, so the combination shows as tried, with the reason
 early_record() { [ -n "${RECORD_OUT:-}" ] && [ ! -s "$RECORD_OUT" ] || return 0
   jq -n -c --arg date "$(date -u +%F)" --arg run "${RECORD_RUN:-$(date -u +%F)-zerobus-$SOURCE-$MODEL}" \
-    --arg engine "$(case $SOURCE in pg) echo postgres;; mssql) echo sqlserver;; crdb) echo cockroachdb;; yb) echo yugabytedb;; *) echo "$SOURCE";; esac)" \
+    --arg engine "$(case $SOURCE in (pg) echo postgres;; (mssql) echo sqlserver;; (crdb) echo cockroachdb;; (yb) echo yugabytedb;; (*) echo "$SOURCE";; esac)" \
     --arg ver "$(echo "${SRC_VERSION:-unknown}" | tr -s ' ' | cut -c1-60)" --arg cloud "${CLOUD:-cloud}" --arg model "${APP:-$MODEL}" \
     --arg topo "$([ "${NSRC:-1}" -gt 1 ] && echo n:1 || echo 1:1)" --argjson nsrc "${NSRC:-1}" --arg why "${EARLY_WHY:-stopped before the end, see the run log}" \
     '{date:$date, run:$run, test:"zerobus", subject:{engine:$engine, version:$ver}, outcome:"fail", result:"stopped early",
@@ -308,7 +308,7 @@ early_record() { [ -n "${RECORD_OUT:-}" ] && [ ! -s "$RECORD_OUT" ] || return 0
       error:$why}' > "$RECORD_OUT" 2>/dev/null || true; }
 cleanup() {
   early_record
-  [ "${KEEP:-0}" = 1 ] && { echo "KEEP=1: left $CATALOG.$S, SP ${SP_NAME:-}, VM containers and $RD, to inspect:"; printf '%s\n' "${LINKS[@]}"; rm -rf "${W:?}"; return; }
+  [ "${KEEP:-0}" = 1 ] && { echo "KEEP=1: left $CATALOG.$S, SP ${SP_NAME:-}, VM containers and $RD, to inspect:"; printf '%s\n' ${LINKS[@]+"${LINKS[@]}"}; rm -rf "${W:?}"; return; }
   vm "$PODMAN rm -f --ignore $DBZS $SRCC $SQR $([ -n "$APP" ] && echo "${APPC[*]}") >/dev/null 2>&1; $PODMAN network rm $NET >/dev/null 2>&1; $(rmc $RD)" || true
   [ -n "${SP_ID:-}" ] && dbx service-principals delete "$SP_ID" >/dev/null 2>&1
   for p in ${PIPELINE_IDS[@]+"${PIPELINE_IDS[@]}"}; do dbx pipelines delete "$p" >/dev/null 2>&1; done
@@ -336,15 +336,15 @@ fi
 # lfc-source-datagen's fill.py fills it from a container on the run's network (nothing is published for it)
 # (APP: the application makes its own tables and rows; nothing is shaped or generated)
 [ -n "$APP" ] || (cd "$STATSCHEMA/.." && uv run -q scripts/shape.py "$MODEL_YAML" --sf "$SF" --expected "$W/expected.json" > "$W/shaped.yaml" 2>"$W/shape.err" \
-  && uv run -q scripts/ddl.py "$W/shaped.yaml" --dialect "$(case $SOURCE in crdb) echo cockroachdb;; mssql) echo tsql;; oracle) echo oracle;; mysql) echo mysql;; db2) echo db2;; informix) echo informix;; *) echo postgres;; esac)" > "$W/ddl.sql" 2>>"$W/shape.err") \
+  && uv run -q scripts/ddl.py "$W/shaped.yaml" --dialect "$(case $SOURCE in (crdb) echo cockroachdb;; (mssql) echo tsql;; (oracle) echo oracle;; (mysql) echo mysql;; (db2) echo db2;; (informix) echo informix;; (*) echo postgres;; esac)" > "$W/ddl.sql" 2>>"$W/shape.err") \
   || { echo "model $MODEL: shape.py or ddl.py failed: $(head -c 300 "$W/shape.err")"; exit 2; }
 # EMPTY=1: no datagen tags (COMMENT ON, one line each); FKS=0: no foreign keys (ALTER TABLE ... FOREIGN KEY, one line each)
 [ -n "$APP" ] && : > "$W/ddl.sql"
 { [ "$EMPTY" = 1 ] && grep -v '^COMMENT ON ' || cat; } < "$W/ddl.sql" | { [ "$FKS" = 0 ] && grep -v -E '^ALTER TABLE .* FOREIGN KEY ' || cat; } > "$W/ddl.run"
 NT=$(yq '.tables | length' "$MODEL_YAML")
 # the source's engine and driver for lfc-source-datagen's Python scripts (fill.py, export.py)
-DGE=$(case $SOURCE in mssql) echo sqlserver;; mysql) echo mysql;; oracle) echo oracle;; db2) echo db2;; informix) echo informix;; *) echo pg;; esac)
-DGPIP=$(case $SOURCE in mssql) echo mssql-python;; mysql) echo pymysql;; oracle) echo oracledb;; db2) echo ibm-db;; informix) echo informix-driver;; *) echo psycopg2-binary;; esac)
+DGE=$(case $SOURCE in (mssql) echo sqlserver;; (mysql) echo mysql;; (oracle) echo oracle;; (db2) echo db2;; (informix) echo informix;; (*) echo pg;; esac)
+DGPIP=$(case $SOURCE in (mssql) echo mssql-python;; (mysql) echo pymysql;; (oracle) echo oracledb;; (db2) echo ibm-db;; (informix) echo informix-driver;; (*) echo psycopg2-binary;; esac)
 DGX=$([ "$SOURCE" = mssql ] && echo --trust-server-certificate)
 # mssql-python's ODBC driver also needs the OS libraries libltdl.so.7 and Kerberos (libkrb5, libgssapi_krb5) on Linux (lfc-source-datagen's python-drivers.md):
 # an image with it, built once on the host from python:3.12-slim and kept
@@ -367,7 +367,7 @@ fill() { # fill <host> <port> <user> <password> <schema>: lfc-source-datagen's f
 counts() { # the current source's rows per table, "table<TAB>rows" lines, in one session (MySQL quotes with backticks);
   # the columns named, so no header row looks like a count (Db2 names an unnamed column 1, 2)
   yq -r '.tables[].name' "$MODEL_YAML" | while read -r t; do fold "$t"; done \
-    | awk -v q="$(case $SOURCE in mysql) echo '`';; oracle|db2|informix) ;; *) echo '"';; esac)" '{printf "SELECT %c%s%c AS tbl, COUNT(*) AS n FROM %s%s%s;\n", 39, $0, 39, q, $0, q}' | srcq | grep -v -E '^\?column\?|^table_name|^tbl|^TBL' \
+    | awk -v q="$(case $SOURCE in (mysql) echo '`';; (oracle|db2|informix) ;; (*) echo '"';; esac)" '{printf "SELECT %c%s%c AS tbl, COUNT(*) AS n FROM %s%s%s;\n", 39, $0, 39, q, $0, q}' | srcq | grep -v -E '^\?column\?|^table_name|^tbl|^TBL' \
     | awk -F'\t' 'NF == 2 && $2 ~ /^[0-9]+$/'; }
 # collect_schema <out.yaml>: the current source's schema as statschema's canonical schema.yaml, from its own catalog
 # (lfc-source-statschema's MySQL collector: keys, foreign keys, types with their precision, generated columns)
@@ -747,8 +747,8 @@ if [ "$PHASE" -ge 2 ] && [ "$SOURCE" != mysql ]; then
       [ "$(wc -l < "$W/export-$i.sql" | tr -d ' ')" = "$(echo "$TABLES" | wc -w | tr -d ' ')" ] || { echo "column lists for EXPORT in $SRC_DB: $(wc -l < "$W/export-$i.sql") of $(echo "$TABLES" | wc -w)"; exit 2; }
       src < "$W/export-$i.sql" > "$W/export-$i.out" 2>&1 || { echo "EXPORT in $SRC_DB failed: $(grep -m1 -i error "$W/export-$i.out" | cut -c1-200)"; exit 2; }
     elif [ "$SOURCE" = mssql ] || [ "$SOURCE" = oracle ] || [ "$SOURCE" = db2 ] || [ "$SOURCE" = informix ]; then   # export.py (lfc-source-datagen) through the driver: one CSV per table, on the host
-      EXA=$(case $SOURCE in mssql) echo "dbo --host mssql --user sa --database $SRC_DB";; oracle) echo "$SRC_SCHEMA --host oracle --user $SRC_DB --database FREEPDB1";;
-        db2) echo "$SRC_SCHEMA --host db2 --user db2inst1 --database LFCDB";; informix) echo "$SRC_DB --host ifx --user informix --server informix";; esac)
+      EXA=$(case $SOURCE in (mssql) echo "dbo --host mssql --user sa --database $SRC_DB";; (oracle) echo "$SRC_SCHEMA --host oracle --user $SRC_DB --database FREEPDB1";;
+        (db2) echo "$SRC_SCHEMA --host db2 --user db2inst1 --database LFCDB";; (informix) echo "$SRC_DB --host ifx --user informix --server informix";; esac)
       vm "rm -rf $RD/snap/$i; mkdir -p $RD/snap/$i" && dgrun "$RD/snap/$i" "export.py $DGE ${EXA%% *} --tables $(echo "$TABLES" | tr ' ' ,) --out /out \
         ${EXA#* } --password-file /pw $DGX" > "$W/export-$i.out" 2>&1 \
         || { echo "export in $SRC_DB failed: $(tail -3 "$W/export-$i.out" | tr '\n' ' ' | cut -c1-300)"; exit 2; }
@@ -817,9 +817,9 @@ else
   # parts (file, offset, slot) as one number (silver's cdc.seq=change_lsn), the file's below 2^15
   # Db2: source.change_lsn's third part (the low 8 bytes of its 16-byte LSN), as T's (silver's cdc.seq=db2_lsn)
   DB2_SEQ="CAST(conv(substring(split_part(COALESCE(value:source:change_lsn, value:source:commit_lsn)::STRING, ':', 3), -15), 16, 10) AS BIGINT)"
-  MSSQL_SEQ=$(for k in 1 2 3; do printf "CAST(conv(split_part(value:source:change_lsn::STRING, ':', $k), 16, 10) AS BIGINT)%s" "$(case $k in 1) echo ' * 281474976710656 + ';; 2) echo ' * 65536 + ';; esac)"; done)
-  SEQX=$(case $SOURCE in mysql) echo "CAST(regexp_extract(value:source:file::STRING, '([0-9]+)\$', 1) AS BIGINT) * 17592186044416 + value:source:pos::BIGINT * 4096 + COALESCE(value:source:row::BIGINT, 0)";;
-    pg) echo 'value:source:lsn::BIGINT';; mssql) echo "$MSSQL_SEQ";; oracle) echo 'value:source:scn::BIGINT';; db2) echo "$DB2_SEQ";; informix) echo 'value:source:change_lsn::BIGINT';; *) echo 'value:ts_ns::BIGINT';; esac)
+  MSSQL_SEQ=$(for k in 1 2 3; do printf "CAST(conv(split_part(value:source:change_lsn::STRING, ':', $k), 16, 10) AS BIGINT)%s" "$(case $k in (1) echo ' * 281474976710656 + ';; (2) echo ' * 65536 + ';; esac)"; done)
+  SEQX=$(case $SOURCE in (mysql) echo "CAST(regexp_extract(value:source:file::STRING, '([0-9]+)\$', 1) AS BIGINT) * 17592186044416 + value:source:pos::BIGINT * 4096 + COALESCE(value:source:row::BIGINT, 0)";;
+    (pg) echo 'value:source:lsn::BIGINT';; (mssql) echo "$MSSQL_SEQ";; (oracle) echo 'value:source:scn::BIGINT';; (db2) echo "$DB2_SEQ";; (informix) echo 'value:source:change_lsn::BIGINT';; (*) echo 'value:ts_ns::BIGINT';; esac)
   NORM="SELECT *, $SEQX AS _seq, value:ts_ns::BIGINT AS _event_ns"
   for i in $(seq 1 "$NSRC"); do SNAPSEQ[$i]=${TNS[$i]:-0}; done   # MySQL: set by the snapshot, after the producers
   mklog() { q "CREATE TABLE $T.$1 (target_table STRING NOT NULL, destination STRING NOT NULL, partition INT, operation STRING NOT NULL,
@@ -1022,7 +1022,7 @@ debezium.sink.zerobus.max.record.bytes=10000000
 EOF
 cat "$W/secret.line" >> "$W/application.properties"
 # the password goes in on the host, from its file (MySQL's mysql.pw, PostgreSQL's src.pw)
-PWF=$(case $SOURCE in mysql) echo "$RD/mysql.pw";; pg|mssql|oracle|db2|informix) echo "$RD/src.pw";; esac)
+PWF=$(case $SOURCE in (mysql) echo "$RD/mysql.pw";; (pg|mssql|oracle|db2|informix) echo "$RD/src.pw";; esac)
 vm "umask 077; mkdir -p $RD/src$i$PK/data && cat > $RD/src$i$PK/application.properties$([ -n "$PWF" ] && echo " && sed -i \"s|@MYSQL_PW@|\$(cat $PWF)|; s|@SRC_PW@|\$(cat $PWF)|\" $RD/src$i$PK/application.properties")" < "$W/application.properties"; rm -f "$W/application.properties"
 # :U gives the mounted files to the container user (Debezium runs as a non-root user), so the secret stays 0600
 DBZS="$DBZS${DBZS:+ }${DBZC[$i]}$PK"
@@ -1289,14 +1289,14 @@ if [ "$PHASE" -ge 2 ]; then
   NOFILES=$(for i in $(seq 1 "$NSRC"); do awk -F'\t' -v p="${DESTP[$i]}" 'NR == FNR {f[$1]; next} $2 > 0 && !(($1 "/" p) in f) {print $1 "/" p}' "$W/snapfiles.tsv" "$W/counts-$i.tsv"; done | head -5 | tr '\n' ' ')
   NF_VOL=0; [ "$NF_LOCAL" -gt 0 ] && NF_VOL=$(q "SELECT COUNT(*) FROM read_files('$VOL', format => 'binaryFile', recursiveFileLookup => true, pathGlobFilter => '*.$SNAP_FMT')" 2>&1)
   if [ -z "$NOFILES" ] && [ "$NF_VOL" = "$NF_LOCAL" ]; then
-    claim snapshot-in-volume PASS "the tables as of T ($(case $SOURCE in crdb) echo 'EXPORT INTO PARQUET ... AS OF SYSTEM TIME';; mysql) echo "START TRANSACTION WITH CONSISTENT SNAPSHOT at binlog $BF:$BP, then SELECT ... INTO OUTFILE";; pg) echo "COPY ... CSV at the slot's LSN, nothing writing";; mssql) echo "export.py through mssql-python at the log's LSN, nothing writing";; oracle) echo "export.py through python-oracledb at the SCN, nothing writing";; db2) echo "export.py through ibm-db at the ASN synch point, nothing writing";; informix) echo "export.py through informix-driver before Debezium's start, nothing writing";; *) echo 'COPY ... CSV under yb_read_time';; esac), one session per source, ${SNAP_S}s), into $VOL/<table>/<source>/ (upload ${UP_S}s): $NF_LOCAL $SNAP_FMT files for $(wc -l < "$W/snapfiles.tsv" | tr -d ' ') table(s) and source(s)$([ "$NT" -le 20 ] && echo ": $(tr '\t\n' '= ' < "$W/snapfiles.tsv")"); a table with no rows may have none"
+    claim snapshot-in-volume PASS "the tables as of T ($(case $SOURCE in (crdb) echo 'EXPORT INTO PARQUET ... AS OF SYSTEM TIME';; (mysql) echo "START TRANSACTION WITH CONSISTENT SNAPSHOT at binlog $BF:$BP, then SELECT ... INTO OUTFILE";; (pg) echo "COPY ... CSV at the slot's LSN, nothing writing";; (mssql) echo "export.py through mssql-python at the log's LSN, nothing writing";; (oracle) echo "export.py through python-oracledb at the SCN, nothing writing";; (db2) echo "export.py through ibm-db at the ASN synch point, nothing writing";; (informix) echo "export.py through informix-driver before Debezium's start, nothing writing";; (*) echo 'COPY ... CSV under yb_read_time';; esac), one session per source, ${SNAP_S}s), into $VOL/<table>/<source>/ (upload ${UP_S}s): $NF_LOCAL $SNAP_FMT files for $(wc -l < "$W/snapfiles.tsv" | tr -d ' ') table(s) and source(s)$([ "$NT" -le 20 ] && echo ": $(tr '\t\n' '= ' < "$W/snapfiles.tsv")"); a table with no rows may have none"
   else claim snapshot-in-volume FAIL "tables with rows but no $SNAP_FMT file: ${NOFILES:-none}; files here $NF_LOCAL, in the volume $NF_VOL"; fi
   # the sources silver merges: each one's destination prefix, T (its snapshot's sequence) and snapshot format
   { echo "# the sources feeding this silver (debezium-zerobus.sh run $E): destination = <prefix>.<table>"
     echo "source_key: $([ "$NSRC" -gt 1 ] && echo true || echo false)"; echo "sources:"
     # MySQL's INTO OUTFILE: NULL as \N, a backslash escapes, a value may span lines
     # export.py (SQL Server): NULL as \N, a quote doubled inside quotes, a value may span lines
-    CSVO=$(case $SOURCE in mysql) echo ', csv: {nullValue: "\\N", escape: "\\", multiLine: true}';; mssql|oracle|db2|informix) echo ', csv: {nullValue: "\\N", escape: "\"", multiLine: true}';; esac)
+    CSVO=$(case $SOURCE in (mysql) echo ', csv: {nullValue: "\\N", escape: "\\", multiLine: true}';; (mssql|oracle|db2|informix) echo ', csv: {nullValue: "\\N", escape: "\"", multiLine: true}';; esac)
     for i in $(seq 1 "$NSRC"); do printf '  - {prefix: "%s", t_ns: %s, format: %s, database: "%s"%s}\n' "${DESTP[$i]}" "${SNAPSEQ[$i]}" "$SNAP_FMT" "${SDB[$i]}" "$CSVO"; done
   } > "$W/_sources.yaml"
   # _snapshot.tsv: table, prefix, format, files; silver reads it rather than list every table's folder
@@ -1522,7 +1522,7 @@ if [ "$PHASE" -ge 2 ]; then
     fi
     local u=() st=() k f t0=$SECONDS done; f=$(run_fanout); [ -n "$f" ] && [ "$f" != SUCCESS ] && { echo "fan-out $f: $(tail -c 300 "$W/fanout.err")" >&2; echo "FANOUT_$f"; return; }
     for k in "${!PIPELINE_IDS[@]}"; do u[$k]=$(dbx pipelines start-update "${PIPELINE_IDS[$k]}" "$@" -o json | yq '.update_id'); done
-    echo "${u[0]}" > "$W/update_id"; : > "$W/update_s"; printf '%s\n' "${u[@]}" > "$W/update_ids"
+    echo "${u[0]}" > "$W/update_id"; : > "$W/update_s"; printf '%s\n' ${u[@]+"${u[@]}"} > "$W/update_ids"
     while :; do done=1
       for k in "${!PIPELINE_IDS[@]}"; do case ${st[$k]:-} in COMPLETED|FAILED|CANCELED) continue;; esac
         st[$k]=$(dbx pipelines get-update "${PIPELINE_IDS[$k]}" "${u[$k]}" -o json | yq '.update.state')
@@ -1756,7 +1756,7 @@ if [ "$PHASE" -ge 2 ]; then
     local have; have=$(q "SELECT CONCAT_WS(',', COLLECT_LIST(table_name)) FROM \`$CATALOG\`.information_schema.tables WHERE table_schema = '$S' AND table_name IN ('$a', '$b$HS', '$c$HS')" 2>&1)
     [ "$st" = COMPLETED ] && [ "$s2" = COMPLETED ] && claim plan-apply PASS "the edited plan applied by a full refresh of $rf and an update: $st, $s2; tables now: $have" \
       || claim plan-apply FAIL "full refresh $st, update $s2: $(cut -c1-300 "$W/err-plan" | tr '\n' ' ')"
-    observe plan-dropped-table "$b$HS after the plan stopped defining it: $(case ",$have," in *",$b$HS,"*) echo 'still in the catalog';; *) echo 'gone from the catalog';; esac)"
+    observe plan-dropped-table "$b$HS after the plan stopped defining it: $(case ",$have," in (*",$b$HS,"*) echo 'still in the catalog';; (*) echo 'gone from the catalog';; esac)"
   }
 
   T0=$SECONDS; st=$(run_silver 2>"$W/err1"); U1_S=$((SECONDS - T0))
@@ -1925,20 +1925,20 @@ fi
   if [ "$SINK" = kafka ]; then
     echo "- Producer: Kafka Connect standalone, $CONNECT_IMAGE ($(vm "$PODMAN inspect -f '{{.ImageDigest}}' $DBZ")), no broker; Yugabyte connector $(basename "$YB_CONNECTOR_URL" .jar | sed 's/-jar-with-dependencies//'), pgoutput on a logical replication slot; StringifyField; into Zerobus's Kafka-compatible endpoint (one change-log table, VARIANT value)"
   else
-    echo "- Debezium: $DBZ_IMAGE ($(vm "$PODMAN inspect -f '{{.ImageDigest}}' $DBZ")), $(case $SOURCE in crdb) echo 'CockroachDB connector, sinkless changefeed';; mysql) echo 'MySQL connector, the binlog (row format, GTIDs)';; pg) echo 'PostgreSQL connector, pgoutput on a logical replication slot';; mssql) echo 'SQL Server connector, CDC change tables';; oracle) echo 'Oracle connector, LogMiner (online catalog)';; db2) echo 'Db2 connector, ASN capture (change-data tables)';; informix) echo 'Informix connector, the CDC API (with the Informix JDBC and change-stream jars)';; *) echo 'PostgreSQL connector, pgoutput on a YugabyteDB logical replication slot';; esac), Zerobus sink (envelope into one change-log table, VARIANT fields, idempotency source)"
+    echo "- Debezium: $DBZ_IMAGE ($(vm "$PODMAN inspect -f '{{.ImageDigest}}' $DBZ")), $(case $SOURCE in (crdb) echo 'CockroachDB connector, sinkless changefeed';; (mysql) echo 'MySQL connector, the binlog (row format, GTIDs)';; (pg) echo 'PostgreSQL connector, pgoutput on a logical replication slot';; (mssql) echo 'SQL Server connector, CDC change tables';; (oracle) echo 'Oracle connector, LogMiner (online catalog)';; (db2) echo 'Db2 connector, ASN capture (change-data tables)';; (informix) echo 'Informix connector, the CDC API (with the Informix JDBC and change-stream jars)';; (*) echo 'PostgreSQL connector, pgoutput on a YugabyteDB logical replication slot';; esac), Zerobus sink (envelope into one change-log table, VARIANT fields, idempotency source)"
   fi
   echo "- Host: $(vm '. /etc/os-release; echo $PRETTY_NAME'), $(vm 'podman --version')"
   echo "- Destination: Zerobus in $CLOUD $REGION, one append-only change-log Delta table, liquid-clustered by destination (the source table)"
-  echo; echo "Created in Databricks ($([ "${KEEP:-0}" = 1 ] && echo 'kept, KEEP=1' || echo 'removed at the end of the run: rerun with KEEP=1 to inspect')):"; printf '%s\n' "${LINKS[@]}"
+  echo; echo "Created in Databricks ($([ "${KEEP:-0}" = 1 ] && echo 'kept, KEEP=1' || echo 'removed at the end of the run: rerun with KEEP=1 to inspect')):"; printf '%s\n' ${LINKS[@]+"${LINKS[@]}"}
   echo; echo "| Claim | Result | Observation |"; echo "|---|---|---|"
-  printf '%s\n' "${RESULTS[@]}"
+  printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"}
 } | tee "${OUT:-/dev/null}"
 # LFC_PERF_DIR=<a perf/runs folder with record.sh one level up> (as lfc-schema-change-test's lib.sh): the run's
 # configuration and numbers there too; this public repo keeps only what was tested and the outcome
 if [ -n "${LFC_PERF_DIR:-}" ] && [ -x "$LFC_PERF_DIR/../record.sh" ]; then
   num() { [[ ${1:-} =~ ^[0-9]+$ ]] && echo "$1" || echo null; }
   jq -n -c --arg id "$(date -u +%F)-zb-$SOURCE-$MODEL-$E" --arg date "$(date -u +%F)" \
-    --arg scen "$(case $ROUNDS in 0) echo zerobus-silver-scale;; app) echo "zerobus-app-$APP";; *) echo zerobus-silver-rounds;; esac)" \
+    --arg scen "$(case $ROUNDS in (0) echo zerobus-silver-scale;; (app) echo "zerobus-app-$APP";; (*) echo zerobus-silver-rounds;; esac)" \
     --arg src "$SRC_NAME" --arg ver "$SRC_VERSION" --arg host "$([ -n "${LIMA:-}" ] && echo lima-podman || echo vm-podman)" \
     --arg ws "$PROFILE" --arg cloud "${CLOUD:-}" --arg region "${REGION:-}" \
     --arg producer "$([ "$SINK" = kafka ] && echo "Kafka Connect $CONNECT_IMAGE" || echo "Debezium Server $DBZ_IMAGE, Zerobus sink")" \
@@ -1948,8 +1948,8 @@ if [ -n "${LFC_PERF_DIR:-}" ] && [ -x "$LFC_PERF_DIR/../record.sh" ]; then
     --argjson tables "$NT" --argjson silver_tables "$(num "$([ -f "$W/want.tsv" ] && wc -l < "$W/want.tsv" | tr -d ' ')")" \
     --argjson first "$(num "${U1_S:-}")" --argjson second "$(num "${U2_S:-}")" --argjson snap "$(num "${SNAP_S:-}")" \
     --argjson up "$(num "${UP_S:-}")" --argjson run "$SECONDS" \
-    --argjson streaming "$(printf '%s\n' "${RESULTS[@]}" | grep -c '^| `producer-streaming-[^`]*` | PASS')" --argjson pass "$(printf '%s\n' "${RESULTS[@]}" | grep -c '| PASS |')" --argjson fail "$(printf '%s\n' "${RESULTS[@]}" | grep -c '| FAIL |')" \
-    --arg claims "$(printf '%s\n' "${RESULTS[@]}" | sed -E 's/^\| `([^`]*)` \| ([A-Z]+) \|.*/\1=\2/' | grep -v '=OBSERVED$' | paste -sd' ' -)" \
+    --argjson streaming "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | grep -c '^| `producer-streaming-[^`]*` | PASS')" --argjson pass "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | grep -c '| PASS |')" --argjson fail "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | grep -c '| FAIL |')" \
+    --arg claims "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | sed -E 's/^\| `([^`]*)` \| ([A-Z]+) \|.*/\1=\2/' | grep -v '=OBSERVED$' | paste -sd' ' -)" \
     '{run_id:$id, date:$date, scenario:$scen,
       config:{source:$src, source_version:$ver, host:$host, workspace:$ws, cloud:$cloud, region:$region, compute:"serverless",
               producer:$producer, bronze:$bronze, silver:$silver, model:$model, sf:$sf, empty:$empty, fks:$fks, rounds:$rounds,
@@ -1963,13 +1963,13 @@ fi
 # zerobus), for this public repo's results/runs after a look (record.py validates it): no names, no measured numbers
 if [ -n "${RECORD_OUT:-}" ]; then
   jq -n -c --arg date "$(date -u +%F)" --arg run "${RECORD_RUN:-$(date -u +%F)-zerobus-$SOURCE-$MODEL}" \
-    --arg engine "$(case $SOURCE in pg) echo postgres;; mssql) echo sqlserver;; crdb) echo cockroachdb;; yb) echo yugabytedb;; *) echo "$SOURCE";; esac)" \
+    --arg engine "$(case $SOURCE in (pg) echo postgres;; (mssql) echo sqlserver;; (crdb) echo cockroachdb;; (yb) echo yugabytedb;; (*) echo "$SOURCE";; esac)" \
     --arg ver "$(echo "$SRC_VERSION" | tr -s ' ' | cut -c1-60)" --arg host "$([ -n "${LIMA:-}" ] && echo lima-podman || echo "${CLOUD:-cloud}-vm-podman")" \
     --arg cloud "${CLOUD:-}" --arg route "$([ "$SINK" = kafka ] && echo kafka-connect-zerobus || echo debezium-zerobus)" \
     --arg topo "$([ "$NSRC" -gt 1 ] && echo n:1 || echo 1:1)" --argjson nsrc "$NSRC" --arg model "${APP:-$MODEL}" --arg sf "$SF" \
     --arg rounds "$ROUNDS" --arg bronze "$BRONZE" --arg silver "$SILVER" --arg gold "${GOLD:+materialized view}" \
-    --argjson pass "$(printf '%s\n' "${RESULTS[@]}" | grep -c '| PASS |')" --argjson fail "$(printf '%s\n' "${RESULTS[@]}" | grep -c '| FAIL |')" \
-    --arg failed "$(printf '%s\n' "${RESULTS[@]}" | grep '| FAIL |' | sed -E 's/^\| `([^`]*)`.*/\1/' | head -5 | paste -sd' ' -)" \
+    --argjson pass "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | grep -c '| PASS |')" --argjson fail "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | grep -c '| FAIL |')" \
+    --arg failed "$(printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"} | grep '| FAIL |' | sed -E 's/^\| `([^`]*)`.*/\1/' | head -5 | paste -sd' ' -)" \
     '{date:$date, run:$run, test:"zerobus", subject:{engine:$engine, version:$ver}, outcome:(if $fail == 0 and $pass > 0 then "pass" else "fail" end),
       result:"\($pass) claims passed, \($fail) failed", host:$host, workspace:{cloud:$cloud, compute:"serverless"},
       setup:{tool:"zerobus-debezium-test", route:$route, topology:$topo, sources:$nsrc,

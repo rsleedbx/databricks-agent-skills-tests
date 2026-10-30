@@ -28,7 +28,7 @@ uuid "$PIPE"
 W=$(mktemp -d); trap 'rm -rf "${W:?}"' EXIT
 
 # updates, newest first, back to the window (or to the one asked for)
-cutoff=$(date -u -v-"${DAYS}"d +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "-$DAYS days" +%Y-%m-%dT%H:%M:%S)
+cutoff_ms=$(jq -n --argjson d "$DAYS" '(now - $d * 86400) * 1000 | floor')
 echo '[]' > "$W/upd.json"; tok=""
 for _ in $(seq 1 50); do
   dbx api get "/api/2.0/pipelines/$PIPE/updates?max_results=100${tok:+&page_token=$tok}" -o json > "$W/p.json"
@@ -36,16 +36,15 @@ for _ in $(seq 1 50); do
   tok=$(jq -r '.next_page_token // ""' "$W/p.json")
   [ -n "$tok" ] || break
   if [ -n "$UPD" ]; then jq -e --arg u "$UPD" 'any(.[]; .update_id == $u)' "$W/upd.json" >/dev/null && break
-  else [ "$(jq -r '.[-1].creation_time // 0' "$W/upd.json")" -lt "$(( $(date -u -j -f %Y-%m-%dT%H:%M:%S "$cutoff" +%s 2>/dev/null || date -u -d "$cutoff" +%s) * 1000 ))" ] && break; fi
+  else [ "$(jq -r '.[-1].creation_time // 0' "$W/upd.json")" -lt "$cutoff_ms" ] && break; fi
 done
 if [ -n "$UPD" ]; then
   jq --arg u "$UPD" '[.[] | select(.update_id == $u)]' "$W/upd.json" > "$W/sel.json"
   [ "$(jq length "$W/sel.json")" = 1 ] || { echo "no update $UPD on pipeline $PIPE" >&2; exit 1; }
   since_ms=$(jq '.[0].creation_time' "$W/sel.json")
 else
-  ms=$(( $(date -u -j -f %Y-%m-%dT%H:%M:%S "$cutoff" +%s 2>/dev/null || date -u -d "$cutoff" +%s) * 1000 ))
-  jq --argjson m "$ms" '[.[] | select(.creation_time >= $m)]' "$W/upd.json" > "$W/sel.json"
-  since_ms=$ms
+  jq --argjson m "$cutoff_ms" '[.[] | select(.creation_time >= $m)]' "$W/upd.json" > "$W/sel.json"
+  since_ms=$cutoff_ms
 fi
 [ "$(jq length "$W/sel.json")" -gt 0 ] || { echo "no updates in the last $DAYS days" >&2; exit 0; }
 since=$(jq -rn --argjson m "$since_ms" '$m / 1000 | todate')
@@ -77,8 +76,7 @@ jq --slurpfile ev "$W/ev.json" '
   })' "$W/sel.json" > "$W/rep.json"
 
 loc() { [ -z "$1" ] || [ "$1" = null ] && { echo "-"; return; }
-  TZ=$TZONE date -j -f %s "$(jq -rn --arg t "$1" '$t | sub("\\.[0-9]+Z$"; "Z") | fromdate')" "+%F %R" 2>/dev/null ||
-  TZ=$TZONE date -d "$1" "+%F %R"; }
+  TZ=$TZONE jq -rn --arg t "$1" '$t | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%F %R")'; }
 echo "pipeline $PIPE, times in $TZONE"
 printf '%-10s %-16s %-16s %8s %-10s %-22s %s\n' update start end minutes state cause errors
 : > "$W/days.tsv"

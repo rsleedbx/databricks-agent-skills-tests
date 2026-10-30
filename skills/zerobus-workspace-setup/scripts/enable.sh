@@ -17,7 +17,7 @@ if [ ${#WANT[@]} -eq 0 ]; then
     | while IFS=$'\t' read -r n d; do printf '%-34s %-38s %s\n' "$n" "$d" "$(value "$n")"; done
   exit 0
 fi
-for s in "${WANT[@]}"; do
+for s in ${WANT[@]+"${WANT[@]}"}; do
   v=$(value "$s"); printf '%-34s %s\n' "$s" "${v:-not found}"
   case $v in true*) continue;; "") echo "  not a setting on this workspace: check the name with enable.sh $P"; continue;; esac
   if [ $APPLY = yes ]; then

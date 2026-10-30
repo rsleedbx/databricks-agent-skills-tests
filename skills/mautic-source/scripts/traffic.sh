@@ -38,10 +38,10 @@ for step in $STEPS; do case $step in
     for i in $(seq 1 "$CONTACTS"); do
       id=$(api -X POST "$BASE/api/contacts/new" -d "{\"firstname\":\"C$SEED\",\"lastname\":\"N$i\",\"email\":\"c$SEED-$i@example.com\"}" | jq -r '.contact.id // empty')
       [ -n "$id" ] && ids+=("$id") || bad=$((bad + 1)); done
-    for id in "${ids[@]}"; do
+    for id in ${ids[@]+"${ids[@]}"}; do
       api -X PATCH "$BASE/api/contacts/$id/edit" -d "{\"city\":\"City $((id % 9))\",\"points\":$((id % 50))}" | jq -e '.contact.id' >/dev/null || bad=$((bad + 1))
       api -X POST "$BASE/api/segments/1/contact/$id/add" | jq -e '.success' >/dev/null || bad=$((bad + 1)); done
-    n=0; for id in "${ids[@]}"; do n=$((n + 1))
+    n=0; for id in ${ids[@]+"${ids[@]}"}; do n=$((n + 1))
       [ $((n % 3)) = 0 ] && { api -X POST "$BASE/api/segments/1/contact/$id/remove" | jq -e '.success' >/dev/null || bad=$((bad + 1)); }
       [ $((n % 5)) = 0 ] && { api -X DELETE "$BASE/api/contacts/$id/delete" | jq -e '.contact' >/dev/null || bad=$((bad + 1)); }; done
     echo "api: ${#ids[@]} contacts created and edited, added to segment 1, $((${#ids[@]} / 3)) removed, $((${#ids[@]} / 5)) deleted; $bad failed";;

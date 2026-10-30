@@ -43,7 +43,7 @@ plan|create)
     F=(); [ "${FREE:-}" = 1 ] && F=(--use-free-limit --free-limit-exhaustion-behavior AutoPause)
     az sql db create "${A[@]}" -s "$SERVER" -n "$DB" --edition GeneralPurpose --compute-model Serverless --family Gen5 \
       --capacity "${VCORES:-1}" --min-capacity "${MIN_CAPACITY:-0.5}" --auto-pause-delay "${AUTO_PAUSE:-60}" \
-      --backup-storage-redundancy Local "${F[@]}" --tags "${TAGS[@]}" -o none
+      --backup-storage-redundancy Local ${F[@]+"${F[@]}"} --tags "${TAGS[@]}" -o none
   fi
   az_record "$SUBSCRIPTION"
   echo "ready: $HOST,1433 database $DB. Next: lfc-source-firewall scripts/server-fw.py sql $SERVER" ;;

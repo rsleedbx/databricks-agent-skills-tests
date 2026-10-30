@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bin/test_scripts.sh: regression tests for the skills' scripts.
-#   Offline (always): shell syntax, every markdown link, the script rules (bin/lint_scripts.py) and SCRIPTS.md, the six TPC schemas through shape.py and ddl.py for seven
+#   Offline (always): shell syntax (also under bash 3.2 when /bin/bash is 3.2, or BASH32=<path>), every markdown link, the script rules (bin/lint_scripts.py) and SCRIPTS.md, the six TPC schemas through shape.py and ddl.py for seven
 #   dialects, every TPC workload from tpc-schema.sh through ddl-to-schema.py and ddl.py for seven dialects, a DDL import
 #   round trip, the Python fill planner compiles, and the shared DuckDB runners.
 #   With databases (PSQL and/or MYSQL set, e.g. PSQL="podman exec -i dg-pg psql -U postgres",
@@ -21,6 +21,11 @@ check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; else n
 
 echo "== offline"
 for f in $(find "$SK" -name '*.sh'); do check "bash -n ${f#$SK/}" bash -n "$f"; done
+# and with bash 3.2 (macOS /bin/bash, or BASH32=<path>): the scripts run on it unchanged (lint_scripts.py rule bash32)
+B32=${BASH32:-$( /bin/bash -c '[ "${BASH_VERSINFO[0]}" -lt 4 ] && echo /bin/bash' 2>/dev/null )}
+if [ -n "$B32" ]; then
+  for f in $(find "$SK" "$R/bin" -name '*.sh'); do check "bash 3.2 -n ${f#$R/}" "$B32" -n "$f"; done
+fi
 check "links in every skill" python3 "$R/bin/check_links.py" "$SK"
 check "script rules: headers, SKILL.md size, rm guards, first-argument flags, jq for one value" python3 "$R/bin/lint_scripts.py"
 check "SCRIPTS.md is current" python3 "$R/bin/scripts_index.py" --check
@@ -37,7 +42,7 @@ tpc_dialects() {                              # tpc_dialects <workload>: its DDL
   uv run -q "$SS/validate.py" "$T/t-$1.yaml"
 }
 for w in tpcb tpcc tpch tpcds tpce tpcdi; do
-  n=$(case $w in tpcb) echo 4;; tpcc) echo 9;; tpch) echo 8;; tpcds) echo 24;; tpce) echo 32;; tpcdi) echo 18;; esac)
+  n=$(case $w in (tpcb) echo 4;; (tpcc) echo 9;; (tpch) echo 8;; (tpcds) echo 24;; (tpce) echo 32;; (tpcdi) echo 18;; esac)
   check "tpc-schema.sh $w (SF 1): $n tables, through ddl-to-schema and ddl.py to seven dialects" tpc_dialects $w
   check "tpc-schema.sh $w (SF 1): $n tables in the schema" test "$(grep -c '^- name:' "$T/t-$w.yaml")" -eq $n
 done
@@ -50,6 +55,7 @@ check "results/*.md: nothing internal" python3 -c "import sys, glob, re; sys.pat
 check "recall.py runs" sh -c "python3 '$SK/lfc-test-results/scripts/recall.py' > /dev/null"
 check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scripts/test-secret-scripts.sh' > /dev/null"
 check "keep-catalogs.sh on a fake CLI" sh -c "'$SK/lfc-workspace-setup/scripts/test-keep-catalogs.sh' > /dev/null"
+check "ws-token.sh: TO (perl alarm timeout)" sh -c "'$SK/account-token-fallback/scripts/test-ws-token.sh' > /dev/null"
 export WANT="10.0.0.0/24 10.9.0.0/24" HAVE="10.0.0.0/16"
 check "q.sh missing.sql" sh -c "'$SK/shell-json-scripting/scripts/q.sh' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
 check "q.py missing.sql" sh -c "uv run -q '$SK/shell-json-scripting/scripts/q.py' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""

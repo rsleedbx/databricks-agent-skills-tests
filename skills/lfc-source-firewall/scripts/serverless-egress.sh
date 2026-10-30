@@ -15,7 +15,7 @@ curl -fsSL "$URL" -o "$T/r.json" || { echo "can't download $URL" >&2; exit 1; }
 TS=$(yq -p json -o tsv '.timestampSeconds // ""' "$T/r.json")
 C="$CLOUD" R="$REGION" yq -p json -o tsv '[.prefixes[] | select(.type == "outbound" and .platform == strenv(C) and .region == strenv(R)) | .ipv4Prefixes[]] | unique | .[]' "$T/r.json" > "$T/now"
 [ -s "$T/now" ] || { echo "no outbound ranges for $CLOUD $REGION in $URL" >&2; exit 1; }
-when=$( [ -n "$TS" ] && { date -u -r "$TS" +%Y-%m-%d 2>/dev/null || date -u -d "@$TS" +%Y-%m-%d; } )
+when=$( [ -n "$TS" ] && jq -rn --argjson t "$TS" '$t | strftime("%Y-%m-%d")' )
 echo "# $CLOUD $REGION: $(wc -l < "$T/now" | tr -d ' ') serverless egress ranges, ip-ranges.json published ${when:-?} (timestampSeconds $TS)"
 rc=0
 if [ -n "$STATE" ] && [ -f "$STATE" ]; then

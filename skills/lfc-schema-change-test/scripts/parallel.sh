@@ -12,7 +12,9 @@ set -uo pipefail
 : "${1:?slots file}" "${2:?jobs file}"
 HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../../.." && pwd)
 RUNS=${RUNS:-$PWD/runs-$(date +%s)}; mkdir -p "$RUNS"
-mapfile -t SLOTS < <(grep -v -E '^\s*(#|$)' "$1"); mapfile -t JOBS < <(grep -v -E '^\s*(#|$)' "$2")
+SLOTS=() JOBS=()   # bash 3.2: no mapfile
+while IFS= read -r l; do SLOTS+=("$l"); done < <(grep -v -E '^\s*(#|$)' "$1")
+while IFS= read -r l; do JOBS+=("$l"); done < <(grep -v -E '^\s*(#|$)' "$2")
 [ ${#SLOTS[@]} -gt 0 ] || { echo "no slots in $1"; exit 2; }
 declare -a PID NAMEOF; FAILED=0
 reap() {   # free the slots whose job ended; report each
@@ -25,7 +27,7 @@ reap() {   # free the slots whose job ended; report each
     PID[$i]=""
   done
 }
-for job in "${JOBS[@]}"; do
+for job in ${JOBS[@]+"${JOBS[@]}"}; do
   read -r name script vars <<< "$job"
   [ -f "$HERE/$script" ] || { echo "$name: no script $script"; FAILED=1; continue; }
   while :; do

@@ -117,7 +117,7 @@ update() {
     tok=$(yq '.next_page_token // ""' "$W/ev_page.json"); [ -z "$tok" ] && break
     IDS="${ids[0]}" yq -e '[.events[] | select(.origin.update_id == strenv(IDS))] | length > 0' "$W/ev_page.json" >/dev/null 2>&1 && break
   done
-  for p in "${ids[@]}"; do U=$p yq -p json -o json -I0 'select(.origin.update_id == strenv(U))' "$W/ev_chain.json"; done > "$W/ev_sel.json"
+  for p in ${ids[@]+"${ids[@]}"}; do U=$p yq -p json -o json -I0 'select(.origin.update_id == strenv(U))' "$W/ev_chain.json"; done > "$W/ev_sel.json"
   if [ -s "$W/ev_sel.json" ]; then yq -p json -o json ea '[.]' "$W/ev_sel.json" > "$W/ev_last.json"; else echo '[]' > "$W/ev_last.json"; fi
   ERRS=$(yq -r '.[] | .error.exceptions[]?.error_class // ""' "$W/ev_last.json" | grep -v '^$' | sort -u | tr '\n' ' ')
   echo "update ${1:+(full refresh $1) }$STATE ${ERRS}[$CHAIN]"
@@ -340,6 +340,6 @@ RUNTIME="- Ingestion pipeline: $("$RT" --summary "$PROFILE" "$AP" 2>/dev/null | 
   echo
   echo "| Claim | Result | Observation |"
   echo "|---|---|---|"
-  printf '%s\n' "${RESULTS[@]}"
+  printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"}
 } | tee "${OUT:-/dev/null}"
 exit $FAILED

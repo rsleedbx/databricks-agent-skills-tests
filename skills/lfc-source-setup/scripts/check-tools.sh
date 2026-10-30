@@ -27,6 +27,6 @@ check azure   az         azure-cli
 check gcp     gcloud     "--cask gcloud-cli"
 if [ ${#missing[@]} -gt 0 ]; then
   echo; echo "install: brew install ${missing[*]}" | sed 's/ --cask gcloud-cli//'
-  printf '%s\n' "${missing[@]}" | grep -q cask && echo "         brew install --cask gcloud-cli"
+  printf '%s\n' ${missing[@]+"${missing[@]}"} | grep -q cask && echo "         brew install --cask gcloud-cli"
   exit 1
 fi

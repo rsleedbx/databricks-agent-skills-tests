@@ -42,7 +42,7 @@ note() { echo "$*" >&2; }
 # escape the backslashes in JSON strings such as stream_progress.progress_json)
 from_api() {
   echo '[]' > "$W/all.json"; local tok="" cutoff
-  cutoff=$(date -u -v-"${SINCE}"H +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "-$SINCE hours" +%Y-%m-%dT%H:%M:%S)
+  cutoff=$(jq -rn --argjson h "$SINCE" 'now - $h * 3600 | strftime("%Y-%m-%dT%H:%M:%S")')
   for _ in $(seq 1 40); do
     databricks api get "/api/2.0/pipelines/$PIPE/events?max_results=250${tok:+&page_token=$tok}" --profile "$PROFILE" -o json > "$W/page.json"
     yq -o json -i ". + load(\"$W/page.json\").events" "$W/all.json"

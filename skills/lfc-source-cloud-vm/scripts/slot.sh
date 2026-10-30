@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # slot.sh [--owner <owner>] <command> [args]: test databases for several people on one VM, one container each, with the
 # data on JuiceFS (object storage) so a stopped database costs no disk or CPU. Run as root on the VM.
+# bash32: exempt (runs on the Linux VM)
 #   masters                                   the masters a database can start from ($ROOT/masters)
 #   ls [--all]                                your databases (--all: everyone's): engine, state, port, created, last up
 #   up <engine> <name> [--from <master> | --empty]

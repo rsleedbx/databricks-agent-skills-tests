@@ -32,8 +32,8 @@ skip() { echo "skip $1: $2" >&2; }
 
 # --- Azure: portal links are https://portal.azure.com/#@<tenant>/resource<resource id>
 if command -v az >/dev/null && az account list >/dev/null 2>&1; then
-  for id in "${EXTRA[@]}"; do link "Azure $(basename "$id")" "https://portal.azure.com/#@$(az account show --subscription "$(echo "$id" | awk -F/ '{print $3}')" --query tenantId -o tsv 2>/dev/null)/resource$id"; done
-  for id in "${EXTRA[@]}"; do SUBS="$SUBS $(echo "$id" | awk -F/ '{print $3}')"; done
+  for id in ${EXTRA[@]+"${EXTRA[@]}"}; do link "Azure $(basename "$id")" "https://portal.azure.com/#@$(az account show --subscription "$(echo "$id" | awk -F/ '{print $3}')" --query tenantId -o tsv 2>/dev/null)/resource$id"; done
+  for id in ${EXTRA[@]+"${EXTRA[@]}"}; do SUBS="$SUBS $(echo "$id" | awk -F/ '{print $3}')"; done
   # the given subscriptions; with none, every enabled one (a search by IP, each named by its id)
   [ -n "${SUBS// /}" ] || { echo "note: no SUBSCRIPTION given, searching every enabled subscription" >&2; SUBS=$(az account list --query "[?state=='Enabled'].id" -o tsv); }
   pipid=; cfg=; sub=
