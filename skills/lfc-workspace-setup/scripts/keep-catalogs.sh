@@ -11,13 +11,13 @@ set -uo pipefail
 P=${1:?usage: keep-catalogs.sh <profile> [--connection N]... [catalog]...}; shift
 CONNS=(); CATS=()   # CATS: "<entity type> <name>"
 while [ $# -gt 0 ]; do case $1 in --connection) CONNS+=("${2:?--connection needs a name}"); shift 2;; -*) echo "unknown $1"; exit 2;; *) CATS+=("catalogs $1"); shift;; esac; done
-UNTIL=${KEEP_UNTIL:-$(date -v+1m +%Y-%m-%d 2>/dev/null || date -u -d '+1 month' +%Y-%m-%d)}
+UNTIL=${KEEP_UNTIL:-$(jq -rn 'now | gmtime | .[1] += 1 | mktime | strftime("%F")')}
 bad=0
 if [ ${#CONNS[@]} -gt 0 ]; then
   E=$(mktemp); trap 'rm -f "${E:?}"' EXIT
   if ! all=$(databricks catalogs list --profile "$P" -o json 2> "$E"); then
     echo "failed  catalogs list: $(head -c 200 "$E" | tr '\n' ' ')"; bad=1; all='[]'; fi
-  for c in "${CONNS[@]}"; do
+  for c in ${CONNS[@]+"${CONNS[@]}"}; do
     CATS+=("connections $c")
     if ! found=$(echo "$all" | jq -r --arg c "$c" '.[] | select(.catalog_type == "FOREIGN_CATALOG" and .connection_name == $c) | .name' 2> "$E"); then
       echo "failed  foreign catalogs of $c: catalogs list isn't a JSON list ($(head -c 120 "$E" | tr '\n' ' '))"; bad=1; continue; fi
@@ -26,7 +26,7 @@ if [ ${#CONNS[@]} -gt 0 ]; then
   done
 fi
 [ ${#CATS[@]} -gt 0 ] || exit $bad
-for e in "${CATS[@]}"; do
+for e in ${CATS[@]+"${CATS[@]}"}; do
   t=${e%% *}; n=${e#* }; [ $t = connections ] && l="connection $n" || l=$n
   cur=$(databricks entity-tag-assignments get $t "$n" RemoveAfter --profile "$P" -o json 2>/dev/null | jq -r '.tag_value // ""')
   if [ -n "$cur" ] && [[ ! "$cur" < "$UNTIL" ]]; then echo "kept    $l RemoveAfter=$cur"; continue; fi

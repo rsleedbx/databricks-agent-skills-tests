@@ -46,7 +46,7 @@ ddl() {   # ddl <op> <table>
 }
 for o in $OPS; do for t in ${o}_off ${o}_on ${o}_ct; do
   [ $t = pk_ct ] && continue
-  out=$( { ddl $o $t; echo GO; case $t in pk_o*|rename_o*) ;; *) echo "INSERT INTO lfcddemo.$t (id) VALUES (11);";; esac; } | src 2>&1) || echo "source DDL on $t failed: $(echo "$out" | head -2)"
+  out=$( { ddl $o $t; echo GO; case $t in (pk_o*|rename_o*) ;; (*) echo "INSERT INTO lfcddemo.$t (id) VALUES (11);";; esac; } | src 2>&1) || echo "source DDL on $t failed: $(echo "$out" | head -2)"
 done; done
 track cdc pk_off pk_on rename_off rename_on
 # their row after CDC is on again: a change made while CDC was off is never captured
@@ -57,11 +57,11 @@ for _ in 1 2 3 4; do
   n=0; for t in $TABLES; do [ -n "$(errs_for $t)" ] || [ "$(q "SELECT COUNT(*) FROM $T.$t" 2>&1)" = 11 ] && n=$((n + 1)); done
   [ $n -eq $(echo $TABLES | wc -w) ] && break
 done
-declare -A ERR
-for t in $TABLES; do ERR[$t]=$(errs_for $t); done
+for t in $TABLES; do printf -v "ERR_$t" '%s' "$(errs_for $t)"; done   # one ERR_<table> each (bash 3.2: no declare -A)
+err() { local v=ERR_$1; printf '%s' "${!v:-}"; }
 cols() { q "SELECT CONCAT_WS(',', COLLECT_LIST(CONCAT(column_name, ':', data_type))) FROM \`$CATALOG\`.information_schema.columns WHERE table_schema = '$S' AND table_name = '$1'" 2>&1; }
 for t in $TABLES; do
-  observe "$t-after-ddl" "errors: ${ERR[$t]:-none}$( [ -n "${ERR[$t]// /}" ] && echo "; $(msgs_for $t | head -1 | cut -c1-160)"); rows $(q "SELECT COUNT(*) FROM $T.$t" 2>&1); columns $(cols $t)"
+  e=$(err $t); observe "$t-after-ddl" "errors: ${e:-none}$( [ -n "${e// /}" ] && echo "; $(msgs_for $t | head -1 | cut -c1-160)"); rows $(q "SELECT COUNT(*) FROM $T.$t" 2>&1); columns $(cols $t)"
 done
 
 # --- the policy: the _on tables recover with no refresh requested (up to 3 more updates) ----------------------------------
@@ -71,14 +71,14 @@ for _ in 1 2 3; do
   [ $done_n -eq $(echo $OPS | wc -w) ] && break; update
 done
 for o in $OPS; do
-  r=$(q "SELECT COUNT(*) FROM $T.${o}_on" 2>&1)
-  if [ -z "${ERR[${o}_off]// /}" ]; then
+  r=$(q "SELECT COUNT(*) FROM $T.${o}_on" 2>&1) e=$(err ${o}_off)
+  if [ -z "${e// /}" ]; then
     observe "$o-inline" "no error without the policy (${o}_off rows $(q "SELECT COUNT(*) FROM $T.${o}_off" 2>&1), columns $(cols ${o}_off)); with it ${o}_on rows $r"
-  elif [[ "${ERR[${o}_off]}" =~ CDC_INCOMPATIBLE_SCHEMA_CHANGES|PRIMARY_KEY_CHANGE|DDL_NOT_SUPPORTED|UNTRACEABLE|CDC_LOG_TRUNCATED ]]; then
-    [ "$r" = 11 ] && claim "$o-afr-recovers" PASS "${o}_off asked for a full refresh (${ERR[${o}_off]% }); ${o}_on recovered on its own: 11 rows, columns $(cols ${o}_on)" \
-      || claim "$o-afr-recovers" FAIL "${o}_off: ${ERR[${o}_off]% }; ${o}_on rows $r, errors $(errs_for ${o}_on)"
+  elif [[ "$e" =~ CDC_INCOMPATIBLE_SCHEMA_CHANGES|PRIMARY_KEY_CHANGE|DDL_NOT_SUPPORTED|UNTRACEABLE|CDC_LOG_TRUNCATED ]]; then
+    [ "$r" = 11 ] && claim "$o-afr-recovers" PASS "${o}_off asked for a full refresh (${e% }); ${o}_on recovered on its own: 11 rows, columns $(cols ${o}_on)" \
+      || claim "$o-afr-recovers" FAIL "${o}_off: ${e% }; ${o}_on rows $r, errors $(errs_for ${o}_on)"
   else
-    observe "$o-other-error" "${o}_off: ${ERR[${o}_off]% } (not a full-refresh error); ${o}_on rows $r"
+    observe "$o-other-error" "${o}_off: ${e% } (not a full-refresh error); ${o}_on rows $r"
   fi
 done
 

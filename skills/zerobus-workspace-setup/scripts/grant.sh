@@ -11,7 +11,7 @@ while [ $# -gt 0 ]; do case $1 in --table) TABLE=$2; shift 2;; --sp) SP=$2; shif
 IFS=. read -r CAT SCH TBL <<< "$TABLE"
 for g in "catalog $CAT USE_CATALOG" "schema $CAT.$SCH USE_SCHEMA" "table $TABLE SELECT,MODIFY"; do set -- $g
   have=$(databricks grants get "$1" "$2" --principal "$SP" --profile "$P" -o json 2>/dev/null | yq -p json -o tsv '[.privilege_assignments[]?.privileges[]?] | unique | join(",")')
-  add=$(echo "$3" | tr , '\n' | while read -r p; do case ",$have," in *",$p,"*|*",ALL_PRIVILEGES,"*) ;; *) printf '%s ' "$p";; esac; done)
+  add=$(echo "$3" | tr , '\n' | while read -r p; do case ",$have," in (*",$p,"*|*",ALL_PRIVILEGES,"*) ;; (*) printf '%s ' "$p";; esac; done)
   [ -z "$add" ] && { printf '%-7s %-50s already: %s\n' "$1" "$2" "$have"; continue; }
   printf '%-7s %-50s grant: %s\n' "$1" "$2" "$add"
   [ $APPLY = yes ] || continue

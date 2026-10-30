@@ -5,6 +5,7 @@
 # and in /etc/sudoers.d/lfc-slot: slot ALL=(root) NOPASSWD: /usr/local/sbin/lfc-slot
 # The words of the command the person typed (ssh slot@vm up postgres pg1 --from x) become slot.sh's arguments; nothing
 # reaches a shell.
+# bash32: exempt (runs on the Linux VM)
 set -euo pipefail
 read -r -a ARGS <<<"${SSH_ORIGINAL_COMMAND:-ls}"
 for a in "${ARGS[@]}"; do [[ $a =~ ^[A-Za-z0-9._-]+$ ]] || { echo "slot: bad argument: $a" >&2; exit 2; }; done

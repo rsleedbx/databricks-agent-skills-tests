@@ -27,14 +27,13 @@ for k in scd1 scd2 append probe_scd1_nokey probe_scd2_nokey_dups probe_nokey_noc
 done
 
 run_all() {
-  declare -A U
-  while read -r k id; do U[$k]=$(databricks pipelines start-update "$id" $P -o json | jq -r .update_id); done < "$OUT/ids.txt"
+  while read -r k id; do echo "$k $id $(databricks pipelines start-update "$id" $P -o json | jq -r .update_id)"; done < "$OUT/ids.txt" > "$OUT/updates.txt"
   while :; do
     left=0; line=""
-    while read -r k id; do
-      st=$(databricks pipelines get-update "$id" "${U[$k]}" $P -o json | jq -r .update.state)
+    while read -r k id u; do
+      st=$(databricks pipelines get-update "$id" "$u" $P -o json | jq -r .update.state)
       line="$line $k=$st"; case $st in COMPLETED|FAILED|CANCELED) ;; *) left=1;; esac
-    done < "$OUT/ids.txt"
+    done < "$OUT/updates.txt"
     [ $left = 0 ] && { echo "$(date -u +%H:%M:%S)$line"; break; }; sleep 20
   done
 }

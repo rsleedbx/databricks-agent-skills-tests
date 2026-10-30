@@ -50,7 +50,7 @@ fi
 echo "commit $COMMIT${DIRTY:+ with uncommitted changes}; results in $RESULTS"
 
 # --- 2. the workspace
-bash skills/zerobus-workspace-setup/scripts/check.sh "$PROFILE" --interfaces "grpc$(case " $SOURCES " in *" yb "*) echo ,kafka;; esac)" \
+bash skills/zerobus-workspace-setup/scripts/check.sh "$PROFILE" --interfaces "grpc$(case " $SOURCES " in (*" yb "*) echo ,kafka;; esac)" \
   --from "$FROM" > "$RESULTS/check.txt" 2>&1; CHECK=$?
 grep -E '^(PASS|FAIL|WARN)' "$RESULTS/check.txt" | cut -c1-100
 

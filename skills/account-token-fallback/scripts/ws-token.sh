@@ -24,32 +24,33 @@ CFG=${CFG:-${TMPDIR:-/tmp}/ws-token-$P.cfg}
 say() { echo "ws-token: $*" >&2; }
 # run with the real profiles: DATABRICKS_CONFIG_FILE_SOURCE if set, else the CLI's default config (not a token file this
 # script wrote earlier). Profile fields come from `databricks auth profiles`; this script never reads the config file.
+TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 real() { if [ -n "${DATABRICKS_CONFIG_FILE_SOURCE:-}" ]; then DATABRICKS_CONFIG_FILE=$DATABRICKS_CONFIG_FILE_SOURCE "$@"; else env -u DATABRICKS_CONFIG_FILE "$@"; fi; }
-PROFILES=$(real timeout 60 databricks auth profiles --skip-validate -o json 2> /dev/null)
+PROFILES=$(real "${TO[@]}" 60 databricks auth profiles --skip-validate -o json 2> /dev/null)
 # field $2 of profile $1
 field() { printf '%s' "$PROFILES" | yq -p json -o tsv ".profiles[] | select(.name == \"$1\") | .$2 // \"\""; }
 
 HOST=$(field "$P" host); AID=$(field "$P" account_id)
 if [ -n "$HOST_ARG" ] && [ "${HOST%/}" != "$HOST_ARG" ]; then HOST=$HOST_ARG; AID=$AID_ARG   # no profile of its own
-elif [ -z "$FORCE" ] && real timeout 60 databricks current-user me --profile "$P" -o json > /dev/null 2>&1; then
+elif [ -z "$FORCE" ] && real "${TO[@]}" 60 databricks current-user me --profile "$P" -o json > /dev/null 2>&1; then
   say "$P: its own login works"; exit 0; fi
 [ -n "$HOST" ] || { say "$P: no such profile (databricks auth profiles); for a workspace without one, pass --host"; exit 1; }
 # write the one-profile config for token $1 to a temp file and check it; when the workspace accepts it, move it over FILE,
 # print FILE and exit 0. A failed try leaves FILE as it was: a long run (or another session) may still be using it.
 try() { local t="$CFG.$$.tmp"; ( umask 077; printf '[%s]\nhost  = %s\ntoken = %s\n' "$P" "$HOST" "$1" > "$t" )
-  if DATABRICKS_CONFIG_FILE=$t timeout 60 databricks current-user me --profile "$P" -o json > /dev/null 2> "$t.err"; then
+  if DATABRICKS_CONFIG_FILE=$t "${TO[@]}" 60 databricks current-user me --profile "$P" -o json > /dev/null 2> "$t.err"; then
     mv -f "$t" "$CFG"; rm -f "$t.err"; say "$P: using a token from $2 (about an hour)"; echo "$CFG"; exit 0; fi
   ERR=$(head -c 400 "$t.err"); rm -f "$t" "$t.err"; return 1; }
 # Azure: an Entra ID token from the Azure CLI for the Azure Databricks resource works for every workspace in its tenant,
 # no account profile needed. A workspace in another tenant names it in the error; retry there if az knows that tenant.
 case $HOST in *.azuredatabricks.net*)
   R=2ff814a6-3304-4ab8-85cb-cd0e6f879c1d
-  tok=$(timeout 60 az account get-access-token --resource $R --query accessToken -o tsv 2> /dev/null)
+  tok=$("${TO[@]}" 60 az account get-access-token --resource $R --query accessToken -o tsv 2> /dev/null)
   if [ -n "$tok" ]; then
     try "$tok" "the Azure CLI login"
     ten=$(printf '%s' "$ERR" | grep -oE 'Expected iss claim to be: https://sts.windows.net/[0-9a-f-]+' | grep -oE '[0-9a-f-]{36}')
     if [ -n "$ten" ]; then
-      tok=$(timeout 60 az account get-access-token --resource $R --tenant "$ten" --query accessToken -o tsv 2> /dev/null)
+      tok=$("${TO[@]}" 60 az account get-access-token --resource $R --tenant "$ten" --query accessToken -o tsv 2> /dev/null)
       [ -n "$tok" ] && try "$tok" "the Azure CLI login, tenant ${ten:0:8}..."
       say "$P: its workspace is in Entra tenant ${ten:0:8}..., which the Azure CLI isn't logged in to: az login --tenant $ten"
     else say "$P: the Azure CLI token isn't accepted"; fi
@@ -64,7 +65,7 @@ elif [ -n "$HOST_ARG" ]; then SEL="(.host // \"\") == \"$AHOST\" and (.account_i
 else say "$P: no account_id in its profile, so no account login to fall back on: databricks auth login --profile $P"; exit 1; fi
 for A in $(printf '%s' "$PROFILES" | yq -p json -o tsv ".profiles[] | select($SEL) | .name"); do
   AH=$(field "$A" host); AA=$(field "$A" account_id)
-  tok=$(real timeout 60 databricks auth token --host "$AH" --account-id "$AA" --profile "$A" -o json 2> /dev/null \
+  tok=$(real "${TO[@]}" 60 databricks auth token --host "$AH" --account-id "$AA" --profile "$A" -o json 2> /dev/null \
         | yq -p json -o tsv '.access_token // ""')
   [ -n "$tok" ] || { say "account profile $A: no token (login expired?): databricks auth login --profile $A"; continue; }
   try "$tok" "account profile $A"; unset tok

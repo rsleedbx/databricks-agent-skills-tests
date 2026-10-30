@@ -24,7 +24,7 @@ if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; fi
 DPS=()
 cleanup_all() {
   if [ "${KEEP:-0}" != 1 ]; then
-    for p in "${DPS[@]}"; do dbx pipelines delete "$p"; done; sleep 5
+    for p in ${DPS[@]+"${DPS[@]}"}; do dbx pipelines delete "$p"; done; sleep 5
     for s in a b c snap; do dbx schemas delete "$CATALOG.${S}_audit_$s" --force 2>/dev/null; done
     [ -n "${SRC_DB:-}" ] && echo "DROP TABLE IF EXISTS lfcddemo.$TB;" | src >/dev/null && echo "source table lfcddemo.$TB dropped"
   fi

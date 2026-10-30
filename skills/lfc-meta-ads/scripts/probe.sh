@@ -26,13 +26,13 @@ D=$(dirname "$0")
 [[ $DAYS =~ ^[0-9]+$ ]] || { echo "--days is a number" >&2; exit 2; }
 start=$(jq -rn --argjson d "$DAYS" 'now - $d * 86400 | strftime("%F")')
 args=()
-for f in "${FILES[@]}"; do
+for f in ${FILES[@]+"${FILES[@]}"}; do
   n=$(basename "$f" .json | tr -c 'a-zA-Z0-9_\n' _ | tr A-Z a-z)
   args+=(--custom-report "cr_$n=$f")
 done
 NAME="${SCH}_probe"
 PIPE=$("$D/pipeline.sh" "$PROFILE" --connection "$CONN" --account "$ACCT" --catalog "$CAT" --schema "$SCH" \
-  --name "$NAME" --tables "" --start-date "$start" "${args[@]}" | tail -1)
+  --name "$NAME" --tables "" --start-date "$start" ${args[@]+"${args[@]}"} | tail -1)
 uuid "$PIPE"
 UPD=$("$D/run.sh" "$PROFILE" "$PIPE" 2>/dev/null | sed -n 's#^update: .*/updates/##p' || true)
 uuid "$UPD"
