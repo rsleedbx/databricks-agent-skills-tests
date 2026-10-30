@@ -11,7 +11,9 @@ set -uo pipefail
 P=${1:?usage: keep-catalogs.sh <profile> [--connection N]... [catalog]...}; shift
 CONNS=(); CATS=()   # CATS: "<entity type> <name>"
 while [ $# -gt 0 ]; do case $1 in --connection) CONNS+=("${2:?--connection needs a name}"); shift 2;; -*) echo "unknown $1"; exit 2;; *) CATS+=("catalogs $1"); shift;; esac; done
-UNTIL=${KEEP_UNTIL:-$(jq -rn 'now | gmtime | .[1] += 1 | mktime | strftime("%F")')}
+# a month out; Jan 31 -> Feb 28 (day 0 of the month mktime rolled into), as date -v+1m does
+UNTIL=${KEEP_UNTIL:-$(jq -rn 'now | gmtime as $t | ($t | .[1] += 1 | mktime | gmtime) as $n
+  | (if $n[2] != $t[2] then $n | .[2] = 0 else $n end) | mktime | strftime("%F")')}
 bad=0
 if [ ${#CONNS[@]} -gt 0 ]; then
   E=$(mktemp); trap 'rm -f "${E:?}"' EXIT
