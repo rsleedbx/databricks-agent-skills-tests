@@ -24,7 +24,7 @@ D=$(dirname "$0")
 . "$D/lib.sh"
 [ ${#FILES[@]} -gt 0 ] || { echo "no custom report files" >&2; exit 2; }
 [[ $DAYS =~ ^[0-9]+$ ]] || { echo "--days is a number" >&2; exit 2; }
-start=$(date -u -v-"${DAYS}"d +%F 2>/dev/null || date -u -d "-$DAYS days" +%F)
+start=$(jq -rn --argjson d "$DAYS" 'now - $d * 86400 | strftime("%F")')
 args=()
 for f in "${FILES[@]}"; do
   n=$(basename "$f" .json | tr -c 'a-zA-Z0-9_\n' _ | tr A-Z a-z)

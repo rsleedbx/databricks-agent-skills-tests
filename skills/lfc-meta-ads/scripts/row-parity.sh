@@ -39,7 +39,7 @@ pct() { jq -rn --arg a "$1" --arg b "$2" 'if ($a|tonumber? // 0) == 0 then (if (
   else (($b|tonumber) / ($a|tonumber) * 1000 | round / 10 | tostring) end'; }
 ok() { [ "$1" = - ] && return 1; jq -en --argjson p "$1" --argjson l "$low" --argjson h "$high" '$p >= $l and $p <= $h' >/dev/null; }
 
-for pr in "${REPORTS[@]}"; do
+for pr in ${REPORTS[@]+"${REPORTS[@]}"}; do
   l=${pr%%=*} r=${pr#*=}
   ft_t=${l%%:*} ft_d=date; [[ $l == *:* ]] && ft_d=${l#*:}
   lf_t=${r%%:*} lf_d=date_start; [[ $r == *:* ]] && lf_d=${r#*:}
@@ -69,7 +69,7 @@ for pr in "${REPORTS[@]}"; do
   if [ -n "$TARGET" ]; then [ $pair_ok = 1 ] && echo "  OK (all within $low-$high %)" || { echo "  UNDER TARGET"; bad=1; }; fi
 done
 
-for pr in "${OBJECTS[@]}"; do
+for pr in ${OBJECTS[@]+"${OBJECTS[@]}"}; do
   ft_t=${pr%%=*} lf_t=${pr#*=}
   out=$(sql "SELECT (SELECT count(DISTINCT id) FROM $ftq.$(ident "$ft_t")), (SELECT count(DISTINCT id) FROM $lfq.$(ident "$lf_t"))") || { bad=1; continue; }
   IFS=$'\t' read -r a b <<<"$out"; p=$(pct "$a" "$b")

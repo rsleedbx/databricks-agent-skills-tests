@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
 done
 . "$(dirname "$0")/lib.sh"
 IFS=, read -ra PL <<<"$PIPES"; for p in "${PL[@]}"; do uuid "$p"; done
-[ -n "$SINCE" ] || SINCE=$(date -u -v-30d +%F 2>/dev/null || date -u -d '-30 days' +%F)
+[ -n "$SINCE" ] || SINCE=$(jq -rn 'now - 30 * 86400 | strftime("%F")')
 [[ $SINCE =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "--since is YYYY-MM-DD" >&2; exit 2; }
 ids="'$(IFS=,; echo "${PL[*]}" | sed "s/,/','/g")'"
 base="WITH u AS (
