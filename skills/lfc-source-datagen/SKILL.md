@@ -17,6 +17,8 @@ Two more scripts use the same drivers (`drivers.py`), for engines whose CLI can'
 - [`scripts/python/sq.py`](scripts/python/sq.py) `<engine>`: SQL on stdin, tab-separated rows out, for Db2 and Informix, whose CLIs pad columns (Db2's CLP) or print no column layout at all (Informix's `dbaccess`). A line `@` ends a statement that can't end at `;` (a trigger body).
 - **Informix:** fill with `--sessions 1`. Each connection sets `SET LOCK MODE TO WAIT 30`, since the default lock mode fails a concurrent writer at once (`-425` / ISAM `-107`), and several sessions still collided.
 
+**A few rows from Databricks** (a test's inserts from a notebook or job, serverless included): Spark `mode("append")` through a TYPE JDBC Unity Catalog connection; a federation connection (`POSTGRESQL`, `MYSQL`, `SQLSERVER`) refuses Spark writes. [references/append-through-connection.md](references/append-through-connection.md).
+
 How the planner works (every row from one integer, resuming, keys only at the ends, scrambled and random columns, the audit, foreign keys and the tags), and why generated values instead of realistic fake data: [references/how-it-works.md](references/how-it-works.md).
 
 ## Make a dataset
