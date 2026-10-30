@@ -338,6 +338,25 @@ ALTER TABLE public.dtix OWNER TO <lfc_user>;
 
 **Fix:** Add `"trustServerCertificate": "true"` to the connection's options, as SKILL.md step 2 describes for SQL Server and MySQL, or use a certificate from a CA. One run also logged a TLS connection while `pg_stat_ssl` showed no SSL for the gateway's sessions; that wasn't resolved.
 
+### TLS Off on the Server
+
+**Symptom:** `The server does not support SSL` from a JDBC URL with `sslmode=require` (tested 2026-10-30, PostgreSQL 16 container started with the image's defaults, TYPE JDBC connection, pgjdbc 42.7.4), or a gateway's `Authentication failure … The server does not support SSL`. `SHOW ssl;` returns `off`.
+
+**Fix:** turn TLS on at the server rather than lowering the client to `sslmode=prefer` or `disable`, which send the login in clear text. A self-signed certificate is enough when the client trusts it (`trustServerCertificate`, or `sslmode=require`, which encrypts without checking the certificate). As a superuser, in the data directory (`SHOW data_directory;`), from the [PostgreSQL SSL docs](https://www.postgresql.org/docs/16/ssl-tcp.html):
+
+```bash
+openssl req -new -x509 -days 365 -nodes -subj /CN=<host> -keyout server.key -out server.crt
+chmod 600 server.key            # owned by the server's OS user, or the server refuses the key
+```
+
+```sql
+ALTER SYSTEM SET ssl = on;      -- server.crt and server.key in the data directory are the defaults
+SELECT pg_reload_conf();        -- no restart needed
+SHOW ssl;                       -- on
+```
+
+Tested 2026-10-30 on a PostgreSQL 16 container that came up with `ssl = off`: after the reload, an append through a TYPE JDBC connection with `sslmode=require` ran on a `TLSv1.3` session (`SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid();` through the same connection). With only SQL access to a container (no shell), a superuser can run the `openssl` step through `COPY <temp table> FROM PROGRAM '...'`.
+
 ### Connection Timeout (Network/Security)
 
 **Symptom:** `psql` hangs or connection refused.
