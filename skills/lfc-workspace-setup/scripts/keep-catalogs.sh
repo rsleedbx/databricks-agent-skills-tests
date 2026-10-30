@@ -15,6 +15,7 @@ while [ $# -gt 0 ]; do case $1 in --connection) CONNS+=("${2:?--connection needs
 # a month out; Jan 31 -> Feb 28 (day 0 of the month mktime rolled into), as date -v+1m does
 UNTIL=${KEEP_UNTIL:-$(jq -rn --arg f "${KEEP_FROM:-}" '(if $f == "" then now else $f + "T12:00:00Z" | fromdate end) | gmtime as $t | ($t | .[1] += 1 | mktime | gmtime) as $n
   | (if $n[2] != $t[2] then $n | .[2] = 0 else $n end) | mktime | strftime("%F")')}
+[[ $UNTIL =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "no RemoveAfter date (KEEP_UNTIL / KEEP_FROM are YYYY-MM-DD): '$UNTIL'"; exit 2; }
 bad=0
 if [ ${#CONNS[@]} -gt 0 ]; then
   E=$(mktemp); trap 'rm -f "${E:?}"' EXIT
