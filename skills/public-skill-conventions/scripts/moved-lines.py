@@ -118,7 +118,7 @@ def main() -> int:
             if p.relative_to(skills).parts[0] == name:
                 continue
             for n, raw in enumerate(p.read_text().splitlines(), 1):
-                if re.search(rf"\b{re.escape(name)}\b(?!-)", raw):
+                if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", raw):
                     print(f"  {p.relative_to(skills)}:{n}\t{raw.strip()[:160]}")
     lines = f", {missing} line(s) with no close match" if "--lines" in args else ""
     print(f"{name}: {len(gone)} term(s) from {base} gone everywhere{lines}", file=sys.stderr)
