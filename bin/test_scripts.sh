@@ -55,6 +55,7 @@ check "results/*.md: nothing internal" python3 -c "import sys, glob, re; sys.pat
 check "recall.py runs" sh -c "python3 '$SK/lfc-test-results/scripts/recall.py' > /dev/null"
 check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scripts/test-secret-scripts.sh' > /dev/null"
 check "keep-catalogs.sh on a fake CLI" sh -c "'$SK/lfc-workspace-setup/scripts/test-keep-catalogs.sh' > /dev/null"
+check "moved-lines.py on a throwaway repo" sh -c "'$SK/public-skill-conventions/scripts/test-moved-lines.sh' > /dev/null"
 check "ws-token.sh: TO (perl alarm timeout)" sh -c "'$SK/account-token-fallback/scripts/test-ws-token.sh' > /dev/null"
 export WANT="10.0.0.0/24 10.9.0.0/24" HAVE="10.0.0.0/16"
 check "q.sh missing.sql" sh -c "'$SK/shell-json-scripting/scripts/q.sh' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
