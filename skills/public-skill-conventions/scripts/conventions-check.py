@@ -8,7 +8,10 @@ Prints FAIL and WARN lines and exits 1 on any FAIL:
         "seen on", "last seen", "in our tests", "we ran"); a reference file name with a number prefix or not kebab-case;
         a frontmatter key most other skills have
   WARN  an error table header no other skill uses and not in the skill at --base; a SKILL.md section (##) no other
-        skill uses and not in --base. Each is reported once, with the files that use it
+        skill uses and not in --base. Each is reported once, with the files that use it. Also: a reference file
+        SKILL.md doesn't link; a pipeline example with the deprecated `target:` (use `schema:`); agents/openai.yaml
+        text cut off or in the generator's "Use $<skill> for ..." form (hand-write it); a skill script with no test
+        in the repo's tests/ that names the skill
 
   python3 skills/public-skill-conventions/scripts/conventions-check.py ../databricks-agent-skills/skills databricks-lakeflow-connect --base upstream/main
 """
@@ -25,6 +28,8 @@ CLOUD_DOCS = re.compile(r"docs\.databricks\.com/(aws|azure|gcp)/|learn\.microsof
 WORDING = re.compile(r"(?i)\b(tested|seen on|last seen|in our tests|we ran)\b")
 ERR_HEAD = re.compile(r"(?i)\b(error|symptom|issue|problem|trap)\b")
 TABLE = re.compile(r"^(\|[^\n]*\|)\n\|[ :|-]+\|$", re.M)
+FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+TARGET = re.compile(r'^\s*(target:\s*\S|"target"\s*:)', re.M)  # pipeline `target` is deprecated for `schema`
 
 
 def norm(head: str) -> str:
@@ -96,6 +101,24 @@ def main() -> int:
         for h in TABLE.findall(t):
             if ERR_HEAD.search(h):
                 mine[norm(h)].append(p.name)
+    for p in sorted((me / "references").glob("*.md")) if (me / "references").is_dir() else []:
+        if f"references/{p.name}" not in md:
+            say("WARN", str(p.relative_to(root)), "not linked from SKILL.md (list every reference file there)")
+    for p, t in texts(me).items():
+        if any(TARGET.search(c) and ("pipelines" in c or "ingestion_definition" in c) for c in FENCE.findall(t)):
+            say("WARN", str(p.relative_to(root)), "pipeline example sets `target:`, deprecated: use `schema:`")
+    oa = me / "agents" / "openai.yaml"
+    if oa.is_file():
+        y = oa.read_text()
+        short = re.search(r'short_description:\s*"(.*)"', y)
+        if (short and short.group(1).rstrip().endswith(("...", "\u2026"))) or f"Use ${name} for " in y:
+            say("WARN", str(oa.relative_to(root)), "generated text (cut off, or 'Use $<skill> for ...'): hand-write "
+                "short_description and default_prompt so the skill reads apart from its siblings")
+    tests = root.parent / "tests"
+    scripts = list((me / "scripts").glob("*.py")) if (me / "scripts").is_dir() else []
+    if scripts and tests.is_dir() and not any(name in t.read_text() for t in tests.glob("*_test.py")):
+        say("WARN", f"{name}/scripts", "no test in tests/ names this skill: checks that need the network "
+                "(a catalog build) also need an offline test")
     old, old_heads = set(), set()
     if base:
         git = ["git", "-C", str(root.parent)]
