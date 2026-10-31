@@ -42,8 +42,9 @@ BASH4 = [   # (regex, what to do instead): bash 4+ only, or GNU/BSD-only command
     (r"\[-[0-9]+\]\}", "negative indexes are bash 4.3: ${a[${#a[@]}-1]}"),
     (r"&>>|\|&", "&>> and |& are bash 4: >>f 2>&1, 2>&1 |"),
     (r"\bwait -n\b|\bcoproc\b|\bglobstar\b|\bEPOCH(SECONDS|REALTIME)\b", "bash 4+ only"),
-    (r"\bdate\b[^|;#]*\s-[a-zA-Z]*[dvj]\b", "date -d is GNU, -v/-j BSD: do the date math in jq"),
+    (r"\bdate\b[^|;&#]*\s-[a-zA-Z]*[dvj]\b", "date -d is GNU, -v/-j BSD: do the date math in jq"),
 ]
+SINGLE_QUOTED = re.compile(r"'[^'\n]*'")
 EMPTYABLE = re.compile(r"(?:^|[\s;(])(?:local\s+)?([A-Za-z_]\w*)=\(\s*\)|read\s+-[a-zA-Z]*a\s+([A-Za-z_]\w*)")
 
 
@@ -126,12 +127,13 @@ def bash32(f: Path, rel) -> list[str]:
     lines = f.read_text(errors="replace").splitlines()
     if any("bash32: exempt" in h for h in lines[:15]):
         return []
-    out, code = [], [re.sub(r"(^|\s)#.*", "", l) if not l.startswith("#!") else "" for l in lines]
+    # comments and single-quoted text (sed, jq and awk programs) aren't shell
+    out, code = [], [SINGLE_QUOTED.sub("''", re.sub(r"(^|\s)#.*", "", l)) if not l.startswith("#!") else "" for l in lines]
     for n, l in enumerate(code, 1):
         for rx, fix in BASH4:
             if re.search(rx, l):
                 out.append(f"{rel(f)}:{n} bash32: {fix}: {lines[n - 1].strip()[:100]}")
-    if re.search(r"^set -[a-z]*u", "\n".join(code), re.MULTILINE):
+    if re.search(r"^\s*set\s+(-[a-zA-Z]*u|-o\s+nounset)", "\n".join(code), re.MULTILINE):
         arrays = {a or b for a, b in EMPTYABLE.findall("\n".join(code))}
         for n, l in enumerate(code, 1):
             for a in arrays:
