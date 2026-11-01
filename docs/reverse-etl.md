@@ -1,6 +1,6 @@
 # Reverse ETL: data from Databricks back out to a database, tested end to end
 
-Reverse ETL writes data that Databricks processed into an operational database, the same engine it came from or a different one. Every route here goes through a Unity Catalog connection, so the database's password sits in the connection, never in code.
+Reverse ETL writes data that Databricks processed into an operational database, the same engine it came from or a different one. Every route into an external database goes through a Unity Catalog connection, so the database's password sits in the connection, never in code; the routes into Lakebase use the identity running the job.
 
 ![Data in and out of Databricks](diagrams/in-and-out.png)
 
@@ -15,6 +15,13 @@ Each ✅ ran on Databricks serverless against a real database, with the rows che
 | SQL Server 2022 | ✅ | ✅ | not offered (PostgreSQL only) | not run | not run |
 | Oracle 23 Free | not run | ✅ | not offered (PostgreSQL only) | not run | not run |
 | Db2 11.5.9 | not run | ✅ | not offered (PostgreSQL only) | not run | not run |
+
+**Into Lakebase**, with no connection: the Lakebase streaming sink and Lakebase synced tables use the identity running the job.
+
+| Route | Tested |
+|---|---|
+| Lakebase streaming sink, `writeStream.format("postgresql")` with `endpoint`, `upsertkey` and `AvailableNow` | ✅ by hand: the sink created the table with the key as primary key; a second run on the same checkpoint updated a corrected key in place and added a new one, no duplicates |
+| [Lakebase synced table](https://docs.databricks.com/aws/en/oltp/projects/sync-tables), `TRIGGERED`, from a Delta table with its change feed on | ✅ by hand: the first sync, then an insert, an update and a delete in Delta all arrived after a triggered sync |
 
 ## The routes
 
@@ -31,5 +38,4 @@ Each ✅ ran on Databricks serverless against a real database, with the rows che
 ## Not tested yet
 
 - Append on Oracle and Db2.
-- Reverse ETL into Lakebase (Lakebase synced tables).
 - Verifying the server certificate on SQL Server, Oracle and Db2.
