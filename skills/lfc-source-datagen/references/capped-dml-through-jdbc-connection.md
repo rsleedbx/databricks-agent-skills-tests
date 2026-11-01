@@ -16,6 +16,7 @@ A CDC or query-based test needs a steady trickle of inserts, updates and deletes
 | MySQL | `SELECT GET_LOCK('<table>', 60);` … `DO RELEASE_LOCK('<table>');` |
 | SQL Server | `EXEC sp_getapplock @Resource = '<table>', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 60000;` … `sp_releaseapplock` |
 | Oracle | `DBMS_LOCK.ALLOCATE_UNIQUE` + `DBMS_LOCK.REQUEST(h, DBMS_LOCK.X_MODE, 60, TRUE)` (released at `COMMIT`; needs `EXECUTE ON DBMS_LOCK`) |
+| Db2 | `LOCK TABLE <table> IN EXCLUSIVE MODE;` inside the compound statement (Db2 has no named lock; this one is held to the statement's commit) |
 
 A fixed row order (`ORDER BY dt, pk`) without the lock keeps the window at *B* rows, since overlapping runs pick the same rows, but each run still updates them: CDC sees every update (8 overlapping runs: 10 rows, 80 updates).
 
@@ -113,6 +114,27 @@ END;
 
 `WHERE d > 0` matters: `CONNECT BY LEVEL <= 0` still returns one row.
 
+**Db2** (LUW 11.5), one compound statement:
+
+```sql
+BEGIN
+  DECLARE b INT; DECLARE d INT;
+  LOCK TABLE app.t IN EXCLUSIVE MODE;
+  SET b = (SELECT GREATEST(0, 10 - COUNT(*)) FROM app.t WHERE dt >= CURRENT TIMESTAMP - 60 SECONDS) / 2;
+  DELETE FROM app.t WHERE pk IN (SELECT pk FROM (SELECT pk, ROW_NUMBER() OVER (ORDER BY dt, pk) AS rn FROM app.t
+                                                 WHERE dt < CURRENT TIMESTAMP - 60 SECONDS) AS o WHERE rn <= b);
+  GET DIAGNOSTICS d = ROW_COUNT;
+  INSERT INTO app.t (dt, ops) WITH g(i) AS (VALUES 1 UNION ALL SELECT i + 1 FROM g WHERE i < d)
+    SELECT CURRENT TIMESTAMP, 'insert' FROM g WHERE d > 0;
+  SET b = (SELECT GREATEST(0, 10 - COUNT(*)) FROM app.t WHERE dt >= CURRENT TIMESTAMP - 60 SECONDS);
+  UPDATE app.t SET dt = CURRENT TIMESTAMP, ops = 'update', n = n + 1 WHERE pk IN (SELECT pk FROM (
+    SELECT pk, ROW_NUMBER() OVER (ORDER BY MOD(BIGINT(pk) * 1103515245 + MICROSECOND(CURRENT TIMESTAMP), 2147483647)) AS rn
+    FROM app.t WHERE dt < CURRENT TIMESTAMP - 60 SECONDS) AS o WHERE rn <= b);
+END
+```
+
+Db2 refuses `RAND()` in a window's `ORDER BY` (`SQLCODE=-583`), so the update's row order is a hash of the key seeded by the clock. A read for the `query` option is `SELECT 1 AS x FROM SYSIBM.SYSDUMMY1`.
+
 ## PostgreSQL CDC setup through the connection
 
 The slot and publication a Postgres CDC test needs can be made from Databricks too, each guarded so a rerun does nothing:
@@ -142,19 +164,20 @@ The slot and publication a Postgres CDC test needs can be made from Databricks t
 | SQL Server | Ran twice (Spark's schema query and the read), and Spark succeeded |
 | MySQL | Refused (syntax error), unless the URL has `allowMultiQueries=true`: then it ran twice |
 | Oracle | Refused: `ORA-03405: End of query reached; no additional text should follow.` |
+| Db2 | Refused: `SQLCODE=-104, SQLSTATE=42601` (a syntax error), also with `sessionInitStatement` allowed |
 
 PostgreSQL also runs a function's side effects inside a `SELECT` (the slot above). A connection meant for reads and appends needs a login with only those grants.
 
 ## Tested
 
-2026-10-31, Databricks serverless (environment 4), PostgreSQL 16, MySQL 8.4, SQL Server 2022 and Oracle Database 23 Free in containers on one VM, all four at once. Drivers: PostgreSQL 42.7.4, MySQL Connector/J 9.1.0, mssql-jdbc 12.8.1.jre11, ojdbc11 23.5.0.24.07. Tables of 100 rows, all outside the window; B = 10; a 2-second wait inside each run (between reading the budget and the update) to make the overlap certain.
+2026-10-31, Databricks serverless (environment 4), PostgreSQL 16, MySQL 8.4, SQL Server 2022 and Oracle Database 23 Free in containers on one VM, all four at once; Db2 11.5.9 (container, no TLS: the image serves plain TCP) the same day, on its own. Drivers: PostgreSQL 42.7.4, MySQL Connector/J 9.1.0, mssql-jdbc 12.8.1.jre11, ojdbc11 23.5.0.24.07, IBM JCC 11.5.9.0. Tables of 100 rows, all outside the window; B = 10; a 2-second wait inside each run (between reading the budget and the update) to make the overlap certain.
 
 | Run | Rows in the window | Updates run |
 |---|---|---|
 | Capped, 3 actions in a row, all engines | 10 | 10 |
 | Fixed `UPDATE ... LIMIT 10`, 3 actions (PostgreSQL) | 30 | 30 |
 | Capped, a failing read retried 4 times (PostgreSQL) | 10 | 10 |
-| Capped, 8 overlapping tasks, no lock | 52 to 80 | 80 |
+| Capped, 8 overlapping tasks, no lock | 40 to 80 | 80 |
 | Capped, 8 overlapping tasks, lock, all engines | 10 | 10 |
-| Capped, 64 tasks (8 at a time) on all four engines at once, lock | 10 (19 to 28 in total over the 2 minutes the queued runs took) | 20 to 30 |
+| Capped, 64 tasks (8 at a time) on the first four engines at once, lock | 10 (19 to 28 in total over the 2 minutes the queued runs took) | 20 to 30 |
 | Delete + insert, then update, lock, 3 actions then 8 tasks (PostgreSQL) and then 64 tasks (all engines) | 10: 5 deleted and replaced, 5 updated | 5 |
