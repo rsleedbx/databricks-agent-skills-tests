@@ -39,7 +39,9 @@ The connection (TYPE JDBC, [append-through-connection.md](append-through-connect
 
 ## The statements, B = 10 rows, W = 60 seconds
 
-**PostgreSQL**: half the budget to deletes with their replacement inserts, the rest to updates:
+Each spends half the budget on deletes with their replacement inserts, and the rest on updates.
+
+**PostgreSQL**:
 
 ```sql
 SELECT pg_advisory_xact_lock(hashtext('public.t'));
@@ -59,6 +61,12 @@ The driver runs the `;`-separated statements in one transaction, so the advisory
 
 ```sql
 SELECT GET_LOCK('t', 60);
+SET @b = (SELECT greatest(0, 10 - count(*)) FROM db.t WHERE dt >= now(6) - INTERVAL 60 SECOND) DIV 2;
+DELETE FROM db.t WHERE pk IN (SELECT pk FROM (SELECT pk, row_number() OVER (ORDER BY dt, pk) AS rn FROM db.t
+                                             WHERE dt < now(6) - INTERVAL 60 SECOND) o WHERE rn <= @b);
+SET @d = ROW_COUNT();
+INSERT INTO db.t (dt, ops) SELECT now(6), 'insert'
+FROM (WITH RECURSIVE g(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM g WHERE i < @d) SELECT i FROM g) x WHERE @d > 0;
 SET @b = (SELECT greatest(0, 10 - count(*)) FROM db.t WHERE dt >= now(6) - INTERVAL 60 SECOND);
 UPDATE db.t t JOIN (SELECT pk, row_number() OVER (ORDER BY rand()) AS rn FROM db.t
                     WHERE dt < now(6) - INTERVAL 60 SECOND) o ON o.pk = t.pk AND o.rn <= @b
@@ -66,14 +74,20 @@ SET t.dt = now(6), t.ops = 'update', t.n = t.n + 1;
 DO RELEASE_LOCK('t');
 ```
 
-The window function makes MySQL materialize the derived table, so the `UPDATE` may read its own table.
+The window function makes MySQL materialize the derived table, so the `DELETE` and `UPDATE` may read their own table.
 
 **SQL Server**:
 
 ```sql
 EXEC sp_getapplock @Resource = 't', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 60000;
 DECLARE @b int = (SELECT CASE WHEN 10 - count(*) > 0 THEN 10 - count(*) ELSE 0 END FROM dbo.t
-                  WHERE dt >= dateadd(second, -60, sysutcdatetime()));
+                  WHERE dt >= dateadd(second, -60, sysutcdatetime())) / 2;
+DECLARE @d TABLE (pk int);
+WITH o AS (SELECT TOP (@b) * FROM dbo.t WHERE dt < dateadd(second, -60, sysutcdatetime()) ORDER BY dt, pk)
+DELETE FROM o OUTPUT deleted.pk INTO @d;
+INSERT INTO dbo.t (dt, ops) SELECT sysutcdatetime(), 'insert' FROM @d;
+SET @b = (SELECT CASE WHEN 10 - count(*) > 0 THEN 10 - count(*) ELSE 0 END FROM dbo.t
+          WHERE dt >= dateadd(second, -60, sysutcdatetime()));
 WITH o AS (SELECT TOP (@b) * FROM dbo.t WHERE dt < dateadd(second, -60, sysutcdatetime()) ORDER BY newid())
 UPDATE o SET dt = sysutcdatetime(), ops = 'update', n = n + 1;
 EXEC sp_releaseapplock @Resource = 't', @LockOwner = 'Session';
@@ -82,15 +96,22 @@ EXEC sp_releaseapplock @Resource = 't', @LockOwner = 'Session';
 **Oracle**, one PL/SQL block:
 
 ```sql
-DECLARE b NUMBER; h VARCHAR2(128); r NUMBER;
+DECLARE b NUMBER; d NUMBER; h VARCHAR2(128); r NUMBER;
 BEGIN
   DBMS_LOCK.ALLOCATE_UNIQUE('t', h); r := DBMS_LOCK.REQUEST(h, DBMS_LOCK.X_MODE, 60, TRUE);
+  SELECT TRUNC(GREATEST(0, 10 - COUNT(*)) / 2) INTO b FROM app.t WHERE dt >= LOCALTIMESTAMP - INTERVAL '60' SECOND;
+  DELETE FROM app.t WHERE pk IN (SELECT pk FROM (
+    SELECT pk FROM app.t WHERE dt < LOCALTIMESTAMP - INTERVAL '60' SECOND ORDER BY dt, pk) WHERE ROWNUM <= b);
+  d := SQL%ROWCOUNT;
+  INSERT INTO app.t (dt, ops) SELECT LOCALTIMESTAMP, 'insert' FROM dual WHERE d > 0 CONNECT BY LEVEL <= d;
   SELECT GREATEST(0, 10 - COUNT(*)) INTO b FROM app.t WHERE dt >= LOCALTIMESTAMP - INTERVAL '60' SECOND;
   UPDATE app.t SET dt = LOCALTIMESTAMP, ops = 'update', n = n + 1 WHERE pk IN (SELECT pk FROM (
     SELECT pk FROM app.t WHERE dt < LOCALTIMESTAMP - INTERVAL '60' SECOND ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM <= b);
   COMMIT;
 END;
 ```
+
+`WHERE d > 0` matters: `CONNECT BY LEVEL <= 0` still returns one row.
 
 ## PostgreSQL CDC setup through the connection
 
@@ -136,4 +157,4 @@ PostgreSQL also runs a function's side effects inside a `SELECT` (the slot above
 | Capped, 8 overlapping tasks, no lock | 52 to 80 | 80 |
 | Capped, 8 overlapping tasks, lock, all engines | 10 | 10 |
 | Capped, 64 tasks (8 at a time) on all four engines at once, lock | 10 (19 to 28 in total over the 2 minutes the queued runs took) | 20 to 30 |
-| Delete + insert, then update, 3 actions then 8 tasks, lock (PostgreSQL) | 10 (5 updated, 5 replaced) | 5 |
+| Delete + insert, then update, lock, 3 actions then 8 tasks (PostgreSQL) and then 64 tasks (all engines) | 10: 5 deleted and replaced, 5 updated | 5 |
