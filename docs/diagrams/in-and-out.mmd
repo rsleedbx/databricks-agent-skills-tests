@@ -9,7 +9,7 @@ flowchart LR
     lfc["Lakeflow Connect<br/>query-based · integrated CDC · standard CDC"]
     zb["Zerobus Ingest<br/>Debezium, Kafka Connect"]
     delta["Delta tables<br/>bronze → silver → gold"]
-    retl["Reverse ETL<br/>JDBC append · SQL on the database<br/>PostgreSQL streaming upsert"]
+    retl["Reverse ETL<br/>JDBC append · SQL on the database<br/>PostgreSQL streaming upsert<br/>Lakebase synced tables"]
     lfc --> delta
     zb --> delta
     delta --> retl
@@ -17,7 +17,7 @@ flowchart LR
     uc -.-> retl
   end
   subgraph TGT["Targets: the same engines, or a different one"]
-    t1[("PostgreSQL · MySQL<br/>SQL Server · Oracle · Db2")]
+    t1[("PostgreSQL · MySQL<br/>SQL Server · Oracle · Db2<br/>Lakebase")]
   end
   s1 --> lfc
   s1 --> zb

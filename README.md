@@ -16,7 +16,7 @@ The skills ask before creating anything, and clean up after themselves. To run t
 |---|---|
 | [Lakeflow Connect, by database](docs/lakeflow-connect-database.md) | Query-based, integrated CDC and standard CDC on PostgreSQL, MySQL, SQL Server, Oracle and Lakebase; schema changes and table lifecycle |
 | [Lakeflow Connect Zerobus](docs/lakeflow-connect-zerobus.md) | Database changes through Zerobus Ingest into bronze, silver and gold, on eight engines, six of them with all six TPC models |
-| [Reverse ETL](docs/reverse-etl.md) | Append, SQL on the database, and upserts back out to PostgreSQL, MySQL, SQL Server, Oracle and Db2 |
+| [Reverse ETL](docs/reverse-etl.md) | Append, SQL on the database, and upserts back out to PostgreSQL, MySQL, SQL Server, Oracle and Db2; into Lakebase with its streaming sink and synced tables |
 
 ## How a prompt becomes a tested result
 
