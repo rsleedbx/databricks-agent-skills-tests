@@ -1,6 +1,6 @@
-# Changes at a fixed rate through a Unity Catalog connection
+# Changes at a fixed rate through a Unity Catalog JDBC connection
 
-A CDC or query-based test needs a steady trickle of inserts, updates and deletes on the source, for example **at most 10 changed rows a minute per table**, while several notebooks, jobs and retries run the same change step without knowing about each other. A statement that caps itself does that, and a Unity Catalog connection runs it from Databricks with no password in the code.
+A CDC or query-based test needs a steady trickle of inserts, updates and deletes on the source, for example **at most 10 changed rows a minute per table**, while several notebooks, jobs and retries run the same change step without knowing about each other. A statement that caps itself does that, and a Unity Catalog connection of type `JDBC` runs it from Databricks with no password in the code (a federation connection, type `POSTGRESQL`, `MYSQL` or `SQLSERVER`, refuses Spark options).
 
 ## How a statement caps itself
 
