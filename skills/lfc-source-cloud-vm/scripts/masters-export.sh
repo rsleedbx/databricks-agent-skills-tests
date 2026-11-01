@@ -5,7 +5,7 @@
 #   MASTERS_SAS_FILE (root-only, mode 600: the container's SAS with read and write, e.g. sp=racwl; read from the file, never on a
 #   command line), MASTERS (all, or a comma list), EXPORT_TMP (default /var/lib/containers/masters-export: the archive is written
 #   there, after a free-space check), MASTER_ENGINES (name=engine,... for a master with no <master>.engine file beside it).
-#   A master whose blob has the same sha256 in the manifest isn't uploaded again. Blocks: MASTERS_BLOCK_MB (1024) above
+#   A master whose blob has the same sha256 in the manifest isn't uploaded again. Blocks: MASTERS_BLOCK_MB (256; curl holds a block in memory and refuses 1 GiB) above
 #   MASTERS_PUT_BLOB_MAX_MB (5000). One JSON line per master on stdout; the rest on stderr.
 # bash32: exempt (runs on the Linux VM)
 set -euo pipefail
@@ -21,7 +21,7 @@ private_file "$SASF" || die "$SASF: chmod 600 it (no group or other access)"
 SAS=$(tr -d ' \r\n' < "$SASF"); SAS=${SAS#\?}
 [ -n "$SAS" ] || die "$SASF is empty"
 MASTERS=${MASTERS:-all}; EXPORT_TMP=${EXPORT_TMP:-/var/lib/containers/masters-export}
-MASTERS_BLOCK_MB=${MASTERS_BLOCK_MB:-1024}; MASTERS_PUT_BLOB_MAX_MB=${MASTERS_PUT_BLOB_MAX_MB:-5000}
+MASTERS_BLOCK_MB=${MASTERS_BLOCK_MB:-256}; MASTERS_PUT_BLOB_MAX_MB=${MASTERS_PUT_BLOB_MAX_MB:-5000}
 V=2023-11-03
 install -d -m 700 "$EXPORT_TMP"
 T=$(mktemp -d "$EXPORT_TMP/run.XXXXXX"); trap 'rm -rf "${T:?}"' EXIT
