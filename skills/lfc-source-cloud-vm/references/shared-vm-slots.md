@@ -38,13 +38,26 @@ Db2, Informix, CockroachDB and YugabyteDB get no CDC settings here: each test se
 
 | Setting (`/etc/lfc-slot.env`) | Default | When it's reached |
 |---|---|---|
-| `MAX_PER_OWNER` | 1 (0 = no limit) | `up` parks your other running database first |
+| `MAX_PER_OWNER` | 1 (0 = no limit) | the default for `max_running` (below): `up` stops and names your running databases; `up ... --park` parks the one that started first |
 | `MAX_RUNNING` | vCPUs / `CPUS_PER_DB`, at least 1 | `up` stops with `the VM is full` and lists what's running |
 | `CPUS_PER_DB` | 2; 1 on a personal VM (`KIND=personal`) | follows a resize: the limit is worked out from `nproc` each time |
 | `PORT_MIN`-`PORT_MAX` | 30000-30063 | `no free port`; each database keeps its port until `rm`. A port something else listens on (a container started outside slot.sh) is skipped |
 | `HOST` | the cloud metadata's public IP, else the first local IP | set it on Azure: the metadata has no public IP for a Standard SKU address |
 | `ROOT`, `STATE`, `SECRETS` | `/mnt/jfs`, `/var/lib/lfc/slots`, `/root/lfc-src` | `STATE` under `ROOT` needs `ROOT` mounted, else the command stops |
 | `LOCK` | `$STATE/.lock` | the lock for one command at a time; a personal VM's is on the VM's disk |
+| `LIMITS` | `/etc/lfc-slot.limits` | per-owner limits, below |
+
+**Per-owner limits** (`/etc/lfc-slot.limits`, read on every command, so a change needs no new slot.sh): one line per owner, and a `default` line for everyone not listed. A key missing from both lines falls back to the setting (`max_running` to `MAX_PER_OWNER`; `hours_per_week` to the client's own default).
+
+```
+default max_running=1 hours_per_week=29
+alice max_running=4 hours_per_week=60
+```
+
+- `max_running`: how many of your databases may run at once (0 = no limit).
+- `hours_per_week`: above it, the client suggests a VM of your own. A suggestion, not enforced.
+
+`slot.sh limits` prints yours: `{"owner": "alice", "max_running": 4, "hours_per_week": 60}`.
 
 A clone of a master uses the master's admin env file (`$SECRETS/<engine>.env`, the one `tpc-master.sh` built it with); an empty database gets a new admin password. Passwords and env files stay in `$STATE/<owner>/` (mode 700, root).
 
@@ -134,6 +147,7 @@ SELECT * FROM remote_query('pg1_conn', database => 'postgres', query => 'select 
 | `<dir> exists without a record` | data left from an interrupted `up`; `rm` it on the VM or pick another name |
 | `<engine> in <container> didn't answer in 3 minutes` (10 for Oracle) | `podman logs <container>`; SQL Server `Permission denied` on `/.system`: the data isn't owned by uid 10001 (clone without `-p`) |
 | `creating lfc_user in <container> failed; run up again` | the login SQL failed: the container is stopped, so the next `up` starts it and runs the login again |
+| `you have <n> of <n> running databases on this VM (...)` | at your `max_running`: `park` one of them, or `up` again with `--park` to park the one that started first |
 | `the VM is full` | park one of yours, wait, or use a VM of your own (`MAX_PER_OWNER=0`) |
 | `<engine> in <container> stopped: podman logs <container>` | the engine's container exited while it started; the log says why |
 | `preparing <engine> in <container> failed; run up again` | an OS user or the Informix database couldn't be made; the container is stopped, and the next `up` tries again |
