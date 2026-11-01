@@ -47,7 +47,7 @@ n = (spark.read.format("jdbc").option("databricks.connection", "<connection>")
      .option("query", "select count(*) as n from <schema>.<table>").load().first()["n"])
 ```
 
-`option("query", ...)` is wrapped in `SELECT * FROM (<query>) ...`, so it must be a `SELECT`: MySQL's `SHOW` fails with a syntax error there.
+`option("query", ...)` is wrapped in `SELECT * FROM (<query>) ...`, so it must be a `SELECT`: MySQL's `SHOW` fails with a syntax error there. That doesn't make the connection read-only: on PostgreSQL and SQL Server a `query` can carry a second statement that writes, so the login's grants are what limit it ([capped-dml-through-connection.md](capped-dml-through-connection.md#the-allowlist-doesnt-stop-writes-the-logins-grants-do)).
 
 Tested 2026-10-30 on serverless (environment 4), three rows per append, the keys made by the source:
 
