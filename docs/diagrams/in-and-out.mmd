@@ -1,0 +1,24 @@
+%% Data in and out of Databricks, with the credentials held once in Unity Catalog connections
+flowchart LR
+  subgraph SRC["Sources"]
+    s1[("PostgreSQL · MySQL · SQL Server<br/>Oracle · Db2 · Informix<br/>CockroachDB · YugabyteDB · Lakebase")]
+  end
+  subgraph DBX["Databricks: the processing engine in the middle"]
+    direction TB
+    uc{{"Unity Catalog connections<br/>credentials held once, no password in code"}}
+    lfc["Lakeflow Connect<br/>query-based · integrated CDC · standard CDC"]
+    zb["Zerobus Ingest<br/>Debezium, Kafka Connect"]
+    delta["Delta tables<br/>bronze → silver → gold"]
+    retl["Reverse ETL<br/>JDBC append · SQL on the database<br/>PostgreSQL streaming upsert"]
+    lfc --> delta
+    zb --> delta
+    delta --> retl
+    uc -.-> lfc
+    uc -.-> retl
+  end
+  subgraph TGT["Targets: the same engines, or a different one"]
+    t1[("PostgreSQL · MySQL<br/>SQL Server · Oracle · Db2")]
+  end
+  s1 --> lfc
+  s1 --> zb
+  retl --> t1

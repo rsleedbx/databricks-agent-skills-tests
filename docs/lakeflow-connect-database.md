@@ -4,13 +4,33 @@ Every ✅ below ran end to end in a real workspace: source database, UC connecti
 
 | Database | UC connection, queried with [`remote_query`](https://docs.databricks.com/aws/en/query-federation/remote-queries) | Query-based | Query-based via foreign catalog | Integrated CDC | Standard CDC (gateway) |
 |---|---|---|---|---|---|
-| Lakebase | ✅ Azure | [✅ Azure, with a DML round trip](../prompts/lfc-matrix/qbc-lakebase.txt) | [✅ Azure](../prompts/lfc-matrix/fcqbc-lakebase.txt) | not offered | Lakebase refuses `CREATE PUBLICATION`: the skill stops |
+| Lakebase | ✅ Azure | [✅ Azure, with a DML round trip](../prompts/lfc-matrix/qbc-lakebase.txt) | [✅ Azure](../prompts/lfc-matrix/fcqbc-lakebase.txt) | not offered | ✅ AWS (serverless gateway), by hand: source type `POSTGRESQL`, a password role, the project's password connections turned on |
 | MySQL 8.4 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-mysql.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-mysql.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/icdc-mysql.txt) | ✅ AWS (serverless gateway); not enabled on the Azure test workspaces |
 | Oracle 23ai Free | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-oracle.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-oracle.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/icdc-oracle.txt) | not offered |
 | PostgreSQL 16 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-pg.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-pg.txt) | not offered | ✅ AWS (serverless gateway); not enabled on the Azure test workspaces |
 | SQL Server 2022 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-sqlserver.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-sqlserver.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/icdc-sqlserver.txt) | [✅ AWS, Azure (serverless gateway)](../prompts/lfc-matrix/scdc-sqlserver.txt) |
 
 The UC connection column has no prompt of its own: the connection comes from step 5 below, and every mode's prompt starts from it. Lakebase runs from one bare "demo" prompt that creates its own project, connection and pipeline ([qbc-lakebase.txt](../prompts/lfc-matrix/qbc-lakebase.txt)). What each cell must show to pass is in [MATRIX.md](../MATRIX.md#pass-criteria-every-cell).
+
+## Schema changes and table lifecycle, by database
+
+Each ✅ ran on a fresh source database and real pipelines, with the destination checked against the source; the test then recovered the table (full refresh or `auto_full_refresh_policy`) and checked the next change arrived. Scripts: [skills/lfc-schema-change-test](../skills/lfc-schema-change-test/SKILL.md).
+
+| Scenario | SQL Server, standard CDC | SQL Server, integrated CDC | PostgreSQL 16, standard CDC |
+|---|---|---|---|
+| ADD COLUMN (nullable, default, identity, computed; keyed and keyless) | ✅ | ✅ | ✅ |
+| Type change, DROP COLUMN, rename, primary key change | ✅ | | ✅ |
+| `auto_full_refresh_policy` recovers a stopped table | ✅ | | ✅ |
+| DELETE every row + INSERT | ✅ | ✅ | |
+| TRUNCATE (CDC and change tracking) | ✅ | ✅ | ✅ |
+| DROP and recreate a table | ✅ | ✅ | |
+| Add a table to a running pipeline | ✅ | ✅ | |
+| Replica identity DEFAULT / FULL / NOTHING, TOAST-able columns | | | ✅ |
+| Permissions missing, table not tracked; the other tables keep loading | ✅ | | |
+| SCD type 2 on change tracking and CDC | ✅ | ✅ | |
+| Change data feed on the destination (`table_changes`) | ✅ | | |
+| Move between integrated CDC and a gateway | ✅ | ✅ | |
+| Many tables in one pipeline (90, 270, 900; TPC-C copies, one schema each) | ✅ | | |
 
 ## How Lakeflow Connect moves the data
 

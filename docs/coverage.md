@@ -30,6 +30,6 @@ See the table in the [README](../README.md#tested-end-to-end-lakeflow-connect-mo
 - CDC (integrated or standard) into a catalog on Default Storage: `Default Storage for Unity Catalog is not supported on LakeFlow Connect pipelines`. Query-based works there.
 - Classic compute, including a classic gateway, on a serverless-only workspace: `You must use serverless compute in this workspace`.
 - `system` and `hive_metastore` as the target catalog.
-- Modes the product doesn't offer for a source (integrated CDC from PostgreSQL or Lakebase; standard CDC from Oracle), and standard CDC from Lakebase, which refuses the publication it needs: the skill should say so and create nothing, which the matrix checks.
+- Modes the product doesn't offer for a source (integrated CDC from PostgreSQL or Lakebase; standard CDC from Oracle): the skill should say so and create nothing, which the matrix checks.
 
 GCP, private network paths (private network gateway, PrivateLink), secrets by reference, other database versions, managed services on AWS and GCP, and larger data volumes aren't tested yet: see the plan in [test-matrix.md](../skills/lfc-test-results/references/test-matrix.md#planned).
