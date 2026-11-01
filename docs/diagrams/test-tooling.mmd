@@ -1,0 +1,14 @@
+%% How a prompt becomes a tested result: sources stood up, data generated, pipelines run, rows checked, result recorded
+flowchart LR
+  you(["A prompt"]) --> agent["Coding agent<br/>running these skills' scripts"]
+  agent --> ss["statschema<br/>schema + statistics → DDL for each engine"]
+  agent --> vm["Source VM: slot.sh<br/>Podman + JuiceFS<br/>a copy of any database in seconds"]
+  agent --> cloud["Cloud databases<br/>RDS · Aurora · Azure SQL · Flexible Server<br/>Cloud SQL · Lakebase"]
+  ss --> gen["Data generated inside the database<br/>no rows over the network"]
+  vm --> gen
+  cloud --> gen
+  gen --> net["Firewall opened to the workspace<br/>UC connection created"]
+  net --> run["Pipelines: Lakeflow Connect · Zerobus<br/>reverse ETL back out"]
+  run --> chk["Changes at a fixed rate<br/>rows checked: source, Databricks, target"]
+  chk --> rec["Recorded: PASS / FAIL<br/>with the runtime and the scripts' commit"]
+  rec -. "the next run starts from what's known" .-> agent
