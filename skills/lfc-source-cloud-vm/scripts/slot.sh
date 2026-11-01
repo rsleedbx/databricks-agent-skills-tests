@@ -4,11 +4,12 @@
 # bash32: exempt (runs on the Linux VM)
 #   masters                                   the masters a database can start from ($ROOT/masters)
 #   ls [--all]                                your databases (--all: everyone's): engine, state, port, created, last up
-#   up <engine> <name> [--from <master> | --empty]
+#   up <engine> <name> [--from <master> | --empty] [--park]
 #                                             start <name>: resume it if it exists, else clone a master (fs_clone:
 #                                             juicefs clone or an XFS reflink) or start empty. Engines: postgres, mysql,
 #                                             sqlserver, oracle, mariadb, db2, informix, cockroachdb, yugabytedb.
-#                                             Parks your other running database first when you're at MAX_PER_OWNER.
+#                                             At your limit of running databases (limits), it stops and names them;
+#                                             --park parks the ones that started first, to make room.
 #                                             Prints one JSON line: name, engine, host, port, user, password, container,
 #                                             state, and service (oracle: the PDB lfc_user lives in) and database (the
 #                                             database a test uses, where the engine has one)
@@ -19,6 +20,8 @@
 #                                             running <name> is stopped for the copy and started again after
 #   rm <name>                                 stop it and delete its data
 #   usage [--days <n>] [--all]                hours running per owner in the last n days (default 7), from the ledger
+#   limits                                    your limits on this VM, one JSON line: max_running (0 = none) and
+#                                             hours_per_week (empty: not set here; the client's default applies)
 #   sql <name> [database] [--wide]            run SQL from stdin as the engine's admin in your running database <name>
 #                                             (CDC, change tracking, test tables): tab-separated rows, no headers; the
 #                                             exit status is the SQL's. --wide: SQL Server prints long values whole
@@ -29,9 +32,13 @@
 # another owner; as root without --owner the owner is "admin".
 # Settings, from /etc/lfc-slot.env if present: HOST (address printed for connections; set it on Azure, see host()),
 # ROOT (/mnt/jfs), STATE (/var/lib/lfc/slots), PORT_MIN/PORT_MAX (30000/30063), MAX_RUNNING (vCPUs / CPUS_PER_DB, at least 1), CPUS_PER_DB (2; 1 on a personal VM),
-# MAX_PER_OWNER (1; 0 = no limit, for a personal VM), SECRETS (/root/lfc-src: the admin env files tpc-master.sh used),
+# MAX_PER_OWNER (1; 0 = no limit, for a personal VM; the default when LIMITS doesn't set max_running), SECRETS (/root/lfc-src: the admin env files tpc-master.sh used),
 # LOCK_WAIT (600 s: how long a command waits for another to finish), LOCK (the lock file for one command at a time; default $STATE/.lock: keep it on a local disk when STATE is on a
 # JuiceFS volume, where flock isn't checked here). STATE on /mnt/jfs needs that volume mounted, or the command stops.
+# LIMITS (/etc/lfc-slot.limits): per-owner limits, read on every command, so changing one needs no new slot.sh. One
+# line per owner, and a line "default" for everyone not listed; a key missing from both falls back to the settings:
+#   default max_running=1 hours_per_week=29
+#   alice max_running=4 hours_per_week=60
 set -euo pipefail
 [ -r /etc/lfc-slot.env ] && . /etc/lfc-slot.env
 ROOT=${ROOT:-/mnt/jfs} STATE=${STATE:-/var/lib/lfc/slots} SECRETS=${SECRETS:-/root/lfc-src}
@@ -39,6 +46,16 @@ PORT_MIN=${PORT_MIN:-30000} PORT_MAX=${PORT_MAX:-30063} MAX_PER_OWNER=${MAX_PER_
 CPUS_PER_DB=${CPUS_PER_DB:-2}
 MAX_RUNNING=${MAX_RUNNING:-$(( $(nproc) / CPUS_PER_DB ))}; [ "$MAX_RUNNING" -ge 1 ] || MAX_RUNNING=1
 LOCK=${LOCK:-$STATE/.lock}
+LIMITS=${LIMITS:-/etc/lfc-slot.limits}
+limit() {   # limit <key> <fallback>: <key>=<value> on the owner's line in LIMITS, else on the default line, else <fallback>
+  local who v
+  for who in "$OWNER" default; do
+    v=$(awk -v w="$who" -v k="$1" '$1 == w { for (i = 2; i <= NF; i++) if (index($i, k "=") == 1) v = substr($i, length(k) + 2) }
+                                   END { print v }' "$LIMITS" 2>/dev/null || true)
+    [ -n "$v" ] && { echo "$v"; return; }
+  done
+  echo "$2"
+}
 lock() {   # one command at a time; LOCK_WAIT (600 s) bounds the wait behind another command instead of hanging with it
   flock -w "${LOCK_WAIT:-600}" 9 || die "another slot command still holds $LOCK after ${LOCK_WAIT:-600} s: see it with pgrep -af lfc-slot"
 }
@@ -232,20 +249,23 @@ case $CMD in
 
   up)
     E=${1:-}; N=${2:-}; shift 2 || usage; name_ok "$N"; engine "$E"
-    FROM="" EMPTY=0
-    while [ $# -gt 0 ]; do case $1 in --from) FROM=${2:-}; shift 2 ;; --empty) EMPTY=1; shift ;; *) usage ;; esac; done
+    FROM="" EMPTY=0 PARK=0
+    while [ $# -gt 0 ]; do case $1 in --from) FROM=${2:-}; shift 2 ;; --empty) EMPTY=1; shift ;; --park) PARK=1; shift ;; *) usage ;; esac; done
     exec 9>"$LOCK"; lock
     M=$(meta "$OWNER" "$N"); D=$ROOT/dbs/$OWNER/$N; C=$(cname "$OWNER" "$N")
     if [ -f "$M" ]; then
       [ "$(field "$M" engine)" = "$E" ] || die "$N is a $(field "$M" engine) database"
     fi
     if running "$OWNER" "$N"; then :; else
-      # one running database per owner (MAX_PER_OWNER), then the VM's limit (MAX_RUNNING)
-      if [ "$MAX_PER_OWNER" -gt 0 ]; then
-        mine=$(for m in $(all_metas); do o=$(basename "$(dirname "$m")"); n=$(basename "$m" .json); [ "$o" = "$OWNER" ] && [ "$n" != "$N" ] && running "$o" "$n" && echo "$n"; done || true)
+      # the owner's limit of running databases (LIMITS, else MAX_PER_OWNER), then the VM's limit (MAX_RUNNING)
+      PER=$(limit max_running "$MAX_PER_OWNER"); [[ $PER =~ ^[0-9]+$ ]] || die "max_running for $OWNER in $LIMITS isn't a number: $PER"
+      if [ "$PER" -gt 0 ]; then
+        # yours, the one that started first first (the container's start time)
+        mine=$(for m in $(all_metas); do o=$(basename "$(dirname "$m")"); n=$(basename "$m" .json); [ "$o" = "$OWNER" ] && [ "$n" != "$N" ] && running "$o" "$n" && echo "$(podman inspect -f '{{.State.StartedAt}}' "$(cname "$o" "$n")" 2>/dev/null) $n"; done | sort | awk '{print $NF}' || true)
         cnt=$(grep -c . <<<"$mine" || true)
-        if [ "$cnt" -ge "$MAX_PER_OWNER" ]; then
-          for n in $mine; do echo "slot: parking your running database $n first (one at a time on this VM)" >&2; park_one "$OWNER" "$n"; done
+        if [ "$cnt" -ge "$PER" ]; then
+          [ $PARK = 1 ] || die "you have $cnt of $PER running databases on this VM ($(tr '\n' ' ' <<<"$mine" | sed 's/ $//')): park one first (park <name>), or up again with --park to park the one that started first"
+          for n in $(head -n $(( cnt - PER + 1 )) <<<"$mine"); do echo "slot: parking your running database $n first ($PER at a time for you on this VM)" >&2; park_one "$OWNER" "$n"; done
         fi
       fi
       run_now=$(podman ps --format '{{.Names}}' | grep -c '^lfc-slot-' || true)
@@ -347,6 +367,11 @@ case $CMD in
     if [ -d "$D" ]; then juicefs rmr "$D" >/dev/null 2>&1 || rm -rf "${D:?}"; fi
     rm -f "$M" "$STATE/$OWNER/$N.env" "$STATE/$OWNER/$N.login"
     log "$N" rm; echo "removed $N" ;;
+
+  limits)
+    PER=$(limit max_running "$MAX_PER_OWNER") H=$(limit hours_per_week "")
+    jq -cn --arg o "$OWNER" --arg m "$PER" --arg h "$H" \
+      '{owner: $o, max_running: ($m | tonumber), hours_per_week: (if $h == "" then null else ($h | tonumber) end)}' ;;
 
   usage)
     DAYS=7 all=0
