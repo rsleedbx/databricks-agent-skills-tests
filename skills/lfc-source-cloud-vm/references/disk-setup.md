@@ -33,6 +33,17 @@ ssh -i ~/.ssh/lfc_test_rsa "$USER_HOST" \
 
 Always run Podman with `sudo`. Rootless Podman stores everything under `~/.local/share/containers`, on the OS disk, not on XFS.
 
+### Logical sector size: 4096 or 512
+
+A data disk's logical sector size decides the smallest direct-I/O write it accepts. [Azure Premium SSD v2](https://learn.microsoft.com/en-us/azure/virtual-machines/disks-deploy-premium-v2) (and Ultra Disk) is 4096 by default: "Premium SSD v2 disks support a 4k physical sector size by default, but you can configure them to use a 512E sector size." The OS disk and Premium SSD (v1) are 512. Check: `sudo blockdev --getss /dev/disk/azure/scsi1/lun0` (or `cat /sys/block/<dev>/queue/logical_block_size`).
+
+| Engine | On a 4096-byte-sector disk |
+|---|---|
+| Db2 11.5 | `CREATE DATABASE` fails: `SQL0293N Error accessing a table space container.` `db2diag.log` shows `pwrite` of 512 bytes, `OSERR: EINVAL (22)`, `DIO/CIO Mode = Yes`. Set `db2set DB2_4K_DEVICE_SUPPORT=ON`, restart the instance (`db2stop force; db2start`), then create the database. `slot.sh` and `tpc-master.sh` do this (Db2 starts without `DBNAME`, the setting stays in the instance home, so clones keep it) |
+| Postgres, MySQL, MariaDB, SQL Server 2022, Oracle 23ai Free, Informix 14.10, CockroachDB, YugabyteDB | no change: each built an SF 1 (Oracle, Informix: SF 0.1) TPC master on a 4096-byte-sector disk |
+
+To get 512 instead (only a new disk; an existing disk's sector size can't change): `az disk create ... --sku PremiumV2_LRS --logical-sector-size 512`. An earlier test VM's Premium SSD v2 data disk was created with 512, and Db2 made its database there without the setting.
+
 ## For Native Databases: Use OS Disk
 
 Native MySQL, PostgreSQL, and SQL Server packages use the OS disk for database files. Ensure `/` has at least 50 GB free:
