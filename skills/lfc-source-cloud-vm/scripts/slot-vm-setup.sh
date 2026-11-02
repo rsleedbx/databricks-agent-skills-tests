@@ -21,7 +21,7 @@
 #   .state/, .secrets/ for the admin env files), and slot.sh clones a master with `cp --reflink`. VOLUME, BUCKET and
 #   azure.env aren't used. A disk from the old layout (lfc-data/masters, lfc-data/secrets) is moved into place. rclone
 #   and zstd are installed for the copy to object storage the admin runs before the VM is deleted.
-#   MASTERS_URL=https://<account>.blob.core.windows.net/<container> with MASTERS (all, a comma list, or none for the admin envs
+#   MASTERS_URL=https://<account>.blob.core.windows.net/<container> with MASTERS (all by default, a comma list, or none for the admin envs
 #   only) and MASTERS_SAS_FILE (a read SAS in a root-only file, mode 600; deleted when this ends): the masters masters-export.sh put
 #   there go into ROOT/masters, and every admin env in its manifest into SECRETS (mode 600). `slot-vm-setup.sh masters` with those
 #   settings adds them to a VM set up already; on a JuiceFS VM, the same settings with no VOLUME do that too (the volume isn't touched).
@@ -49,7 +49,7 @@ url_cfg() { printf 'url = "%s"\n' "$1"; }   # the URL, with the SAS, reaches cur
 bl() { local b=$1 q=$2; shift 2; curl -sS --retry 3 -K <(url_cfg "$MU/$b?${q:+$q&}$MSAS") "$@"; }   # bl <blob> <query> curl args...
 masters_import() {   # MASTERS, MASTERS_URL, MASTERS_SAS_FILE: the masters and admin envs of the container's manifest
   local n e want f chosen="" seen="" names rc got sha dir stg h code
-  : "${MASTERS:?MASTERS=all or a comma list of masters}" "${MASTERS_SAS_FILE:?MASTERS_SAS_FILE=<root-only file with the container SAS>}"
+  MASTERS=${MASTERS:-all}; : "${MASTERS_SAS_FILE:?MASTERS_SAS_FILE=<root-only file with the container SAS>}"
   MU=${MASTERS_URL:?MASTERS_URL=https://<account>.blob.core.windows.net/<container>}; MU=${MU%/}
   [ -f "$MASTERS_SAS_FILE" ] || die "no $MASTERS_SAS_FILE"
   trap 'rm -f "$MASTERS_SAS_FILE"; [ -z "${MT:-}" ] || rm -rf "$MT"; [ -z "${T:-}" ] || rm -rf "$T"' EXIT   # the SAS goes when this ends
@@ -91,12 +91,13 @@ masters_import() {   # MASTERS, MASTERS_URL, MASTERS_SAS_FILE: the masters and a
     if [ -d "$dir" ]; then jq -cn --arg m "$n" --arg e "$e" '{master: $m, engine: $e, state: "exists"}'; continue; fi
     sha=$(jq -r --arg n "$n" '.masters[$n].sha256' "$MT/manifest.json")
     # the blob streams through sha256 and zstd into a staging folder: it becomes the master only when the sum matches
-    stg=$MROOT/masters/.incoming-$n; rm -rf "$stg"; install -d "$stg"; h=$MT/$n.sha
+    stg=$MROOT/masters/.incoming-$n; rm -rf "$stg"; install -d "$stg"; h=$MT/$n.sha; fifo=$MT/$n.fifo; mkfifo "$fifo"
+    sha_stdin < "$fifo" > "$h" & shp=$!   # the sum reads the fifo that tee fills; this shell waits for it by PID (a process substitution's isn't ours)
     set +e
-    bl "$n.tar.zst" "" -fsS | tee >(sha_stdin > "$h") | zstd -dc -q | tar -x --numeric-owner -C "$stg"
+    bl "$n.tar.zst" "" -fsS | tee "$fifo" | zstd -dc -q | tar -x --numeric-owner -C "$stg"
     rc=("${PIPESTATUS[@]}")
+    wait "$shp"   # tee has closed the fifo, so the sum is complete when this returns
     set -e
-    wait   # the checksum is written by its own process: done when this returns
     got=$(cut -c1-64 "$h" 2>/dev/null || true)
     if [ "${rc[0]}" != 0 ] || [ "${rc[1]}" != 0 ] || [ "${rc[2]}" != 0 ] || [ "${rc[3]}" != 0 ] || [ "$got" != "$sha" ] || [ ! -d "$stg/$n" ]; then
       rm -rf "${stg:?}"; die "$n: the download didn't verify (sha256 ${got:-none}, manifest $sha, statuses ${rc[*]}): the partial master is removed"
@@ -106,6 +107,11 @@ masters_import() {   # MASTERS, MASTERS_URL, MASTERS_SAS_FILE: the masters and a
     jq -cn --arg m "$n" --arg e "$e" '{master: $m, engine: $e, state: "imported"}'
   done
 }
+# with MASTERS_URL the SAS file is checked before any setup step: a full run must not stop at its masters step with the rest done
+if [ -n "${MASTERS_URL:-}" ]; then
+  [ -f "${MASTERS_SAS_FILE:-}" ] || die "MASTERS_SAS_FILE=<root-only file with the container SAS> (MASTERS_URL is set): nothing was set up"
+  private_file "$MASTERS_SAS_FILE" || die "$MASTERS_SAS_FILE: chmod 600 it (no group or other access)"
+fi
 # masters only, into an existing setup: `slot-vm-setup.sh masters`, or on a JuiceFS VM the same settings with no VOLUME (the volume
 # is then never formatted or re-created: the masters and envs are fetched and the mount must be there)
 if [ "${1:-}" = masters ] || { [ -n "${MASTERS_URL:-}" ] && [ -z "${VOLUME:-}" ] && [ "$STORAGE" = juicefs ]; }; then masters_import; exit 0; fi

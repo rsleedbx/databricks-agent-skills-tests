@@ -159,13 +159,15 @@ ready() {
   fi
   probe "$2" | PROBE_TIMEOUT=30 sql "$1" "$2" >/dev/null 2>&1
 }
+# informix_os <container> <env file>: the Informix admin's OS password (user informix) from its env file
+informix_os() { sed -n 's/^INFORMIX_PASSWORD=//p' "$2" | sed 's/^/informix:/' | podman exec -i -u root "$1" chpasswd; }
 # prep <engine> <container> <password> <env file>: what a start needs before lfc_user's login: OS users (Db2, Informix),
 # the Informix admin's OS password from its env file, the Informix test database. Every start runs it again (idempotent)
 prep() {
   case $1 in
     db2) printf 'lfc_user:%s\n' "$3" | podman exec -i -u root "$2" sh -c 'read l; id -u lfc_user >/dev/null 2>&1 || useradd -m lfc_user; echo "$l" | chpasswd' ;;
     informix)   # the container's default user is informix: the OS accounts need root
-      sed -n 's/^INFORMIX_PASSWORD=//p' "$4" | sed 's/^/informix:/' | podman exec -i -u root "$2" chpasswd || return 1
+      informix_os "$2" "$4" || return 1
       printf 'lfc_user:%s\n' "$3" | podman exec -i -u root "$2" sh -c 'read l; id -u lfc_user >/dev/null 2>&1 || useradd -m lfc_user; echo "$l" | chpasswd' || return 1
       [ "$(echo "SELECT name FROM sysmaster:sysdatabases WHERE name = 'lfcdb';" | sql "$2" "$1" 2>/dev/null | grep -c lfcdb)" -gt 0 ] \
         || echo "CREATE DATABASE lfcdb WITH LOG;" | sql "$2" "$1" >/dev/null 2>&1 ;;   # dbaccess's messages stay off the JSON line
@@ -201,6 +203,7 @@ rotate_change() {
       | podman exec -i "$c" sqlplus -s -L /nolog >/dev/null || return 1 ;;
     db2) printf '%s\n' "$old" | podman exec -i "$c" bash -c 'read -r p; f=$(mktemp); printf "connect to LFCDB user db2inst1 using %s;\n" "$p" > $f; chown db2inst1 $f; su - db2inst1 -c "db2 -x -t -s -f $f" >/dev/null 2>&1; r=$?; rm -f $f; exit $r' || return 1
          printf 'db2inst1:%s\n' "$new" | podman exec -i -u root "$c" sh -c 'read -r l; echo "$l" | chpasswd' >/dev/null || return 1 ;;
+    # prep() re-applies INFORMIX_PASSWORD from the database's own env file at every start (up applies it before this check too), so a re-created container gets the new value back
     informix) printf '%s\0' "$old" | podman exec -i -u root "$c" unix_chkpwd informix nullok >/dev/null || return 1
               printf 'informix:%s\n' "$new" | podman exec -i -u root "$c" chpasswd >/dev/null || return 1 ;;
     *) return 1 ;;
@@ -395,7 +398,10 @@ case $CMD in
     # container without lfc_user, so the login runs again here (it's idempotent)
     P=$(field "$M" port)
     await_db
-    if [ -f "$STATE/$OWNER/$N.rotate" ]; then rotate_now; fi
+    if [ -f "$STATE/$OWNER/$N.rotate" ]; then   # the change's check reads the OS password the env file gives (Informix: prep sets it after)
+      [ "$E" != informix ] || informix_os "$C" "$STATE/$OWNER/$N.env" || { podman rm -f "$C" >/dev/null 2>&1; die "the Informix admin's OS password in $C failed; run up again"; }
+      rotate_now
+    fi
     prep "$E" "$C" "$(cat "$STATE/$OWNER/$N.login")" "$STATE/$OWNER/$N.env" || { podman rm -f "$C" >/dev/null 2>&1; die "preparing $E in $C failed; run up again"; }
     # a failed login stops the container, so the next up tries again instead of resuming without lfc_user
     login_sql "$E" "$(cat "$STATE/$OWNER/$N.login")" | sql "$C" "$E" >/dev/null || { podman rm -f "$C" >/dev/null 2>&1; die "creating lfc_user in $C failed; run up again"; }

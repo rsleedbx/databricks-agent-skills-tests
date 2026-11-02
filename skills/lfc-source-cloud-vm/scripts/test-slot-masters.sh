@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034   # variables are read by the check strings that ok() evals
 # test-slot-masters.sh: offline checks of masters-export.sh, slot-vm-setup.sh masters, and the admin password change of a
 #   database cloned from a master in slot.sh. Stubs only: a local Blob-style HTTP server (Put Blob, Put Block, Put Block List,
 #   Get, Head), a fake podman that keeps each container's password and logs its calls, a curl that logs its argv (the SAS must
 #   not be on it), and fake timeout, ss, findmnt, juicefs and flock. No VM, no containers, no object storage. One PASS/FAIL line
 #   per check; exit 1 on any FAIL.
 # bash32: exempt (runs the VM scripts with the bash on PATH)
+# shellcheck disable=SC2034   # variables are read by the check strings that ok() evals
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fail=0
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 SAS_SIG=TESTSIG
-mkdir -p "$T/bin" "$T/fp/bin" "$T/fp/run" "$T/fp/db" "$T/fp/envs" "$T/blob"
+mkdir -p "$T/bin" "$T/fp/bin" "$T/fp/run" "$T/fp/db" "$T/fp/envs" "$T/fp/eng" "$T/blob"
 REAL_CURL=$(command -v curl)
 export REAL_CURL ARGV_LOG=$T/argv.log PATH="$T/bin:$PATH"
 cat > "$T/bin/curl" <<'EOF'
@@ -161,10 +161,40 @@ ok "import: a download that doesn't match its sha256 is removed and fails" \
 ok "import: the mismatched run still deletes the SAS file" '[ ! -e "$T/sas.use" ]'
 serve
 
+cp "$T/sas" "$T/sas.u6"; chmod 600 "$T/sas.u6"
+env -u MASTERS STORAGE=local ROOT="$T/vm6" SECRETS="$T/vm6s" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.u6" bash "$S/slot-vm-setup.sh" masters > "$T/imp9.out" 2>"$T/imp9.err"; rc=$?
+ok "import with MASTERS unset: every master of the manifest (as masters-export.sh's default), rc 0" \
+  '[ $rc = 0 ] && [ "$(grep -c "\"state\":\"imported\"" "$T/imp9.out")" = 2 ] && diff -r "$T/root/masters/alpha" "$T/vm6/masters/alpha" >/dev/null'
+
+# a checksum process that writes its sum only after the download ends (a slow sha256sum stub): the sum must be complete when it's read
+mkdir -p "$T/slow/bin"; REAL_SUM=$(if command -v sha256sum >/dev/null; then command -v sha256sum; else echo "/usr/bin/shasum -a 256"; fi)   # the absolute path: the stub shadows the name
+cat > "$T/slow/bin/sha256sum" <<EOF
+#!/usr/bin/env bash
+tmp=\$(mktemp); cat > "\$tmp"; sleep 1; $REAL_SUM < "\$tmp"; rm -f "\$tmp"
+EOF
+chmod +x "$T/slow/bin/sha256sum"
+cp "$T/sas" "$T/sas.slow"; chmod 600 "$T/sas.slow"
+env PATH="$T/slow/bin:$PATH" STORAGE=local ROOT="$T/vm7" SECRETS="$T/vm7s" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.slow" MASTERS=beta \
+  bash "$S/slot-vm-setup.sh" masters > "$T/slow.out" 2>"$T/slow.err"; rc=$?
+ok "a slow checksum (its sum written after the download ends) still verifies: beta imported, rc 0 ($(tr '\n' ' ' < "$T/slow.err" | cut -c1-160))" \
+  '[ $rc = 0 ] && [ "$(grep -c "\"state\":\"imported\"" "$T/slow.out")" = 1 ] && diff -r "$T/root/masters/beta" "$T/vm7/masters/beta" >/dev/null'
+
+# a full setup with MASTERS_URL: the SAS file is checked before any setup step (nothing printed, nothing run)
+out=$(env -u MASTERS_SAS_FILE STORAGE=local HOST=192.0.2.9 MASTERS_URL="$MU" bash "$S/slot-vm-setup.sh" 2>"$T/early.err"); rc=$?
+ok "a full setup with MASTERS_URL and no MASTERS_SAS_FILE: stops before the first step, rc 1, names the setting" \
+  '[ $rc != 0 ] && [ -z "$out" ] && [[ $(cat "$T/early.err") == *MASTERS_SAS_FILE* ]]'
+printf 'sv=x\n' > "$T/sas.open2"; chmod 644 "$T/sas.open2"
+out=$(env STORAGE=local HOST=192.0.2.9 MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.open2" bash "$S/slot-vm-setup.sh" 2>"$T/early2.err"); rc=$?
+ok "a full setup with a SAS file others can read: stops before the first step, rc 1" \
+  '[ $rc != 0 ] && [ -z "$out" ] && [[ $(cat "$T/early2.err") == *"chmod 600"* ]]'
+
 # ---- slot.sh: the admin password of a clone changes once, at its first start
-# the fake podman: a container runs while $FT/run/<name> exists; its env file at start is kept in $FT/envs/<name>; its admin
-# password is in $FT/db/<name> (the one in its env file at its first start); a login with a password (its first stdin line)
-# must match it, and an ALTER that succeeds sets it; FT_FAIL=1 fails every ALTER. Calls are logged in $FT/calls.
+# the fake podman: a container runs while $FT/run/<name> exists; its env file at start is kept in $FT/envs/<name>; its engine
+# (the lfc.engine label) in $FT/eng/<name>; its admin password is in $FT/db/<name> (the one in its env file at its first
+# start). Each engine's change is checked the way slot.sh's rotate_change sends it: the old password from the stdin the
+# command reads (Oracle's CONNECT, Informix's NUL-terminated unix_chkpwd input, Db2's connect file, MYSQL_PWD for the client
+# the engine names); the new one is recorded from the ALTER or chpasswd that carries it. The admin helpers that read the
+# container's env check it. FT_FAIL=1 fails every ALTER. Logins are logged as auth-ok in $FT/calls, with every call.
 cat > "$T/fp/bin/podman" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$FT/calls"
@@ -173,27 +203,68 @@ case $1 in
   inspect) n=${!#}; [ -f "$FT/run/$n" ] || exit 1
            case "$*" in *Running*) echo true ;; *StartedAt*) echo 2026-10-31T10:00:00Z ;; *) exit 1 ;; esac ;;
   ps) ls "$FT/run" ;;
+  logs) echo "DATABASE IS READY TO USE"; echo "(*) Setup has completed" ;;   # the readiness lines of Oracle and Db2
   rm|stop) n=${!#}; rm -f "$FT/run/$n" ;;
-  run) n=""; ef=""
-       while [ $# -gt 0 ]; do case $1 in --name) n=$2; shift 2 ;; --env-file) ef=$2; shift 2 ;; *) shift ;; esac; done
+  run) n=""; ef=""; eng=""
+       while [ $# -gt 0 ]; do
+         case $1 in --name) n=$2; shift 2 ;; --env-file) ef=$2; shift 2 ;;
+           --label) case $2 in lfc.engine=*) eng=${2#lfc.engine=} ;; esac; shift 2 ;; *) shift ;; esac
+       done
        [ -n "$n" ] || exit 1
-       cp "$ef" "$FT/envs/$n"; date > "$FT/run/$n"
-       [ -f "$FT/db/$n" ] || grep -m1 'PASSWORD=' "$ef" | cut -d= -f2 > "$FT/db/$n" || : > "$FT/db/$n"
+       cp "$ef" "$FT/envs/$n"; date > "$FT/run/$n"; [ -z "$eng" ] || echo "$eng" > "$FT/eng/$n"
+       # the admin password at a first start: the env file's, except Informix, whose OS password the image sets to its own default
+       # (slot.sh's prep sets the env file's on each start, after rotate_now: the check of a clone's old one comes first)
+       [ -f "$FT/db/$n" ] || { if [ "$eng" = informix ]; then echo image-default > "$FT/db/$n"; else grep -m1 'PASSWORD=' "$ef" | cut -d= -f2 > "$FT/db/$n" || : > "$FT/db/$n"; fi; }
        ;;
   exec) shift
         while [[ ${1:-} == -* ]]; do case $1 in -u|-e) shift ;; esac; shift; done
-        n=$1; [ -f "$FT/run/$n" ] || { echo "no container $n" >&2; exit 1; }
-        in=$(mktemp "$FT/in.XXXXXX"); cat > "$in"
-        first=$(head -1 "$in")
-        if [[ $first =~ ^Lfc1[0-9a-f]+$ ]]; then
-          [ "$first" = "$(cat "$FT/db/$n")" ] || { echo "auth failed for $n" >&2; rm -f "$in"; exit 1; }
-          echo "auth-ok $n" >> "$FT/calls"
-          grep -q 'SELECT host' "$in" && printf '%%\nlocalhost\n'
-          if grep -q ALTER "$in"; then
-            [ -z "${FT_FAIL:-}" ] || { echo "ALTER failed (test)" >&2; rm -f "$in"; exit 1; }
-            grep -o 'Lfc1[0-9a-f]*' "$in" | tail -1 > "$FT/db/$n"
-          fi
-        fi
+        n=$1; shift; [ -f "$FT/run/$n" ] || { echo "no container $n" >&2; exit 1; }
+        cmd="$*"; eng=$(cat "$FT/eng/$n" 2>/dev/null || true); in=$(mktemp "$FT/in.XXXXXX"); cat > "$in"
+        first=$(head -1 "$in"); db=$(cat "$FT/db/$n")
+        bad() { echo "$1" >&2; rm -f "$in"; exit 1; }
+        login() { [ "$1" = "$db" ] || bad "auth failed for $n"; echo "auth-ok $n" >> "$FT/calls"; }
+        setpw() { [ -n "$1" ] || bad "no new password for $n"; [ -z "${FT_FAIL:-}" ] || bad "ALTER failed (test)"; echo "$1" > "$FT/db/$n"; }
+        envof() { sed -n "s/^$1=//p" "$FT/envs/$n" | head -1; }
+        case $cmd in
+          # postgres: the old password is the first stdin line, read into PGPASSWORD for psql; ALTER USER sets the new one
+          *'read -r p; PGPASSWORD=$p'*) login "$first"
+            setpw "$(sed -n "s/^ALTER USER postgres WITH PASSWORD '\([^']*\)';\$/\1/p" "$in")" ;;
+          # mysql and mariadb: the old password is the first line, MYSQL_PWD for the client the engine names; ALTER sets all roots
+          *'read -r p; MYSQL_PWD=$p exec '*) [[ $cmd == *"exec $eng -h127.0.0.1"* ]] || bad "$eng: the change runs the wrong client: $cmd"
+            login "$first"
+            grep -q 'SELECT host' "$in" && printf '%%\nlocalhost\n'
+            if grep -q ALTER "$in"; then
+              pws=$(sed -n "s/^ALTER USER 'root'@'[^']*' IDENTIFIED BY '\([^']*\)';\$/\1/p" "$in" | sort -u)
+              [ "$(printf '%s\n' "$pws" | wc -l | tr -d ' ')" = 1 ] || bad "root accounts got different passwords"
+              setpw "$pws"
+            fi ;;
+          # Db2: the old password is the first line, printed into the connect file; then chpasswd sets db2inst1's OS password
+          *'read -r p; f=$(mktemp); printf "connect to LFCDB user db2inst1 using %s;'*)
+            [[ $cmd == *'"$p"'* ]] || bad "db2: the connect doesn't pass the password"
+            login "$first" ;;
+          *'read -r l; echo "$l" | chpasswd'*) [ "${first%%:*}" = db2inst1 ] || bad "chpasswd for ${first%%:*}"
+            setpw "${first#db2inst1:}" ;;
+          # sqlserver: the old sa password is the first line, SQLCMDPASSWORD for sqlcmd; ALTER LOGIN sets the new one
+          *'SQLCMDPASSWORD=$p'*) login "$first"
+            setpw "$(sed -n "s/^ALTER LOGIN sa WITH PASSWORD = N'\([^']*\)';\$/\1/p" "$in")" ;;
+          # Oracle: the sqlplus script's CONNECT carries the old sys password in double quotes; sys and system get the new one
+          *'sqlplus -s -L /nolog'*) login "$(sed -n 's/^CONNECT sys\/"\([^"]*\)"@.*AS SYSDBA$/\1/p' "$in")"
+            new=$(sed -n 's/^ALTER USER sys IDENTIFIED BY "\([^"]*\)";$/\1/p' "$in")
+            [ -n "$new" ] && [ "$new" = "$(sed -n 's/^ALTER USER system IDENTIFIED BY "\([^"]*\)";$/\1/p' "$in")" ] \
+              || bad "sys and system: no new password, or two different ones"
+            setpw "$new" ;;
+          # Informix: unix_chkpwd reads the old OS password of informix, NUL-terminated; chpasswd sets the new one
+          'unix_chkpwd informix nullok') [ "$(tail -c1 "$in" | od -An -tx1 | tr -d ' \n')" = 00 ] || bad "unix_chkpwd input isn't NUL-terminated"
+            old=$(tr -d '\0' < "$in")
+            [ "$(wc -c < "$in" | tr -d ' ')" = $(( ${#old} + 1 )) ] || bad "unix_chkpwd input isn't one NUL-terminated password"
+            login "$old" ;;
+          chpasswd) while IFS= read -r l; do case $l in informix:*) setpw "${l#informix:}" ;; esac; done < "$in" ;;
+          # the admin helpers of sql read the admin password from the container's own env: a container not started again fails here
+          *'MYSQL_PWD="$MYSQL_ROOT_PASSWORD"'*) [ "$(envof MYSQL_ROOT_PASSWORD)" = "$db" ] || bad "$n: its env has an old MYSQL_ROOT_PASSWORD" ;;
+          *'MYSQL_PWD="$MARIADB_ROOT_PASSWORD"'*) [ "$(envof MARIADB_ROOT_PASSWORD)" = "$db" ] || bad "$n: its env has an old MARIADB_ROOT_PASSWORD" ;;
+          *'-P "$MSSQL_SA_PASSWORD"'*) [ "$(envof MSSQL_SA_PASSWORD)" = "$db" ] || bad "$n: its env has an old MSSQL_SA_PASSWORD" ;;
+          *) ;;
+        esac
         rm -f "$in"; exit 0 ;;
   *) echo "fake podman: $*" >&2; exit 1 ;;
 esac
@@ -255,6 +326,31 @@ ok "mysql clone: the running container got the new value" '[ "$(env_of "$T/fp/en
 : > "$T/fp/calls"; : > "$T/fp/calls"; out=$(slot up sqlserver ss1 --from sqm 2>"$T/ss1.err"); rc=$?
 ok "sqlserver clone: the sa password changed, and the container started again with it" \
   '[ $rc = 0 ] && [ "$(grep -c "^auth-ok lfc-slot-alice-ss1$" "$T/fp/calls")" = 1 ] && [ "$(grep -c "^run " "$T/fp/calls")" = 2 ] && [ ! -e "$ST/ss1.rotate" ]'
+
+# Oracle, Db2, Informix and MariaDB: an admin env as slot.sh's up writes it, and a master of each
+mkdir -p "$T/fp/root/masters/"{orm,db2m,ifm,mdm}
+printf 'ORACLE_PASSWORD=Lfc1d1d1d1d1d1d1d1d1d1d1d1\n' > "$T/fp/secrets/oracle.env"
+printf 'LICENSE=accept\nDB2INSTANCE=db2inst1\nDB2INST1_PASSWORD=Lfc1e5e5e5e5e5e5e5e5e5e5e5\nDBNAME=LFCDB\n' > "$T/fp/secrets/db2.env"
+printf 'LICENSE=accept\nINFORMIX_PASSWORD=Lfc1f6f6f6f6f6f6f6f6f6f6f6\n' > "$T/fp/secrets/informix.env"
+printf 'MARIADB_ROOT_PASSWORD=Lfc1a7a7a7a7a7a7a7a7a7a7a7\n' > "$T/fp/secrets/mariadb.env"
+# engine, clone name, master, admin key, restarted after the change (1 = the restart list of rotate_now)
+for spec in "oracle ora1 orm ORACLE_PASSWORD 0" "informix ifx1 ifm INFORMIX_PASSWORD 0" "db2 db21 db2m DB2INST1_PASSWORD 1" "mariadb mdb1 mdm MARIADB_ROOT_PASSWORD 1"; do
+  read -r e n m k restarted <<<"$spec"; c=lfc-slot-alice-$n
+  : > "$T/fp/calls"; out=$(slot up "$e" "$n" --from "$m" 2>"$T/$n.err"); rc=$?
+  mp=$(env_of "$T/fp/secrets/$e.env" "$k"); ne=$(env_of "$ST/$n.env" "$k"); dbpw=$(cat "$T/fp/db/$c" 2>/dev/null || true)
+  envpw=$(env_of "$T/fp/envs/$c" "$k"); runs=$(grep -c -- "--name $c " "$T/fp/calls" || true)
+  ok "$e clone: up answers with lfc_user and rc 0 ($(tr '\n' ' ' < "$T/$n.err" | cut -c1-120))" '[ $rc = 0 ] && [ "$(jq -r .user <<<"$out")" = lfc_user ]'
+  ok "$e clone: logged in with the master's password before the change" '[ "$(grep -c "^auth-ok $c\$" "$T/fp/calls")" -ge 1 ]'
+  ok "$e clone: the admin env has a new password (not the master's), and the database has the same one" \
+    '[ -n "$ne" ] && [ "$ne" != "$mp" ] && [ "$ne" = "$dbpw" ]'
+  ok "$e clone: no marker left" '[ ! -e "$ST/$n.rotate" ]'
+  if [ "$restarted" = 1 ]; then
+    ok "$e clone: started again after the change (its helpers read the new env), the change logged in before the start" \
+      '[ "$runs" = 2 ] && [ "$envpw" = "$ne" ] && [ "$(grep -n "^auth-ok $c\$" "$T/fp/calls" | tail -1 | cut -d: -f1)" -lt "$(grep -n -- "--name $c " "$T/fp/calls" | tail -1 | cut -d: -f1)" ]'
+  else
+    ok "$e clone: not started again (the change needs no restart)" '[ "$runs" = 1 ]'
+  fi
+done
 
 : > "$T/fp/calls"; out=$(slot up cockroachdb cr1 --from crm 2>"$T/cr1.err"); rc=$?
 ok "cockroachdb clone: insecure, nothing to change: no login, no ALTER, marker gone, rc 0" \
