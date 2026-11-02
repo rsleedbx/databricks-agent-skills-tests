@@ -13,11 +13,14 @@
 #                 (no CLI calls); notes on stderr when the settings were last checked over 30 days ago
 #   checked       record today as SETTINGS_CHECKED (after setup, or after a failed call made you re-check a value)
 #   env           export lines for eval: eval "$(settings.sh env)"
+#   workspaces    the workspace profiles of `databricks auth profiles`, numbered, by cloud: host, and whether the login
+#                 works or an account login covers it (* = saved in WORKSPACES or DATABRICKS_PROFILE). Show it and ask
+#                 which ones the user works in often: those become WORKSPACES, the most used DATABRICKS_PROFILE
 #   azure         the subscriptions this az login reaches (name, id, tenant), the saved one marked "saved", the CLI's
 #                 default marked "default": what to show the user when AZ_SUBSCRIPTION is missing
 set -uo pipefail
 F=${LFC_TESTS_SETTINGS:-$HOME/.lfc/tests/settings.env}
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 valid() { case $1 in ''|*[!A-Z0-9_]*|[0-9]*) return 1 ;; esac; }
 value() {   # value KEY: the saved value, unquoted by the shell that wrote it
@@ -61,10 +64,7 @@ case $cmd in
     { command -v aws > /dev/null && for p in $(aws configure list-profiles 2>/dev/null); do   # config only: no network
         a=$(aws configure get sso_account_id --profile "$p" 2>/dev/null); r=$(aws configure get region --profile "$p" 2>/dev/null)
         printf '%s\t%s\t%s\n' "$p" "${a:-?}" "${r:-?}"; done; } > "$T/aws" 2>/dev/null &
-    { command -v databricks > /dev/null && "${TO[@]}" 90 databricks auth profiles -o json | jq -r '.profiles[]
-        | [.name, .host, (if (.host // "") | test("^https://accounts[.]") then "account" else
-             (if (.host // "") | test("azuredatabricks") then "azure" elif (.host // "") | test("gcp[.]databricks") then "gcp" else "aws" end) end),
-           (.account_id // ""), (if .valid then "ok" else "login expired" end)] | @tsv'; } > "$T/dbx" 2>/dev/null &
+    { command -v databricks > /dev/null && "$0" workspaces; } > "$T/dbx" 2>/dev/null &
     { if command -v podman > /dev/null; then
         if [ "$(uname -s)" = Darwin ]; then
           command -v limactl > /dev/null && "${TO[@]}" 30 limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | sed 's/^/lima vm: /'
@@ -75,8 +75,19 @@ case $cmd in
     echo "== saved ($F)"; [ -f "$F" ] && cat "$F"; echo
     echo "== Azure subscriptions (name, id, tenant, saved/default)"; cat "$T/azure"; echo
     echo "== AWS profiles (profile, account, region)"; cat "$T/aws"; echo
-    echo "== Databricks profiles (name, host, cloud, account id, login)"; cat "$T/dbx"; echo
+    echo "== Databricks workspace profiles: which do you work in often? (number, cloud, profile, login, host)"; cat "$T/dbx"; echo
     echo "== local Podman"; cat "$T/podman" ;;
+  workspaces)
+    mine=",$(value WORKSPACES 2>/dev/null || true),$(value DATABRICKS_PROFILE 2>/dev/null || true),"
+    "${TO[@]}" 90 databricks auth profiles -o json 2>/dev/null | jq -r --arg mine "$mine" '
+      def cloud: (.host // "") | if test("azuredatabricks") then "azure" elif test("gcp[.]databricks") then "gcp" else "aws" end;
+      def acct: (.host // "") | test("^https://accounts[.]");
+      [.profiles[] | select(acct)] as $a
+      | [.profiles[] | select(acct | not)] | sort_by(cloud, .name) | to_entries[]
+      | .value as $w | ($a | map(select(.valid and .account_id == $w.account_id and .account_id != null)) | .[0].name // "") as $cov
+      | [ "\(.key + 1)\(if ($mine | contains("," + $w.name + ",")) then "*" else "" end)", ($w | cloud), $w.name,
+          (if $w.valid then "login ok" elif $cov != "" then "expired, covered by account login \($cov)"
+           elif ($w | cloud) == "azure" then "expired; the Azure CLI may cover it" else "expired" end), $w.host ] | @tsv' ;;
   env) [ -f "$F" ] || exit 0; grep -E '^[A-Z_][A-Z0-9_]*=' "$F" | sed 's/^/export /' ;;
   azure)
     saved=$(value AZ_SUBSCRIPTION 2>/dev/null || true)

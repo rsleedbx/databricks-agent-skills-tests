@@ -33,7 +33,9 @@ last checked over 30 days ago.
      default marked. Recommend the one the user's earlier resources were made in (their records), not the CLI default.
      A subscription in a tenant the login doesn't reach needs `az login --tenant <tenant id>`.
    - `AWS_PROFILE`, `AWS_REGION`: `aws configure list-profiles`; `aws sts get-caller-identity --profile <p>` for the account.
-   - `DATABRICKS_PROFILE`, `WORKSPACES`: from `setup`'s Databricks list. A profile whose login expired often still works
+   - `DATABRICKS_PROFILE`, `WORKSPACES`: show `settings.sh workspaces` (the user's `databricks auth profiles`, numbered by
+     cloud, with each login's state) and ask which ones they work in often; save those as `WORKSPACES` and the one used
+     most as `DATABRICKS_PROFILE`. Don't pick for them from other records. A profile whose login expired often still works
      through **account-token-fallback** (`ws-token.sh`: the Azure CLI on Azure, or the account login); ask for a login
      only when that fails, and then for the account's login first (it covers every workspace in the account).
    - `SOURCE_HOST`: `podman` (local, **lfc-source-podman**) or `vm` (a cloud VM, **lfc-source-cloud-vm**), and `SOURCE_VM`
