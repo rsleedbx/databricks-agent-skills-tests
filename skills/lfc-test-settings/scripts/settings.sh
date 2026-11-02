@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
-# settings.sh show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|env|azure: the answers a test skill asks for
-#   once (cloud identity, region, workspace profile, catalog, resource group, owner), kept per user in one file outside
-#   the repo, so later runs read them instead of asking again. File: $LFC_TESTS_SETTINGS, default
-#   ~/.lfc/tests/settings.env (mode 600, folder 700); lines KEY=value, shell-quoted, never committed.
+# settings.sh setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test
+#   skill asks for once (cloud accounts, region, workspaces, Podman or a VM, catalog, resource group, owner), kept per user
+#   in one file outside the repo, so later runs read them instead of asking or listing again. File: $LFC_TESTS_SETTINGS,
+#   default ~/.lfc/tests/settings.env (mode 600, folder 700); lines KEY=value, shell-quoted, never committed.
+#   setup         the first run (or a refresh): one parallel pass over what changes rarely (Azure subscriptions, AWS
+#                 profiles and their accounts, Databricks workspace profiles and whether each login works, local Podman),
+#                 next to what's saved, so every question is asked at once. Then `set` the answers and `checked`.
 #   show          every key and value (no secrets belong here: passwords stay in their own 0600 files)
 #   get KEY       the value; exit 1 if it isn't set
 #   set K=V ...   add or replace keys (KEY: capital letters, digits and _)
-#   require K ... exit 1 and list the missing keys, one per line, so the skill asks for only those
+#   require K ... exit 1 and list the missing keys, one per line, so the skill asks for only those. Reads the file only
+#                 (no CLI calls); notes on stderr when the settings were last checked over 30 days ago
+#   checked       record today as SETTINGS_CHECKED (after setup, or after a failed call made you re-check a value)
 #   env           export lines for eval: eval "$(settings.sh env)"
 #   azure         the subscriptions this az login reaches (name, id, tenant), the saved one marked "saved", the CLI's
 #                 default marked "default": what to show the user when AZ_SUBSCRIPTION is missing
 set -uo pipefail
 F=${LFC_TESTS_SETTINGS:-$HOME/.lfc/tests/settings.env}
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 valid() { case $1 in ''|*[!A-Z0-9_]*|[0-9]*) return 1 ;; esac; }
 value() {   # value KEY: the saved value, unquoted by the shell that wrote it
   [ -f "$F" ] || return 1
@@ -42,7 +48,35 @@ case $cmd in
   require)
     [ $# -gt 0 ] || usage; miss=0
     for k; do valid "$k" || usage; v=$(value "$k") && [ -n "$v" ] || { echo "$k"; miss=1; }; done
+    c=$(value SETTINGS_CHECKED 2>/dev/null || true)
+    if [ -n "$c" ]; then
+      age=$(jq -n --arg d "$c" '((now - ($d + "T00:00:00Z" | fromdateiso8601)) / 86400) | floor' 2>/dev/null || echo 0)
+      [ "${age:-0}" -le 30 ] || echo "settings: last checked $c ($age days ago): run setup to refresh them" >&2
+    fi
     exit $miss ;;
+  checked) init || exit 1; "$0" set "SETTINGS_CHECKED=$(date -u +%Y-%m-%d)" ;;
+  setup)
+    T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
+    { command -v az > /dev/null && "${TO[@]}" 60 "$0" azure; } > "$T/azure" 2>/dev/null &
+    { command -v aws > /dev/null && for p in $(aws configure list-profiles 2>/dev/null); do   # config only: no network
+        a=$(aws configure get sso_account_id --profile "$p" 2>/dev/null); r=$(aws configure get region --profile "$p" 2>/dev/null)
+        printf '%s\t%s\t%s\n' "$p" "${a:-?}" "${r:-?}"; done; } > "$T/aws" 2>/dev/null &
+    { command -v databricks > /dev/null && "${TO[@]}" 90 databricks auth profiles -o json | jq -r '.profiles[]
+        | [.name, .host, (if (.host // "") | test("^https://accounts[.]") then "account" else
+             (if (.host // "") | test("azuredatabricks") then "azure" elif (.host // "") | test("gcp[.]databricks") then "gcp" else "aws" end) end),
+           (.account_id // ""), (if .valid then "ok" else "login expired" end)] | @tsv'; } > "$T/dbx" 2>/dev/null &
+    { if command -v podman > /dev/null; then
+        if [ "$(uname -s)" = Darwin ]; then
+          command -v limactl > /dev/null && "${TO[@]}" 30 limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | sed 's/^/lima vm: /'
+          command -v limactl > /dev/null || echo "podman on macOS without Lima: see lfc-source-podman"
+        else echo "native podman $(podman --version 2>/dev/null | awk '{print $NF}')"; fi
+      else echo "no podman (lfc-source-podman to install, or a cloud VM: lfc-source-cloud-vm)"; fi; } > "$T/podman" 2>&1 &
+    wait
+    echo "== saved ($F)"; [ -f "$F" ] && cat "$F"; echo
+    echo "== Azure subscriptions (name, id, tenant, saved/default)"; cat "$T/azure"; echo
+    echo "== AWS profiles (profile, account, region)"; cat "$T/aws"; echo
+    echo "== Databricks profiles (name, host, cloud, account id, login)"; cat "$T/dbx"; echo
+    echo "== local Podman"; cat "$T/podman" ;;
   env) [ -f "$F" ] || exit 0; grep -E '^[A-Z_][A-Z0-9_]*=' "$F" | sed 's/^/export /' ;;
   azure)
     saved=$(value AZ_SUBSCRIPTION 2>/dev/null || true)

@@ -183,7 +183,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 ## lfc-test-settings
 
-- `skills/lfc-test-settings/scripts/settings.sh` show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|env|azure: the answers a test skill asks for once (clo...
+- `skills/lfc-test-settings/scripts/settings.sh` setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test skill asks...
 
 ## lfc-ui-capture
 
