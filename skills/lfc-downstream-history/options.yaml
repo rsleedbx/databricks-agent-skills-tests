@@ -1,0 +1,45 @@
+topic: History downstream of a Lakeflow Connect table
+question: Keep each row's history when the connector writes SCD type 1 only, or a full refresh overwrites the table
+options:
+  - name: The connector's own SCD type 2
+    setup: {effort: 1, what: one table_configuration setting}
+    operate: {effort: 1, what: none}
+    breaks: [full refresh rebuilds the history from the source]
+    recovery: none
+    status: not-supported
+    evidence: "SharePoint FAQ (Databricks docs): SCD type 2 not supported for SharePoint; other connectors per their docs"
+  - name: Append-only table (structured files)
+    setup: {effort: 1, what: the default for structured files}
+    operate: {effort: 1, what: none}
+    breaks: [full refresh empties the table]
+    recovery: "none; history before the refresh is lost"
+    status: docs
+    evidence: SharePoint FAQ (Databricks docs)
+  - name: AUTO CDC FROM SNAPSHOT
+    setup: {effort: 1, what: "one pipeline: history-snapshot.py, 5 lines"}
+    operate: {effort: 2, what: full table scan each run; edits between runs become one version}
+    breaks: []
+    recovery: "none needed; a full refresh of the table (17 history runs during it) left the history correct"
+    status: tested
+    evidence: scripts/sqlserver-history-snapshot.sh (6 of 6 claims)
+  - name: Change feed into a log and AUTO CDC
+    setup: {effort: 2, what: "one pipeline: audit-history.py, about 60 lines"}
+    operate: {effort: 3, what: a recovery pipeline after every full refresh}
+    breaks: [full refresh of the table (DELTA_SCHEMA_NOT_SET)]
+    recovery: "new pipeline with backfill_from = the old schema; gap changes show only as the state at the refresh"
+    status: tested
+    evidence: lfc-schema-change-test scripts/sqlserver-cdf-history-recovery.sh (6 of 6 claims)
+  - name: MERGE written by hand
+    setup: {effort: 5, what: "your code for ordering, deletes and replays"}
+    operate: {effort: 4, what: tombstones and replay rules you keep}
+    breaks: [whatever the code doesn't handle]
+    recovery: your code
+    status: untested
+    evidence: zerobus-debezium-test merge-silver.py and references/trade-offs.md (silver, not this question)
+  - name: Delta time travel
+    setup: {effort: 1, what: none}
+    operate: {effort: 2, what: only within the retention window}
+    breaks: [vacuum and log retention]
+    recovery: none
+    status: docs
+    evidence: Delta time travel docs
