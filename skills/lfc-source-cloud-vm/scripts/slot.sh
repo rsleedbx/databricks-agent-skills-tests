@@ -234,8 +234,8 @@ park_one() {   # owner name
 }
 
 case $CMD in
-  masters)
-    for d in "$ROOT"/masters/*/; do [ -d "$d" ] && echo "$(basename "$d")"; done ;;
+  masters)   # none (a VM made without masters): no lines, exit 0
+    for d in "$ROOT"/masters/*/; do if [ -d "$d" ]; then basename "$d"; fi; done ;;
 
   ls)
     all=0; [ "${1:-}" = --all ] && all=1
