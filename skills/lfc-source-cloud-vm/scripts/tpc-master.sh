@@ -166,6 +166,7 @@ podman rm $C > /dev/null 2>&1
 echo "master on disk: $(du -sh $M | cut -f1), files $(find $M -type f | wc -l)"
 # into JuiceFS (then wait until its write-back staging is uploaded), or a reflink copy when $OUT is on the same XFS
 t cp -a --reflink=auto $M $OUT/$NAME || { echo "copy to $OUT/$NAME failed: the build is still in $M"; exit 1; }
+echo "$E" > $OUT/$NAME.engine   # the engine beside the master (masters-export.sh reads it; the admin env is $SECRETS/$E.env)
 until ! find $JC -path '*rawstaging*' -type f 2>/dev/null | grep . > /dev/null; do sleep 2; done
 echo "copied to $OUT/$NAME: $(juicefs info -r $OUT/$NAME 2>/dev/null | awk '/size:/ {print $2 $3; exit}')"
 rm -rf "${M:?}"

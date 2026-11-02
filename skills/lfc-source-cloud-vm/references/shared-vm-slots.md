@@ -61,6 +61,14 @@ alice max_running=4 hours_per_week=60
 
 A clone of a master uses the master's admin env file (`$SECRETS/<engine>.env`, the one `tpc-master.sh` built it with); an empty database gets a new admin password. Passwords and env files stay in `$STATE/<owner>/` (mode 700, root).
 
+## Masters in object storage, and admin passwords
+
+`scripts/masters-export.sh` (root, on a VM that has the masters) writes each master to a Blob container as `<master>.tar.zst` (tar `--numeric-owner`, zstd), each engine's admin env as `<engine>.env`, and `manifest.json` (`masters: {<name>: {engine, bytes, sha256, files}}`, `envs: [{engine, file, bytes, sha256}]`, `created`). Settings: `MASTERS_URL=https://<account>.blob.core.windows.net/<container>`, `MASTERS=all|<comma list>`, `MASTERS_SAS_FILE` (root-only, mode 600, a SAS with read and write; read from the file, never on a command line). The archive goes to a temp file under `EXPORT_TMP` (default `/var/lib/containers/masters-export`, free space checked first). A master whose blob already has its sha256 isn't uploaded again. Each master's engine comes from `<master>.engine` beside it (`tpc-master.sh` writes it) or `MASTER_ENGINES=name=engine,...`.
+
+`scripts/slot-vm-setup.sh` takes them back: `MASTERS_URL`, `MASTERS` (`all`, a comma list, or `none` for the admin envs only) and `MASTERS_SAS_FILE` (a read SAS, mode 600, deleted when the run ends). Each archive streams through sha256 and zstd into a staging folder, which becomes the master only when the sum matches; a mismatch removes it and stops. Every admin env in the manifest goes to `$SECRETS` (mode 600); a different file already there stops the run. To add masters to a VM that's set up: `slot-vm-setup.sh masters` with the same settings, or on a JuiceFS VM the same settings with no `VOLUME` (the volume is never formatted or re-created; the mount must be there).
+
+**Admin password of a clone.** A database `up --from <master>` (and a `clone`) gets a new admin password at its first start: the master's password is the one its data was built with, so the change logs in with it, sets a new random one, writes the env file after the change succeeded, and starts the container again where the engine's admin helpers read the env (MySQL, MariaDB, SQL Server, Db2). A failed change keeps the working password and tries again at the next `up`. Cockroachdb and yugabytedb run insecure: nothing to change. An empty database already has its own password.
+
 ## Set up (once per VM)
 
 `scripts/slot-vm-setup.sh` does steps 1 and 2 on a new Ubuntu 24.04 VM with a blank data disk, as root, from a folder holding it, `disk-setup.sh`, `slot.sh` and `slot-ssh.sh`. First write `/etc/juicefs/azure.env` (the connection string, [juicefs-branches.md](juicefs-branches.md), "Access"), then:
