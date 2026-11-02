@@ -2,7 +2,8 @@
 # test-slot-limits.sh: checks slot.sh's per-owner limits against a fake podman and flock (no VM, no containers): the
 #   LIMITS lookup (owner line, default line, a key missing from the owner's line, a key that starts like another, no
 #   file), `up` at the limit stopping without parking, and `up --park` parking just enough, the earliest started
-#   first. One PASS/FAIL line per check; exit 1 on any FAIL.
+#   first; `masters` on a VM without masters (no lines, exit 0) and with one (its folder, not its .engine file). One
+#   PASS/FAIL line per check; exit 1 on any FAIL.
 # bash32: exempt (slot.sh runs on the Linux VM; this runs it with the bash on PATH)
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fail=0
@@ -52,4 +53,9 @@ ok "under the limit: nothing parked (others' databases don't count)" '[ ! -s "$T
 printf 'default max_running=x\n' > "$T/limits"
 err=$(slot carol up postgres y 2>&1 >/dev/null); rc=$?
 ok "a bad max_running: stops with the file named" '[ $rc = 1 ] && [[ $err == *"max_running for carol in $T/limits isn'"'"'t a number: x"* ]]'
+# masters: a VM made without masters has no masters folder; the .engine file beside a master isn't one
+out=$(slot carol masters); rc=$?
+ok "no masters: no lines, exit 0" '[ $rc = 0 ] && [ -z "$out" ]'
+install -d "$T/root/masters/postgres16-tpc-sf1"; echo postgres > "$T/root/masters/postgres16-tpc-sf1.engine"
+ok "masters: the folders only" '[ "$(slot carol masters)" = postgres16-tpc-sf1 ]'
 exit $fail
