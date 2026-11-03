@@ -184,6 +184,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 ## lfc-test-settings
 
 - `skills/lfc-test-settings/scripts/settings.sh` setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test skill asks...
+- `skills/lfc-test-settings/scripts/test-settings.sh` settings.sh offline on a temporary settings file (LFC_TESTS_SETTINGS), with fake databricks and az on PATH: set/get/u...
 
 ## lfc-ui-capture
 

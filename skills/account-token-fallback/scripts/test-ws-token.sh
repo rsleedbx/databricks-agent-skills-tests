@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-ws-token.sh: checks ws-token.sh's TO (its timeout: perl alarm, as timeout(1) isn't on macOS), the line from the
 #   script itself: a command's exit status passes through, and a command that hangs is stopped. Then ws-token.sh itself
-#   with a fake databricks and az on PATH: a deleted workspace (exit 3, no login asked), an expired account login (named
+#   with a fake databricks and az on PATH: a deleted workspace (exit 3, no login asked), a host that doesn't resolve (exit 4), an expired account login (named
 #   first), an account token the workspace takes. One PASS/FAIL line per check; exit 1 on any FAIL.
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); fail=0
@@ -48,5 +48,7 @@ FK_AZ=bad FK_ACCT=good FK_ME=ok wst; rc=$?
 ok "an account token the workspace takes: exit 0, the config file printed and mode 600" \
   '[ $rc = 0 ] && [ "$(cat "$T/out")" = "$T/ws1.cfg" ] && [ "$(stat -f %Lp "$T/ws1.cfg" 2>/dev/null || stat -c %a "$T/ws1.cfg")" = 600 ]'
 rm -f "$T/ws1.cfg"; FK_AZ= FK_ACCT=good FK_ME="Error: dial tcp: lookup adb-1.2.azuredatabricks.net: no such host" wst; rc=$?
-ok "a host that no longer resolves: exit 3" '[ $rc = 3 ] && grep -q "no longer exists" "$T/err"'
+ok "a host that doesn't resolve: exit 4, the network named before a deleted workspace" '[ $rc = 4 ] && grep -q "Check the network first" "$T/err" && ! grep -q "no longer exists" "$T/err"'
+FK_AZ=bad FK_ACCT=good FK_ME="Error: User does not exist in the workspace" wst; rc=$?
+ok "another error with \"does not exist\" in it: exit 1 with a login, not a deleted workspace" '[ $rc = 1 ] && ! grep -q "no longer exists" "$T/err" && grep -q "auth login" "$T/err"'
 exit $fail

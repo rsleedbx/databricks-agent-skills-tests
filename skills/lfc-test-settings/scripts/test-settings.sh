@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-settings.sh: settings.sh offline on a temporary settings file (LFC_TESTS_SETTINGS), with fake databricks and az on
 #   PATH: set/get/unset with values that need quoting, file and folder modes, require (missing keys, no CLI call, the
-#   30-day note), env, workspaces (numbered by cloud, saved ones marked, login state), azure (saved and default marked).
+#   30-day note), env, workspaces (numbered by cloud, saved ones marked, login state), azure (saved and default marked),
+#   setup (the resource-group suggestions, AWS, a saved group that's gone, no az user), a copy without the exec bit.
 #   One PASS/FAIL line per check; exit 1 on any FAIL. Runs on bash 3.2 and 5.
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd)/settings.sh; fail=0
@@ -22,9 +23,25 @@ F
 cat > "$T/bin/az" <<'F'
 #!/usr/bin/env bash
 echo "az $*" >> "$FAKE_LOG"
-echo '[{"name": "sub-two", "id": "22", "tenantId": "t2", "isDefault": true}, {"name": "sub-one", "id": "11", "tenantId": "t1", "isDefault": false}]'
+case "$1 $2" in
+  "account list") echo '[{"name": "sub-two", "id": "22", "tenantId": "t2", "isDefault": true}, {"name": "sub-one", "id": "11", "tenantId": "t1", "isDefault": false}]' ;;
+  "account show") [ -n "${FAKE_ME:-}" ] && echo "$FAKE_ME" || exit 1 ;;
+  "group show") case "$*" in *"-n rg-mine "*) echo centralus ;; *) exit 3 ;; esac ;;
+  "group list") echo '[{"name": "rg-mine", "location": "centralus", "tags": {"Owner": "me@x.com"}},
+    {"name": "rg-made", "location": "eastus", "tags": {"Creator": "ME@X.COM"}},
+    {"name": "rg-other", "location": "eastus", "tags": {"Owner": "other@x.com"}},
+    {"name": "rg-untagged", "location": "eastus"}]' ;;
+esac
 F
-chmod +x "$T/bin/databricks" "$T/bin/az"
+cat > "$T/bin/aws" <<'F'
+#!/usr/bin/env bash
+case "$*" in
+  "configure list-profiles") echo p1 ;;
+  "configure get sso_account_id --profile p1") echo 111122223333 ;;
+  "configure get region --profile p1") echo us-east-2 ;;
+esac
+F
+chmod +x "$T/bin/databricks" "$T/bin/az" "$T/bin/aws"
 st() { PATH="$T/bin:$PATH" bash "$S" "$@"; }
 mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
 
@@ -52,4 +69,17 @@ ok "workspaces: saved ones marked *, login state per profile" \
 st set AZ_SUBSCRIPTION=11
 a=$(st azure)
 ok "azure: sorted by name, the saved one and the CLI default marked" '[ "$a" = "$(printf "sub-one\t11\tt1\tsaved\nsub-two\t22\tt2\tdefault")" ]'
+st set AZ_RESOURCE_GROUP=rg-mine
+FAKE_ME=me@x.com st setup > "$T/setup" 2>&1
+ok "setup: the saved group checked, and only the groups tagged with the az user (any case) suggested" \
+  'grep -q "saved: rg-mine, exists, in centralus" "$T/setup" && grep -q "^  rg-mine  centralus" "$T/setup" && grep -q "^  rg-made  eastus" "$T/setup" && ! grep -q "rg-other\|rg-untagged" "$T/setup"'
+ok "setup: the AWS profile with its account and region, the subscriptions, the workspaces" \
+  'grep -q "^p1	111122223333	us-east-2" "$T/setup" && grep -q "^sub-one	11	t1	saved" "$T/setup" && grep -q "ws-a	login ok" "$T/setup"'
+st set AZ_RESOURCE_GROUP=rg-gone
+st setup > "$T/setup" 2>&1
+ok "setup: a saved group that's gone is said so; with no az user, no group is suggested (not the untagged ones)" \
+  'grep -q "saved: rg-gone, NOT found" "$T/setup" && grep -q "no groups suggested" "$T/setup" && ! grep -q "rg-untagged" "$T/setup"'
+st set SETTINGS_CHECKED=2020-01-01; cp "$S" "$T/copy.sh"; chmod 644 "$T/copy.sh"
+( cd "$T" && PATH="$T/bin:$PATH" bash copy.sh checked )
+ok "checked works from a copy without the exec bit, run as bash <file> from its folder" '[ "$(st get SETTINGS_CHECKED)" = "$(date -u +%Y-%m-%d)" ]'
 exit $fail

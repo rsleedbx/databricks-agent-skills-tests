@@ -22,7 +22,7 @@ answers, then `settings.sh checked`.
 
 Every later run only reads the file: `require` makes no CLI call and asks nothing. Look a value up again only when a
 command using it fails (a subscription gone, a workspace deleted: **account-token-fallback**'s `ws-token.sh` exits 3
-for a workspace that no longer exists), then `set` the new one and `checked`. `require` notes when the settings were
+for a workspace that no longer exists, 4 for a host that doesn't resolve: check the network first), then `set` the new one and `checked`. `require` notes when the settings were
 last checked over 30 days ago.
 
 ## At the start of a test

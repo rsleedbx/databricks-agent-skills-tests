@@ -22,6 +22,7 @@
 #                 default marked "default": what to show the user when AZ_SUBSCRIPTION is missing
 set -uo pipefail
 F=${LFC_TESTS_SETTINGS:-$HOME/.lfc/tests/settings.env}
+SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")   # its own subcommands, as bash: no exec bit or ./ needed
 usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 valid() { case $1 in ''|*[!A-Z0-9_]*|[0-9]*) return 1 ;; esac; }
@@ -59,14 +60,14 @@ case $cmd in
       [ "${age:-0}" -le 30 ] || echo "settings: last checked $c ($age days ago): run setup to refresh them" >&2
     fi
     exit $miss ;;
-  checked) init || exit 1; "$0" set "SETTINGS_CHECKED=$(date -u +%Y-%m-%d)" ;;
+  checked) init || exit 1; bash "$SELF" set "SETTINGS_CHECKED=$(date -u +%Y-%m-%d)" ;;
   setup)
     T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
-    { command -v az > /dev/null && "${TO[@]}" 60 "$0" azure; } > "$T/azure" 2>/dev/null &
+    { command -v az > /dev/null && "${TO[@]}" 60 bash "$SELF" azure; } > "$T/azure" 2>/dev/null &
     { command -v aws > /dev/null && for p in $(aws configure list-profiles 2>/dev/null); do   # config only: no network
         a=$(aws configure get sso_account_id --profile "$p" 2>/dev/null); r=$(aws configure get region --profile "$p" 2>/dev/null)
         printf '%s\t%s\t%s\n' "$p" "${a:-?}" "${r:-?}"; done; } > "$T/aws" 2>/dev/null &
-    { command -v databricks > /dev/null && "$0" workspaces; } > "$T/dbx" 2>/dev/null &
+    { command -v databricks > /dev/null && bash "$SELF" workspaces; } > "$T/dbx" 2>/dev/null &
     { if command -v podman > /dev/null; then
         if [ "$(uname -s)" = Darwin ]; then
           command -v limactl > /dev/null && "${TO[@]}" 30 limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | sed 's/^/lima vm: /'
@@ -79,9 +80,11 @@ case $cmd in
         me=$("${TO[@]}" 30 az account show --query user.name -o tsv 2>/dev/null)
         [ -z "$rg" ] || { "${TO[@]}" 60 az group show --subscription "$sub" -n "$rg" --query location -o tsv 2>/dev/null \
           | sed "s/^/saved: $rg, exists, in /" | grep . || echo "saved: $rg, NOT found in the subscription"; }
-        echo "yours (Owner or Creator tag = ${me:-?}):"
+        if [ -z "$me" ]; then echo "yours: (the az user couldn't be read: az account show; no groups suggested)"
+        else echo "yours (Owner or Creator tag = $me):"
         "${TO[@]}" 60 az group list --subscription "$sub" -o json 2>/dev/null | jq -r --arg me "$me" \
           '.[] | select(((.tags.Owner // "") | ascii_downcase) == ($me | ascii_downcase) or ((.tags.Creator // "") | ascii_downcase) == ($me | ascii_downcase)) | "  \(.name)  \(.location)"'
+        fi
       fi; } > "$T/rg" 2>&1 &
     wait
     echo "== saved ($F)"; [ -f "$F" ] && cat "$F"; echo
