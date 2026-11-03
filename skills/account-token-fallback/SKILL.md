@@ -20,6 +20,10 @@ CFG=$(bash $S/ws-token.sh new-ws --host https://<new-workspace>) && export DATAB
 bash $S/add-account.sh <account-id> <aws|azure|gcp>   # add an account profile, the standard way
 ```
 
+`ws-token.sh` exits 0 with the file, 1 when a login is needed (the account login named first when it has expired
+too), 3 when the workspace answers "Did not find workspace" (deleted or expired: no login helps), and 4 when its host
+doesn't resolve (check the VPN or network before treating it as deleted). It tries every route before deciding.
+
 ## Check every profile: `profiles-check.sh`
 
 One `databricks auth profiles -o json` (it validates every profile, a few seconds for dozens), then one line per workspace profile: cloud, account, whether its login is valid, a status, and the next step. Without `--verify` the status is a guess from the profiles alone: `ok`, `try` (expired, and a valid account profile or the Azure CLI may cover it), `account-expired`, `no-account-profile`, or `no-account-id`. Accounts that need a login follow, on stderr. **With `--verify` it tries each fallback** through `ws-token.sh`, so every expired profile ends as `covered` or `needs-login` with the reason. Use `--verify` before trusting the list: a valid account login doesn't mean the workspace accepts its token, and a workspace that no longer exists fails the same way. It changes nothing in `~/.databrickscfg` and deletes every token file it makes.

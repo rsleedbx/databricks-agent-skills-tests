@@ -181,6 +181,11 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `skills/lfc-test-results/scripts/recall.py` look up recorded test results (results/runs/*.jsonl).
 - `skills/lfc-test-results/scripts/record.py` validate test-result records and append them to results/runs/<run>.jsonl.
 
+## lfc-test-settings
+
+- `skills/lfc-test-settings/scripts/settings.sh` setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test skill asks...
+- `skills/lfc-test-settings/scripts/test-settings.sh` settings.sh offline on a temporary settings file (LFC_TESTS_SETTINGS), with fake databricks and az on PATH: set/get/u...
+
 ## lfc-ui-capture
 
 - `skills/lfc-ui-capture/scripts/check-chrome-attach.sh` before a UI capture, check that the Chrome DevTools tools will attach to your own Chrome.
