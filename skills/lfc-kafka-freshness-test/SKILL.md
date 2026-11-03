@@ -87,6 +87,9 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
 
 `recall.py --test load --all`:
 
+- `results/2026-11-03-lfc-kafka-contract.md`: the workflow above as written, the broker from **lfc-source-eventhubs**'s
+  contract (`SOURCE_JSON`) for the connection, the pipeline and the producer: 4 minutes at 3,000/s with a 10x burst
+  (29,789/s); every distinct event landed once (0 lost, 0 extra copies); freshness p50 3.9 s, p90 5.9 s.
 - `results/2026-11-03-lfc-kafka-laptop.md`: the scripts as committed here, end to end on Azure (centralus), producer on
   a laptop, Kafka only: 3,000/s for 15 minutes with a 10x burst that reached 29,938/s on average; freshness p50 3.9 s,
   p90 5.3 s; 330 more rows than sent, each an extra copy (no event id more than twice).

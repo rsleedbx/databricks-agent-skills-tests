@@ -49,5 +49,6 @@ From the laptop, check the endpoint first: `nc -z -w 5 <namespace>.servicebus.wi
 ## Tested
 
 2026-11-03 on Azure (centralus), with **lfc-kafka-freshness-test**: `up` into an existing group (its tags unchanged),
-a 15-minute run at 3,000 events/s with a 30,000/s burst, then `down`. The contract file was added after that run and is
-checked by `test-eventhubs.sh`.
+a 15-minute run at 3,000 events/s with a 30,000/s burst, then `down`. Then again with the contract: `up` wrote
+`<namespace>.source.json`, and the connection, the pipeline and the producer took the broker from it (`SOURCE_JSON`);
+`down` deleted the namespace by its `CreatedBy=lfc-source-eventhubs` tag. `test-eventhubs.sh` checks the contract offline.
