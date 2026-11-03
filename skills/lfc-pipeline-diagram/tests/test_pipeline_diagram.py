@@ -231,6 +231,14 @@ class Saas(unittest.TestCase):
         self.assertIn("reverse ETL -> PostgreSQL (synced tables): 2 tables", out)
 
 
+class ZerobusSqlServer(unittest.TestCase):
+    def test_debezium_reads_sql_server_through_cdc(self):
+        out = run("--ingest", "zerobus", "--engine", "sqlserver", "--bronze", "main.s.cdc_log", "--format", "text",
+                  "--workspace-host", "https://adb-1.2.azuredatabricks.net")
+        self.assertIn("change capture: CDC, read on the database", out)
+        self.assertNotIn("change tracking", out)
+
+
 class Kafka(unittest.TestCase):
     def test_created(self):
         out = run("--pipeline-json", f("kafka-pipeline.json"), "--connection-json", f("kafka-connection.json"),

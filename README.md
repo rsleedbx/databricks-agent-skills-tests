@@ -52,9 +52,26 @@ The skills read the settings asked once on the first run (subscription, region, 
 
 ### 2. See the plan as a diagram, before anything is created
 
-Every component the run will create, drawn from the pipeline spec and the connection before either exists ([lfc-pipeline-diagram](skills/lfc-pipeline-diagram/SKILL.md)). Nothing is created until you agree; after the create, the same drawing is made from what exists, so the two can be compared.
+Every component the run will create, drawn from the pipeline spec and the connection before either exists ([lfc-pipeline-diagram](skills/lfc-pipeline-diagram/SKILL.md)), as it appears in the session. Nothing is created until you agree; after the create, the same drawing is made from what exists, so the two can be compared.
 
-![The planned Kafka run](docs/diagrams/example-plan.png)
+```text
+model tag-simulator: 1 table, 3,000 events/s; 10x for 2 min at minute 5 (producer.py's tag simulator)
+        | simulates
+Laptop: producer.py, 10 streams
+        | Kafka produce, SASL PLAIN
+Azure: Event Hubs (Kafka endpoint) at kafka-test-ns.servicebus.windows.net:9093
+  Standard, 4-40 TU auto-inflate, 32 partitions
+  topic tag-observations
+        |
+Databricks (Azure)   [planned: not created yet]
+  connection kafka_test (KAFKA, SASL PLAIN, user $ConnectionString)  <-- stored in the connection
+        |
+  ingestion pipeline lfc-kafka-tag_observations (serverless, continuous, channel PREVIEW): Kafka consumer from offset latest
+        |
+  streaming table (append-only): main.kafka_test.tag_observations: key STRING, value VARIANT (JSON)
+        |
+  freshness probe: SQL warehouse, every 2 s
+```
 
 ### 3. Run it, fix what comes up, record the result
 

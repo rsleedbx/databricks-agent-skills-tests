@@ -23,7 +23,8 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
 
 ## Workflow
 
-0. **Plan and draw it.** Pass the cloud identity on every call (`--profile` on each Databricks call; the broker's
+0. **Plan and draw it.** Read the saved answers first (**lfc-test-settings**: `eval "$(bash skills/lfc-test-settings/scripts/settings.sh env)"`,
+   then `settings.sh require DATABRICKS_PROFILE LFC_CATALOG` lists only what to ask). Pass the cloud identity on every call (`--profile` on each Databricks call; the broker's
    skill does the same for its cloud). An expired workspace login often still works through
    **account-token-fallback** (`ws-token.sh`). Draw the plan before creating anything: `pipeline.sh` without `--apply`
    prints the spec; give it to **lfc-pipeline-diagram**'s `pipeline-diagram.py --pipeline-json` with a `KAFKA`
