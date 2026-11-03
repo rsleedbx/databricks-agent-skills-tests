@@ -93,6 +93,6 @@ The capture step is drawn on the node the connection points at (the secondary, w
 
 `scripts/show-diagram.sh <ingestion pipeline id>` prints "Components created for pipeline <id>:" and the text diagram to stderr (stdout stays free for scripts that print the id), saves text + Mermaid to `$DIAGRAM_MD` when set, and never fails the caller. `DIAGRAM=0` skips it. The flags come from `SRC_CLOUD`, `SRC_HOST`, `SRC_PRIMARY`, `SRC_SECONDARY`, `SRC_FIREWALL`, `SECRET_STORE`, `SECRET_KIND`, `CAPTURE`, `SRC_FACTS`, `SRC_VM`.
 
-Called right after the create in `lfc-schema-change-test` (`lib.sh` `pipelines_create`, which also saves `$W/diagram.md`; `sqlserver-add-column.sh`; `integrated-scd2-ct.sh`) `lfc-meta-ads` (`pipeline.sh`) and `lfc-kafka-freshness-test` (`pipeline.sh`). A new script that creates an ingestion pipeline calls it the same way.
+Called right after the create in `lfc-schema-change-test` (`lib.sh` `pipelines_create`, which also saves `$W/diagram.md`; `sqlserver-add-column.sh`; `integrated-scd2-ct.sh`) `lfc-meta-ads` (`pipeline.sh`), `lfc-kafka-freshness-test` (`pipeline.sh`), and `zerobus-debezium-test`'s `debezium-zerobus.sh` (`--ingest zerobus`, after silver; saved as `$W/diagram.md`). A new script that creates an ingestion pipeline calls it the same way.
 
 Tests: `tests/test_pipeline_diagram.py` runs the script on saved JSON (placeholder names): a gateway pipeline on an availability group, an integrated one, and the capture line per source.

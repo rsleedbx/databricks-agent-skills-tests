@@ -103,6 +103,8 @@ The Debezium settings that matter, the event size each setting saved, and the co
 
 ## Links to inspect
 
+After silver, the run prints "Components created:" and a text diagram of the model, the source and its capture, the producer, Zerobus and bronze (**lfc-pipeline-diagram**), and saves it with the Mermaid as `diagram.md` in its work folder; `DIAGRAM=0` skips it.
+
 Every Databricks object a run creates gets a clickable link, printed as `LINK <what>: <url>` when it's created: the schema, the change log, the service principal, the snapshot volume, the UC connection, the pipeline and its source folder, and the silver and gold tables. The result file lists them under "Created in Databricks". The run removes them when it ends, so to inspect them, run with `KEEP=1`; the links are printed again at the end, and `sweep.sh` removes the run later. On a VM, `run-all.sh` also writes **lfc-source-cloud-vm**'s `cloud-links.sh` links (the VM, its network rules, its disks) into `summary.md`.
 
 ## The repeatable test

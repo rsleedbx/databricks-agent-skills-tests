@@ -109,7 +109,7 @@ MODELS = {
     "tpcdi": (18, "statschema + datagen"), "tpcds": (24, "statschema + datagen"), "tpce": (32, "statschema + datagen"),
     "mautic": (128, "the application: its own install and traffic"),
     # SaaS load tools: what they create, through the connector's own REST API (no fixed table count)
-    "tag-simulator": (1, "zerobus-sdk-freshness-test producer.py: assets x tags x Hz into one topic or table"),
+    "tag-simulator": (1, "producer.py's tag simulator"),
     "jira-test-data-generator": (None, "jira-test-data-generator: projects, issues, comments through the Jira REST API"),
 }
 
@@ -327,7 +327,8 @@ def zerobus_model(a, host):
     names = {"SQLSERVER": "SQL Server", "POSTGRESQL": "PostgreSQL", "MYSQL": "MySQL", "MARIADB": "MariaDB",
              "ORACLE": "Oracle", "DB2": "Db2", "INFORMIX": "Informix", "COCKROACHDB": "CockroachDB"}
     return {
-        "saas": False, "integrated": False, "capture": capture_text(eng, None, None, None),
+        # Debezium reads SQL Server through its CDC change tables, never change tracking
+        "saas": False, "integrated": False, "capture": capture_text(eng, "cdc" if eng == "SQLSERVER" else None, None, None),
         "source_cloud": CLOUD_NAMES.get(a.source_cloud or "", a.source_cloud or "source"),
         "source_host": a.source_host or "database host", "engine": names.get(eng, eng.title()),
         "nodes": nodes, "firewall": a.firewall, "workspace_cloud": workspace_cloud(host),

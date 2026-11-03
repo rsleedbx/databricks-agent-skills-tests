@@ -32,12 +32,16 @@ the default 2-20 is short of it. Partitions spread the load across consumers (`-
 
 ## Use
 
+The subscription, region, resource group and owner come from the saved settings (**lfc-test-settings**), asked once:
+
 ```bash
+eval "$(bash skills/lfc-test-settings/scripts/settings.sh env)"   # AZ_SUBSCRIPTION (on every az call), AZ_REGION, AZ_RESOURCE_GROUP, OWNER
+bash skills/lfc-test-settings/scripts/settings.sh require AZ_SUBSCRIPTION AZ_REGION AZ_RESOURCE_GROUP OWNER   # what to ask, if anything
 S=skills/lfc-source-eventhubs/scripts
-bash $S/eventhubs.sh up <resource group> <namespace> <region> --password-file ~/.lfc/kafka/<namespace>.pw \
-  --tu 4 --max-tu 40 --tags "Owner=<you> RemoveAfter=<date>" --apply
+bash $S/eventhubs.sh up "$AZ_RESOURCE_GROUP" <namespace> "$AZ_REGION" --password-file ~/.lfc/kafka/<namespace>.pw \
+  --tu 4 --max-tu 40 --tags "Owner=$OWNER RemoveAfter=<date>" --apply
 export SOURCE_JSON=~/.lfc/kafka/<namespace>.source.json        # what a Kafka test reads
-bash $S/eventhubs.sh down <resource group> <namespace> --apply  # when done
+bash $S/eventhubs.sh down "$AZ_RESOURCE_GROUP" <namespace> --apply  # when done
 ```
 
 From the laptop, check the endpoint first: `nc -z -w 5 <namespace>.servicebus.windows.net 9093`.
