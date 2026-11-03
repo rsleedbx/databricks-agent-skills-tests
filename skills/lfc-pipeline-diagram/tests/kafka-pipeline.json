@@ -1,0 +1,39 @@
+{
+  "pipeline_id": "00000000-0000-0000-0000-000000000000",
+  "name": "lfc-kafka-events",
+  "spec": {
+    "name": "lfc-kafka-events",
+    "serverless": true,
+    "continuous": true,
+    "channel": "PREVIEW",
+    "catalog": "main",
+    "schema": "demo_kafka",
+    "ingestion_definition": {
+      "connection_name": "demo_kafka",
+      "objects": [
+        {
+          "table": {
+            "source_table": "N/A",
+            "destination_catalog": "main",
+            "destination_schema": "demo_kafka",
+            "destination_table": "events",
+            "connector_options": {
+              "kafka_options": {
+                "topics": [
+                  "demo-topic"
+                ],
+                "starting_offset": "latest",
+                "key_transformer": {
+                  "format": "STRING"
+                },
+                "value_transformer": {
+                  "format": "JSON"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

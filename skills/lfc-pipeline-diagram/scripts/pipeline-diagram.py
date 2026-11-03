@@ -32,6 +32,12 @@ usage: pipeline-diagram.py --pipeline <ingestion pipeline id> [--profile P] [opt
   --written NAME=append|scd1|scd2|merge             tables of that layer written outside a pipeline
   --layers-json FILE             layers 2..n saved by medallion.py --save, instead of reading the workspace
   --reverse-etl TARGET[:METHOD[:TABLES]]           the last box: out to a database
+  Kafka (a KAFKA connection, or kafka_options in the pipeline): the broker, the topic and a Kafka consumer instead of
+  a database; drawn from the pipeline, or before it exists from pipeline.sh's spec (--pipeline-json) and a connection
+  JSON with connection_type KAFKA and options.bootstrap_servers (--connection-json)
+  --broker TEXT                  what the API can't see, e.g. "Standard, 2-20 TU, 32 partitions"
+  --producer TEXT --producer-host TEXT     what writes to the topic and where it runs (default: not drawn)
+  --probe TEXT                   a reader timing the table, e.g. "freshness probe: SQL warehouse, every 5 s"
   Zerobus instead of Lakeflow Connect (no --pipeline):
   --ingest zerobus --engine mysql|postgresql|sqlserver|oracle|db2|informix|cockroachdb|mariadb
   --bronze CATALOG.SCHEMA.TABLE[,...]   the table(s) Zerobus appends to   --producer TEXT (default Debezium Server)
@@ -103,6 +109,7 @@ MODELS = {
     "tpcdi": (18, "statschema + datagen"), "tpcds": (24, "statschema + datagen"), "tpce": (32, "statschema + datagen"),
     "mautic": (128, "the application: its own install and traffic"),
     # SaaS load tools: what they create, through the connector's own REST API (no fixed table count)
+    "tag-simulator": (1, "zerobus-sdk-freshness-test producer.py: assets x tags x Hz into one topic or table"),
     "jira-test-data-generator": (None, "jira-test-data-generator: projects, issues, comments through the Jira REST API"),
 }
 
@@ -332,6 +339,124 @@ def zerobus_model(a, host):
     }
 
 
+def kafka_options(idef):
+    """The kafka_options of the pipeline's first Kafka object, or None."""
+    for o in (idef or {}).get("objects") or []:
+        k = ((o.get("table") or {}).get("connector_options") or {}).get("kafka_options")
+        if k is not None:
+            return k
+    return None
+
+
+def broker_service(bootstrap):
+    """(cloud, service) for a Kafka bootstrap host: Azure Event Hubs, Confluent Cloud, Amazon MSK; else (None, "Kafka")."""
+    h = (bootstrap or "").split(",")[0].rsplit(":", 1)[0].lower()
+    if h.endswith(".servicebus.windows.net"):
+        return "azure", "Event Hubs (Kafka endpoint)"
+    if h.endswith(".confluent.cloud"):
+        return next((c for c in ("aws", "azure", "gcp") if f".{c}." in h), None), "Confluent Cloud"
+    if ".kafka." in h and h.endswith(".amazonaws.com"):
+        return "aws", "Amazon MSK"
+    return None, "Kafka"
+
+
+def kafka_model(a, ap, conn, host):
+    """A Kafka pipeline: producer -> broker topic -> UC connection -> ingestion pipeline (a consumer) -> table."""
+    spec = ap.get("spec", ap)
+    idef = spec.get("ingestion_definition") or {}
+    k = kafka_options(idef) or {}
+    opts = (conn or {}).get("options") or {}
+    boot = opts.get("bootstrap_servers", "")
+    cloud, service = broker_service(boot)
+    tables, kinds = [], []
+    for o in idef.get("objects") or []:
+        t = o.get("table") or {}
+        name = f"{t.get('destination_catalog') or spec.get('catalog')}.{t.get('destination_schema') or spec.get('schema')}.{t.get('destination_table')}"
+        tables.append(name); kinds.append((name, "append"))
+    fmt = lambda x: (x or {}).get("format", "?").replace("JSON", "VARIANT (JSON)") if x else "binary"
+    run = ", ".join(x for x in ("serverless" if spec.get("serverless") else "classic",
+                                "continuous" if spec.get("continuous") else "triggered",
+                                f"channel {spec['channel']}" if spec.get("channel") else "") if x)
+    return {
+        "source_cloud": CLOUD_NAMES.get(a.source_cloud or cloud or "", a.source_cloud or cloud or "broker"),
+        "service": service, "bootstrap": "" if a.hide_host else boot, "broker": a.broker or "",
+        "sasl": opts.get("sasl_mechanism", "?"), "user": opts.get("user", ""),
+        "topics": ", ".join(k.get("topics") or []) or "?", "offset": k.get("starting_offset", "latest"),
+        "key": fmt(k.get("key_transformer")), "value": fmt(k.get("value_transformer")),
+        "producer": a.producer, "producer_host": a.producer_host or "", "probe": a.probe or "",
+        "workspace_cloud": workspace_cloud(host), "connection": (conn or {}).get("name") or idef.get("connection_name") or "?",
+        "secret_kind": SECRET_KIND[a.secret_kind], "secret_store": a.secret_store, "firewall": a.firewall,
+        "ap_name": ap.get("name") or spec.get("name") or "ingestion pipeline", "run": run,
+        "planned": not ap.get("pipeline_id"), "tables": tables, "scd": "append-only", "workload": workload(a),
+        "layers": layers_for(a, medallion.landing("landing", kinds)) if a.layered else [],
+        "reverse": medallion.parse_reverse(a.reverse_etl),
+    }
+
+
+def kafka_text(m):
+    L = []
+    if m["workload"]:
+        L += [workload_line(m), "        | simulates"]
+    if m["producer"]:
+        L += [f"{m['producer_host'] + ': ' if m['producer_host'] else ''}{m['producer']}",
+              f"        | Kafka produce, SASL {m['sasl']}"]
+    L.append(f"{m['source_cloud']}: {m['service']}" + (f" at {m['bootstrap']}" if m["bootstrap"] else ""))
+    if m["broker"]:
+        L.append(f"  {m['broker']}")
+    L.append(f"  topic {m['topics']}")
+    L.append("        |")
+    if m["firewall"]:
+        L += [f"  firewall: {m['firewall']}", "        |"]
+    L.append(f"Databricks ({m['workspace_cloud'] or 'workspace'})" + ("   [planned: not created yet]" if m["planned"] else ""))
+    secret = f"  <-- {m['secret_kind']}" + (f" <-- {m['secret_store']}" if m["secret_store"] else "")
+    L.append(f"  connection {m['connection']} (KAFKA, SASL {m['sasl']}{', user ' + m['user'] if m['user'] else ''}){secret}")
+    L.append("        |")
+    L.append(f"  ingestion pipeline {m['ap_name']} ({m['run']}): Kafka consumer from offset {m['offset']}")
+    L.append("        |")
+    L.append(f"  streaming table ({m['scd']}): {tables_line(m)}: key {m['key']}, value {m['value']}")
+    if m["probe"]:
+        L += ["        |", f"  {m['probe']}"]
+    return finish_text(L, m)
+
+
+def kafka_mermaid(m):
+    L = ['%%{init: {"flowchart": {"wrappingWidth": 420}}}%%', "flowchart TD"]
+    w = m["workload"]
+    first = "TOP"
+    if m["producer"]:
+        L.append(f"  subgraph PH[{q(m['producer_host'] or 'producer')}]")
+        L.append(f"    PROD[{q(m['producer'])}]")
+        L.append("  end")
+        first = "PROD"
+    if w:
+        n = f"{w['tables']} table{'' if w['tables'] == 1 else 's'}" if w["tables"] is not None else "tables: ?"
+        L.append(f"  WL[/{q('model ' + w['model'] + '<br/>' + n + (', ' + w['scale'] if w['scale'] else ''))}/] --> {first}")
+    L.append(f"  subgraph SRC[{q(m['source_cloud'] + ': ' + m['service'])}]")
+    top = f"topic {m['topics']}" + (f"<br/>{m['bootstrap']}" if m["bootstrap"] else "") + (f"<br/>{m['broker']}" if m["broker"] else "")
+    L.append(f"    TOP[({q(top)})]")
+    L.append("  end")
+    if m["producer"]:
+        L.append(f"  PROD -->|{q('Kafka produce, SASL ' + m['sasl'])}| TOP")
+    if m["firewall"]:
+        L.append(f"  FW{{{{{q('firewall: ' + m['firewall'])}}}}}")
+    title = "Databricks workspace" + (f" ({m['workspace_cloud']})" if m["workspace_cloud"] else "") + (": planned" if m["planned"] else "")
+    L.append(f"  subgraph DBX[{q(title)}]")
+    L.append(f"    C[{q('UC connection ' + m['connection'] + '<br/>KAFKA, SASL ' + m['sasl'])}]")
+    L.append(f"    SEC[/{q(m['secret_kind'])}/]")
+    L.append(f"    A[{q('ingestion pipeline ' + m['ap_name'] + '<br/>' + m['run'] + '<br/>Kafka consumer from ' + m['offset'])}]")
+    if not m["layers"]:
+        L.append(f"    T[({q('streaming table (' + m['scd'] + ')<br/>' + tables_line(m, 2) + '<br/>key ' + m['key'] + ', value ' + m['value'])})]")
+    L.append("    SEC --> C")
+    L.append("    C --> A")
+    L.append("    A --> T")
+    if m["probe"]:
+        L.append(f"    PRB[/{q(m['probe'])}/]")
+        L.append("    T -.-> PRB")
+    after = [f"KV[/{q(m['secret_store'])}/] --> SEC"] if m["secret_store"] else []
+    after.append("TOP --- FW --- C" if m["firewall"] else "TOP --- C")
+    return finish_mermaid(L, m, *after)
+
+
 def gb(x):
     return f"{x:g} GB" if isinstance(x, (int, float)) else "?"
 
@@ -389,7 +514,7 @@ def tables_line(m, n=3):
 
 def workload_line(m):
     w = m["workload"]
-    n = f"{w['tables']} tables" if w["tables"] is not None else "tables: ?"
+    n = f"{w['tables']} table{'' if w['tables'] == 1 else 's'}" if w["tables"] is not None else "tables: ?"
     return f"model {w['model']}: {n}" + (f", {w['scale']}" if w["scale"] else "") + f" ({w['by']})"
 
 
@@ -464,7 +589,7 @@ def mermaid(m):
     L = ['%%{init: {"flowchart": {"wrappingWidth": 420}}}%%', "flowchart TD"]
     w = m["workload"]
     if w:
-        n = f"{w['tables']} tables" if w["tables"] is not None else "tables: ?"
+        n = f"{w['tables']} table{'' if w['tables'] == 1 else 's'}" if w["tables"] is not None else "tables: ?"
         L.append(f"  WL[/{q('model ' + w['model'] + '<br/>' + n + (', ' + w['scale'] if w['scale'] else '') + '<br/>' + w['by'])}/]")
     L.append(f"  subgraph SRC[{q(m['source_cloud'] + ': ' + m['source_host'])}]")
     if m["saas"]:
@@ -564,6 +689,7 @@ def main():
     medallion.add_args(p)
     p.add_argument("--ingest", choices=["lakeflow", "zerobus"], default="lakeflow")
     p.add_argument("--engine"); p.add_argument("--bronze"); p.add_argument("--producer")
+    p.add_argument("--producer-host"); p.add_argument("--broker"); p.add_argument("--probe")
     p.add_argument("-o", dest="out")
     a = p.parse_args()
     a.facts = load(a.source_facts) if a.source_facts else None
@@ -581,6 +707,8 @@ def main():
         conn = load(a.connection_json) if a.connection_json else None
         host = a.workspace_host or ""
         events = load(a.events_json).get("events", []) if a.events_json else []
+        if (conn or {}).get("connection_type", "").upper() == "KAFKA" or kafka_options(ap.get("spec", ap).get("ingestion_definition")) is not None:
+            return emit(a, kafka_model(a, ap, conn, host))
     else:
         ap = cli(["pipelines", "get", a.pipeline], a.profile)
         gid = (ap.get("spec", {}).get("ingestion_definition") or {}).get("ingestion_gateway_id")
@@ -592,6 +720,8 @@ def main():
             (conn.get("options") or {}).pop("password", None)
         host = cli(["auth", "describe"], a.profile).get("details", {}).get("host", "")
         events = []
+        if (conn or {}).get("connection_type", "").upper() == "KAFKA":
+            return emit(a, kafka_model(a, ap, conn, host))
         if not a.capture and (conn or {}).get("connection_type", "").upper() == "SQLSERVER":
             reader = gid or ap.get("pipeline_id")
             try:
@@ -603,11 +733,12 @@ def main():
 
 def emit(a, m):
     md = bool(a.out and a.out.endswith(".md"))
+    tx, mm = (kafka_text, kafka_mermaid) if "service" in m else (text, mermaid)
     parts = []
     if a.format in ("text", "both"):
-        parts.append(("```text\n" + text(m) + "```\n") if md else text(m))
+        parts.append(("```text\n" + tx(m) + "```\n") if md else tx(m))
     if a.format in ("mermaid", "both"):
-        parts.append(("```mermaid\n" + mermaid(m) + "```\n") if md else mermaid(m))
+        parts.append(("```mermaid\n" + mm(m) + "```\n") if md else mm(m))
     out = "\n".join(parts)
     if a.out:
         with open(a.out, "w") as f:

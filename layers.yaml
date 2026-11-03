@@ -68,6 +68,7 @@ layers:
       - lfc-pipeline-diagram
       - lfc-sqlserver-secondary
       - zerobus-sdk-freshness-test
+      - lfc-kafka-freshness-test
     bin:
       - lfc-events.sh
       - lfc-runtime.sh

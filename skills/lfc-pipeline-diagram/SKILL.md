@@ -1,6 +1,6 @@
 ---
 name: lfc-pipeline-diagram
-description: Draw a Lakeflow Connect pipeline as a text diagram and a Mermaid flowchart, from what was actually created (gateway or integrated CDC, serverless or classic, staging volume, UC connection and the host it points at, how changes are captured: SQL Server CDC or change tracking, Oracle LogMiner, MySQL binlog, PostgreSQL slot and publication, query-based, SaaS API; destination tables and SCD type, or Debezium through Zerobus into a bronze change log), the medallion layers after the landing tables (counted per layer: materialized or not, SCD 1, SCD 2, append-only, recomputed) and a reverse ETL box, plus flags for what the API can't see (where the source runs, primary/secondary, firewall, secret store). Use right after creating a pipeline, in a test report or a customer write-up, or to check which node a connection points at.
+description: Draw a Lakeflow Connect pipeline as a text diagram and a Mermaid flowchart, from what was actually created (gateway or integrated CDC, serverless or classic, staging volume, UC connection and the host it points at, how changes are captured: SQL Server CDC or change tracking, Oracle LogMiner, MySQL binlog, PostgreSQL slot and publication, query-based, SaaS API; destination tables and SCD type, or Debezium through Zerobus into a bronze change log, or a Kafka topic read by the Kafka connector), the medallion layers after the landing tables (counted per layer: materialized or not, SCD 1, SCD 2, append-only, recomputed) and a reverse ETL box, plus flags for what the API can't see (where the source runs, primary/secondary, firewall, secret store). Use right after creating a pipeline, in a test report or a customer write-up, or to check which node a connection points at.
 ---
 
 # Pipeline diagram
@@ -55,6 +55,17 @@ A SaaS pipeline is read like a database one; the source box is the connector's R
 
 The connector's table count (incremental and full-refresh tables, or "objects discovered from the source" for connectors that list them at run time) comes from an optional file, `$LFC_SAAS_TABLES` (default `~/.config/lfc/saas-tables.json`): `{"connectors": {"<CONNECTION_TYPE>": {"tables": N, "incremental": N, "full": N, "inventory": "finite|runtime"}}}`. Without it the box has no count.
 
+## Kafka
+
+A pipeline on a `KAFKA` connection is drawn as the topic and its broker, then the connection, the pipeline as a Kafka
+consumer (its `starting_offset`) and the table with its key and value formats. The broker is named from the bootstrap
+host (Azure Event Hubs `*.servicebus.windows.net`, Confluent Cloud, Amazon MSK, else Kafka). What the API can't see
+comes from flags: `--broker "Standard, 4-40 TU, 32 partitions"`, `--producer` and `--producer-host` for what writes the
+topic, `--probe` for a reader timing the table (`show-diagram.sh`: `BROKER`, `PRODUCER`, `PRODUCER_HOST`, `PROBE`).
+Before the pipeline exists, `--pipeline-json` with the spec `pipeline.sh` prints and `--connection-json` with
+`{"name", "connection_type": "KAFKA", "options": {"bootstrap_servers", "sasl_mechanism", "user"}}` draw the plan,
+marked planned.
+
 ## Zerobus instead of Lakeflow Connect
 
 `--ingest zerobus --engine <mysql|postgresql|sqlserver|oracle|db2|informix|cockroachdb|mariadb> --bronze CATALOG.SCHEMA.TABLE[,...]` draws the same source half (model, VM, database, change capture) with Debezium Server (`--producer`) on the source host pushing to the Zerobus ingest endpoint (a service principal, OAuth) and the append-only bronze change log, which is layer 1 of the medallion. No pipeline is read; the layers after bronze come from `--layer` as above.
@@ -82,6 +93,6 @@ The capture step is drawn on the node the connection points at (the secondary, w
 
 `scripts/show-diagram.sh <ingestion pipeline id>` prints "Components created for pipeline <id>:" and the text diagram to stderr (stdout stays free for scripts that print the id), saves text + Mermaid to `$DIAGRAM_MD` when set, and never fails the caller. `DIAGRAM=0` skips it. The flags come from `SRC_CLOUD`, `SRC_HOST`, `SRC_PRIMARY`, `SRC_SECONDARY`, `SRC_FIREWALL`, `SECRET_STORE`, `SECRET_KIND`, `CAPTURE`, `SRC_FACTS`, `SRC_VM`.
 
-Called right after the create in `lfc-schema-change-test` (`lib.sh` `pipelines_create`, which also saves `$W/diagram.md`; `sqlserver-add-column.sh`; `integrated-scd2-ct.sh`) and `lfc-meta-ads` (`pipeline.sh`). A new script that creates an ingestion pipeline calls it the same way.
+Called right after the create in `lfc-schema-change-test` (`lib.sh` `pipelines_create`, which also saves `$W/diagram.md`; `sqlserver-add-column.sh`; `integrated-scd2-ct.sh`) `lfc-meta-ads` (`pipeline.sh`) and `lfc-kafka-freshness-test` (`pipeline.sh`). A new script that creates an ingestion pipeline calls it the same way.
 
 Tests: `tests/test_pipeline_diagram.py` runs the script on saved JSON (placeholder names): a gateway pipeline on an availability group, an integrated one, and the capture line per source.

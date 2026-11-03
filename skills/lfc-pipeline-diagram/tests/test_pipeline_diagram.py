@@ -231,5 +231,28 @@ class Saas(unittest.TestCase):
         self.assertIn("reverse ETL -> PostgreSQL (synced tables): 2 tables", out)
 
 
+class Kafka(unittest.TestCase):
+    def test_created(self):
+        out = run("--pipeline-json", f("kafka-pipeline.json"), "--connection-json", f("kafka-connection.json"),
+                  "--workspace-host", "https://adb-1.2.azuredatabricks.net", "--broker", "Standard, 4-40 TU",
+                  "--producer", "producer.py", "--producer-host", "Laptop", "--probe", "freshness probe")
+        self.assertIn("Azure: Event Hubs (Kafka endpoint) at demo-ns.servicebus.windows.net:9093", out)
+        self.assertIn("topic demo-topic", out)
+        self.assertIn("connection demo_kafka (KAFKA, SASL PLAIN, user $ConnectionString)", out)
+        self.assertIn("(serverless, continuous, channel PREVIEW): Kafka consumer from offset latest", out)
+        self.assertIn("main.demo_kafka.events: key STRING, value VARIANT (JSON)", out)
+        self.assertNotIn("planned", out)
+        self.assertNotIn("SaaS", out)   # a KAFKA connection isn't drawn as a REST API
+        self.assertIn('PROD -->|"Kafka produce, SASL PLAIN"| TOP', out)
+        self.assertIn("TOP --- C", out)
+        self.assertIn("T -.-> PRB", out)
+
+    def test_planned_from_the_spec(self):
+        out = run("--pipeline-json", f("kafka-spec.json"), "--connection-json", f("kafka-connection.json"),
+                  "--format", "text", "--hide-host")
+        self.assertIn("[planned: not created yet]", out)
+        self.assertNotIn("servicebus", out)   # --hide-host
+
+
 if __name__ == "__main__":
     unittest.main()

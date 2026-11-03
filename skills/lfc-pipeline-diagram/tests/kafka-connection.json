@@ -1,0 +1,9 @@
+{
+  "name": "demo_kafka",
+  "connection_type": "KAFKA",
+  "options": {
+    "bootstrap_servers": "demo-ns.servicebus.windows.net:9093",
+    "sasl_mechanism": "PLAIN",
+    "user": "$ConnectionString"
+  }
+}
