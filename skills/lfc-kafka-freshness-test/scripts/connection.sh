@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# connection.sh <profile> <name> --bootstrap <host:port> --user <user> --password-file F [--apply]
+# connection.sh <profile> <name> (--source-json F | --bootstrap <host:port> --user <user> --password-file F) [--apply]
 #   A Unity Catalog connection of type KAFKA (SASL PLAIN, the options bootstrap_servers, sasl_mechanism, user, password)
 #   for the Lakeflow Connect Kafka connector. For Event Hubs: --bootstrap <namespace>.servicebus.windows.net:9093
-#   --user '$ConnectionString', and the connection string in the password file (eventhubs.sh up writes it). The password
+#   --user '$ConnectionString', and the connection string in the password file. --source-json (default $SOURCE_JSON): a
+#   source contract with engine kafka (lfc-source-contract; lfc-source-eventhubs writes one) gives all three. The password
 #   goes from the file into a 0600 request body that's deleted after the call, never onto a command line. An existing
 #   connection of that name is left as it is. Prints the plan; changes nothing without --apply.
 set -uo pipefail
 P=${1:-}; NAME=${2:-}
 [ -n "$P" ] && [ -n "$NAME" ] || { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-shift 2; BOOT=; USR=; PWF=; APPLY=no
+shift 2; BOOT=; USR=; PWF=; SJ=${SOURCE_JSON:-}; APPLY=no
 while [ $# -gt 0 ]; do case $1 in --bootstrap) BOOT=$2; shift 2;; --user) USR=$2; shift 2;; --password-file) PWF=$2; shift 2;;
+  --source-json) SJ=$2; shift 2;;
   --apply) APPLY=yes; shift;; *) echo "unknown $1"; exit 2;; esac; done
-[ -n "$BOOT" ] && [ -n "$USR" ] && [ -n "$PWF" ] || { echo "--bootstrap, --user and --password-file are required"; exit 2; }
+if [ -n "$SJ" ] && [ -z "$BOOT" ]; then   # the contract fills what the flags didn't give
+  E=$(bash "$(dirname "$0")/../../lfc-source-contract/scripts/source-env.sh" "$SJ") || exit 2; eval "$E"
+  [ "$SRC_ENGINE" = kafka ] || { echo "$SJ: engine $SRC_ENGINE, not kafka"; exit 2; }
+  BOOT=$SRC_HOST:$SRC_PORT; USR=${USR:-$CONN_USER}; PWF=${PWF:-${SRC_PASSWORD_FILE:-}}
+fi
+[ -n "$BOOT" ] && [ -n "$USR" ] && [ -n "$PWF" ] || { echo "--source-json, or --bootstrap, --user and --password-file, are required"; exit 2; }
 [ -s "$PWF" ] || { echo "$PWF is missing or empty"; exit 2; }
 if have=$(databricks connections get "$NAME" --profile "$P" -o json 2>/dev/null); then
   echo "exists: $NAME ($(echo "$have" | jq -r '.connection_type'), bootstrap $(echo "$have" | jq -r '.options.bootstrap_servers // "?"')); left as it is"

@@ -1,0 +1,1 @@
+{"contract": 1, "engine": "kafka", "host": "demo-ns.servicebus.windows.net", "port": 9093, "user": "$ConnectionString"}

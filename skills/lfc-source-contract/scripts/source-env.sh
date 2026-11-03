@@ -6,8 +6,10 @@
 #   SRC_CONTRACT (the file, absolute), and SRC_SQL, CONNECTION and SRC_FACTS when the contract gives them. SRC_SQL is the
 #   contract's sql_cmd, else sql-client.sh (the default client for the engine, which reads the password from SRC_CONTRACT
 #   itself). Variables the contract doesn't give are left as they are. The password is never printed.
+#   engine kafka (a Kafka broker, not a database): also SRC_TOPIC, SRC_SASL (default PLAIN) and SRC_PASSWORD_FILE (the
+#   file holding the SASL password, absolute); no SRC_SQL.
 set -uo pipefail
-[ $# -ge 1 ] || { sed -n 2,11p "$0"; exit 2; }
+[ $# -ge 1 ] || { sed -n 2,10p "$0"; exit 2; }
 F=$1
 HERE=$(cd "$(dirname "$0")" && pwd)
 ABS_DIR=$(cd "$(dirname "$F")" 2>/dev/null && pwd) || { echo "source-env: no such folder for $F" >&2; exit 2; }
@@ -21,7 +23,7 @@ CV=$(jq -c '.contract // null' "$F")
 
 # every problem, one per line; none means the contract holds
 PROBLEMS=$(jq -r '
-  def engines: ["sqlserver", "postgres", "mysql", "oracle", "mariadb", "db2", "informix", "cockroachdb", "yugabytedb"];
+  def engines: ["sqlserver", "postgres", "mysql", "oracle", "mariadb", "db2", "informix", "cockroachdb", "yugabytedb", "kafka"];
   def db_engines: ["db2", "informix", "cockroachdb", "yugabytedb"];
   def req($k): if (.[$k] | type) == "string" and (.[$k] | length) > 0 then empty else "missing \($k)" end;
   def opt($k): if has($k) and .[$k] != null and ((.[$k] | type) != "string") then "\($k) must be a string" else empty end;
@@ -36,8 +38,10 @@ PROBLEMS=$(jq -r '
      else "port must be a whole number from 1 to 65535" end),
     (if $engine == "oracle" then req("service")
      elif (db_engines | any(. == $engine)) then req("database")
+     elif $engine == "kafka" then req("topic")
      else empty end),
-    opt("database"), opt("service"), opt("password"), opt("sql_cmd"), opt("connection"), opt("facts"), opt("name")
+    opt("database"), opt("service"), opt("password"), opt("sql_cmd"), opt("connection"), opt("facts"), opt("name"),
+    opt("topic"), opt("sasl_mechanism"), opt("password_file")
   ] | .[]' "$F")
 [ -z "$PROBLEMS" ] || bad "$(printf '%s' "$PROBLEMS" | paste -sd, - | sed 's/,/, /g')"
 
@@ -45,7 +49,8 @@ PROBLEMS=$(jq -r '
 eval "$(yq -p json -o shell '{
   "SRC_ENGINE": (.engine // ""), "SRC_HOST": (.host // ""), "SRC_PORT": (.port | tostring), "SRC_NAME": (.name // ""),
   "CONN_USER": (.user // ""), "SRC_DB": (.database // .service // ""), "SRC_CMD": (.sql_cmd // ""),
-  "SRC_CONN": (.connection // ""), "SRC_FACTS": (.facts // ""), "SRC_HAS_PW": ((.password // "") | length | tostring)
+  "SRC_CONN": (.connection // ""), "SRC_FACTS": (.facts // ""), "SRC_HAS_PW": ((.password // "") | length | tostring),
+  "SRC_TOPIC_V": (.topic // ""), "SRC_SASL_V": (.sasl_mechanism // "PLAIN"), "SRC_PWF": (.password_file // "")
 }' "$F")"
 
 qv() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }   # one value, single-quoted for eval
@@ -60,6 +65,13 @@ out SRC_CONTRACT "$ABS"
 [ -n "$SRC_CONN" ] && out CONNECTION "$SRC_CONN"
 if [ -n "$SRC_FACTS" ]; then case $SRC_FACTS in /*) FACTS=$SRC_FACTS ;; *) FACTS=$ABS_DIR/$SRC_FACTS ;; esac; out SRC_FACTS "$FACTS"; fi
 
+abs() { case $1 in /*) printf '%s' "$1" ;; *) printf '%s' "$ABS_DIR/$1" ;; esac; }   # relative to the file
+if [ "$SRC_ENGINE" = kafka ]; then   # a broker: no SQL client
+  out SRC_TOPIC "$SRC_TOPIC_V"
+  out SRC_SASL "$SRC_SASL_V"
+  [ -n "$SRC_PWF" ] && out SRC_PASSWORD_FILE "$(abs "$SRC_PWF")"
+  exit 0
+fi
 case $SRC_ENGINE in sqlserver|postgres|mysql|mariadb|oracle|cockroachdb|yugabytedb) HAS_CLIENT=1 ;; *) HAS_CLIENT=0 ;; esac
 if [ -n "$SRC_CMD" ]; then
   out SRC_SQL "$SRC_CMD"
