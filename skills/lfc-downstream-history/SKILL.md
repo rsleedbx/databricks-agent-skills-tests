@@ -60,6 +60,15 @@ Result, through the same lifecycle and expected history as route 4 (6 of 6 claim
 - The next change: a new version. A run with nothing new: no change.
 - Reading the table `VERSION AS OF` the refresh's versions fails with `STREAMING_TABLE_NEEDS_REFRESH`, so the runs during the refresh are the evidence, not a time-travel probe.
 
+### 3b. The same for an SCD type 2 destination
+
+A full refresh reloads an SCD type 2 table with one row per live key: its older versions and the deleted keys are gone (Lakeflow Connect doesn't allow auto full refresh on SCD type 2 for this reason). The same route keeps them downstream, keyed by the key and the version's start:
+
+- Code: [scripts/history-snapshot-scd2.py](scripts/history-snapshot-scd2.py) (settings `src`, `keys`). `history` holds every version it has seen, with the source's `__START_AT` / `__END_AT` as `src_start` / `src_end` (AUTO CDC owns those names); a version closing in the source updates it in place, and a version the refresh dropped is closed there, not deleted. `versions` is one row per source version: a reloaded unchanged row joins the version before it, and a version dropped while open ends where the next one starts.
+- A guard: while the refresh has emptied the table (`DLT REFRESH` with no `MERGE` after it), the update fails instead of closing every version; run it again after the ingestion update.
+- What it can't keep: a version made and replaced between two history runs, if a full refresh comes before the next run. Run it after each ingestion update and before a planned full refresh.
+- Harness: [scripts/sqlserver-scd2-history-snapshot.sh](scripts/sqlserver-scd2-history-snapshot.sh), the lifecycle and expected history above with an SCD type 2 destination, and a claim that no run during the refresh closed every version.
+
 ## 4. Change feed into a log and AUTO CDC
 
 A pipeline of its own reads the destination's change data feed into an append-only `audit_log` and builds an SCD type 2 table from it with AUTO CDC.

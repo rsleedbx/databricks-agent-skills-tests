@@ -28,6 +28,8 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 src >/dev/null <<EOF || { echo "source setup failed"; exit 2; }
+IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
+  ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 3 DAYS, AUTO_CLEANUP = ON);
 CREATE TABLE lfcddemo.$TB (id INT NOT NULL PRIMARY KEY, v VARCHAR(20));
 INSERT INTO lfcddemo.$TB (id, v) VALUES (1, 'a1'), (2, 'b1'), (3, 'c1'), (4, 'd1'), (5, 'e1');
 ALTER TABLE lfcddemo.$TB ENABLE CHANGE_TRACKING;

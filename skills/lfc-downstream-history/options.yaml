@@ -22,6 +22,13 @@ options:
     recovery: "none needed; a full refresh of the table (17 history runs during it) left the history correct"
     status: tested
     evidence: scripts/sqlserver-history-snapshot.sh (6 of 6 claims)
+  - name: AUTO CDC FROM SNAPSHOT on an SCD type 2 destination
+    setup: {effort: 2, what: "one pipeline: history-snapshot-scd2.py (keys + the version's start)"}
+    operate: {effort: 2, what: "run after each ingestion update and before a planned full refresh; full scan each run"}
+    breaks: [a version made and replaced between two runs is lost if a full refresh comes first]
+    recovery: "none needed; the guard fails a run that would read the emptied table"
+    status: untested
+    evidence: scripts/sqlserver-scd2-history-snapshot.sh
   - name: Change feed into a log and AUTO CDC
     setup: {effort: 2, what: "one pipeline: audit-history.py, about 60 lines"}
     operate: {effort: 3, what: a recovery pipeline after every full refresh}
