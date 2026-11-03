@@ -47,6 +47,7 @@ layers:
       - lfc-source-aws-rds
       - lfc-source-aws-aurora
       - lfc-source-firewall
+      - lfc-source-eventhubs
 
   lakeflow:
     may_use: [contract, common]

@@ -31,18 +31,22 @@ FA_GROUP=1 FA_NS=none eh up rg1 ns1 centralus --password-file "$T/pw" --apply; r
 ok "up, a namespace of that name it didn't make: left alone (rc 2)" '[ $rc = 2 ] && ! calls | grep -q -E "namespace create|eventhub create|rule create"'
 FA_GROUP=1 FA_NS= eh up rg1 ns1 centralus --password-file "$T/pw" --tags "Owner=a RemoveAfter=2026-11-09" --apply; rc=$?
 ok "up, new: the namespace is created tagged CreatedBy (and the given tags), the group untouched, the password file 0600" \
-  '[ $rc = 0 ] && calls | grep "namespace create" | grep -q -- "--tags CreatedBy=lfc-kafka-freshness-test Owner=a RemoveAfter=2026-11-09" && ! calls | grep -q -E "^group (create|update|delete)" && [ "$(stat -f %Lp "$T/pw" 2>/dev/null || stat -c %a "$T/pw")" = 600 ]'
-FA_GROUP=1 FA_NS=lfc-kafka-freshness-test eh up rg1 ns1 centralus --password-file "$T/pw" --apply; rc=$?
+  '[ $rc = 0 ] && calls | grep "namespace create" | grep -q -- "--tags CreatedBy=lfc-source-eventhubs Owner=a RemoveAfter=2026-11-09" && ! calls | grep -q -E "^group (create|update|delete)" && [ "$(stat -f %Lp "$T/pw" 2>/dev/null || stat -c %a "$T/pw")" = 600 ]'
+ok "up, new: the source contract beside the password file, valid (engine kafka), no secret in it" \
+  'eval "$(bash "$S/../../lfc-source-contract/scripts/source-env.sh" "$T/ns1.source.json")" && [ "$SRC_ENGINE" = kafka ] && [ "$SRC_HOST" = ns1.servicebus.windows.net ] && [ "$SRC_TOPIC" = tag-observations ] && [ "$SRC_PASSWORD_FILE" = "$T/pw" ] && ! grep -q SharedAccessKey= "$T/ns1.source.json"'
+FA_GROUP=1 FA_NS=lfc-source-eventhubs eh up rg1 ns1 centralus --password-file "$T/pw" --apply; rc=$?
 ok "up, its own namespace from before: reused, not created again" '[ $rc = 0 ] && grep -q reused "$T/out" && ! calls | grep -q "namespace create"'
 AZ_SUBSCRIPTION=sub-1 FA_GROUP=1 FA_NS= eh up rg1 ns1 centralus --password-file "$T/pw" --apply
 ok "AZ_SUBSCRIPTION goes on every az call" '[ "$(calls | grep -c -v -- "--subscription sub-1")" = 0 ]'
 FA_NS=none eh down rg1 ns1 --apply; rc=$?
 ok "down, a namespace it didn't make: not deleted (rc 2)" '[ $rc = 2 ] && ! calls | grep -q delete'
-FA_NS=lfc-kafka-freshness-test eh down rg1 ns1 --apply; rc=$?
+FA_NS=lfc-source-eventhubs eh down rg1 ns1 --apply; rc=$?
 ok "down, its own: the namespace deleted, never the group" '[ $rc = 0 ] && calls | grep -q "namespace delete" && ! calls | grep -q "group delete"'
+FA_NS=lfc-kafka-freshness-test eh down rg1 ns1 --apply; rc=$?
+ok "down, its own under the tag it wrote before the move (lfc-kafka-freshness-test): deleted" '[ $rc = 0 ] && calls | grep -q "namespace delete"'
 FA_NS= eh down rg1 ns1 --apply; rc=$?
 ok "down, nothing there: rc 0, no delete" '[ $rc = 0 ] && ! calls | grep -q delete'
-FA_LOOKUP_FAILS=1 FA_NS=lfc-kafka-freshness-test eh down rg1 ns1 --apply; rc=$?
+FA_LOOKUP_FAILS=1 FA_NS=lfc-source-eventhubs eh down rg1 ns1 --apply; rc=$?
 ok "down, the lookup fails (expired login): rc 1, no delete, the error shown" '[ $rc = 1 ] && ! calls | grep -q delete && grep -q AADSTS "$T/out"'
 FA_OTHER_SUB=1 eh down rg1 ns1 --apply; rc=$?
 ok "down, the group isn't in this subscription: rc 1, not \"nothing to delete\"" '[ $rc = 1 ] && ! calls | grep -q delete && grep -q "check the subscription" "$T/out"'

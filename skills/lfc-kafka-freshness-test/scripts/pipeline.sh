@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# pipeline.sh <profile> --connection <name> --topic <topic> --table <catalog.schema.table> [--name <pipeline name>]
+# pipeline.sh <profile> --connection <name> (--topic <topic> | --source-json F) --table <catalog.schema.table> [--name <pipeline name>]
 #             [--starting-offset latest|earliest] [--apply]
 #   A serverless, continuous Lakeflow Connect Kafka pipeline into one table: the key as STRING, the value as VARIANT
 #   (value_transformer JSON without json_options). The connector is Beta, so the pipeline runs on channel PREVIEW. Prints
 #   the spec; with --apply creates it (a continuous pipeline starts on its own) and prints its id. It runs until stopped:
 #   databricks pipelines stop <pipeline-id> --profile <profile>. The catalog and schema must exist. After the create,
 #   lfc-pipeline-diagram's show-diagram.sh draws what was made (stderr; BROKER, PRODUCER, PROBE, DIAGRAM_MD from env).
+#   --source-json (default $SOURCE_JSON): the topic from a source contract with engine kafka (lfc-source-contract).
 set -uo pipefail
 P=${1:-}; [ -n "$P" ] || { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-shift; CONN=; TOPIC=; TABLE=; NAME=; OFF=latest; APPLY=no
+shift; CONN=; TOPIC=; TABLE=; NAME=; OFF=latest; SJ=${SOURCE_JSON:-}; APPLY=no
 while [ $# -gt 0 ]; do case $1 in --connection) CONN=$2; shift 2;; --topic) TOPIC=$2; shift 2;; --table) TABLE=$2; shift 2;;
-  --name) NAME=$2; shift 2;; --starting-offset) OFF=$2; shift 2;; --apply) APPLY=yes; shift;; *) echo "unknown $1"; exit 2;; esac; done
+  --name) NAME=$2; shift 2;; --starting-offset) OFF=$2; shift 2;; --source-json) SJ=$2; shift 2;; --apply) APPLY=yes; shift;; *) echo "unknown $1"; exit 2;; esac; done
+if [ -n "$SJ" ] && [ -z "$TOPIC" ]; then
+  E=$(bash "$(dirname "$0")/../../lfc-source-contract/scripts/source-env.sh" "$SJ") || exit 2; eval "$E"
+  [ "$SRC_ENGINE" = kafka ] || { echo "$SJ: engine $SRC_ENGINE, not kafka"; exit 2; }
+  TOPIC=$SRC_TOPIC
+fi
 [ -n "$CONN" ] && [ -n "$TOPIC" ] && [ -n "$TABLE" ] || { echo "--connection, --topic and --table are required"; exit 2; }
 IFS=. read -r CAT SCH TBL <<< "$TABLE"
 [ -n "$TBL" ] || { echo "--table must be catalog.schema.table"; exit 2; }

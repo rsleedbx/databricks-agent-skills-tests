@@ -21,7 +21,7 @@ A skill or bin script may reference another one only if the other one's layer is
 | **common** | nothing | Helpers any layer may use: credentials, CLI JSON, long waits, token and tool checks, the rules for writing skills and branches | `account-token-fallback`, `options-first`, `podman-desktop-remove`, `secret-handling`, `cli-setup`, `lfc-test-settings`, `shell-json-scripting`, `watch-progress`, `skill-token-budget`, `git-topic-branches` |
 | **shape** | contract, common | Data shaped like a customer's or a benchmark's, engine-agnostic: the schema and statistics, and the data generated inside any database. Its producer writes the workload file | `lfc-source-statschema`, `lfc-source-datagen` |
 | **contract** | common | The contracts between a producer and its consumers: the source contract (what a source provides), and the workload contract (a model's tables and the commands that build them) | `lfc-source-contract`, `lfc-workload-contract` |
-| **sources** | shape, contract, common | Source databases on demand: provisioning, reaching and opening them | `lfc-source-podman`, `lfc-source-cloud-vm`, `lfc-source-azure-sql`, `lfc-source-azure-flexserver`, `lfc-source-gcp-cloudsql`, `lfc-source-aws-rds`, `lfc-source-aws-aurora`, `lfc-source-firewall` |
+| **sources** | shape, contract, common | Source databases on demand: provisioning, reaching and opening them | `lfc-source-podman`, `lfc-source-cloud-vm`, `lfc-source-azure-sql`, `lfc-source-azure-flexserver`, `lfc-source-gcp-cloudsql`, `lfc-source-aws-rds`, `lfc-source-aws-aurora`, `lfc-source-firewall`, `lfc-source-eventhubs` |
 | **lakeflow** | contract, common | Lakeflow Connect tests and demos, and the prep and checks around them | every other skill, and the `bin/` scripts `lfc-events.sh`, `lfc-runtime.sh`, `compute_report.sh`, `stop_after.sh` |
 | **repo** | all | This repo's own tooling: checks, the test runners, the plugin hook | `public-skill-conventions` (contributor skill), `bin/` checks and runners (`check_links.py`, `check_layers.py`, `lint_scripts.py`, `scripts_index.py`, `run_batch.sh`, `run_matrix.sh`, `plugin-session.sh`, `test_*`) |
 
@@ -54,6 +54,7 @@ One line per skill: what it does, which decides its layer.
 | `lfc-source-gcp-cloudsql` | sources | Provisions Cloud SQL databases. |
 | `lfc-source-aws-rds` | sources | Provisions RDS databases. |
 | `lfc-source-aws-aurora` | sources | Provisions Aurora clusters. |
+| `lfc-source-eventhubs` | sources | Provisions an Azure Event Hubs namespace as a Kafka broker and writes its source contract (engine `kafka`); `lfc-kafka-freshness-test` reads it as `SOURCE_JSON`. Moved here from that skill. |
 | `lfc-source-firewall` | sources | Opens a source's firewall to the laptop and the workspace's egress; reaches the database's network. |
 | `lfc-source-setup` | lakeflow | Lakeflow source prep: utility objects, CDC and change tracking, grants (per engine). Its per-engine pages are what the source skills point to (baseline). |
 | `lfc-source-log-state` | lakeflow | Reads where a SQL Server source's change tracking and CDC stand, for a Lakeflow pipeline. |

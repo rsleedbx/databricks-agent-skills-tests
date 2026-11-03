@@ -1,6 +1,6 @@
 ---
 name: lfc-kafka-freshness-test
-description: "Measure the Lakeflow Connect Kafka connector (Beta) from a Kafka topic into a Delta table: create an Azure Event Hubs namespace with its Kafka endpoint, a Unity Catalog KAFKA connection, and a serverless continuous ingestion pipeline (value as VARIANT), send simulated events (optionally the same events to Zerobus at the same moments), then report rows sent vs landed, the per-second rate and burst seen in the data, the table's commits, and freshness before, during and after a burst. Use to measure event-to-queryable time or burst behavior through Kafka, or to compare it with a direct Zerobus producer on identical events."
+description: "Measure the Lakeflow Connect Kafka connector (Beta) from a Kafka topic into a Delta table: from a Kafka broker given as a source contract (SOURCE_JSON, engine kafka; lfc-source-eventhubs makes one on Azure), create a Unity Catalog KAFKA connection and a serverless continuous ingestion pipeline (value as VARIANT), send simulated events (optionally the same events to Zerobus at the same moments), then report rows sent vs landed, the per-second rate and burst seen in the data, the table's commits, and freshness before, during and after a burst. Use to measure event-to-queryable time or burst behavior through Kafka, or to compare it with a direct Zerobus producer on identical events."
 parent: zerobus-sdk-freshness-test
 ---
 
@@ -8,46 +8,44 @@ parent: zerobus-sdk-freshness-test
 
 The producer, the freshness probe and the report come from **zerobus-sdk-freshness-test**: `producer.py` sends to a
 Kafka topic with `--kafka-*` (and to Zerobus at the same moments unless `--no-zerobus`), and `freshness_probe.py` and
-`report.py` read the event time from inside the VARIANT value. This skill adds the broker, the connection and the
-pipeline:
+`report.py` read the event time from inside the VARIANT value. The broker is a source: it comes through the source
+contract (**lfc-source-contract**, engine `kafka`: bootstrap, SASL user, topic, the password file), which
+**lfc-source-eventhubs** writes for an Azure Event Hubs namespace. This skill adds the connection and the pipeline:
 
 | Script | Does | Changes anything |
 |---|---|---|
-| [`scripts/eventhubs.sh`](scripts/eventhubs.sh) | `up`: an Event Hubs namespace (Standard, Kafka on, auto-inflate) in an existing resource group, tagged `CreatedBy`, one event hub as the topic, a Listen+Send rule; its connection string into a 0600 file. `down`: deletes the namespace only when the tag says `up` made it; never the group | Only with `--apply` |
-| [`scripts/connection.sh`](scripts/connection.sh) | A UC connection of type `KAFKA` (`bootstrap_servers`, `sasl_mechanism`, `user`, `password`); the password from the file into a 0600 request body, deleted after | Only with `--apply` |
-| [`scripts/pipeline.sh`](scripts/pipeline.sh) | A serverless, continuous ingestion pipeline on channel `PREVIEW` into one table: key `STRING`, value `VARIANT`; then the diagram of what was made (**lfc-pipeline-diagram**) | Only with `--apply` |
-| [`scripts/test-eventhubs.sh`](scripts/test-eventhubs.sh) | `eventhubs.sh` against a fake `az`: the group is never created, re-tagged or deleted; only its own namespace is | No |
+| [`scripts/connection.sh`](scripts/connection.sh) | A UC connection of type `KAFKA` (`bootstrap_servers`, `sasl_mechanism`, `user`, `password`) from `SOURCE_JSON` (or `--bootstrap`, `--user`, `--password-file`); the password from the file into a 0600 request body, deleted after | Only with `--apply` |
+| [`scripts/pipeline.sh`](scripts/pipeline.sh) | A serverless, continuous ingestion pipeline on channel `PREVIEW` into one table, the topic from `SOURCE_JSON` (or `--topic`): key `STRING`, value `VARIANT`; then the diagram of what was made (**lfc-pipeline-diagram**) | Only with `--apply` |
+| [`scripts/test-scripts.sh`](scripts/test-scripts.sh) | Both against a fake `databricks`: the contract's fields, the password only in the request body, a non-Kafka contract refused, nothing created without `--apply` | No |
 
-Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN works for `connection.sh` and
-`pipeline.sh`; `eventhubs.sh` is the Azure one.
+Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN works: write its contract by hand
+(the format is in **lfc-source-contract**), or pass the flags.
 
 ## Workflow
 
-0. **Plan and draw it.** Pass the cloud identity on every call (`AZ_SUBSCRIPTION` goes on each `az` call of
-   `eventhubs.sh`; `--profile` on each Databricks call). An expired workspace login often still works through
+0. **Plan and draw it.** Pass the cloud identity on every call (`--profile` on each Databricks call; the broker's
+   skill does the same for its cloud). An expired workspace login often still works through
    **account-token-fallback** (`ws-token.sh`). Draw the plan before creating anything: `pipeline.sh` without `--apply`
    prints the spec; give it to **lfc-pipeline-diagram**'s `pipeline-diagram.py --pipeline-json` with a `KAFKA`
    connection JSON. The probe needs a SQL warehouse: create a Small serverless one if the workspace has none (tagged,
    auto-stop), and delete it at the end.
-1. **Broker:** `eventhubs.sh up <resource group> <namespace> <region> --password-file <0600 file> --tags "Owner=<you> RemoveAfter=<date>" --apply`.
-   The group must exist; the script never creates, re-tags or deletes one. Size it for the burst: about 1 throughput
-   unit per 1,000 events/s or 1 MB/s (`--tu 4 --max-tu 40` for a 30,000/s burst; the default 2-20 is short of it), and
-   enough partitions (`--partitions`) to spread it.
-   With Event Hubs the SASL user is the literal `$ConnectionString` and the password is the connection string.
-2. **Connection:** `connection.sh <PROFILE> <name> --bootstrap <namespace>.servicebus.windows.net:9093 --user '$ConnectionString' --password-file <file> --apply`.
+1. **Broker:** a source contract for it: on Azure, **lfc-source-eventhubs** (`eventhubs.sh up ... --apply` writes
+   `<namespace>.source.json`; size it for the burst there). `export SOURCE_JSON=<that file>`.
+2. **Connection:** `connection.sh <PROFILE> <name> --apply` (the bootstrap, user and password file from `SOURCE_JSON`).
 3. **Pipeline:** create the schema first, then
-   `pipeline.sh <PROFILE> --connection <name> --topic tag-observations --table <catalog>.<schema>.<table> --apply`.
+   `pipeline.sh <PROFILE> --connection <name> --table <catalog>.<schema>.<table> --apply` (the topic from `SOURCE_JSON`).
    A continuous pipeline starts on its own; wait for its update to be `RUNNING` before sending (`starting_offset`
    `latest` skips anything sent earlier).
 4. **Probe, then producer** (from **zerobus-sdk-freshness-test**):
 
    ```bash
    Z=skills/zerobus-sdk-freshness-test/scripts; P=<PROFILE>; T=<catalog>.<schema>.<table>
+   eval "$(bash skills/lfc-source-contract/scripts/source-env.sh "$SOURCE_JSON")"   # SRC_HOST, SRC_PORT, CONN_USER, SRC_TOPIC, SRC_PASSWORD_FILE
    uv run $Z/freshness_probe.py $P --seconds 1200 --out probe.json \
      --path "lfc_kafka|<warehouse-id>|$T|timestamp_micros(value:producer_time::bigint)" \
      --path "zerobus|<warehouse-id>|<zerobus table>" &
-   uv run $Z/producer.py --kafka-bootstrap <namespace>.servicebus.windows.net:9093 --kafka-topic tag-observations \
-     --kafka-user '$ConnectionString' --kafka-password-file <file> <the Zerobus options, or --no-zerobus> \
+   uv run $Z/producer.py --kafka-bootstrap "$SRC_HOST:$SRC_PORT" --kafka-topic "$SRC_TOPIC" \
+     --kafka-user "$CONN_USER" --kafka-password-file "$SRC_PASSWORD_FILE" <the Zerobus options, or --no-zerobus> \
      --minutes 15 --streams 10 --burst-at 5 --burst-minutes 2 --burst-x 10 --out run.json
    ```
 
@@ -59,8 +57,9 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
    ```
 
 6. **Tear down only what this run made**, after recording (step 7): stop and delete the pipeline (it runs until
-   stopped), drop the schema, delete the connection and the probe's warehouse if the run created it, then
-   `eventhubs.sh down <resource group> <namespace> --apply` (it checks the `CreatedBy` tag), and the password file.
+   stopped), drop the schema, delete the connection and the probe's warehouse if the run created it, then the broker
+   with its own skill (**lfc-source-eventhubs**: `eventhubs.sh down`, which checks the `CreatedBy` tag), and the
+   password file.
 7. **Record** with **lfc-test-results** `record.py`: `test: load`, `setup.route: lfc-kafka`, `compute` as for any
    pipeline test, and the runtime from `bin/lfc-runtime.sh --summary <PROFILE> <pipeline-id>`.
 
