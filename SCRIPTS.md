@@ -18,8 +18,6 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `bin/scripts_index.py` [--check]: write SCRIPTS.md, one line per runnable script (a #! line): its path and the first line of its usage heade...
 - `bin/stop_after.sh` Stop each pipeline's latest update once it has run longer than a limit.
 - `bin/test_scripts.sh` regression tests for the skills' scripts.
-- `bin/test_scripts.sh` regression tests for the skills' scripts.
-- `bin/test_scripts.sh` regression tests for the skills' scripts.
 
 ## account-token-fallback
 

@@ -1,0 +1,24 @@
+%% docs/diagrams/example-plan.png: the README's example plan, drawn by lfc-pipeline-diagram's pipeline-diagram.py from pipeline.sh's
+%% printed spec and a KAFKA connection JSON (placeholder names). Render: mmdc -i example-plan.mmd -o example-plan.png -b white -s 2
+%%{init: {"flowchart": {"wrappingWidth": 420}}}%%
+flowchart TD
+  subgraph PH["Laptop"]
+    PROD["producer.py, 10 streams"]
+  end
+  WL[/"model tag-simulator<br/>1 table, 3,000 events/s; 10x for 2 min at minute 5"/] --> PROD
+  subgraph SRC["Azure: Event Hubs (Kafka endpoint)"]
+    TOP[("topic tag-observations<br/>kafka-test-ns.servicebus.windows.net:9093<br/>Standard, 4-40 TU auto-inflate, 32 partitions")]
+  end
+  PROD -->|"Kafka produce, SASL PLAIN"| TOP
+  subgraph DBX["Databricks workspace (Azure): planned"]
+    C["UC connection kafka_test<br/>KAFKA, SASL PLAIN"]
+    SEC[/"stored in the connection"/]
+    A["ingestion pipeline lfc-kafka-tag_observations<br/>serverless, continuous, channel PREVIEW<br/>Kafka consumer from latest"]
+    T[("streaming table (append-only)<br/>main.kafka_test.tag_observations<br/>key STRING, value VARIANT (JSON)")]
+    SEC --> C
+    C --> A
+    A --> T
+    PRB[/"freshness probe: SQL warehouse, every 2 s"/]
+    T -.-> PRB
+  end
+  TOP --- C

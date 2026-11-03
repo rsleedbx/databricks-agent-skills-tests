@@ -39,13 +39,13 @@ class ResultsDirTest(unittest.TestCase):
                              timeout=60, check=True)
         return json.loads(out.stdout)
 
-    def plugin_copy(self) -> tuple[Path, dict]:
+    def plugin_copy(self, version: str | None = "0.1.0", folder: str = "0.1.0") -> tuple[Path, dict]:
         """A copy of the scripts as an installed plugin has them, with one shipped run and one shipped finding."""
         home = self.tmp / "home"
-        root = home / ".claude/plugins/cache/lfc-tests/lfc-tests/0.1.0"
+        root = home / ".claude/plugins/cache/lfc-tests/lfc-tests" / folder
         shutil.copytree(SCRIPTS, root / "skills/lfc-test-results/scripts", ignore=shutil.ignore_patterns("__pycache__"))
         (root / ".claude-plugin").mkdir(parents=True)
-        (root / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "lfc-tests", "version": "0.1.0"}))
+        (root / ".claude-plugin/plugin.json").write_text(json.dumps({"name": "lfc-tests", **({"version": version} if version else {})}))
         (root / "results/runs").mkdir(parents=True)
         shipped = {**RECORD, "run": "2026-10-01-shipped", "date": "2026-10-01", "subject": {"engine": "mysql", "version": "8.4"}}
         (root / "results/runs/2026-10-01-shipped.jsonl").write_text(json.dumps(shipped) + "\n")
@@ -63,6 +63,14 @@ class ResultsDirTest(unittest.TestCase):
         d = self.dirs(SCRIPTS, {**self.env, "LFC_TESTS_RESULTS": str(self.tmp / "res")})
         self.assertEqual(d["write"], str(self.tmp / "res/runs"))
         self.assertEqual(d["read"], [str(REPO / "results/runs"), str(self.tmp / "res/runs")])
+
+    def test_a_plugin_without_a_version_is_recorded_by_its_commit(self):
+        # no version in plugin.json: Claude Code names the install folder after the commit (12 hex digits)
+        root, env = self.plugin_copy(version=None, folder="0da54f5a1b2c")
+        out = run(root / "skills/lfc-test-results/scripts/record.py", env=env, stdin=json.dumps(RECORD))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        mine = Path(env["HOME"]) / ".lfc/tests/results/runs" / f"{RECORD['run']}.jsonl"
+        self.assertEqual(json.loads(mine.read_text())["skills"], {"databricks-agent-skills-tests": "plugin 0da54f5a1b2c"})
 
     def test_a_plugin_copy_records_outside_itself_and_recalls_both(self):
         root, env = self.plugin_copy()
