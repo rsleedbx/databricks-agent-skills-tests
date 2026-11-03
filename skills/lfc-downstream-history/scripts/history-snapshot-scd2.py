@@ -79,7 +79,8 @@ def src_versions():
         part("__END_AT", "seq").alias("src_end"), part("__END_AT", "ts").alias("src_end_ts"))
 
 
-dlt.create_streaming_table("history")
+# reset not allowed: a full refresh of this pipeline would start the history over from the current snapshot
+dlt.create_streaming_table("history", table_properties={"pipelines.reset.allowed": "false"})
 dlt.apply_changes_from_snapshot(
     target="history", source="src_versions", keys=[*KEYS, "src_start"], stored_as_scd_type=2,
     track_history_except_column_list=["src_end", "src_end_ts"])
