@@ -67,6 +67,7 @@ layers:
       - mautic-source
       - lfc-pipeline-diagram
       - lfc-sqlserver-secondary
+      - zerobus-sdk-freshness-test
     bin:
       - lfc-events.sh
       - lfc-runtime.sh
