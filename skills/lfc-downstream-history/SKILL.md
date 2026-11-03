@@ -67,7 +67,15 @@ A full refresh reloads an SCD type 2 table with one row per live key: its older 
 - Code: [scripts/history-snapshot-scd2.py](scripts/history-snapshot-scd2.py) (settings `src`, `keys`). `history` holds every version it has seen, with the source's `__START_AT` / `__END_AT` as `src_start` / `src_end` (AUTO CDC owns those names); a version closing in the source updates it in place, and a version the refresh dropped is closed there, not deleted. `versions` is one row per source version: a reloaded unchanged row joins the version before it, and a version dropped while open ends where the next one starts.
 - A guard: while the refresh has emptied the table (`DLT REFRESH` with no `MERGE` after it), the update fails instead of closing every version; run it again after the ingestion update.
 - What it can't keep: a version made and replaced between two history runs, if a full refresh comes before the next run. Run it after each ingestion update and before a planned full refresh.
-- Harness: [scripts/sqlserver-scd2-history-snapshot.sh](scripts/sqlserver-scd2-history-snapshot.sh), the lifecycle and expected history above with an SCD type 2 destination, and a claim that no run during the refresh closed every version.
+- Harness: [scripts/sqlserver-scd2-history-snapshot.sh](scripts/sqlserver-scd2-history-snapshot.sh), the lifecycle and expected history above with an SCD type 2 destination (the source table on CDC: SCD type 2 needs CDC on SQL Server), and a claim that no run during the refresh closed every version.
+
+Result, integrated CDC, SQL Server 2022 (7 of 7 claims):
+
+- Load and a normal sync: each update, delete and insert opens or closes a version, as in the destination.
+- A gap, then a full refresh of the destination (one row per live key afterwards) with 16 history runs back to back while it was applied: every run completed and none closed every version; after it, `versions` holds every version seen before the refresh, deleted keys closed, and each unchanged key as one version.
+- The refresh's empty window was there (three table versions with no rows before the reload), but no run fell in it, so the guard didn't have to stop one.
+- The next change: a new version. A run with nothing new: no change.
+- On a change-tracking source table the destination got no incremental changes at all, only the snapshots (integrated CDC holds an SCD type 2 change-tracking table's changes: lfc-schema-change-test `references/findings.md`); use CDC.
 
 ## 4. Change feed into a log and AUTO CDC
 
