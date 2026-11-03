@@ -1,6 +1,5 @@
 {
   "name": "lfc-tests",
-  "version": "0.1.0",
   "description": "Lakeflow Connect test skills: stand up source databases (local Podman, cloud VMs, managed cloud databases), fill them with test data, open firewalls, prepare a workspace, run ingestion tests and record the results.",
   "author": {
     "name": "Robert Lee"

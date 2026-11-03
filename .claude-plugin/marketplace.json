@@ -9,5 +9,8 @@
       "source": "./",
       "description": "Lakeflow Connect test skills: source databases, test data, firewalls, workspace setup, ingestion tests and results."
     }
-  ]
+  ],
+  "metadata": {
+    "description": "Lakeflow Connect test skills: stand up source databases, run ingestion tests end to end, and record the results."
+  }
 }
