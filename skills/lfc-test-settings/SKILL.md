@@ -1,7 +1,7 @@
 ---
 name: lfc-test-settings
 description: "The settings a Lakeflow Connect test skill would otherwise ask for on every run (the Azure subscription and tenant, AWS profile, region, resource group, Databricks workspace profile, target catalog, owner tag), asked once and kept per user in ~/.lfc/tests/settings.env, then read by every later run. Use at the start of any test that creates cloud or workspace resources, before asking the user anything."
-parent: lfc-source-setup
+parent: cli-setup
 ---
 
 # Test settings: ask once, then read
@@ -10,6 +10,7 @@ A test that creates resources needs the same answers each time: which subscripti
 They go in one file per user, outside the repo (a plugin update replaces the repo's copy):
 `~/.lfc/tests/settings.env` (or `$LFC_TESTS_SETTINGS`), mode 600. [`scripts/settings.sh`](scripts/settings.sh) reads
 and writes it; run it with no arguments for its usage.
+[`scripts/test-settings.sh`](scripts/test-settings.sh) checks it offline with fake `databricks` and `az`.
 
 ## The first run: setup, then fast
 

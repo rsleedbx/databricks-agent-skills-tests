@@ -77,6 +77,7 @@ check "slot-source.sh: a slot's contract, and its SRC_SQL through slot-sql.sh an
 check "masters-export, slot-vm-setup masters, and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
 check "moved-lines.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-moved-lines.sh' > /dev/null"
 check "eventhubs.sh: never creates, re-tags or deletes the group; only its own namespace (fake az)" sh -c "'$SK/lfc-kafka-freshness-test/scripts/test-eventhubs.sh' > /dev/null"
+check "settings.sh: set/get quoting, modes, require without CLI calls, workspaces and azure listings (fake CLIs)" sh -c "bash '$SK/lfc-test-settings/scripts/test-settings.sh' > /dev/null"
 check "ws-token.sh: TO (perl alarm timeout)" sh -c "'$SK/account-token-fallback/scripts/test-ws-token.sh' > /dev/null"
 check "options-first: ranking, pick, check, index" sh -c "'$SK/options-first/scripts/test-options.sh' > /dev/null"
 check "options-first: every options.yaml in the skills is valid" sh -c "files=\$(find '$SK' -name options.yaml); [ -z \"\$files\" ] || uv run -q '$SK/options-first/scripts/options.py' check \$files"
