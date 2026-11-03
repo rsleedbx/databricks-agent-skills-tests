@@ -39,8 +39,9 @@ INSERT INTO lfcddemo.orders (id, v) VALUES (1, 'a1'), (2, 'a2'), (3, 'a3');
 INSERT INTO lfcdb.orders (id, v) VALUES (1, 'b1'), (2, 'b2'), (3, 'b3'), (4, 'b4'), (5, 'b5');
 EOF
 src_util
-proc=lakeflowSetupChangeTracking; [ "$TRACK" = cdc ] && proc=lakeflowSetupChangeDataCapture
-echo "EXEC dbo.$proc @Tables = 'lfcddemo.orders,lfcdb.orders', @User = '$CONN_USER';" | src > "$W/track.out" 2>&1
+proc=lakeflowSetupChangeTracking ddl=", @CreateDdlSupportingObjects = 1"   # change tracking: the DDL audit objects are opt-in in 1.7
+[ "$TRACK" = cdc ] && { proc=lakeflowSetupChangeDataCapture; ddl=""; }
+echo "EXEC dbo.$proc @Tables = 'lfcddemo.orders,lfcdb.orders', @User = '$CONN_USER'$ddl;" | src > "$W/track.out" 2>&1
 tv="(SELECT object_id FROM sys.change_tracking_tables)"; [ "$TRACK" = cdc ] && tv="(SELECT object_id FROM sys.tables WHERE is_tracked_by_cdc = 1)"
 n=$(printf "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.tables WHERE name = 'orders' AND object_id IN %s;\n" "$tv" | src | tr -d '[:space:]')
 [ "$n" = 2 ] || { echo "could not set up $TRACK on both tables (tracked: $n): $(grep -i -m1 -E 'error|msg [0-9]' "$W/track.out" | cut -c1-160)"; exit 2; }

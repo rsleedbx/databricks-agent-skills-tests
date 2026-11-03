@@ -112,7 +112,7 @@ def setup_lines(engine: str, mech: str, setup: str, tables: list[str], schema: s
                     out.append(f"GRANT SELECT, VIEW CHANGE TRACKING ON {schema}.{t} TO [{login}];")
                 out += [f"GRANT VIEW DEFINITION TO [{login}];", f"GRANT VIEW DATABASE STATE TO [{login}];"]
             else:
-                out.append(f"EXEC dbo.lakeflowSetupChangeTracking @Tables = '{listed}', @User = '{login}';")
+                out.append(f"EXEC dbo.lakeflowSetupChangeTracking @Tables = '{listed}', @User = '{login}', @CreateDdlSupportingObjects = 1;")
                 out.append(f"EXEC dbo.lakeflowFixPermissions @User = '{login}', @Tables = 'SCHEMAS:{schema}';")
         if mech == "cdc":
             if setup == "none":
