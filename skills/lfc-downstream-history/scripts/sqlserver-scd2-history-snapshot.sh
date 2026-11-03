@@ -16,7 +16,8 @@ set -uo pipefail
 export SCD=SCD_TYPE_2
 lfc_init histscd2
 TB=histscd2_$E; FP_TABLES=$TB
-if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; fi
+# a fresh database gets the utility objects (without them: INGESTION_GATEWAY_DDL_OBJECTS_MISSING); SRC_DB has them already
+if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; src_util; fi
 HS=${S}_history; HT="\`$CATALOG\`.$HS"; DP=""
 cleanup_all() {
   if [ "${KEEP:-0}" != 1 ]; then
@@ -88,7 +89,7 @@ V0=$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)
 
 # --- 3. full refresh; history runs back to back while it is applied ------------------------------------------------
 EARLY_STOP=0 update "$TB"   # integrated CDC: this one re-reads the source; the next update applies it
-RUNS=0 GUARDED=0 BADRUN=""
+RUNS=0 GUARDED=0 BADRUN="" READ=0
 if [ "$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)" = "$V0" ]; then
   u=$(dbx pipelines start-update "$AP" --json '{}' -o json | yq '.update_id')
   [ -n "$u" ] && [ "$u" != null ] || { echo "ingestion start-update failed: stopping the run"; exit 2; }
@@ -100,6 +101,7 @@ if [ "$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)" = "$V0" ];
     # a run inside the reload's empty window must fail on the guard, not snapshot an empty table (all versions closed)
     GUARD=$(U=$(yq -r '.events[0].origin.update_id // ""' "$W/hev.json") yq -r '.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.message // ""' "$W/hev.json" 2>/dev/null | grep -c "being reloaded by a full refresh")
     if [ "$HSTATE" = COMPLETED ] && [ "${OV:-0}" = 0 ]; then BADRUN="${BADRUN:-}$RUNS "; fi
+    [ "$HSTATE" = COMPLETED ] && [[ "${OV:-}" =~ ^[0-9]+$ ]] && [ "$OV" -gt 0 ] && READ=$((READ + 1))
     [ "$HSTATE" = FAILED ] && [ "${GUARD:-0}" -gt 0 ] && GUARDED=$((GUARDED + 1))
     observe "during-refresh-$RUNS" "ingestion $st; destination $(dest); history $HSTATE ${HERRS}; open versions $OV"
   done
@@ -108,8 +110,9 @@ if [ "$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)" = "$V0" ];
   # the pipeline's own retries, and joins an update that is still running
   [ "$st" = COMPLETED ] || { echo "refresh apply not completed ($st): finishing it with update"; EARLY_STOP=0 update; }
 fi
-[ -z "$BADRUN" ] && claim guard PASS "$RUNS history runs during the refresh: none closed every version ($GUARDED stopped by the guard in the empty window)" \
-  || claim guard FAIL "history runs $BADRUN completed with no open version: a snapshot of the emptied table"
+if [ $((READ + GUARDED)) = 0 ]; then claim guard FAIL "no history run during the refresh completed or was stopped by the guard ($RUNS runs): nothing to judge"
+elif [ -z "$BADRUN" ]; then claim guard PASS "$RUNS history runs during the refresh: none closed every version ($GUARDED stopped by the guard in the empty window)"
+else claim guard FAIL "history runs $BADRUN completed with no open version: a snapshot of the emptied table"; fi
 # the claims after this point only mean something if the refresh was applied: a DLT REFRESH after the gap's version
 NREF=$(q "SELECT COUNT(*) FROM (DESCRIBE HISTORY $T.$TB) WHERE operation = 'DLT REFRESH' AND version > $V0" 2>&1)
 [ "$NREF" -ge 1 ] 2>/dev/null && claim refresh-applied PASS "the destination was rebuilt (DLT REFRESH after version $V0)" \
@@ -131,7 +134,7 @@ echo "UPDATE lfcddemo.$TB SET v = 'd2' WHERE id = 4;" | src >/dev/null
 settle_rows "SELECT COUNT(*) FROM $T.$TB WHERE v = 'd2'" 1
 hupdate; GOT=$(scd2)
 [[ "$GOT" == *"4=d1(closed)"*"4=d2"* ]] && claim keeps-going PASS "history: $GOT" || claim keeps-going FAIL "history: $GOT"
-hupdate; [ "$(scd2)" = "$GOT" ] && claim no-change-no-version PASS "a run with nothing new left the history as it was" \
+hupdate; [[ "$GOT" != FAILED* ]] && [ "$(scd2)" = "$GOT" ] && claim no-change-no-version PASS "a run with nothing new left the history as it was" \
   || claim no-change-no-version FAIL "changed on a rerun: $(scd2)"
 result_md sqlserver-scd2-history-snapshot
 exit $FAILED

@@ -16,7 +16,8 @@ set -uo pipefail
 : "${HISTORY_NB:?}"
 lfc_init histsnap
 TB=histsnap_$E; FP_TABLES=$TB
-if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; fi
+# a fresh database gets the utility objects (without them: INGESTION_GATEWAY_DDL_OBJECTS_MISSING); SRC_DB has them already
+if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; src_util; fi
 HS=${S}_history; HT="\`$CATALOG\`.$HS"; DP=""
 cleanup_all() {
   if [ "${KEEP:-0}" != 1 ]; then
