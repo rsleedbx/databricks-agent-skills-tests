@@ -18,6 +18,8 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `bin/scripts_index.py` [--check]: write SCRIPTS.md, one line per runnable script (a #! line): its path and the first line of its usage heade...
 - `bin/stop_after.sh` Stop each pipeline's latest update once it has run longer than a limit.
 - `bin/test_scripts.sh` regression tests for the skills' scripts.
+- `bin/test_scripts.sh` regression tests for the skills' scripts.
+- `bin/test_scripts.sh` regression tests for the skills' scripts.
 
 ## account-token-fallback
 
@@ -44,6 +46,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 - `skills/lfc-kafka-freshness-test/scripts/connection.sh` <profile> <name> (--source-json F | --bootstrap <host:port> --user <user> --password-file F) [--apply] A Unity Catalo...
 - `skills/lfc-kafka-freshness-test/scripts/pipeline.sh` <profile> --connection <name> (--topic <topic> | --source-json F) --table <catalog.schema.table> [--name <pipeline na...
+- `skills/lfc-kafka-freshness-test/scripts/test-scripts.sh` connection.sh and pipeline.sh offline, with a fake databricks on PATH (it logs every call and the request body; FD_CO...
 
 ## lfc-meta-ads
 
@@ -183,6 +186,11 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `skills/lfc-test-results/scripts/finding.py` the findings register, results/findings/<id>.json, one file per finding.
 - `skills/lfc-test-results/scripts/recall.py` look up recorded test results (results/runs/*.jsonl).
 - `skills/lfc-test-results/scripts/record.py` validate test-result records and append them to results/runs/<run>.jsonl.
+
+## lfc-test-settings
+
+- `skills/lfc-test-settings/scripts/settings.sh` setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test skill asks...
+- `skills/lfc-test-settings/scripts/test-settings.sh` settings.sh offline on a temporary settings file (LFC_TESTS_SETTINGS), with fake databricks and az on PATH: set/get/u...
 
 ## lfc-ui-capture
 

@@ -18,6 +18,7 @@ layers:
       - podman-desktop-remove
       - secret-handling
       - cli-setup
+      - lfc-test-settings
       - shell-json-scripting
       - watch-progress
       - skill-token-budget

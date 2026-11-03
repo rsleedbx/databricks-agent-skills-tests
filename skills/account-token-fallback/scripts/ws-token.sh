@@ -14,7 +14,12 @@
 #     so `--profile <profile>` keeps working. The token lasts about an hour (some workspaces: 30 minutes): rerun when
 #     calls start failing, or every 20 minutes in a long run. The default FILE is shared by every shell on the machine:
 #     give a long run a FILE of its own with --cfg.
-#   - Exit 1 with the reason when neither works (then: databricks auth login --profile <profile>).
+#   - Exit 1 with the reason when neither works: the account login first when it has expired too (one login covers every
+#     workspace in the account), else databricks auth login --profile <profile>.
+#   - Exit 3 when every route failed and the workspace answered "Did not find workspace" (deleted or expired, such as an
+#     FEVM sandbox): no login brings it back; use another workspace or recreate it.
+#   - Exit 4 when every route failed and its host didn't resolve: a deleted workspace, or the network (VPN off, a
+#     private-link workspace, DNS): check the network before recreating anything.
 #   --force mints even when the profile's login works (to test the fallback). The token is never printed.
 set -uo pipefail
 P=${1:?ws-token.sh <profile> [--host URL [--account-id ID]] [--cfg FILE] [--force]}; shift; CFG=; FORCE=; HOST_ARG=; AID_ARG=
@@ -40,7 +45,12 @@ elif [ -z "$FORCE" ] && real "${TO[@]}" 60 databricks current-user me --profile 
 try() { local t="$CFG.$$.tmp"; ( umask 077; printf '[%s]\nhost  = %s\ntoken = %s\n' "$P" "$HOST" "$1" > "$t" )
   if DATABRICKS_CONFIG_FILE=$t "${TO[@]}" 60 databricks current-user me --profile "$P" -o json > /dev/null 2> "$t.err"; then
     mv -f "$t" "$CFG"; rm -f "$t.err"; say "$P: using a token from $2 (about an hour)"; echo "$CFG"; exit 0; fi
-  ERR=$(head -c 400 "$t.err"); rm -f "$t" "$t.err"; return 1; }
+  ERR=$(head -c 400 "$t.err"); rm -f "$t" "$t.err"; seen; return 1; }
+# what the workspace's answers say about it, kept until every route has failed (one route's error doesn't stop the rest)
+GONE=; UNREACHABLE=
+seen() { case $ERR in *"Did not find workspace"*) GONE=$(printf '%s' "$ERR" | head -1 | cut -c1-120) ;;
+  *"no such host"*|*"Could not resolve host"*) UNREACHABLE=$(printf '%s' "$ERR" | head -1 | cut -c1-120) ;; esac; }
+EXPIRED=
 # Azure: an Entra ID token from the Azure CLI for the Azure Databricks resource works for every workspace in its tenant,
 # no account profile needed. A workspace in another tenant names it in the error; retry there if az knows that tenant.
 case $HOST in *.azuredatabricks.net*)
@@ -67,11 +77,19 @@ for A in $(printf '%s' "$PROFILES" | yq -p json -o tsv ".profiles[] | select($SE
   AH=$(field "$A" host); AA=$(field "$A" account_id)
   tok=$(real "${TO[@]}" 60 databricks auth token --host "$AH" --account-id "$AA" --profile "$A" -o json 2> /dev/null \
         | yq -p json -o tsv '.access_token // ""')
-  [ -n "$tok" ] || { say "account profile $A: no token (login expired?): databricks auth login --profile $A"; continue; }
+  [ -n "$tok" ] || { say "account profile $A: no token (login expired?)"; EXPIRED=${EXPIRED:-$A}; continue; }
   try "$tok" "account profile $A"; unset tok
   say "account profile $A: its token isn't accepted by $HOST (some workspaces, such as field sandboxes, take only their own login)"
 done
+if [ -n "$GONE" ]; then
+  say "$P: the workspace $HOST no longer exists (deleted or expired; FEVM sandboxes expire): no login brings it back; use another workspace or recreate it ($GONE)"
+  exit 3
+elif [ -n "$UNREACHABLE" ]; then
+  say "$P: $HOST can't be reached: its name doesn't resolve. Check the network first (VPN, private link, DNS); if the workspace was deleted, use another one ($UNREACHABLE)"
+  exit 4
+fi
 if [ -n "$HOST_ARG" ]; then say "$P: no account profile${AID:+ for account ${AID:0:8}...} could mint a token $HOST accepts: log in to its account (add-account.sh <account-id> <cloud>), or to the workspace: databricks auth login --host $HOST --profile $P"
-elif [ -n "$AID" ]; then say "$P: its login has expired and no account profile for account ${AID:0:8}... could mint a token: databricks auth login --profile $P"
+elif [ -n "$EXPIRED" ]; then say "$P: its login has expired, and so has the account login that covers it: log in to the account (every workspace in it then works): databricks auth login --profile $EXPIRED; or to this workspace only: databricks auth login --profile $P"
+elif [ -n "$AID" ]; then say "$P: its login has expired and no account profile for account ${AID:0:8}... could mint a token: log in to the account (add-account.sh ${AID} <cloud>), or to the workspace: databricks auth login --profile $P"
 fi
 exit 1

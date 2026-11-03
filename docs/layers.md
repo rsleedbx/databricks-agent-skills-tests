@@ -18,7 +18,7 @@ A skill or bin script may reference another one only if the other one's layer is
 
 | Layer | May use | What it holds | Skills and bin scripts |
 |---|---|---|---|
-| **common** | nothing | Helpers any layer may use: credentials, CLI JSON, long waits, token and tool checks, the rules for writing skills and branches | `account-token-fallback`, `options-first`, `podman-desktop-remove`, `secret-handling`, `cli-setup`, `shell-json-scripting`, `watch-progress`, `skill-token-budget`, `git-topic-branches` |
+| **common** | nothing | Helpers any layer may use: credentials, CLI JSON, long waits, token and tool checks, the rules for writing skills and branches | `account-token-fallback`, `options-first`, `podman-desktop-remove`, `secret-handling`, `cli-setup`, `lfc-test-settings`, `shell-json-scripting`, `watch-progress`, `skill-token-budget`, `git-topic-branches` |
 | **shape** | contract, common | Data shaped like a customer's or a benchmark's, engine-agnostic: the schema and statistics, and the data generated inside any database. Its producer writes the workload file | `lfc-source-statschema`, `lfc-source-datagen` |
 | **contract** | common | The contracts between a producer and its consumers: the source contract (what a source provides), and the workload contract (a model's tables and the commands that build them) | `lfc-source-contract`, `lfc-workload-contract` |
 | **sources** | shape, contract, common | Source databases on demand: provisioning, reaching and opening them | `lfc-source-podman`, `lfc-source-cloud-vm`, `lfc-source-azure-sql`, `lfc-source-azure-flexserver`, `lfc-source-gcp-cloudsql`, `lfc-source-aws-rds`, `lfc-source-aws-aurora`, `lfc-source-firewall`, `lfc-source-eventhubs` |
@@ -38,6 +38,7 @@ One line per skill: what it does, which decides its layer.
 | `podman-desktop-remove` | common | Removes Podman Desktop from a Mac so its VM stops filling the disk; host cleanup, no database. |
 | `secret-handling` | common | Reads passwords and keys without printing them; every layer reads credentials. Also holds `pw.sh` and `pw.py` (the password reference used by source and Lakeflow scripts). |
 | `cli-setup` | common | Checks the command-line tools are installed and records a cloud identity (`check-tools.sh`, `cloud-identity.sh`), which sources and Lakeflow scripts both source. Moved here from lfc-source-setup. |
+| `lfc-test-settings` | common | Keeps the answers a test would ask on every run (cloud accounts, region, resource group, workspaces, Podman or a VM) in one file per user; every layer reads them. |
 | `shell-json-scripting` | common | How to read CLI JSON in shell (jq, yq, DuckDB); used by every script. |
 | `watch-progress` | common | Waits on a long job with backoff; generic. |
 | `skill-token-budget` | common | How to write any skill so it loads few tokens; the rule applies to every layer. Its check commands are repo tooling (baseline). |
