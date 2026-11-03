@@ -2,8 +2,8 @@
 # sqlserver-scd2-history-snapshot.sh: keep an SCD type 2 destination table's versions across a full refresh
 # (history-snapshot-scd2.py: AUTO CDC FROM SNAPSHOT keyed by (keys, the version's start)), through the lifecycle of
 # sqlserver-history-snapshot.sh: normal sync, a gap, a full refresh of the destination with history runs while it is
-# applied, the next sync, a run with nothing new. Same table and changes as that script; the destination is SCD type 2,
-# which the full refresh reloads with one row per live key.
+# applied, the next sync, a run with nothing new. Same table and changes as that script; the destination is SCD type 2
+# (the table on CDC, as SCD type 2 needs on SQL Server), which the full refresh reloads with one row per live key.
 #
 #   Needs: as lfc-schema-change-test lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER, or SOURCE_JSON: a source
 #   contract, lfc-source-contract), and HISTORY_NB: the workspace path of history-snapshot-scd2.py imported as a
@@ -29,14 +29,12 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 src >/dev/null <<EOF || { echo "source setup failed"; exit 2; }
-IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
-  ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 3 DAYS, AUTO_CLEANUP = ON);
 CREATE TABLE lfcddemo.$TB (id INT NOT NULL PRIMARY KEY, v VARCHAR(20));
 INSERT INTO lfcddemo.$TB (id, v) VALUES (1, 'a1'), (2, 'b1'), (3, 'c1'), (4, 'd1'), (5, 'e1');
 EOF
-# change tracking through the utility objects' procedure (it also sets up the DDL capture; a plain ALTER TABLE ...
-# ENABLE CHANGE_TRACKING leaves INGESTION_GATEWAY_DDL_OBJECTS_MISSING), with the connection login's grants
-track ct "$TB"
+# CDC, not change tracking: SCD type 2 needs CDC on SQL Server (the docs), and on a change-tracking table integrated
+# CDC holds the changes until the next schema change (lfc-schema-change-test references/findings.md)
+track cdc "$TB"
 pipelines_create "$(obj "$TB")"
 update; [ "$(q "SELECT COUNT(*) FROM $T.$TB" 2>&1)" = 5 ] || update
 
@@ -76,7 +74,7 @@ hupdate; check load "1=a1 2=b1 3=c1 4=d1 5=e1"
 src >/dev/null <<EOF
 UPDATE lfcddemo.$TB SET v = 'b2' WHERE id = 2; DELETE FROM lfcddemo.$TB WHERE id = 3; INSERT INTO lfcddemo.$TB (id, v) VALUES (6, 'f1');
 EOF
-settle_rows "SELECT (SELECT COUNT(*) FROM $T.$TB), (SELECT COUNT(*) FROM $T.$TB WHERE v = 'b2')" "$(printf '5\t1')"
+settle_rows "SELECT (SELECT COUNT(*) FROM $T.$TB WHERE __END_AT IS NULL), (SELECT COUNT(*) FROM $T.$TB WHERE v = 'b2')" "$(printf '5\t1')"   # SCD type 2: open versions
 hupdate; check sync-history "1=a1 2=b1(closed) 2=b2 3=c1(closed) 4=d1 5=e1 6=f1"
 observe sync-destination "destination (SCD type 2): $(dest)"
 
@@ -84,7 +82,7 @@ observe sync-destination "destination (SCD type 2): $(dest)"
 src >/dev/null <<EOF
 UPDATE lfcddemo.$TB SET v = 'a2' WHERE id = 1; DELETE FROM lfcddemo.$TB WHERE id = 5;
 EOF
-settle_rows "SELECT (SELECT COUNT(*) FROM $T.$TB), (SELECT COUNT(*) FROM $T.$TB WHERE v = 'a2')" "$(printf '4\t1')"
+settle_rows "SELECT (SELECT COUNT(*) FROM $T.$TB WHERE __END_AT IS NULL), (SELECT COUNT(*) FROM $T.$TB WHERE v = 'a2')" "$(printf '4\t1')"
 observe gap "destination: $(dest) (history pipeline not run)"
 V0=$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)
 
