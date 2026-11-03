@@ -42,8 +42,9 @@ last checked over 30 days ago.
      for the VM's name.
    - `LFC_CATALOG`: the workspace's default catalog first (`databricks settings default-namespace get`), checked as in
      **lfc-workspace-setup**.
-   - `AZ_RESOURCE_GROUP`: a group of the user's own for test resources, made for it; never an existing shared one
-     (a create can change a group's tags).
+   - `AZ_RESOURCE_GROUP`: the one existing group every Azure test resource goes in. `setup` suggests the user's own
+     groups in the subscription (tagged with them as Owner or Creator); ask which one, and save it. A subscription
+     allows only so many groups, so skills never create, re-tag or delete one.
 3. **Save the answers**: `bash scripts/settings.sh set AZ_SUBSCRIPTION=<id> AZ_TENANT=<id> AZ_REGION=centralus ...`.
 4. **Read them** for every command, and pass the identity explicitly (`--subscription "$AZ_SUBSCRIPTION"`,
    `--profile "$DATABRICKS_PROFILE"`): never rely on the CLI's current default, which is whatever was set last.
@@ -52,6 +53,10 @@ last checked over 30 days ago.
    eval "$(bash scripts/settings.sh env)"
    az eventhubs namespace list --subscription "$AZ_SUBSCRIPTION" -g "$AZ_RESOURCE_GROUP" -o table
    ```
+
+**Cleanup removes only what the skill created.** A create tags what it makes (`CreatedBy=<skill>`, with `Owner` and
+`RemoveAfter`) or records it in its own state file; a teardown deletes a resource only when that tag or record says
+this skill made it, and never the group or anything that was there before.
 
 Change one with `set`, drop one with `unset`; `show` prints them all. Only names and ids belong here: passwords and
 keys stay in their own 0600 files, named by a setting if needed (`KAFKA_PASSWORD_FILE=~/.lfc/kafka/<ns>.pw`).
@@ -62,7 +67,7 @@ keys stay in their own 0600 files, named by a setting if needed (`KAFKA_PASSWORD
 |---|---|---|
 | `AZ_SUBSCRIPTION`, `AZ_TENANT` | Azure subscription id and its tenant | `<subscription id>`, `<tenant id>` |
 | `AZ_REGION` | Azure region for test resources: the workspace's region | `centralus` |
-| `AZ_RESOURCE_GROUP` | the user's own group for test resources | `lfc-tests-<owner>` |
+| `AZ_RESOURCE_GROUP` | the existing group every Azure test resource goes in | `<resource group>` |
 | `AWS_PROFILE`, `AWS_ACCOUNT`, `AWS_REGION` | AWS CLI profile, its account and region | `<profile>`, `<account id>`, `us-east-2` |
 | `DATABRICKS_PROFILE` | the workspace the tests use by default | `<profile>` |
 | `WORKSPACES` | the shared workspaces to pick from, by profile, comma-separated | `<profile>,<profile>` |

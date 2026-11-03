@@ -11,6 +11,8 @@
 #   set K=V ...   add or replace keys (KEY: capital letters, digits and _)
 #   require K ... exit 1 and list the missing keys, one per line, so the skill asks for only those. Reads the file only
 #                 (no CLI calls); notes on stderr when the settings were last checked over 30 days ago
+#   AZ_RESOURCE_GROUP is an existing group, asked for: setup suggests the groups in AZ_SUBSCRIPTION tagged with the az
+#   user as Owner or Creator. A subscription allows only so many groups, so the skills never create, re-tag or delete one.
 #   checked       record today as SETTINGS_CHECKED (after setup, or after a failed call made you re-check a value)
 #   env           export lines for eval: eval "$(settings.sh env)"
 #   workspaces    the workspace profiles of `databricks auth profiles`, numbered, by cloud: host, and whether the login
@@ -20,7 +22,7 @@
 #                 default marked "default": what to show the user when AZ_SUBSCRIPTION is missing
 set -uo pipefail
 F=${LFC_TESTS_SETTINGS:-$HOME/.lfc/tests/settings.env}
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 valid() { case $1 in ''|*[!A-Z0-9_]*|[0-9]*) return 1 ;; esac; }
 value() {   # value KEY: the saved value, unquoted by the shell that wrote it
@@ -71,8 +73,19 @@ case $cmd in
           command -v limactl > /dev/null || echo "podman on macOS without Lima: see lfc-source-podman"
         else echo "native podman $(podman --version 2>/dev/null | awk '{print $NF}')"; fi
       else echo "no podman (lfc-source-podman to install, or a cloud VM: lfc-source-cloud-vm)"; fi; } > "$T/podman" 2>&1 &
+    rg=$(value AZ_RESOURCE_GROUP 2>/dev/null || true); sub=$(value AZ_SUBSCRIPTION 2>/dev/null || true)
+    { if ! command -v az > /dev/null || [ -z "$sub" ]; then echo "(AZ_SUBSCRIPTION not set: choose the subscription first)"
+      else
+        me=$("${TO[@]}" 30 az account show --query user.name -o tsv 2>/dev/null)
+        [ -z "$rg" ] || { "${TO[@]}" 60 az group show --subscription "$sub" -n "$rg" --query location -o tsv 2>/dev/null \
+          | sed "s/^/saved: $rg, exists, in /" | grep . || echo "saved: $rg, NOT found in the subscription"; }
+        echo "yours (Owner or Creator tag = ${me:-?}):"
+        "${TO[@]}" 60 az group list --subscription "$sub" -o json 2>/dev/null | jq -r --arg me "$me" \
+          '.[] | select(((.tags.Owner // "") | ascii_downcase) == ($me | ascii_downcase) or ((.tags.Creator // "") | ascii_downcase) == ($me | ascii_downcase)) | "  \(.name)  \(.location)"'
+      fi; } > "$T/rg" 2>&1 &
     wait
     echo "== saved ($F)"; [ -f "$F" ] && cat "$F"; echo
+    echo "== Azure resource group for every test resource (AZ_RESOURCE_GROUP: an existing one; skills never create or delete a group)"; cat "$T/rg"; echo
     echo "== Azure subscriptions (name, id, tenant, saved/default)"; cat "$T/azure"; echo
     echo "== AWS profiles (profile, account, region)"; cat "$T/aws"; echo
     echo "== Databricks workspace profiles: which do you work in often? (number, cloud, profile, login, host)"; cat "$T/dbx"; echo
