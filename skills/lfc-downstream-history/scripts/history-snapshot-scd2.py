@@ -8,7 +8,8 @@
 #             the source updates src_end in place, not as a new version.
 #   versions  one row per version as the source had it: src_start_at, src_end_at; a refresh's reload of an unchanged
 #             live row is joined to the version before it; a dropped open version ends where the next one starts.
-# Settings: src (the SCD type 2 table), keys (comma-separated key columns, default id). Run it after each ingestion
+# Settings: src (the SCD type 2 table), keys (comma-separated key columns, default id), allow_empty (true: a snapshot
+# with no rows may close every version; default false: it fails the update). Run it after each ingestion
 # update; versions made and dropped between two of its runs are not seen. `spark` comes from the pipeline runtime.
 # ruff: noqa: F821
 import dlt
@@ -18,6 +19,7 @@ from pyspark.sql.types import StructType
 
 SRC = spark.conf.get("src")
 KEYS = [k.strip() for k in spark.conf.get("keys", "id").split(",") if k.strip()]
+ALLOW_EMPTY = spark.conf.get("allow_empty", "false").lower() == "true"
 SCHEMA = spark.read.table(SRC).schema
 DATA = [f.name for f in SCHEMA.fields if f.name not in KEYS and f.name not in ("__START_AT", "__END_AT")]
 
@@ -33,20 +35,44 @@ def part(col, field):
     return F.col(col).cast("string") if field == "seq" else F.col(col).cast("timestamp")
 
 
-def refresh_in_progress():
-    """A full refresh empties the table (DLT REFRESH) before it reloads it (MERGE): a snapshot read in between would
-    close every version. True when the newest DLT REFRESH has no data write after it."""
-    ops = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50").select("version", "operation").collect()
-    refresh = max((r.version for r in ops if r.operation == "DLT REFRESH"), default=None)
-    writes = max((r.version for r in ops if r.operation in ("MERGE", "WRITE", "STREAMING UPDATE")), default=None)
-    return refresh is not None and (writes is None or writes < refresh)
+WRITES = ("MERGE", "WRITE", "STREAMING UPDATE")
+ROW_METRICS = ("numOutputRows", "numTargetRowsInserted", "numTargetRowsUpdated", "numTargetRowsCopied")
+
+
+def wrote_rows(metrics):
+    """A write's operationMetrics show rows; no metrics at all counts as rows (older tables don't record them)."""
+    if not metrics:
+        return True
+    return any(int(metrics.get(k) or 0) > 0 for k in ROW_METRICS)
+
+
+def refresh_in_progress(ops):
+    """ops: (version, operation, operationMetrics) from DESCRIBE HISTORY. A full refresh empties the table (DLT REFRESH)
+    before it reloads it: True while the newest DLT REFRESH has no write with rows after it."""
+    refresh = max((v for v, op, _ in ops if op == "DLT REFRESH"), default=None)
+    if refresh is None:
+        return False
+    return not any(v > refresh and op in WRITES and wrote_rows(m) for v, op, m in ops)
+
+
+def empty_after_rows(snapshot_rows, ops, allow_empty):
+    """A snapshot with no rows of a table that had rows written (in the history read) would close every version:
+    refuse it unless allow_empty says the table is meant to be empty. Reads the source's history, not this pipeline's
+    own tables (no cycle in the graph)."""
+    had_rows = any(op in WRITES and wrote_rows(m) for _, op, m in ops)
+    return snapshot_rows == 0 and had_rows and not allow_empty
 
 
 @dlt.view(name="src_versions")
 def src_versions():
-    if refresh_in_progress():
-        raise RuntimeError(f"{SRC} is being reloaded by a full refresh (DLT REFRESH, no MERGE yet): "
+    hist = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50").select("version", "operation", "operationMetrics").collect()
+    ops = [(r.version, r.operation, r.operationMetrics) for r in hist]
+    if refresh_in_progress(ops):
+        raise RuntimeError(f"{SRC} is being reloaded by a full refresh (DLT REFRESH, no write with rows yet): "
                            "run this pipeline again after the ingestion update finishes")
+    if empty_after_rows(spark.read.table(SRC).limit(1).count(), ops, ALLOW_EMPTY):
+        raise RuntimeError(f"{SRC} is empty after rows were written to it: a snapshot would close every version. "
+                           "Run again once the table is loaded, or set allow_empty=true if it is meant to be empty")
     return spark.read.table(SRC).select(
         *KEYS, *DATA,
         part("__START_AT", "seq").alias("src_start"), part("__START_AT", "ts").alias("src_start_ts"),

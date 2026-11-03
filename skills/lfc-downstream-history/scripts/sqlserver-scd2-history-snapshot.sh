@@ -66,7 +66,7 @@ scd2() { q "SELECT CONCAT_WS(' ', COLLECT_LIST(x)) FROM (SELECT CONCAT(id, '=', 
 open_versions() { q "SELECT COUNT(*) FROM $HT.versions WHERE src_end_at IS NULL" 2>&1 | tr -d '[:space:]'; }
 dest() { q "SELECT CONCAT_WS(' ', SORT_ARRAY(COLLECT_LIST(CONCAT(id, '=', v, IF(__END_AT IS NULL, '', '(closed)'))))) FROM $T.$TB" 2>&1; }
 hist() { q "SELECT CONCAT_WS(' ', COLLECT_LIST(CONCAT(version, ':', operation))) FROM (SELECT version, operation FROM (DESCRIBE HISTORY $T.$TB) ORDER BY version)" 2>&1 | cut -c1-400; }
-check() { [ "$(scd2)" = "$2" ] && claim "$1" PASS "history: $(scd2)" || claim "$1" FAIL "history: $(scd2) (want $2)"; }
+check() { [ "$HSTATE" = COMPLETED ] && [ "$(scd2)" = "$2" ] && claim "$1" PASS "history: $(scd2)" || claim "$1" FAIL "history: $(scd2) (want $2)"; }
 
 hupdate; check load "1=a1 2=b1 3=c1 4=d1 5=e1"
 
@@ -132,8 +132,8 @@ check survives-refresh "$WANT"
 echo "UPDATE lfcddemo.$TB SET v = 'd2' WHERE id = 4;" | src >/dev/null
 settle_rows "SELECT COUNT(*) FROM $T.$TB WHERE v = 'd2'" 1
 hupdate; GOT=$(scd2)
-[[ "$GOT" == *"4=d1(closed)"*"4=d2"* ]] && claim keeps-going PASS "history: $GOT" || claim keeps-going FAIL "history: $GOT"
-hupdate; [[ "$GOT" != FAILED* ]] && [ "$(scd2)" = "$GOT" ] && claim no-change-no-version PASS "a run with nothing new left the history as it was" \
+[ "$HSTATE" = COMPLETED ] && [[ "$GOT" == *"4=d1(closed)"*"4=d2"* ]] && claim keeps-going PASS "history: $GOT" || claim keeps-going FAIL "history: $GOT"
+hupdate; [ "$HSTATE" = COMPLETED ] && [ "$(scd2)" = "$GOT" ] && claim no-change-no-version PASS "a run with nothing new left the history as it was" \
   || claim no-change-no-version FAIL "changed on a rerun: $(scd2)"
 result_md sqlserver-scd2-history-snapshot
 exit $FAILED
