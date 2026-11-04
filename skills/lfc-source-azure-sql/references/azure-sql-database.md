@@ -27,7 +27,7 @@ az sql db create \
   --resource-group <resource_group> \
   --server <pfx>-mssql-<location>-<epoch> \
   --name <pfx>_mssql_db_<epoch> \
-  --service-objective GP_S_Gen5_2 \
+  --service-objective GP_S_Gen5_1 \
   --collation SQL_Latin1_General_CP1_CI_AS \
   --tags owner="<pfx>" purpose="lfc-test" created="$(date -u +'%Y-%m-%d')"
 ```

@@ -4,7 +4,8 @@ In a checkout: the repo's results/. Installed as a Claude Code plugin (this copy
 is replaced on every update): new results go to ~/.lfc/tests/results/<kind>, and reads take the shipped results plus
 those. LFC_TESTS_RESULTS=<dir> sets the folder for new results in either case.
 """
-import json, os
+import json
+import re, os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]          # skills/lfc-test-results/scripts/results_dir.py
@@ -23,6 +24,9 @@ def show(path):                                     # repo-relative in a checkou
     try: return str(path.relative_to(REPO))
     except ValueError: return str(path)
 
-def plugin_version():                               # "0.1.0" when installed as a plugin with no .git, else None
-    try: return json.loads((REPO / ".claude-plugin" / "plugin.json").read_text())["version"] if PLUGIN else None
-    except Exception: return None
+def plugin_version():                               # installed as a plugin (no .git): its version, else None
+    if not PLUGIN: return None
+    try: return json.loads((REPO / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except Exception: pass
+    # no version in plugin.json: Claude Code versions the plugin by its commit and names the install folder after it
+    return REPO.name if re.fullmatch(r"[0-9a-f]{7,40}", REPO.name) else None

@@ -4,7 +4,7 @@
 # caller. Profile: $PROFILE or $DATABRICKS_CONFIG_PROFILE. Flags from env: SRC_CLOUD, SRC_HOST, SRC_PRIMARY,
 # SRC_SECONDARY, SRC_FIREWALL, SECRET_STORE, SECRET_KIND, CAPTURE (cdc|ct|cdc+ct), SRC_FACTS (a vm-facts.sh JSON file),
 # SRC_VM (the VM as text), SRC_MODEL, SRC_MODEL_TABLES, SRC_MODEL_SCALE (the data model loaded into the source).
-# LAYERS (space-separated NAME=CATALOG.SCHEMA[,...] after the landing layer), REVERSE_ETL (TARGET[:METHOD[:TABLES]]).
+# Kafka: BROKER, PRODUCER, PRODUCER_HOST, PROBE (what the API can't see). LAYERS (space-separated NAME=CATALOG.SCHEMA[,...] after the landing layer), REVERSE_ETL (TARGET[:METHOD[:TABLES]]).
 # DIAGRAM=0 skips it.
 id=${1:?usage: show-diagram.sh <ingestion pipeline id>}
 [ "${DIAGRAM:-1}" = 1 ] || exit 0
@@ -24,6 +24,10 @@ p=${PROFILE:-${DATABRICKS_CONFIG_PROFILE:-}}; [ -n "$p" ] && fl+=(--profile "$p"
 [ -n "${SRC_MODEL:-}" ] && fl+=(--model "$SRC_MODEL")
 [ -n "${SRC_MODEL_TABLES:-}" ] && fl+=(--model-tables "$SRC_MODEL_TABLES")
 [ -n "${SRC_MODEL_SCALE:-}" ] && fl+=(--model-scale "$SRC_MODEL_SCALE")
+[ -n "${BROKER:-}" ] && fl+=(--broker "$BROKER")
+[ -n "${PRODUCER:-}" ] && fl+=(--producer "$PRODUCER")
+[ -n "${PRODUCER_HOST:-}" ] && fl+=(--producer-host "$PRODUCER_HOST")
+[ -n "${PROBE:-}" ] && fl+=(--probe "$PROBE")
 for l in ${LAYERS:-}; do fl+=(--layer "$l"); done
 [ -n "${REVERSE_ETL:-}" ] && fl+=(--reverse-etl "$REVERSE_ETL")
 {

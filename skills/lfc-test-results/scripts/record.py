@@ -37,7 +37,8 @@ RAN_ON = {"serverless", "classic", "not-started", "unknown"}   # unknown: not re
 BLOCKED_BY = {"compute-not-allowed", "firewall", "feature-gate", "other"}
 PIPELINE_TESTS = {"qbc", "fcqbc", "icdc", "scdc", "dml", "saas"}
 SETUP_KEYS = {"storage", "network", "credentials", "workload", "dml", "tool", "contributor",
-              "route", "topology", "sources", "rounds", "bronze", "silver", "layers", "producer"}   # documented; others allowed (warned)
+              "route", "topology", "sources", "rounds", "bronze", "silver", "layers", "producer",
+              "producer_host", "fanout", "probe", "broker", "pipeline", "runtime"}   # documented; others allowed (warned)
 
 # Anything matching these is internal or secret; use placeholders (see SKILL.md)
 LEAKS = [

@@ -44,7 +44,7 @@ Next, for Podman: format the data disk (`/dev/disk/by-id/google-data`) as XFS wi
 ```bash
 gcloud compute instances add-labels "$VM_NAME" \
   --zone="$ZONE" \
-  --labels=purpose=lfc-test,owner=jane-doe,removal_date=2025-02-15
+  --labels=purpose=lfc-test,owner=jane-doe,remove_after=2025-02-15
 ```
 
 ## Add firewall tag for database access

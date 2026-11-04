@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-source-env.sh: offline checks of the source contract (contract 1): source-env.sh on every fixture (valid, missing
 # field, bad port or engine, contract 2), each engine's default client (fake clients on PATH record their arguments and
-# environment: the password is never an argument). A slot's contract (slot-source.sh) is checked by lfc-source-cloud-vm's
+# environment: the password is never an argument), and a Kafka broker's contract. A slot's contract (slot-source.sh) is checked by lfc-source-cloud-vm's
 # test-slot-source.sh. Prints "all passed" or the failures; exit 1 on any failure.
 #   bash skills/lfc-source-contract/scripts/test-source-env.sh
 set -uo pipefail
@@ -34,6 +34,13 @@ connection_and_facts() {   # a connection, facts (resolved beside the file) and 
 connection_kept() {   # a contract without a connection leaves CONNECTION as the environment had it
   CONNECTION=keep; eval "$(exports_of postgres)"; [ "$CONNECTION" = keep ]
 }
+kafka_broker() {   # a broker, not a database: its fields, and no SQL client
+  local err; unset SRC_SQL SRC_PASSWORD_FILE
+  eval "$("$SE" "$FX/kafka.json" 2> "$T/kerr")"; err=$(cat "$T/kerr")
+  [ "$SRC_ENGINE" = kafka ] && [ "$SRC_HOST" = demo-ns.servicebus.windows.net ] && [ "$SRC_PORT" = 9093 ] &&
+    [ "$CONN_USER" = '$ConnectionString' ] && [ "$SRC_TOPIC" = tag-observations ] && [ "$SRC_SASL" = PLAIN ] &&
+    [ "$SRC_PASSWORD_FILE" = "$FX/demo-ns.pw" ] && [ -z "${SRC_SQL:-}" ] && [ -z "$err" ]
+}
 no_client_no_sql() {   # db2 has no default client: SRC_SQL stays unset, and the reason is said
   local out; unset SRC_SQL; eval "$(exports_of db2)"
   [ -z "${SRC_SQL:-}" ] && "$SE" "$FX/informix.json" 2>&1 > /dev/null | grep -q 'no default SQL client'
@@ -53,7 +60,9 @@ check "contract's connection, facts (resolved beside the file) and sql_cmd are e
 check "no connection in the contract: CONNECTION is left as the environment had it" connection_kept
 check "db2: no default client, so SRC_SQL is not set, and the reason is said" no_client_no_sql
 check "insecure cockroachdb: the default client, without a password" insecure_default
+check "kafka: bootstrap host and port, user, topic, SASL, the password file beside the contract; no SRC_SQL, no warning" kafka_broker
 check "missing host: refused, named" refused missing-host "missing host"
+check "kafka without a topic: refused, named" refused kafka-no-topic "missing topic"
 check "oracle without a service: refused, named" refused missing-service "missing service"
 check "port as text: refused" refused bad-port "port must be a whole number"
 check "unknown engine: refused, the engines listed" refused bad-engine "is not one of"

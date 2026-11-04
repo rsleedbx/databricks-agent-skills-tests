@@ -14,7 +14,7 @@ E=$1; D=/var/lib/containers/lfc-data; J=/mnt/jfs; JC=/var/lib/containers/jfs/cac
 F="--create-empty-src-dirs --metadata --links --transfers 16 --checkers 16"
 t() { local s=$(date +%s.%N); "$@"; local rc=$?; echo "  [$(echo "$(date +%s.%N) - $s" | bc | cut -c1-6) s] $*"; return $rc; }
 rclone() { podman run --rm --env-file /var/tmp/lfc-rclone.env -v $D:$D docker.io/rclone/rclone:latest "$@"; }
-[ -s /root/lfc-eng.pw ] || (umask 077; echo "Lfc1$(openssl rand -hex 10)" > /root/lfc-eng.pw)
+[ -s /root/lfc-eng.pw ] || (umask 077; echo "Lfc1$(openssl rand -hex 12)" > /root/lfc-eng.pw)
 ENVF=/root/lfc-$E.env; PW=$(cat /root/lfc-eng.pw); EXTRA=; CMD=; TMO=600
 case $E in
 mssql) IMG=mcr.microsoft.com/mssql/server:2022-latest; MNT=/var/opt/mssql

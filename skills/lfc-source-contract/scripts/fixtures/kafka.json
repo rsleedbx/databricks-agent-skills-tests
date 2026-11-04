@@ -1,0 +1,2 @@
+{"contract": 1, "name": "demo-ns", "engine": "kafka", "host": "demo-ns.servicebus.windows.net", "port": 9093,
+ "user": "$ConnectionString", "topic": "tag-observations", "sasl_mechanism": "PLAIN", "password_file": "demo-ns.pw"}

@@ -26,16 +26,16 @@ Provision a source database on AWS RDS for Lakeflow Connect (LFC) using the AWS 
 
 ## Inputs to collect
 
-Before creating, ask and collect:
+**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.sh env`; `settings.sh require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. Before creating, collect the rest:
 
 | Input | Purpose | Example |
 |-------|---------|---------|
 | **engine** | Database engine | `postgres`, `mysql`, `sqlserver`, `oracle` |
 | **version** | Engine version | `16` (postgres), `8.0` (mysql), `2022` (sqlserver) |
-| **aws-region** | AWS region for RDS | `us-east-1`, `eu-west-1` |
+| **aws-region** | `AWS_REGION` (saved) | `us-east-1`, `eu-west-1` |
 | **instance-type** | EC2 instance class | `db.t3.micro`, `db.t3.small` |
 | **storage-gb** | Allocated storage | `20`, `50`, `100` |
-| **user-prefix** | Prefix for resource names | `jane-doe` (derived from email) |
+| **user-prefix** | Prefix for resource names, from `OWNER` (saved) | `jane-doe` |
 
 ## Prerequisites
 
@@ -120,8 +120,9 @@ Generate and store admin password safely:
 
 ```bash
 umask 077
-openssl rand -base64 32 > /tmp/admin_pw.txt
-export RDS_ADMIN_PASSWORD="$(cat /tmp/admin_pw.txt)"
+# letters and digits only: RDS refuses /, @ and " in a master password, which base64 output can contain
+umask 077; mkdir -p ~/.lfc/pw; echo "Lfc1$(openssl rand -hex 12)" > ~/.lfc/pw/rds-admin.pw
+export RDS_ADMIN_PASSWORD="$(cat ~/.lfc/pw/rds-admin.pw)"
 ```
 
 Create the instance (PostgreSQL example):
@@ -183,10 +184,10 @@ These guides cover creating LFC users, enabling replication, and testing connect
 Create a Databricks Unity Catalog connection. See the parent skill's "Register the UC connection" section.
 
 **Briefly:**
-1. Generate password: `umask 077; openssl rand -base64 32 > /tmp/lfc_pw.txt`
+1. Generate password: `umask 077; mkdir -p ~/.lfc/pw; echo "Lfc1$(openssl rand -hex 12)" > ~/.lfc/pw/rds-lfc.pw` (letters and digits: RDS refuses `/`, `@`, `"`)
 2. Create `conn.json` with `umask 077; cat > conn.json <<EOF...EOF` (read password from file)
 3. Create: `databricks connections create --json @conn.json --profile <PROFILE>`
-4. Delete: `rm conn.json /tmp/lfc_pw.txt`
+4. Delete: `rm conn.json ~/.lfc/pw/rds-lfc.pw`
 
 ### 6. Verify the connection
 

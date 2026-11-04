@@ -1462,6 +1462,18 @@ if [ "$PHASE" -ge 2 ]; then
       done; fi
     done
   fi; PIPELINE_ID=${PIPELINE_IDS[0]:-}
+  # what was created, drawn (lfc-pipeline-diagram): the model, the source and its capture, the producer, Zerobus and bronze;
+  # to stderr and $W/diagram.md; it never fails the run (DIAGRAM=0 skips it)
+  if [ "${DIAGRAM:-1}" = 1 ]; then
+    DG=(python3 "$HERE/../../lfc-pipeline-diagram/scripts/pipeline-diagram.py" --ingest zerobus
+      --engine "$(case $SOURCE in crdb) echo cockroachdb;; yb) echo yugabytedb;; pg) echo postgresql;; mssql) echo sqlserver;; *) echo "$SOURCE";; esac)"
+      --bronze "$(for l in $LOGS; do printf '%s,' "$CATALOG.$S.$l"; done | sed 's/,$//')"
+      --producer "$([ "$SINK" = kafka ] && echo 'Kafka Connect (Zerobus sink)' || echo 'Debezium Server (Zerobus sink)')"
+      --source-host "$([ -n "${LIMA:-}" ] && echo 'Lima VM + Podman' || echo 'VM + Podman')" --model "$MODEL" --model-tables "$NT"
+      --workspace-host "$HOST")
+    { echo "Components created:"; "${DG[@]}" --format text 2>/dev/null || echo "(diagram skipped)"; } >&2
+    "${DG[@]}" -o "$W/diagram.md" 2>/dev/null || true
+  fi
   [ "$NT" -le 20 ] && for t in $TABLES; do link "silver $t" "$HOST/explore/data/$CATALOG/$S/$t"; done
   [ -n "$GOLD" ] && link "gold $GOLD" "$HOST/explore/data/$CATALOG/$S/$GOLD"
   [ "$ON_DRIFT" = record ] && link "schema drift schema_drift" "$HOST/explore/data/$CATALOG/$S/schema_drift"

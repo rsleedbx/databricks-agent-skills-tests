@@ -10,6 +10,13 @@ Open Claude Code (or another coding agent) in this repo, with a Databricks CLI l
 
 The skills ask before creating anything, and clean up after themselves. To run the tests as scripts instead, see [docs/running-tests.md](docs/running-tests.md).
 
+## What you need
+
+- **Databricks:** a workspace you can create connections and pipelines in, and the Databricks CLI logged in to it (`databricks auth login`).
+- **Tools:** uv, jq, yq and DuckDB; for local source databases, Podman (and Lima on macOS). The first session names any that are missing, with the install command.
+- **A cloud login, only for cloud sources:** `az`, `aws` or `gcloud`, logged in to the account the sources should go in.
+- **Asked once, then saved:** the first test asks for your cloud account, region, resource group, workspace and catalog in one message, with a recommendation for each, and saves the answers in `~/.lfc/tests/settings.env` ([lfc-test-settings](skills/lfc-test-settings/SKILL.md)). Later tests read them instead of asking again.
+
 ## Install
 
 In Claude Code, from any folder, with no clone:
@@ -19,9 +26,18 @@ In Claude Code, from any folder, with no clone:
 /plugin install lfc-tests@lfc-tests
 ```
 
-From a terminal, the same with `claude plugin marketplace add rsleedbx/databricks-agent-skills-tests` and `claude plugin install lfc-tests@lfc-tests`. The public Lakeflow Connect skill the tests use comes from the Databricks plugin: `/plugin marketplace add databricks/databricks-agent-skills`, then `/plugin install databricks@databricks-agent-skills`.
+**Update often:** the skills change every few days. Before a test, get the latest, then restart Claude Code:
 
-Then ask in plain words, as above. Each session starts by naming any tool the tests need that isn't installed (Databricks CLI, uv, jq, yq, DuckDB, Podman, and Lima on macOS); ask *"check the tools for local tests"* for the install commands ([check-tools.sh](skills/cli-setup/scripts/check-tools.sh)). `/plugin update lfc-tests@lfc-tests` gets the latest. Results you record go to `~/.lfc/tests/results/` (or `$LFC_TESTS_RESULTS`), next to the ones shipped with the plugin; to add yours to this repo, open a pull request from a clone ([CONTRIBUTING.md](CONTRIBUTING.md)).
+```
+/plugin marketplace update lfc-tests
+/plugin update lfc-tests@lfc-tests
+```
+
+Each commit is a new version (the plugin has no fixed version number), so an update always brings what's on `main`.
+
+From a terminal, the same with `claude plugin marketplace add rsleedbx/databricks-agent-skills-tests`, `claude plugin install lfc-tests@lfc-tests`, `claude plugin marketplace update lfc-tests` and `claude plugin update lfc-tests@lfc-tests`. The public Lakeflow Connect skill the tests use comes from the Databricks plugin: `/plugin marketplace add databricks/databricks-agent-skills`, then `/plugin install databricks@databricks-agent-skills`.
+
+Then ask in plain words, as above. Each session starts by naming any tool the tests need that isn't installed (Databricks CLI, uv, jq, yq, DuckDB, Podman, and Lima on macOS); ask *"check the tools for local tests"* for the install commands ([check-tools.sh](skills/cli-setup/scripts/check-tools.sh)). Results you record go to `~/.lfc/tests/results/` (or `$LFC_TESTS_RESULTS`), next to the ones shipped with the plugin; to add yours to this repo, open a pull request from a clone ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## What's tested, by route
 
@@ -33,12 +49,57 @@ Then ask in plain words, as above. Each session starts by naming any tool the te
 
 ## How a prompt becomes a tested result
 
+Three steps, shown with one real run: Kafka into Databricks through the Lakeflow Connect Kafka connector, timed end to end ([results/2026-11-03-lfc-kafka-laptop.md](results/2026-11-03-lfc-kafka-laptop.md)).
+
+### 1. Ask for the experiment
+
+> Measure how fresh Kafka events are in Databricks through Lakeflow Connect: an Event Hubs broker in my resource group, 3,000 events/s from my laptop with a 10x burst for 2 minutes, and report freshness before, during and after the burst. Clean up only what you create.
+
+The skills read the settings asked once on the first run (subscription, region, resource group, workspace: [lfc-test-settings](skills/lfc-test-settings/SKILL.md)) instead of asking again.
+
+### 2. See the plan as a diagram, before anything is created
+
+Every component the run will create, drawn from the pipeline spec and the connection before either exists ([lfc-pipeline-diagram](skills/lfc-pipeline-diagram/SKILL.md)), as it appears in the session. Nothing is created until you agree; after the create, the same drawing is made from what exists, so the two can be compared.
+
+```text
+model tag-simulator: 1 table, 3,000 events/s; 10x for 2 min at minute 5 (producer.py's tag simulator)
+        | simulates
+Laptop: producer.py, 10 streams
+        | Kafka produce, SASL PLAIN
+Azure: Event Hubs (Kafka endpoint) at kafka-test-ns.servicebus.windows.net:9093
+  Standard, 4-40 TU auto-inflate, 32 partitions
+  topic tag-observations
+        |
+Databricks (Azure)   [planned: not created yet]
+  connection kafka_test (KAFKA, SASL PLAIN, user $ConnectionString)  <-- stored in the connection
+        |
+  ingestion pipeline lfc-kafka-tag_observations (serverless, continuous, channel PREVIEW): Kafka consumer from offset latest
+        |
+  streaming table (append-only): main.kafka_test.tag_observations: key STRING, value VARIANT (JSON)
+        |
+  freshness probe: SQL warehouse, every 2 s
+```
+
+### 3. Run it, fix what comes up, record the result
+
 ![How the tests run](docs/diagrams/test-tooling.png)
 
 - **A fresh copy of any database, in a fraction of a second**, on a VM (Podman and JuiceFS), or a cloud database (RDS, Aurora, Azure SQL, Flexible Server, Cloud SQL, Lakebase).
 - **Data generated inside the database, from any schema**, shaped like a customer's from its statistics only ([statschema](https://github.com/rsleedbx/statschema)); only the SQL travels.
 - **Scripts, not instructions:** each skill runs the scripts in its own `scripts/` folder, so anyone can repeat a test without the AI, and a ✅ means "these scripts, at this commit".
 - **Answers tested as claims, on the runtime they ran on:** each result is a rerunnable PASS or FAIL tied to the runtime and settings of every update.
+
+What came up in the example run, and what was changed so the next run doesn't hit it:
+
+| What happened | Fixed by |
+|---|---|
+| The workspace's login had expired | a token from the Azure CLI login ([account-token-fallback](skills/account-token-fallback/SKILL.md)); no login asked |
+| The broker script would have run `az group create` on the user's existing group, which replaces its tags | the script now needs an existing group, never creates, re-tags or deletes one, and deletes only the namespace it tagged ([lfc-source-eventhubs](skills/lfc-source-eventhubs/SKILL.md)) |
+| The workspace had no SQL warehouse for the freshness probe | a small serverless one, created for the run and deleted after |
+| The diagram drew the Kafka connection as a SaaS API | Kafka added to the diagram (broker, topic, consumer) |
+| 330 more rows landed than were sent | the producer now counts the duplicates it sends on purpose, so the report shows lost events and extra copies apart |
+
+The result: the 10x burst reached 29,938 events/s; freshness p50 3.9 s, p90 5.3 s; recorded with `record.py`, and everything the run made removed.
 
 How these compare with other tools, and their limits: [docs/what-is-unique.md](docs/what-is-unique.md).
 

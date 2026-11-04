@@ -27,14 +27,16 @@ Not suitable for: local development (use Podman), existing on-premises databases
 
 ## Input parameters to collect
 
+**Saved settings first** (**lfc-test-settings**): `GCP_PROJECT`, `GCP_REGION` and `OWNER` come from `settings.sh env`; `settings.sh require GCP_PROJECT GCP_REGION OWNER` lists only what to ask. The rest below is per instance.
+
 | Input | Example | Notes |
 |-------|---------|-------|
-| **GCP project ID** | `company-dev-project` | From `gcloud config get-value project` |
-| **GCP region** | `us-central1` | From config or choose one |
+| **GCP project ID** | `company-dev-project` | `GCP_PROJECT` (saved), on every `gcloud` call (`--project`) |
+| **GCP region** | `us-central1` | `GCP_REGION` (saved) |
 | **Engine** | `mysql` \| `postgres` \| `sqlserver` | Determines version + flags |
 | **Instance tier** | `db-f1-micro` (dev) / `db-custom-1-3840` (SQL Server min) | GCP machine type |
 | **Storage (GB)** | `10` | GCP minimum is engine-dependent |
-| **User email prefix** | `jane-doe` | Lowercase, `.` / `_` → `-`, max 12 chars |
+| **User email prefix** | `jane-doe` | From `OWNER` (saved): lowercase, `.` / `_` → `-`, max 12 chars |
 
 ## Before creating: cost check and approval
 
