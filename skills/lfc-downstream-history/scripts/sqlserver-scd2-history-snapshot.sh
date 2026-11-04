@@ -45,6 +45,7 @@ DP=$(dbx pipelines create -o json --json "{\"name\":\"$HS\",\"catalog\":\"$CATAL
 echo "LINK history pipeline $(dbx auth describe -o json 2>/dev/null | yq -r '.details.host // ""')/pipelines/$DP"
 # hupdate: one history update; HSTATE, HERRS. A platform rollout abort (nothing written) is run once more; no update
 # ID (an expired login, an API error) stops the run.
+HRETRY=0
 hupdate() {
   local u n
   for n in 1 2; do
@@ -55,9 +56,14 @@ hupdate() {
     dbx api get "/api/2.0/pipelines/$DP/events?max_results=250" -o json > "$W/hev.json"
     HERRS=$(U=$u yq -r '.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.error_class // ""' "$W/hev.json" | grep -v '^$' | sort -u | tr '\n' ' ')
     [ "$HSTATE" = COMPLETED ] && break
+    # the first line of the error, for the log (the pipeline is deleted at cleanup)
+    U=$u yq -r '[.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.message // ""] | map(select(. != "")) | .[0] // ""' "$W/hev.json" | head -1 | cut -c1-300 | sed 's/^/  history error: /'
     dbx pipelines stop "$DP" >/dev/null 2>&1
-    [[ "$HERRS" == *AUTO_MIGRATION_ENVIRONMENT_VERSION_ENABLEMENT_BLOCKED* ]] || break
-    echo "history update: platform rollout abort (try $n), running once more"
+    # run once more after a platform rollout abort (nothing written), or after a read of the table at a moment its
+    # schema didn't resolve (UNRESOLVED_COLUMN, seen right after a stopped ingestion update): the next run catches up
+    case $HERRS in *AUTO_MIGRATION_ENVIRONMENT_VERSION_ENABLEMENT_BLOCKED*|*UNRESOLVED_COLUMN*) ;; *) break;; esac
+    observe "history-retry-$((++HRETRY))" "history update failed ($HERRS), running once more"
+    echo "history update: $HERRS(try $n), running once more"
   done
   echo "history update $HSTATE ${HERRS}"
 }

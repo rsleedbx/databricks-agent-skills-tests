@@ -8,10 +8,17 @@
 #             the source updates src_end in place, not as a new version.
 #   versions  one row per version as the source had it: src_start_at, src_end_at; a refresh's reload of an unchanged
 #             live row is joined to the version before it; a dropped open version ends where the next one starts.
+# The snapshot comes from a function (it runs when the flow runs, not while the pipeline builds its graph): it skips the
+# run (returns None) while a full refresh has emptied the table, and when the table is empty after rows were written
+# to it. The guards read the source's Delta history with filters and count() only: no rows come back to Python (a collect()
+# is flagged as unsupported in a pipeline). A snapshot's version is the time it was taken, in ms; a new one is
+# taken when the source has a commit after the last one.
 # Settings: src (the SCD type 2 table), keys (comma-separated key columns, default id), allow_empty (true: a snapshot
-# with no rows may close every version; default false: it fails the update). Run it after each ingestion
+# with no rows may close every version; default false: such a run is skipped). Run it after each ingestion
 # update; versions made and dropped between two of its runs are not seen. `spark` comes from the pipeline runtime.
 # ruff: noqa: F821
+import time
+
 import dlt
 from pyspark.sql import Window
 from pyspark.sql import functions as F
@@ -63,32 +70,61 @@ def empty_after_rows(snapshot_rows, ops, allow_empty):
     return snapshot_rows == 0 and had_rows and not allow_empty
 
 
-@dlt.view(name="src_versions")
-def src_versions():
-    hist = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50").select("version", "operation", "operationMetrics").collect()
-    ops = [(r.version, r.operation, r.operationMetrics) for r in hist]
-    if refresh_in_progress(ops):
-        raise RuntimeError(f"{SRC} is being reloaded by a full refresh (DLT REFRESH, no write with rows yet): "
-                           "run this pipeline again after the ingestion update finishes")
-    if empty_after_rows(spark.read.table(SRC).limit(1).count(), ops, ALLOW_EMPTY):
-        raise RuntimeError(f"{SRC} is empty after rows were written to it: a snapshot would close every version. "
-                           "Run again once the table is loaded, or set allow_empty=true if it is meant to be empty")
-    return spark.read.table(SRC).select(
+# the same rules as refresh_in_progress / empty_after_rows above (the offline tests check those), on the history DataFrame
+WROTE_ROWS = ("(operationMetrics IS NULL OR size(operationMetrics) <= 0 OR "
+              + " OR ".join(f"coalesce(CAST(operationMetrics['{k}'] AS BIGINT), 0) > 0" for k in ROW_METRICS) + ")")
+
+
+def source_state():
+    """(refresh_in_progress, had_rows) from the source's last 50 commits, with filters and count() only."""
+    h = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50")
+    refreshes = h.where("operation = 'DLT REFRESH'")
+    writes = h.where(F.col("operation").isin(*WRITES) & F.expr(WROTE_ROWS))
+    if refreshes.limit(1).count() == 0:
+        return False, writes.limit(1).count() > 0
+    newest = refreshes.agg(F.max("version").alias("refresh_version"))
+    reloaded = writes.crossJoin(newest).where("version > refresh_version").limit(1).count() > 0
+    return not reloaded, writes.limit(1).count() > 0
+
+
+def committed_since(latest_ms):
+    """True when the source has a commit after the last snapshot (its version is the time it was taken, in ms)."""
+    h = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50")
+    return h.where(F.expr(f"unix_millis(timestamp) > {int(latest_ms)}")).limit(1).count() > 0
+
+
+def next_snapshot(latest_version):
+    """The snapshot source: (the table's rows, the time in ms), or None to take no snapshot this run. The flow calls
+    it until it returns None: after the first snapshot, only a source commit after the last snapshot makes another."""
+    if latest_version is not None and not committed_since(latest_version):
+        return None
+    in_refresh, had_rows = source_state()
+    if in_refresh:
+        print(f"history-snapshot-scd2: {SRC} is being reloaded by a full refresh: no snapshot this run")
+        return None
+    table = spark.read.table(SRC)
+    if table.limit(1).count() == 0 and had_rows and not ALLOW_EMPTY:
+        print(f"history-snapshot-scd2: {SRC} is empty after rows were written to it: no snapshot (allow_empty=true to take it)")
+        return None
+    now_ms = max(int(time.time() * 1000), (latest_version or 0) + 1)
+    return (table.select(
         *KEYS, *DATA,
         part("__START_AT", "seq").alias("src_start"), part("__START_AT", "ts").alias("src_start_ts"),
-        part("__END_AT", "seq").alias("src_end"), part("__END_AT", "ts").alias("src_end_ts"))
+        part("__END_AT", "seq").alias("src_end"), part("__END_AT", "ts").alias("src_end_ts")), now_ms)
 
 
 # reset not allowed: a full refresh of this pipeline would start the history over from the current snapshot
 dlt.create_streaming_table("history", table_properties={"pipelines.reset.allowed": "false"})
 dlt.apply_changes_from_snapshot(
-    target="history", source="src_versions", keys=[*KEYS, "src_start"], stored_as_scd_type=2,
+    target="history", source=next_snapshot, keys=[*KEYS, "src_start"], stored_as_scd_type=2,
     track_history_except_column_list=["src_end", "src_end_ts"])
 
 
 @dlt.table(name="versions", comment="one row per source version, across full refreshes of the source table")
 def versions():
     h = spark.read.table("history")
+    # __START_AT / __END_AT here are snapshot versions: the source table's commit time in ms
+    seen_at, gone_at = F.timestamp_millis(F.col("__START_AT")), F.timestamp_millis(F.col("__END_AT"))
     dropped = F.col("__END_AT").isNotNull()          # gone from the source table: a full refresh dropped it
     # A row with no source start (src_start empty) came from a snapshot: the first load (before every CDC version of
     # its key) or a full refresh's reload (after every version the refresh dropped: a drop of this key at or before
@@ -96,7 +132,7 @@ def versions():
     first_drop = F.min(F.when(dropped, F.col("__END_AT"))).over(Window.partitionBy(*KEYS))
     snap = F.coalesce(F.col("src_start"), F.lit("")) == ""
     h = h.withColumn("order_ts", F.when(~snap, F.col("src_start_ts"))
-                     .when(first_drop <= F.col("__START_AT"), F.col("__START_AT").cast("timestamp"))
+                     .when(first_drop <= F.col("__START_AT"), seen_at)
                      .otherwise(F.lit("1900-01-01").cast("timestamp")))
     w = Window.partitionBy(*KEYS).orderBy("order_ts", "src_start")
     v = (h.withColumn("dh", F.xxhash64(*[F.col(c) for c in DATA]) if DATA else F.lit(0))
@@ -107,7 +143,7 @@ def versions():
     v = v.withColumn("continues", F.coalesce(F.col("prev_open_dropped") & (F.col("dh") == F.col("prev_dh")), F.lit(False)))
     v = v.withColumn("grp", F.sum(F.when(F.col("continues"), 0).otherwise(1)).over(w.rowsBetween(Window.unboundedPreceding, 0)))
     # the end of a version: the source's, else (dropped while open) where the next one starts, else when it was dropped
-    v = v.withColumn("end_ts", F.coalesce(F.col("src_end_ts"), F.when(dropped, F.coalesce(F.col("next_start_ts"), F.col("__END_AT").cast("timestamp")))))
+    v = v.withColumn("end_ts", F.coalesce(F.col("src_end_ts"), F.when(dropped, F.coalesce(F.col("next_start_ts"), gone_at))))
     last = Window.partitionBy(*KEYS, "grp").orderBy(F.col("order_ts").desc(), F.col("src_start").desc())
     # a version's start: the source's; a reload's (no source start): where the dropped version before it ended
     start = F.when(F.col("order_ts") > F.lit("1900-01-01").cast("timestamp"), F.col("order_ts"))
