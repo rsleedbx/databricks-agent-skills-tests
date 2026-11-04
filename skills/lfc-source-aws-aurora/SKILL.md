@@ -26,7 +26,7 @@ Aurora uses a **cluster + writer instance** structure with auto-scaling storage 
 |-----------|---------|---------|
 | **Engine** | — | `mysql-aurora` or `pg-aurora` |
 | **Version** | Latest stable | MySQL `8.0`, PostgreSQL `16` |
-| **Instance class** | `db.t3.small` (as the commands below) | `db.r6g.large` |
+| **Instance class** | `db.t3.small` (Aurora MySQL), `db.t3.medium` (Aurora PostgreSQL: its smallest T3; `db.t3.small` isn't supported) | `db.r6g.large` |
 | **Region** | `AWS_REGION` (saved) | `us-east-1`, `eu-west-1` |
 | **Environment** | `dev` | `dev` (1-day backups), `staging` (7-day), `prod` (7-day + DeletionProtection) |
 
@@ -208,7 +208,7 @@ aws rds create-db-instance \
 aws rds create-db-instance \
   --db-instance-identifier "${CLUSTER_ID}-primary" \
   --db-cluster-identifier "$CLUSTER_ID" \
-  --db-instance-class db.t3.small \
+  --db-instance-class db.t3.medium \
   --engine aurora-postgresql \
   --publicly-accessible
 ```
