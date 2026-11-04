@@ -92,7 +92,7 @@ Container and volume names follow a pattern to avoid collisions and stay under P
 
 | Component | Rule | Example |
 |-----------|------|---------|
-| `{prefix}` | OS user (normalized: lowercase, `.`/`_` → `-`, max 12 chars) | `jane-doe` |
+| `{prefix}` | `OWNER` from the saved settings (lfc-test-settings), else the OS user; lowercase, `.`/`_` → `-`, max 12 chars | `jane-doe` |
 | `{engine-short}` | 2–4 letter engine ID | `mysql`, `pg`, `mssql`, `ora`, `db2`, `ifx` |
 | `{version}` | Major version | `8.0`, `16`, `2022`, `21c` |
 | `{source}` | Registry short name | `dockerhub`, `mcr`, `gvenzl`, `oci`, `icr` |

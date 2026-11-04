@@ -25,6 +25,16 @@ command using it fails (a subscription gone, a workspace deleted: **account-toke
 for a workspace that no longer exists, 4 for a host that doesn't resolve: check the network first), then `set` the new one and `checked`. `require` notes when the settings were
 last checked over 30 days ago.
 
+## Defaults, stated up front
+
+What the skills do unless the user says otherwise is in the repo's [`defaults.yaml`](../../defaults.yaml): where sources run (a cloud VM
+of their own), which cloud and region (the workspace's; Azure when there's a choice), how the firewall is opened (the
+laptop's /32 and the workspace's serverless egress, the database ports only), which workspace and catalog, compute
+(serverless in tests), passwords and TLS, tags and cleanup, the approval before creating, the pipeline channel, test
+data, and the exceptions. `settings.sh defaults` prints them, one line each, and `setup` shows them first: tell the
+user before the first test and ask what to change, then save the answers as settings. The repo's tests
+fail when a script or page no longer matches a default, so a change updates both.
+
 ## At the start of a test
 
 1. **Check what's missing** for the keys the test uses: `bash scripts/settings.sh require AZ_SUBSCRIPTION AZ_REGION DATABRICKS_PROFILE`.
@@ -41,7 +51,8 @@ last checked over 30 days ago.
      most as `DATABRICKS_PROFILE`. Don't pick for them from other records. A profile whose login expired often still works
      through **account-token-fallback** (`ws-token.sh`: the Azure CLI on Azure, or the account login); ask for a login
      only when that fails, and then for the account's login first (it covers every workspace in the account).
-   - `SOURCE_HOST`: `podman` (local, **lfc-source-podman**) or `vm` (a cloud VM, **lfc-source-cloud-vm**), and `SOURCE_VM`
+   - `SOURCE_HOST`: `vm` (recommended: a cloud VM of their own in the workspace's cloud, **lfc-source-cloud-vm**; serverless
+     can reach it) or `podman` (local, **lfc-source-podman**: laptop-only tests), and `SOURCE_VM`
      for the VM's name.
    - `LFC_CATALOG`: the workspace's default catalog first (`databricks settings default-namespace get`), checked as in
      **lfc-workspace-setup**.
@@ -76,7 +87,7 @@ keys stay in their own 0600 files, named by a setting if needed (`KAFKA_PASSWORD
 | `GCP_PROJECT`, `GCP_REGION` | GCP project and region for test resources | `<project id>`, `us-central1` |
 | `DATABRICKS_PROFILE` | the workspace the tests use by default | `<profile>` |
 | `WORKSPACES` | the shared workspaces to pick from, by profile, comma-separated | `<profile>,<profile>` |
-| `SOURCE_HOST`, `SOURCE_VM` | where source databases run: `podman` (local) or `vm`, and the VM | `podman`, `<vm name>` |
+| `SOURCE_HOST`, `SOURCE_VM` | where source databases run: `vm` (default) or `podman` (local), and the VM | `vm`, `<vm name>` |
 | `LFC_CATALOG` | the target catalog there | `<catalog>` |
 | `OWNER` | the owner tag and name prefix | `<firstname>.<lastname>` |
 | `REMOVE_AFTER_DAYS` | days until a test resource's `RemoveAfter` tag | `7` |

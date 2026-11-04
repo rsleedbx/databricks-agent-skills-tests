@@ -28,7 +28,7 @@ Both support Change Tracking (CT) and CDC. Both incur data transfer costs if Dat
 | Subscription ID | `AZ_SUBSCRIPTION` (saved), on every `az` call | `<subscription id>` |
 | Owner tag | `OWNER` (saved) | `jane-doe` |
 | Replication mode | Query-based only / CT / CDC / BOTH | See parent [engine-sqlserver.md](../lfc-source-setup/references/engine-sqlserver.md) |
-| **SQL Database:** Service Objective (SKU) | Default | `GP_S_Gen5_2` for testing |
+| **SQL Database:** Service Objective (SKU) | Default | `GP_S_Gen5_1` for testing (sqldb.sh's `VCORES=1`) |
 | **SQL Database:** Storage (GB) | Minimum 32 | `32`, `64` |
 | **SQL MI:** vCore count | Must be 4, 8, 16, 24, 32, 40, 64, or 80 | `4` (minimum) |
 | **SQL MI:** Storage (GB) | Minimum 32 | `32`, `128` |

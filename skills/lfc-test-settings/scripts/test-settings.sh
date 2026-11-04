@@ -88,4 +88,11 @@ ok "setup: a saved group that's gone is said so; with no az user, no group is su
 st set SETTINGS_CHECKED=2020-01-01; cp "$S" "$T/copy.sh"; chmod 644 "$T/copy.sh"
 ( cd "$T" && PATH="$T/bin:$PATH" bash copy.sh checked )
 ok "checked works from a copy without the exec bit, run as bash <file> from its folder" '[ "$(st get SETTINGS_CHECKED)" = "$(date -u +%Y-%m-%d)" ]'
+ok "defaults: one line per default, then the exceptions" '[ "$(st defaults | grep -c "^- [A-Z]")" = "$(yq ".defaults | length" "$(dirname "$S")/../../../defaults.yaml")" ] && st defaults | grep -q "^- (exception)"'
+grep -q "== defaults" "$T/setup"; d=$?
+ok "setup shows the defaults first" '[ $d = 0 ]'
+st set REMOVE_AFTER_DAYS=30
+ok "remove-after: today + REMOVE_AFTER_DAYS" '[ "$(st remove-after)" = "$(jq -rn "now + 30 * 86400 | strftime(\"%Y-%m-%d\")")" ]'
+st unset REMOVE_AFTER_DAYS
+ok "remove-after: 7 days when REMOVE_AFTER_DAYS isn't set" '[ "$(st remove-after)" = "$(jq -rn "now + 7 * 86400 | strftime(\"%Y-%m-%d\")")" ]'
 exit $fail

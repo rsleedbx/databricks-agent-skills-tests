@@ -35,7 +35,7 @@ The workflow is manual so you control every step and understand the configuratio
 
 | Input | Choices | Example | Notes |
 |-------|---------|---------|-------|
-| **Cloud** | `azure` or `gcp` | — | Determines VM API and firewall |
+| **Cloud** | the workspace's: `azure`, `aws` or `gcp` | — | Determines VM API and firewall |
 | **Region** | Azure: `eastus`, `centralus`, `westus`; GCP: `us-central1`, `us-east1` | `eastus` (Azure) / `us-central1` (GCP) | Close to Databricks workspace |
 | **VM size** | Azure: `Standard_D4s_v5`, `Standard_B4ms`; GCP: `n1-standard-4`, `e2-standard-4` | `Standard_D4s_v5` (in a zone, for a Premium SSD v2 data disk) / `n1-standard-4` | 4 vCPU, 8–16 GB recommended |
 | **Installation model** | `native` or `podman` | — | Based on engine availability |
@@ -54,7 +54,7 @@ About to create on <CLOUD>:
     Estimated cost: ~$60–80/month
   - Public IP: {IP_NAME}
   - Firewall rules (allow {DB_PORT} from your IP / Databricks CIDR)
-  - Tags: purpose=lfc-test, owner={prefix}, removal_date=YYYY-MM-DD
+  - Tags: purpose=lfc-test, owner={prefix}, RemoveAfter=YYYY-MM-DD (GCP labels are lowercase: remove_after); the date from lfc-test-settings `settings.sh remove-after`
 
 Proceed? (yes/no)
 ```

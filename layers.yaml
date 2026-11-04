@@ -83,6 +83,7 @@ layers:
       - public-skill-conventions
     bin:
       - check_links.py
+      - check_defaults.py
       - check_layers.py
       - check_model_counts.py
       - lint_scripts.py

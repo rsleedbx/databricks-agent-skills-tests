@@ -10,7 +10,10 @@
 #   the same list as every other source), then the database: GeneralPurpose serverless Gen5, local backup redundancy.
 #   A paused database resumes on the next login; that first login fails with error 40613 ("Database ... is not
 #   currently available") until it's online, about a minute. wake: logs in until it answers (needs sqlcmd, ADMIN_PW_FILE).
-#   status: the database's state (Online, Paused, Resuming) and its pause settings. delete: the server and its databases.
+#   status: the database's state (Online, Paused, Resuming) and its pause settings. delete: the server and its databases,
+#   only when its CreatedBy tag is lfc-source-azure-sql (or, made before that tag, purpose=lfc-test with this owner);
+#   not found exits 3, a failed lookup 1, another's 2. Tags: owner, purpose, created, CreatedBy, RemoveAfter
+#   (lfc-test-settings REMOVE_AFTER_DAYS, default 7).
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../../secret-handling/scripts/pw.sh"   # pw/pw_check: a password file or keyring:<name>
 CMD=${1:?plan|create|status|wake|delete}
@@ -22,6 +25,17 @@ plan|create) SUBSCRIPTION=${SUBSCRIPTION:-$(az account show --query id -o tsv)} 
 esac
 az_require "$SUBSCRIPTION" "${TENANT_ID:-}" || exit 1
 A=(--resource-group "$RG" --subscription "$SUBSCRIPTION")
+# what create tags, and the only thing delete removes (lfc-test-settings: OWNER, REMOVE_AFTER_DAYS)
+MINE=lfc-source-azure-sql; ST=$(cd "$(dirname "$0")" && pwd)/../../lfc-test-settings/scripts/settings.sh
+TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)" CreatedBy=$MINE RemoveAfter="$(bash "$ST" remove-after)")
+ours() {   # ours "<az show command>": 0 when the resource's tags say this skill (or, before CreatedBy, this owner) made it
+  local t; t=$($1 "${A[@]}" -n "$SERVER" --query tags -o json 2> "${TMPDIR:-/tmp}/ours.$$") || {
+    grep -q ResourceNotFound "${TMPDIR:-/tmp}/ours.$$" && { echo "$SERVER not found: nothing to delete"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 3; }
+    echo "couldn't read $SERVER's tags; nothing deleted:"; cat "${TMPDIR:-/tmp}/ours.$$"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 1; }
+  rm -f "${TMPDIR:-/tmp}/ours.$$"
+  printf '%s' "${t:-null}" | jq -e --arg m "$MINE" --arg o "${OWNER:-$USER}" '(.CreatedBy // "") == $m or ((.purpose // "") == "lfc-test" and (.owner // "") == $o)' > /dev/null \
+    || { echo "$SERVER wasn't made by this skill for ${OWNER:-$USER} (tags: $(printf '%s' "${t:-null}" | jq -c .)): not deleted"; return 2; }
+}
 HOST=$SERVER.database.windows.net
 srv() { az sql server show "${A[@]}" -n "$SERVER" -o json 2>/dev/null; }
 db() { az sql db show "${A[@]}" -s "$SERVER" -n "$DB" -o json 2>/dev/null; }
@@ -34,7 +48,6 @@ plan|create)
   az_record "$SUBSCRIPTION"
   [ "$CMD" = plan ] && exit 0
   : "${ADMIN_PW_FILE:?}"; pw_check "$ADMIN_PW_FILE" || exit 2
-  TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)")
   # az takes the password only as a flag: it's in this machine's process list while the command runs
   srv >/dev/null || az sql server create "${A[@]}" -n "$SERVER" -l "$LOCATION" --admin-user sqladmin \
     --admin-password "$(pw "$ADMIN_PW_FILE")" --enable-public-network true --minimal-tls-version 1.2 -o none
@@ -56,6 +69,7 @@ wake)
     sleep 15
   done
   echo "still not online after 5 minutes: $(db | yq -p json '.status')"; exit 1 ;;
-delete) az sql server delete "${A[@]}" -n "$SERVER" --yes && echo "deleted $SERVER and its databases" ;;
+delete) ours "az sql server show" || exit $?
+  az sql server delete "${A[@]}" -n "$SERVER" --yes && echo "deleted $SERVER and its databases" ;;
 *) echo "unknown $CMD"; exit 2 ;;
 esac

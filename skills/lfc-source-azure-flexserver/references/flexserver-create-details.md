@@ -58,9 +58,9 @@ az vm list-usage -l {location} --query \
 Create a secure location for the admin password (do not hardcode):
 
 ```bash
-# Generate a strong 16-character password (will be deleted after use)
-openssl rand -base64 12 | cut -c1-16 > /tmp/admin_password.txt
-chmod 600 /tmp/admin_password.txt
+# Generate the admin password into a private file (deleted once the UC connection exists): letters and digits, 28
+# characters, as lfc-source-setup's rule (base64 output can hold characters a server refuses)
+umask 077; mkdir -p ~/.lfc/pw; echo "Lfc1$(openssl rand -hex 12)" > ~/.lfc/pw/flex-admin.pw
 ```
 
 ## Naming conventions
@@ -111,13 +111,13 @@ export LOCATION="eastus"                           # Azure region
 export RESOURCE_GROUP="<resource-group>"     # or the user's own group: they are free to choose
 eval "$(az account show -o json | yq -p json -o shell '{"SUBSCRIPTION_ID": (.id // "")}')"; export SUBSCRIPTION_ID
 export ENGINE="mysql"                             # or "postgres"
-export VERSION="8.0"                              # MySQL 5.7/8.0 or PostgreSQL 12-16
+export VERSION="8.0.21"                              # MySQL 5.7/8.0 or PostgreSQL 12-16
 export PREFIX="jane-doe"                        # Your prefix (from Azure AD UPN)
 export EPOCH="$(date +%s)"                        # Unix timestamp
 export SERVER_NAME="${PREFIX}-${ENGINE}-${LOCATION}-${EPOCH}"
 export DB_NAME="${PREFIX}_${ENGINE}_db_${EPOCH}"
 export ADMIN_USER="mysqladmin"                    # For MySQL; use "pgadmin" for PostgreSQL
-export SKU="Standard_B2ms"                        # or Standard_B1s, Standard_D2ds_v4, etc.
+export SKU="Standard_B1ms"                        # or Standard_B1s, Standard_D2ds_v4, etc.
 export STORAGE_GB="32"                            # Minimum
 export ENV="dev"                                  # dev, staging, or prod
 ```
@@ -127,7 +127,7 @@ For PostgreSQL, adjust:
 ```bash
 export ENGINE="postgres"
 export ADMIN_USER="pgadmin"
-export SKU="Standard_B2ms"
+export SKU="Standard_B1ms"
 ```
 
 ### Step 2: Ensure resource group
@@ -165,7 +165,7 @@ az network vnet subnet create \
 Read the admin password from the secure file and pass it to the create command:
 
 ```bash
-ADMIN_PASSWORD="$(cat /tmp/admin_password.txt)"
+ADMIN_PASSWORD="$(cat ~/.lfc/pw/flex-admin.pw)"
 
 if [ "${ENGINE}" = "mysql" ]; then
   az mysql flexible-server create \
@@ -209,4 +209,4 @@ az resource wait \
   --updated
 ```
 
-The admin password is stored in `/tmp/admin_password.txt` for use in subsequent steps.
+The admin password is in `~/.lfc/pw/flex-admin.pw` (mode 600) for the next steps; delete it once the UC connection exists.

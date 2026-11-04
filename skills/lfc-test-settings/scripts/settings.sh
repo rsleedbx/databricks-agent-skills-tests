@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# settings.sh setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test
+# settings.sh setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|defaults|remove-after|env|azure: the answers a test
 #   skill asks for once (cloud accounts, region, workspaces, Podman or a VM, catalog, resource group, owner), kept per user
 #   in one file outside the repo, so later runs read them instead of asking or listing again. File: $LFC_TESTS_SETTINGS,
 #   default ~/.lfc/tests/settings.env (mode 600, folder 700); lines KEY=value, shell-quoted, never committed.
@@ -14,6 +14,9 @@
 #                 (no CLI calls); notes on stderr when the settings were last checked over 30 days ago
 #   AZ_RESOURCE_GROUP is an existing group, asked for: setup suggests the groups in AZ_SUBSCRIPTION tagged with the az
 #   user as Owner or Creator. A subscription allows only so many groups, so the skills never create, re-tag or delete one.
+#   defaults      the defaults the test skills use unless the user says otherwise (the repo's defaults.yaml), one line each, and
+#                 the stated exceptions: what to tell the user before the first test; setup shows them first
+#   remove-after  the RemoveAfter tag date for a new test resource: today + REMOVE_AFTER_DAYS (default 7), YYYY-MM-DD
 #   checked       record today as SETTINGS_CHECKED (after setup, or after a failed call made you re-check a value)
 #   env           export lines for eval: eval "$(settings.sh env)"
 #   workspaces    the workspace profiles of `databricks auth profiles`, numbered, by cloud: host, and whether the login
@@ -23,8 +26,8 @@
 #                 default marked "default": what to show the user when AZ_SUBSCRIPTION is missing
 set -uo pipefail
 F=${LFC_TESTS_SETTINGS:-$HOME/.lfc/tests/settings.env}
-SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")   # its own subcommands, as bash: no exec bit or ./ needed
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+SELF_DIR=$(cd "$(dirname "$0")" && pwd); SELF=$SELF_DIR/$(basename "$0")   # its own subcommands, as bash: no exec bit or ./ needed
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 valid() { case $1 in ''|*[!A-Z0-9_]*|[0-9]*) return 1 ;; esac; }
 value() {   # value KEY: the saved value, unquoted by the shell that wrote it
@@ -61,6 +64,12 @@ case $cmd in
       [ "${age:-0}" -le 30 ] || echo "settings: last checked $c ($age days ago): run setup to refresh them" >&2
     fi
     exit $miss ;;
+  defaults)
+    yq -r '.defaults[] | "- " + .area + ": " + .value' "$SELF_DIR/../../../defaults.yaml" || exit 1
+    yq -r '.exceptions[] | "- (exception) " + .' "$SELF_DIR/../../../defaults.yaml" ;;
+  remove-after)
+    d=$(value REMOVE_AFTER_DAYS 2>/dev/null || true); case $d in ''|*[!0-9]*) d=7;; esac
+    jq -rn --argjson d "$d" 'now + $d * 86400 | strftime("%Y-%m-%d")' ;;
   checked) init || exit 1; bash "$SELF" set "SETTINGS_CHECKED=$(date -u +%Y-%m-%d)" ;;
   setup)
     T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
@@ -90,6 +99,7 @@ case $cmd in
         fi
       fi; } > "$T/rg" 2>&1 &
     wait
+    echo "== defaults: used unless you say otherwise (tell the user, and ask what to change)"; bash "$SELF" defaults; echo
     echo "== saved ($F)"; [ -f "$F" ] && cat "$F"; echo
     echo "== Azure resource group for every test resource (AZ_RESOURCE_GROUP: an existing one; skills never create or delete a group)"; cat "$T/rg"; echo
     echo "== Azure subscriptions (name, id, tenant, saved/default)"; cat "$T/azure"; echo

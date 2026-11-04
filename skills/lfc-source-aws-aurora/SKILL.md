@@ -26,7 +26,7 @@ Aurora uses a **cluster + writer instance** structure with auto-scaling storage 
 |-----------|---------|---------|
 | **Engine** | — | `mysql-aurora` or `pg-aurora` |
 | **Version** | Latest stable | MySQL `8.0`, PostgreSQL `16` |
-| **Instance class** | `db.t3.micro` | `db.t3.small`, `db.r6g.large` |
+| **Instance class** | `db.t3.small` (as the commands below) | `db.r6g.large` |
 | **Region** | `AWS_REGION` (saved) | `us-east-1`, `eu-west-1` |
 | **Environment** | `dev` | `dev` (1-day backups), `staging` (7-day), `prod` (7-day + DeletionProtection) |
 
@@ -130,8 +130,9 @@ Generate and store admin password safely:
 
 ```bash
 umask 077
-openssl rand -base64 32 > /tmp/admin_pw.txt
-export AURORA_ADMIN_PASSWORD="$(cat /tmp/admin_pw.txt)"
+# letters and digits only: Aurora refuses /, @ and " in a master password, which base64 output can contain
+umask 077; mkdir -p ~/.lfc/pw; echo "Lfc1$(openssl rand -hex 12)" > ~/.lfc/pw/aurora-admin.pw
+export AURORA_ADMIN_PASSWORD="$(cat ~/.lfc/pw/aurora-admin.pw)"
 ```
 
 **MySQL cluster:**
@@ -236,11 +237,11 @@ After the instance is available and rebooted, configure users and CDC settings. 
 See the parent skill's "Register the UC connection" section.
 
 **Briefly:**
-1. Generate password: `umask 077; openssl rand -base64 32 > /tmp/lfc_pw.txt`
+1. Generate password: `umask 077; mkdir -p ~/.lfc/pw; echo "Lfc1$(openssl rand -hex 12)" > ~/.lfc/pw/aurora-lfc.pw` (letters and digits: Aurora refuses `/`, `@`, `"`)
 2. Get cluster endpoint: `aws rds describe-db-clusters --db-cluster-identifier $CLUSTER_ID --query 'DBClusters[0].Endpoint'`
 3. Create `conn.json` with `umask 077; cat > conn.json <<EOF...EOF` (read password from file)
 4. Create: `databricks connections create --json @conn.json --profile <PROFILE>`
-5. Delete: `rm conn.json /tmp/lfc_pw.txt`
+5. Delete: `rm conn.json ~/.lfc/pw/aurora-lfc.pw`
 
 ### 7. Verify the connection
 
