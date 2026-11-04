@@ -8,13 +8,12 @@
 #             the source updates src_end in place, not as a new version.
 #   versions  one row per version as the source had it: src_start_at, src_end_at; a refresh's reload of an unchanged
 #             live row is joined to the version before it; a dropped open version ends where the next one starts.
-# The snapshot comes from a function (it runs when the flow runs, not while the pipeline builds its graph): it skips the
-# run (returns None) while a full refresh has emptied the table, and when the table is empty after rows were written
-# to it. The guards read the source's Delta history with filters and count() only: no rows come back to Python (a collect()
+# The snapshot comes from a function (it runs when the flow runs, not while the pipeline builds its graph): it fails the
+# update while a full refresh has emptied the table, and when the table is empty after rows were written to it. The guards read the source's Delta history with filters and count() only: no rows come back to Python (a collect()
 # is flagged as unsupported in a pipeline). A snapshot's version is the time it was taken, in ms; a new one is
 # taken when the source has a commit after the last one.
 # Settings: src (the SCD type 2 table), keys (comma-separated key columns, default id), allow_empty (true: a snapshot
-# with no rows may close every version; default false: such a run is skipped). Run it after each ingestion
+# with no rows may close every version; default false: such a run fails). Run it after each ingestion
 # update; versions made and dropped between two of its runs are not seen. `spark` comes from the pipeline runtime.
 # ruff: noqa: F821
 import time
@@ -46,11 +45,19 @@ WRITES = ("MERGE", "WRITE", "STREAMING UPDATE")
 ROW_METRICS = ("numOutputRows", "numTargetRowsInserted", "numTargetRowsUpdated", "numTargetRowsCopied")
 
 
+def count(value):
+    """A metric as a number; one that isn't a number is 0 (as TRY_CAST in WROTE_ROWS)."""
+    try:
+        return int(value or 0)
+    except ValueError:
+        return 0
+
+
 def wrote_rows(metrics):
     """A write's operationMetrics show rows; no metrics at all counts as rows (older tables don't record them)."""
     if not metrics:
         return True
-    return any(int(metrics.get(k) or 0) > 0 for k in ROW_METRICS)
+    return any(count(metrics.get(k)) > 0 for k in ROW_METRICS)
 
 
 def refresh_in_progress(ops):
@@ -72,7 +79,7 @@ def empty_after_rows(snapshot_rows, ops, allow_empty):
 
 # the same rules as refresh_in_progress / empty_after_rows above (the offline tests check those), on the history DataFrame
 WROTE_ROWS = ("(operationMetrics IS NULL OR size(operationMetrics) <= 0 OR "
-              + " OR ".join(f"coalesce(CAST(operationMetrics['{k}'] AS BIGINT), 0) > 0" for k in ROW_METRICS) + ")")
+              + " OR ".join(f"coalesce(TRY_CAST(operationMetrics['{k}'] AS BIGINT), 0) > 0" for k in ROW_METRICS) + ")")
 
 
 def source_state():
@@ -100,12 +107,12 @@ def next_snapshot(latest_version):
         return None
     in_refresh, had_rows = source_state()
     if in_refresh:
-        print(f"history-snapshot-scd2: {SRC} is being reloaded by a full refresh: no snapshot this run")
-        return None
+        raise RuntimeError(f"{SRC} is being reloaded by a full refresh (DLT REFRESH, no write with rows yet): "
+                           "run this pipeline again after the ingestion update finishes")
     table = spark.read.table(SRC)
     if table.limit(1).count() == 0 and had_rows and not ALLOW_EMPTY:
-        print(f"history-snapshot-scd2: {SRC} is empty after rows were written to it: no snapshot (allow_empty=true to take it)")
-        return None
+        raise RuntimeError(f"{SRC} is empty after rows were written to it: a snapshot would close every version. "
+                           "Run again once the table is loaded, or set allow_empty=true if it is meant to be empty")
     now_ms = max(int(time.time() * 1000), (latest_version or 0) + 1)
     return (table.select(
         *KEYS, *DATA,

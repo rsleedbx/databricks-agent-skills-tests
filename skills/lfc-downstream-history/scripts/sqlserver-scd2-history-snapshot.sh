@@ -68,7 +68,7 @@ hupdate() {
   echo "history update $HSTATE ${HERRS}"
 }
 # the versions as the source had them, across the refresh (history-snapshot-scd2.py's versions table), in start order
-scd2() { q "SELECT CONCAT_WS(' ', COLLECT_LIST(x)) FROM (SELECT CONCAT(id, '=', v, IF(src_end_at IS NULL, '', '(closed)')) x FROM $HT.versions ORDER BY id, src_start_at NULLS FIRST)" 2>&1 | cut -c1-400; }
+scd2() { q "SELECT CONCAT_WS(' ', TRANSFORM(ARRAY_SORT(COLLECT_LIST(STRUCT(id, COALESCE(src_start_at, TIMESTAMP'1900-01-01') AS s, x))), e -> e.x)) FROM (SELECT id, src_start_at, CONCAT(id, '=', v, IF(src_end_at IS NULL, '', '(closed)')) x FROM $HT.versions)" 2>&1 | cut -c1-400; }
 open_versions() { q "SELECT COUNT(*) FROM $HT.versions WHERE src_end_at IS NULL" 2>&1 | tr -d '[:space:]'; }
 dest() { q "SELECT CONCAT_WS(' ', SORT_ARRAY(COLLECT_LIST(CONCAT(id, '=', v, IF(__END_AT IS NULL, '', '(closed)'))))) FROM $T.$TB" 2>&1; }
 hist() { q "SELECT CONCAT_WS(' ', COLLECT_LIST(CONCAT(version, ':', operation))) FROM (SELECT version, operation FROM (DESCRIBE HISTORY $T.$TB) ORDER BY version)" 2>&1 | cut -c1-400; }
