@@ -16,7 +16,8 @@ P=; case ${1:-} in ''|--*) ;; *) P=$1; shift;; esac; CAT=; WHO=; EGRESS=
 ENABLE=yes
 while [ $# -gt 0 ]; do case $1 in --catalog) CAT=$2; shift 2;; --principal) WHO=$2; shift 2;; --egress-file) EGRESS=$2; shift 2;; --no-enable) ENABLE=no; shift;; *) echo "unknown $1"; exit 2;; esac; done
 [ -n "$P" ] || P=$(bash "$ST" get DATABRICKS_PROFILE 2>/dev/null) || { echo "ready.sh: no <profile>, and no DATABRICKS_PROFILE saved: bash $ST setup"; exit 2; }
-[ -n "$CAT" ] || CAT=$(bash "$ST" get LFC_CATALOG 2>/dev/null) || CAT=; T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fails=0
+[ -n "$CAT" ] || CAT=$(bash "$ST" get LFC_CATALOG 2>/dev/null) || CAT=
+T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fails=0
 row() { printf "%-5s %-40s %s\n" "$1" "$2" "$3" | tee -a $T/rows; case $1 in FAIL|ASK) fails=$((fails + 1));; esac; [ -n "${4:-}" ] && printf "      next: %s\n" "$4"; return 0; }
 j() { databricks "$@" --profile $P -o json 2> $T/err; }
 
