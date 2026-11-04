@@ -76,6 +76,7 @@ check "workload.sh: a tpcb workload at SF 0.01 that workload-env.sh accepts; a p
 check "slot-source.sh: a slot's contract, and its SRC_SQL through slot-sql.sh and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
 check "masters-export, slot-vm-setup masters, and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
 check "moved-lines.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-moved-lines.sh' > /dev/null"
+check "conventions-check.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-conventions-check.sh' > /dev/null"
 check "eventhubs.sh: never creates, re-tags or deletes the group; only its own namespace; a valid Kafka contract (fake az)" sh -c "'$SK/lfc-source-eventhubs/scripts/test-eventhubs.sh' > /dev/null"
 check "lfc-kafka-freshness-test connection.sh, pipeline.sh: from a Kafka source contract (fake databricks)" sh -c "'$SK/lfc-kafka-freshness-test/scripts/test-scripts.sh' > /dev/null"
 check "sqldb.sh, mi.sh: delete only what lfc-source-azure-sql tagged; not found 3, failed lookup 1 (fake az)" sh -c "bash '$SK/lfc-source-azure-sql/scripts/test-delete.sh' > /dev/null"

@@ -11,7 +11,7 @@ A reviewer reads a public skill next to about 30 others. What differs from them 
 python3 .claude/skills/public-skill-conventions/scripts/conventions-check.py <skills-repo>/skills <skill> --base upstream/main
 ```
 
-It compares the skill with every other skill in that checkout, and with its own SKILL.md section names and table headers at `--base`. `FAIL` lines break a rule below; `WARN` lines are a section name or an error table header no other skill uses (keep one only if the skill needs it), an unlinked reference file, a pipeline `target:`, generated `agents/openai.yaml` text, or a script with no offline test.
+It compares the skill with every other skill in that checkout, and with its own SKILL.md section names and table headers at `--base`. `FAIL` lines break a rule below (including a `references/<file>.md` path, own or another skill's, that doesn't exist or isn't at `--base`); `WARN` lines are a section name or an error table header no other skill uses (keep one only if the skill needs it), an unlinked reference file, a pipeline `target:`, generated `agents/openai.yaml` text, a script with no offline test, a description over 200 characters without `. Use when`, a markdown link inside a code block, or a bare `<file>.md` mention.
 
 ## Frontmatter and files
 
@@ -36,7 +36,14 @@ It compares the skill with every other skill in that checkout, and with its own 
 - **Pipeline examples** use `schema:`, not the deprecated `target:`; agents copy examples as written.
 - **Consistent groupings:** a list in the description (categories, sources) matches what the skill's scripts return for the same names.
 - **When content moves** (files merged, deleted, a skill split): `python3 .claude/skills/public-skill-conventions/scripts/moved-lines.py <skills-repo>/skills <skill> --base upstream/main --links` lists the options, states, roles, limits and docs URLs the skill had at the base that no skill has now, and the other skills' lines naming it. Carry each term over or say in the PR why it's dropped; point each link to the skill that owns its topic now. `--lines` adds every line with no close match (long after a rewrite).
-- **Links:** Databricks hosts only. Docs links cloud-neutral, `https://docs.databricks.com/<path>` (it redirects to the reader's cloud), not `/aws/en/`, `/azure/` or `learn.microsoft.com/azure/databricks`. Relative links between the skill's files.
+- **One statement per rule, then grep for the rest:** before committing a rule, grep the skill for every other line that states it (the same option, mode or grant) and make them agree. Scope words match the docs: per table or per database, with a cursor or without, "never" or "not without the user's go-ahead".
+- **Steps an agent runs are complete where they are:** the order that matters (stop, change the source, start) is in the file that gives the step, not only in a file that cites it; a teardown undoes everything its setup created; an intro lists only sections that exist; "once X supports it" goes when X does.
+- **Version-bound syntax names its version** when the skill's supported range starts lower (SQL Server `STRING_AGG ... WITHIN GROUP` is 2017+), or gives the fallback.
+- **An option that turns off a safety check says so** where it's used, with when it's acceptable (`trustServerCertificate: true` turns off certificate validation: test sources only; production uses a CA-signed certificate).
+- **Placeholders:** one meaning per placeholder across the skill; no literal names (`'databricks_replication'`) the skill never introduces.
+- **Counts and "exactly":** say what is counted (keys with a new version, not updates); a script that parses names lists the names it gets wrong in its reference.
+- **Description:** 200 characters or fewer, or the `<what it does>. Use when ...` form; the generator cuts the short description at about 197 characters otherwise.
+- **Links:** Databricks hosts only. Docs links cloud-neutral, `https://docs.databricks.com/<path>` (it redirects to the reader's cloud), not `/aws/en/`, `/azure/` or `learn.microsoft.com/azure/databricks`. Relative links between the skill's files; a file mentioned in text is `references/<file>.md`, not a bare name; links go in prose, not inside code blocks (they don't render there). A path into another skill's file exists on the base branch: `validate` doesn't check it, so until that skill's change merges, name only the skill.
 - **Nothing outside the repo:** no test repos, tickets, chat channels, internal tools, or account and resource names, in the skill or in the repo's `CLAUDE.md` and README. Placeholders (`<PROFILE>`, `<catalog>`) for anything the user picks.
 - **Profiles:** `--profile <PROFILE>` on CLI examples; never pick one for the user (the parent skill says how to choose).
 
