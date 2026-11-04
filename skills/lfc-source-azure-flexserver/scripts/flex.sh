@@ -31,12 +31,12 @@ A=(--resource-group "$RG" --subscription "$SUBSCRIPTION")
 # what create tags, and the only thing delete removes (lfc-test-settings: OWNER, REMOVE_AFTER_DAYS)
 MINE=lfc-source-azure-flexserver; ST=$(cd "$(dirname "$0")" && pwd)/../../lfc-test-settings/scripts/settings.sh
 TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)" CreatedBy=$MINE RemoveAfter="$(bash "$ST" remove-after)")
-ours() {   # ours "<az show command>": 0 when the resource's tags say this skill (or, before CreatedBy, this owner) made it
+ours() {   # ours "<az show command>": 0 when its CreatedBy tag is this skill's; with no CreatedBy (made before it), purpose=lfc-test and this owner
   local t; t=$($1 "${A[@]}" -n "$SERVER" --query tags -o json 2> "${TMPDIR:-/tmp}/ours.$$") || {
     grep -q ResourceNotFound "${TMPDIR:-/tmp}/ours.$$" && { echo "$SERVER not found: nothing to delete"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 3; }
     echo "couldn't read $SERVER's tags; nothing deleted:"; cat "${TMPDIR:-/tmp}/ours.$$"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 1; }
   rm -f "${TMPDIR:-/tmp}/ours.$$"
-  printf '%s' "${t:-null}" | jq -e --arg m "$MINE" --arg o "${OWNER:-$USER}" '(.CreatedBy // "") == $m or ((.purpose // "") == "lfc-test" and (.owner // "") == $o)' > /dev/null \
+  printf '%s' "${t:-null}" | jq -e --arg m "$MINE" --arg o "${OWNER:-$USER}" 'if (.CreatedBy // "") != "" then .CreatedBy == $m else ((.purpose // "") == "lfc-test" and (.owner // "") == $o) end' > /dev/null \
     || { echo "$SERVER wasn't made by this skill for ${OWNER:-$USER} (tags: $(printf '%s' "${t:-null}" | jq -c .)): not deleted"; return 2; }
 }
 srv() { az $S flexible-server show "${A[@]}" -n "$SERVER" -o json 2>/dev/null; }

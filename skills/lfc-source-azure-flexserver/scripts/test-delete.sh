@@ -26,6 +26,8 @@ for c in "flex.sh lfc-source-azure-flexserver pg" "flex.sh lfc-source-azure-flex
   ok "$f: its own (CreatedBy=$mine): deleted" '[ $rc = 0 ] && deleted'
   FA_TAGS='{"purpose": "lfc-test", "owner": "jane"}' run $f "$@" delete; rc=$?
   ok "$f: made before the tag, this owner: deleted" '[ $rc = 0 ] && deleted'
+  FA_TAGS='{"CreatedBy": "lfc-source-eventhubs", "purpose": "lfc-test", "owner": "jane"}' run $f "$@" delete; rc=$?
+  ok "$f: another skill's, same owner: not deleted (rc 2)" '[ $rc = 2 ] && ! deleted'
   FA_TAGS='{"purpose": "lfc-test", "owner": "someone-else"}' run $f "$@" delete; rc=$?
   ok "$f: another owner's: not deleted (rc 2)" '[ $rc = 2 ] && ! deleted'
   FA_TAGS=null run $f "$@" delete; rc=$?

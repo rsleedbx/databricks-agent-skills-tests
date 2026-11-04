@@ -5,6 +5,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 ## bin
 
+- `bin/check_defaults.py` [--file defaults.yaml]: the stated test defaults (defaults.yaml at the repo root) still match the code. For each defa...
 - `bin/check_layers.py` [--report] [--baseline] [--root DIR]: the layers in layers.yaml, and the one-way rule.
 - `bin/check_links.py` [skills]: every relative markdown link in the skills points at a file or directory that exists.
 - `bin/check_model_counts.py` the table counts lfc-pipeline-diagram draws for each statschema model match the models.
@@ -97,12 +98,14 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 - `skills/lfc-source-azure-flexserver/scripts/flex.sh` pg|mysql plan|create|status|stop|start|delete: an Azure Database for PostgreSQL or MySQL Flexible Server set up for L...
 - `skills/lfc-source-azure-flexserver/scripts/lfc-setup.sh` pg|mysql: the test user and seed tables on an Azure Database for PostgreSQL or MySQL Flexible Server (after flex.sh c...
+- `skills/lfc-source-azure-flexserver/scripts/test-delete.sh` flex.sh's delete and create tags offline, with a fake az on PATH (it logs every call; FA_TAGS: the resource's tags as...
 
 ## lfc-source-azure-sql
 
 - `skills/lfc-source-azure-sql/scripts/lfc-setup.sh` the test login, seed tables, and change tracking + CDC on an Azure SQL Database or Managed Instance.
 - `skills/lfc-source-azure-sql/scripts/mi.sh` plan|create|wait|status|endpoint|stop|start|delete: an Azure SQL Managed Instance behind its own NSG.
 - `skills/lfc-source-azure-sql/scripts/sqldb.sh` plan|create|status|wake|delete: an Azure SQL Database (serverless, auto-pause) on its own logical server.
+- `skills/lfc-source-azure-sql/scripts/test-delete.sh` sqldb.sh's and mi.sh's delete and create tags offline, with a fake az on PATH (it logs every call; FA_TAGS: the resou...
 
 ## lfc-source-cloud-vm
 
