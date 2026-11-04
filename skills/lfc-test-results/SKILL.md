@@ -32,6 +32,8 @@ uv run $S/recall.py --workspace classic --storage juicefs --all
 
 Then read the run's write-up (`--run` names it) for the details. If a cell already passed with the current skill commits (`skills` in the record), don't rerun it unless the user asks or the docs changed.
 
+The same for a change: when earlier records, the vendor's docs or a skill already show how it will behave (a setting the docs define, a fix shaped like one that passed), don't propose a long live run for it. Make it, run the offline checks, and say in the commit or PR what wasn't run. Record nothing for it, since no run happened; the next run that exercises it records the outcome. Propose a run only when nothing covers the behavior, or the user asks.
+
 `jq` and DuckDB work on the file directly:
 
 ```bash
