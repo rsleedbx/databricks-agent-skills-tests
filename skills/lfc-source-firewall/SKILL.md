@@ -39,7 +39,7 @@ Counts are from `ip-ranges.json` at the time of writing; recount with the comman
 | Databricks CLI profile | Ask; never pick one (see **databricks-core**) |
 | Target type and name | From the `lfc-source-*` skill that created it: Flexible Server / Azure SQL server / NSG / security group / Cloud SQL instance / VPC network |
 | Database port | 5432 Postgres, 3306 MySQL, 1433 SQL Server, 1521 Oracle, 3342 SQL Managed Instance public endpoint |
-| Azure resource group and NSG | Ask whether the user has their own resource group. If not, use the team's shared test group, `<resource-group>` (check it exists: `az group show -n <resource-group>`) and its shared NSG for the VM's region (`az network nsg list -g <resource-group>`). The user is free to choose a different group. Don't create resource groups or NSGs without asking |
+| Azure resource group and NSG | The saved `AZ_RESOURCE_GROUP` (**lfc-test-settings**, asked once: an existing group the user picked) and its shared NSG for the VM's region (`az network nsg list --subscription "$AZ_SUBSCRIPTION" -g "$AZ_RESOURCE_GROUP"`). Never create a resource group; ask before creating an NSG |
 | Scope | This workspace's region (default), or every serverless region for a shared source |
 | Does the pipeline use classic compute? | A standard CDC gateway or integrated CDC with `serverless: false`, or unset on a workspace with classic compute; or classic query-based (Beta). Read `update.config.serverless` from `pipelines get-update` |
 | Classic egress IPs | Only if classic compute is used: from the user, or found as below |

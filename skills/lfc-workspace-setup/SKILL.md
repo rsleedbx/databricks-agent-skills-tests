@@ -11,10 +11,10 @@ A fresh workspace usually needs three things before Lakeflow Connect tests run: 
 ## The one-command check: `ready.sh`
 
 ```bash
-bash scripts/ready.sh <PROFILE> [--catalog <catalog>] [--principal "account users"] [--egress-file <file>] [--no-enable]
+bash scripts/ready.sh [<PROFILE>] [--catalog <catalog>] [--principal "account users"] [--egress-file <file>] [--no-enable]
 ```
 
-It checks, in order: login; the metastore's cloud and region (put the sources there); serverless and classic compute; the connector previews (step 1); a target catalog (step 2); access for you and `--principal` through `check.sh` (step 4); the serverless egress ranges for the source's firewall ([lfc-source-firewall](../lfc-source-firewall/SKILL.md)); the connections already here. One line each: `PASS`, `FAIL`, `WARN`, `INFO` or `ASK`, with the next command. `ASK` means stop and ask the user (no writable target catalog). Exit 1 on any `FAIL` or `ASK`.
+It checks, in order: login; the metastore's cloud and region (put the sources there); serverless and classic compute; the connector previews (step 1); a target catalog (step 2); access for you and `--principal` through `check.sh` (step 4); the serverless egress ranges for the source's firewall ([lfc-source-firewall](../lfc-source-firewall/SKILL.md)); the connections already here. One line each: `PASS`, `FAIL`, `WARN`, `INFO` or `ASK`, with the next command. Without `<PROFILE>` or `--catalog`, it uses the saved settings (**lfc-test-settings**: `DATABRICKS_PROFILE`, `LFC_CATALOG`). `ASK` means stop and ask the user (no writable target catalog). Exit 1 on any `FAIL` or `ASK`.
 
 - The one change it makes: as a workspace admin, it turns on a connector preview that's off. `--no-enable` makes it read-only.
 - `--egress-file <file>` keeps the egress list; a later run shows the ranges added and removed as a `WARN`. Rerun at least monthly.

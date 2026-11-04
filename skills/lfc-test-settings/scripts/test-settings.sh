@@ -41,7 +41,11 @@ case "$*" in
   "configure get region --profile p1") echo us-east-2 ;;
 esac
 F
-chmod +x "$T/bin/databricks" "$T/bin/az" "$T/bin/aws"
+cat > "$T/bin/gcloud" <<'F'
+#!/usr/bin/env bash
+case "$*" in "config configurations list"*) printf 'default\tproj-a\tus-central1\tTrue\nother\t\t\tFalse\n' ;; esac
+F
+chmod +x "$T/bin/databricks" "$T/bin/az" "$T/bin/aws" "$T/bin/gcloud"
 st() { PATH="$T/bin:$PATH" bash "$S" "$@"; }
 mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
 
@@ -75,6 +79,8 @@ ok "setup: the saved group checked, and only the groups tagged with the az user 
   'grep -q "saved: rg-mine, exists, in centralus" "$T/setup" && grep -q "^  rg-mine  centralus" "$T/setup" && grep -q "^  rg-made  eastus" "$T/setup" && ! grep -q "rg-other\|rg-untagged" "$T/setup"'
 ok "setup: the AWS profile with its account and region, the subscriptions, the workspaces" \
   'grep -q "^p1	111122223333	us-east-2" "$T/setup" && grep -q "^sub-one	11	t1	saved" "$T/setup" && grep -q "ws-a	login ok" "$T/setup"'
+ok "setup: the GCP configurations (project, region, the active one), ? for an unset value" \
+  'grep -q "^default	proj-a	us-central1	active" "$T/setup" && grep -q "^other	?	?$" "$T/setup"'
 st set AZ_RESOURCE_GROUP=rg-gone
 st setup > "$T/setup" 2>&1
 ok "setup: a saved group that's gone is said so; with no az user, no group is suggested (not the untagged ones)" \

@@ -20,11 +20,13 @@ Provision a managed MySQL or PostgreSQL Flexible Server instance on Azure and co
 
 ## Inputs to collect
 
+**Saved settings first** (**lfc-test-settings**): `AZ_SUBSCRIPTION`, `AZ_REGION`, `AZ_RESOURCE_GROUP` and `OWNER` come from `settings.sh env`; `settings.sh require AZ_SUBSCRIPTION AZ_REGION AZ_RESOURCE_GROUP OWNER` lists only what to ask. The rest below is per database.
+
 | Input | Example | Notes |
 |-------|---------|-------|
-| Azure subscription ID | `12345678-1234-1234-1234-123456789012` | Run `az account show --query id -o tsv` |
-| Azure region | `eastus`, `westeurope` | Keep close to Databricks workspace |
-| Resource group | `<resource-group>` | Ask whether the user has their own; otherwise the team's shared test group, `<resource-group>` (check it with `az group show -n <resource-group>`). The user is free to choose a different one. Don't create one without asking |
+| Azure subscription ID | `12345678-1234-1234-1234-123456789012` | `AZ_SUBSCRIPTION` (saved), on every `az` call |
+| Azure region | `eastus`, `westeurope` | `AZ_REGION` (saved): the workspace's region |
+| Resource group | `<resource-group>` | `AZ_RESOURCE_GROUP` (saved): an existing group the user picked; never created, re-tagged or deleted |
 | Engine | `mysql` or `postgres` | Binlog (MySQL) or logical replication (PostgreSQL) |
 | Version | MySQL `8.0` / PostgreSQL `15`, `16` | Use LTS for stability |
 | SKU | `Standard_B1s` or `Standard_B2ms` | Compute size; verify availability in region |

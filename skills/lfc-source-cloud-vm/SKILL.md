@@ -31,6 +31,8 @@ The workflow is manual so you control every step and understand the configuratio
 
 ## Inputs to collect
 
+**Saved settings first** (**lfc-test-settings**): the cloud identity and region (`AZ_SUBSCRIPTION`, `AZ_REGION`, `AZ_RESOURCE_GROUP`, or `GCP_PROJECT`, `GCP_REGION`), `OWNER`, and an existing VM to reuse (`SOURCE_HOST=vm`, `SOURCE_VM`) come from `settings.sh env`; `settings.sh require <keys>` lists only what to ask. The rest below is per VM.
+
 | Input | Choices | Example | Notes |
 |-------|---------|---------|-------|
 | **Cloud** | `azure` or `gcp` | — | Determines VM API and firewall |

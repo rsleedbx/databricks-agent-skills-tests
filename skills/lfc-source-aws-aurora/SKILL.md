@@ -20,12 +20,14 @@ Aurora uses a **cluster + writer instance** structure with auto-scaling storage 
 
 ## Inputs to collect
 
+**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.sh env`; `settings.sh require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. The rest below is per cluster.
+
 | Parameter | Default | Example |
 |-----------|---------|---------|
 | **Engine** | — | `mysql-aurora` or `pg-aurora` |
 | **Version** | Latest stable | MySQL `8.0`, PostgreSQL `16` |
 | **Instance class** | `db.t3.micro` | `db.t3.small`, `db.r6g.large` |
-| **Region** | From AWS profile | `us-east-1`, `eu-west-1` |
+| **Region** | `AWS_REGION` (saved) | `us-east-1`, `eu-west-1` |
 | **Environment** | `dev` | `dev` (1-day backups), `staging` (7-day), `prod` (7-day + DeletionProtection) |
 
 ## Prerequisites

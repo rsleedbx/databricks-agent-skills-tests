@@ -26,16 +26,16 @@ Provision a source database on AWS RDS for Lakeflow Connect (LFC) using the AWS 
 
 ## Inputs to collect
 
-Before creating, ask and collect:
+**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.sh env`; `settings.sh require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. Before creating, collect the rest:
 
 | Input | Purpose | Example |
 |-------|---------|---------|
 | **engine** | Database engine | `postgres`, `mysql`, `sqlserver`, `oracle` |
 | **version** | Engine version | `16` (postgres), `8.0` (mysql), `2022` (sqlserver) |
-| **aws-region** | AWS region for RDS | `us-east-1`, `eu-west-1` |
+| **aws-region** | `AWS_REGION` (saved) | `us-east-1`, `eu-west-1` |
 | **instance-type** | EC2 instance class | `db.t3.micro`, `db.t3.small` |
 | **storage-gb** | Allocated storage | `20`, `50`, `100` |
-| **user-prefix** | Prefix for resource names | `jane-doe` (derived from email) |
+| **user-prefix** | Prefix for resource names, from `OWNER` (saved) | `jane-doe` |
 
 ## Prerequisites
 

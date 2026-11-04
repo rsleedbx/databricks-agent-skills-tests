@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ready.sh <profile> [--catalog C] [--principal P] [--egress-file FILE] [--no-enable]: is this workspace ready for a Lakeflow Connect demo?
+# ready.sh [<profile>] [--catalog C] [--principal P] [--egress-file FILE] [--no-enable]: is this workspace ready for a Lakeflow Connect demo?
 #   Checks, in the order a demo needs them: the profile logs in; the workspace's cloud and region (where the sources
 #   should be); serverless and classic compute; the connector previews; a target catalog that works for CDC; access for
 #   you (and --principal, e.g. "account users") through check.sh; the serverless egress ranges the source firewall must
@@ -8,11 +8,15 @@
 #   catalog isn't writable, or there is none). Exit 1 if anything FAILs or ASKs.
 #   The one change it makes: a connector preview that's off is turned on (as a workspace admin), with a line saying so
 #   first. --no-enable makes it read-only. Turn one off again with the same patch and "value": false.
+#   Without <profile> or --catalog, the saved test settings give them (lfc-test-settings: DATABRICKS_PROFILE, LFC_CATALOG).
 set -uo pipefail
-P=$1; shift; CAT=; WHO=; EGRESS=
+D=$(cd "$(dirname "$0")" && pwd)
+ST=$D/../../lfc-test-settings/scripts/settings.sh   # the answers asked once (lfc-test-settings)
+P=; case ${1:-} in ''|--*) ;; *) P=$1; shift;; esac; CAT=; WHO=; EGRESS=
 ENABLE=yes
 while [ $# -gt 0 ]; do case $1 in --catalog) CAT=$2; shift 2;; --principal) WHO=$2; shift 2;; --egress-file) EGRESS=$2; shift 2;; --no-enable) ENABLE=no; shift;; *) echo "unknown $1"; exit 2;; esac; done
-D=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fails=0
+[ -n "$P" ] || P=$(bash "$ST" get DATABRICKS_PROFILE 2>/dev/null) || { echo "ready.sh: no <profile>, and no DATABRICKS_PROFILE saved: bash $ST setup"; exit 2; }
+[ -n "$CAT" ] || CAT=$(bash "$ST" get LFC_CATALOG 2>/dev/null) || CAT=; T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fails=0
 row() { printf "%-5s %-40s %s\n" "$1" "$2" "$3" | tee -a $T/rows; case $1 in FAIL|ASK) fails=$((fails + 1));; esac; [ -n "${4:-}" ] && printf "      next: %s\n" "$4"; return 0; }
 j() { databricks "$@" --profile $P -o json 2> $T/err; }
 

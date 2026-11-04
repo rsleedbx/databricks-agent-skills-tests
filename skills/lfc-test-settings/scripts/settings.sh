@@ -4,7 +4,8 @@
 #   in one file outside the repo, so later runs read them instead of asking or listing again. File: $LFC_TESTS_SETTINGS,
 #   default ~/.lfc/tests/settings.env (mode 600, folder 700); lines KEY=value, shell-quoted, never committed.
 #   setup         the first run (or a refresh): one parallel pass over what changes rarely (Azure subscriptions, AWS
-#                 profiles and their accounts, Databricks workspace profiles and whether each login works, local Podman),
+#                 profiles and their accounts, GCP projects from the gcloud config, Databricks workspace profiles and
+#                 whether each login works, local Podman),
 #                 next to what's saved, so every question is asked at once. Then `set` the answers and `checked`.
 #   show          every key and value (no secrets belong here: passwords stay in their own 0600 files)
 #   get KEY       the value; exit 1 if it isn't set
@@ -67,6 +68,8 @@ case $cmd in
     { command -v aws > /dev/null && for p in $(aws configure list-profiles 2>/dev/null); do   # config only: no network
         a=$(aws configure get sso_account_id --profile "$p" 2>/dev/null); r=$(aws configure get region --profile "$p" 2>/dev/null)
         printf '%s\t%s\t%s\n' "$p" "${a:-?}" "${r:-?}"; done; } > "$T/aws" 2>/dev/null &
+    { command -v gcloud > /dev/null && { "${TO[@]}" 30 gcloud config configurations list --format='value(name,properties.core.project,properties.compute.region,is_active)' 2>/dev/null \
+        | awk -F'\t' '{printf "%s\t%s\t%s%s\n", $1, ($2 == "" ? "?" : $2), ($3 == "" ? "?" : $3), ($4 == "True" ? "\tactive" : "")}'; }; } > "$T/gcp" 2>/dev/null &   # config only: no network
     { command -v databricks > /dev/null && bash "$SELF" workspaces; } > "$T/dbx" 2>/dev/null &
     { if command -v podman > /dev/null; then
         if [ "$(uname -s)" = Darwin ]; then
@@ -91,6 +94,7 @@ case $cmd in
     echo "== Azure resource group for every test resource (AZ_RESOURCE_GROUP: an existing one; skills never create or delete a group)"; cat "$T/rg"; echo
     echo "== Azure subscriptions (name, id, tenant, saved/default)"; cat "$T/azure"; echo
     echo "== AWS profiles (profile, account, region)"; cat "$T/aws"; echo
+    echo "== GCP configurations (name, project, region, active)"; cat "$T/gcp"; echo
     echo "== Databricks workspace profiles: which do you work in often? (number, cloud, profile, login, host)"; cat "$T/dbx"; echo
     echo "== local Podman"; cat "$T/podman" ;;
   workspaces)

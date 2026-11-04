@@ -2,7 +2,7 @@
 
 Uses `fw.env` and the parent skill's `$Q` and `$FW` (its Step 0). Start every block with `set -a; . ./fw.env`. Also needed: the resource group (`RG`) and the server or NSG.
 
-**Resource group:** ask whether the user has their own. If not, use the team's shared test group, `<resource-group>` (`az group show -n <resource-group>`); the user is free to choose a different one. Shared groups can hit quota or resource limits: if a create fails with a quota error there, ask for another group instead of removing other people's resources.
+**Resource group:** the saved `AZ_RESOURCE_GROUP` (lfc-test-settings: an existing group the user picked once; never created, re-tagged or deleted). Shared groups can hit quota or resource limits: if a create fails with a quota error there, ask for another group instead of removing other people's resources.
 
 ## Shared NSG (VMs and the shared VNet): set up once, reuse everywhere
 

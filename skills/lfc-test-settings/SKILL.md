@@ -16,8 +16,8 @@ and writes it; run it with no arguments for its usage.
 
 What changes rarely (the Azure and AWS accounts, the shared workspaces, local Podman or a VM) is found once:
 `bash scripts/settings.sh setup` lists it all in one parallel pass (about 6 s): the Azure subscriptions, the AWS
-profiles and their accounts (from the config, no network), every Databricks profile and whether its login works, and
-local Podman, next to what's saved. Ask every missing question at once, with a recommendation for each, `set` the
+profiles and their accounts and the GCP configurations (from the configs, no network), every Databricks profile and
+whether its login works, and local Podman, next to what's saved. Ask every missing question at once, with a recommendation for each, `set` the
 answers, then `settings.sh checked`.
 
 Every later run only reads the file: `require` makes no CLI call and asks nothing. Look a value up again only when a
@@ -34,6 +34,8 @@ last checked over 30 days ago.
      default marked. Recommend the one the user's earlier resources were made in (their records), not the CLI default.
      A subscription in a tenant the login doesn't reach needs `az login --tenant <tenant id>`.
    - `AWS_PROFILE`, `AWS_REGION`: `aws configure list-profiles`; `aws sts get-caller-identity --profile <p>` for the account.
+     `AWS_VPC` only for RDS or Aurora outside the default VPC.
+   - `GCP_PROJECT`, `GCP_REGION`: `setup` lists the gcloud configurations (project, region, which is active).
    - `DATABRICKS_PROFILE`, `WORKSPACES`: show `settings.sh workspaces` (the user's `databricks auth profiles`, numbered by
      cloud, with each login's state) and ask which ones they work in often; save those as `WORKSPACES` and the one used
      most as `DATABRICKS_PROFILE`. Don't pick for them from other records. A profile whose login expired often still works
@@ -70,6 +72,8 @@ keys stay in their own 0600 files, named by a setting if needed (`KAFKA_PASSWORD
 | `AZ_REGION` | Azure region for test resources: the workspace's region | `centralus` |
 | `AZ_RESOURCE_GROUP` | the existing group every Azure test resource goes in | `<resource group>` |
 | `AWS_PROFILE`, `AWS_ACCOUNT`, `AWS_REGION` | AWS CLI profile, its account and region | `<profile>`, `<account id>`, `us-east-2` |
+| `AWS_VPC` | the VPC for RDS and Aurora (unset: the region's default VPC) | `vpc-<id>` |
+| `GCP_PROJECT`, `GCP_REGION` | GCP project and region for test resources | `<project id>`, `us-central1` |
 | `DATABRICKS_PROFILE` | the workspace the tests use by default | `<profile>` |
 | `WORKSPACES` | the shared workspaces to pick from, by profile, comma-separated | `<profile>,<profile>` |
 | `SOURCE_HOST`, `SOURCE_VM` | where source databases run: `podman` (local) or `vm`, and the VM | `podman`, `<vm name>` |
