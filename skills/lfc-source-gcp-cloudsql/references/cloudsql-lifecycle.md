@@ -58,7 +58,7 @@ Add labels to instances for cost allocation and cleanup:
 
 ```bash
 gcloud sql instances patch "${INSTANCE_NAME}" \
-  --update-labels="env=dev,owner=jane-doe,removal_date=2025-02-15" \
+  --update-labels="env=dev,owner=jane-doe,remove_after=2025-02-15" \
   --project="${PROJECT_ID}"
 ```
 
@@ -66,7 +66,7 @@ Query all instances with a label:
 
 ```bash
 gcloud sql instances list \
-  --filter="labels.removal_date<2025-02-15" \
+  --filter="labels.remove_after<2025-02-15" \
   --project="${PROJECT_ID}" \
   --format="table(name, state, createTime)"
 ```

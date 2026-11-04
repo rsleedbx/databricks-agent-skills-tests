@@ -5,7 +5,7 @@
 ```bash
 SUBSCRIPTION="<your-subscription-id>"
 RESOURCE_GROUP="<resource-group>"     # or the user's own group: they are free to choose
-LOCATION="eastus"
+LOCATION="$AZ_REGION"   # the workspace's region, saved once (lfc-test-settings)
 ZONE="1"                             # Premium SSD v2 needs a zonal VM
 VM_NAME="jane-doe-mysql-vm-eastus-1779207800"
 VM_SIZE="Standard_D4s_v5"            # 4 vCPU, 16 GB
@@ -72,5 +72,5 @@ Next, for Podman: format the data disk (LUN 0, `/dev/disk/azure/scsi1/lun0`) as 
 az vm update \
   --resource-group "$RESOURCE_GROUP" \
   --name "$VM_NAME" \
-  --set "tags={purpose=lfc-test,owner=jane-doe,removal_date=2025-02-15}"
+  --set "tags={purpose=lfc-test,owner=jane-doe,RemoveAfter=2025-02-15}"
 ```

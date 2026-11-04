@@ -21,6 +21,6 @@ if [ -s "$sf" ]; then
   printf 'lfc-tests plugin: test settings saved in %s (%s; checked %s). Before asking the user which subscription, region, resource group, workspace or source host, read them: eval "$(bash "$LFC_TESTS/skills/lfc-test-settings/scripts/settings.sh" env)"; ask only for keys "settings.sh require <keys>" lists.\n' \
     "$sf" "$keys" "$(bash "$st" get SETTINGS_CHECKED 2>/dev/null || echo never)"
 else
-  printf 'lfc-tests plugin: no test settings saved yet. The first test that needs a cloud account, region, resource group or workspace runs bash "$LFC_TESTS/skills/lfc-test-settings/scripts/settings.sh" setup, asks every question once with a recommendation, and saves the answers (lfc-test-settings).\n'
+  printf 'lfc-tests plugin: no test settings saved yet. The first test that needs a cloud account, region, resource group or workspace runs bash "$LFC_TESTS/skills/lfc-test-settings/scripts/settings.sh" setup, which shows the defaults the skills use (tell the user, and ask what to change), then asks every question once with a recommendation, and saves the answers (lfc-test-settings).\n'
 fi
 exit 0

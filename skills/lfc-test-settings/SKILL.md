@@ -16,14 +16,24 @@ and writes it; run it with no arguments for its usage.
 
 What changes rarely (the Azure and AWS accounts, the shared workspaces, local Podman or a VM) is found once:
 `bash scripts/settings.sh setup` lists it all in one parallel pass (about 6 s): the Azure subscriptions, the AWS
-profiles and their accounts (from the config, no network), every Databricks profile and whether its login works, and
-local Podman, next to what's saved. Ask every missing question at once, with a recommendation for each, `set` the
+profiles and their accounts and the GCP configurations (from the configs, no network), every Databricks profile and
+whether its login works, and local Podman, next to what's saved. Ask every missing question at once, with a recommendation for each, `set` the
 answers, then `settings.sh checked`.
 
 Every later run only reads the file: `require` makes no CLI call and asks nothing. Look a value up again only when a
 command using it fails (a subscription gone, a workspace deleted: **account-token-fallback**'s `ws-token.sh` exits 3
 for a workspace that no longer exists, 4 for a host that doesn't resolve: check the network first), then `set` the new one and `checked`. `require` notes when the settings were
 last checked over 30 days ago.
+
+## Defaults, stated up front
+
+What the skills do unless the user says otherwise is in the repo's [`defaults.yaml`](../../defaults.yaml): where sources run (a cloud VM
+of their own), which cloud and region (the workspace's; Azure when there's a choice), how the firewall is opened (the
+laptop's /32 and the workspace's serverless egress, the database ports only), which workspace and catalog, compute
+(serverless in tests), passwords and TLS, tags and cleanup, the approval before creating, the pipeline channel, test
+data, and the exceptions. `settings.sh defaults` prints them, one line each, and `setup` shows them first: tell the
+user before the first test and ask what to change, then save the answers as settings. The repo's tests
+fail when a script or page no longer matches a default, so a change updates both.
 
 ## At the start of a test
 
@@ -34,12 +44,15 @@ last checked over 30 days ago.
      default marked. Recommend the one the user's earlier resources were made in (their records), not the CLI default.
      A subscription in a tenant the login doesn't reach needs `az login --tenant <tenant id>`.
    - `AWS_PROFILE`, `AWS_REGION`: `aws configure list-profiles`; `aws sts get-caller-identity --profile <p>` for the account.
+     `AWS_VPC` only for RDS or Aurora outside the default VPC.
+   - `GCP_PROJECT`, `GCP_REGION`: `setup` lists the gcloud configurations (project, region, which is active).
    - `DATABRICKS_PROFILE`, `WORKSPACES`: show `settings.sh workspaces` (the user's `databricks auth profiles`, numbered by
      cloud, with each login's state) and ask which ones they work in often; save those as `WORKSPACES` and the one used
      most as `DATABRICKS_PROFILE`. Don't pick for them from other records. A profile whose login expired often still works
      through **account-token-fallback** (`ws-token.sh`: the Azure CLI on Azure, or the account login); ask for a login
      only when that fails, and then for the account's login first (it covers every workspace in the account).
-   - `SOURCE_HOST`: `podman` (local, **lfc-source-podman**) or `vm` (a cloud VM, **lfc-source-cloud-vm**), and `SOURCE_VM`
+   - `SOURCE_HOST`: `vm` (recommended: a cloud VM of their own in the workspace's cloud, **lfc-source-cloud-vm**; serverless
+     can reach it) or `podman` (local, **lfc-source-podman**: laptop-only tests), and `SOURCE_VM`
      for the VM's name.
    - `LFC_CATALOG`: the workspace's default catalog first (`databricks settings default-namespace get`), checked as in
      **lfc-workspace-setup**.
@@ -70,9 +83,11 @@ keys stay in their own 0600 files, named by a setting if needed (`KAFKA_PASSWORD
 | `AZ_REGION` | Azure region for test resources: the workspace's region | `centralus` |
 | `AZ_RESOURCE_GROUP` | the existing group every Azure test resource goes in | `<resource group>` |
 | `AWS_PROFILE`, `AWS_ACCOUNT`, `AWS_REGION` | AWS CLI profile, its account and region | `<profile>`, `<account id>`, `us-east-2` |
+| `AWS_VPC` | the VPC for RDS and Aurora (unset: the region's default VPC) | `vpc-<id>` |
+| `GCP_PROJECT`, `GCP_REGION` | GCP project and region for test resources | `<project id>`, `us-central1` |
 | `DATABRICKS_PROFILE` | the workspace the tests use by default | `<profile>` |
 | `WORKSPACES` | the shared workspaces to pick from, by profile, comma-separated | `<profile>,<profile>` |
-| `SOURCE_HOST`, `SOURCE_VM` | where source databases run: `podman` (local) or `vm`, and the VM | `podman`, `<vm name>` |
+| `SOURCE_HOST`, `SOURCE_VM` | where source databases run: `vm` (default) or `podman` (local), and the VM | `vm`, `<vm name>` |
 | `LFC_CATALOG` | the target catalog there | `<catalog>` |
 | `OWNER` | the owner tag and name prefix | `<firstname>.<lastname>` |
 | `REMOVE_AFTER_DAYS` | days until a test resource's `RemoveAfter` tag | `7` |

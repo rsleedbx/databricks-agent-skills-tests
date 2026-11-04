@@ -10,6 +10,13 @@ Open Claude Code (or another coding agent) in this repo, with a Databricks CLI l
 
 The skills ask before creating anything, and clean up after themselves. To run the tests as scripts instead, see [docs/running-tests.md](docs/running-tests.md).
 
+## What you need
+
+- **Databricks:** a workspace you can create connections and pipelines in, and the Databricks CLI logged in to it (`databricks auth login`).
+- **Tools:** uv, jq, yq and DuckDB; for local source databases, Podman (and Lima on macOS). The first session names any that are missing, with the install command.
+- **A cloud login, only for cloud sources:** `az`, `aws` or `gcloud`, logged in to the account the sources should go in.
+- **Asked once, then saved:** the first test asks for your cloud account, region, resource group, workspace and catalog in one message, with a recommendation for each, and saves the answers in `~/.lfc/tests/settings.env` ([lfc-test-settings](skills/lfc-test-settings/SKILL.md)). Later tests read them instead of asking again.
+
 ## Install
 
 In Claude Code, from any folder, with no clone:

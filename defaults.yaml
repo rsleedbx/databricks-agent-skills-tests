@@ -1,0 +1,103 @@
+# defaults.yaml: the defaults the test skills use unless the user says otherwise (with layers.yaml, repo policy). State them before the first test
+# (settings.sh defaults prints them; setup shows them first). bin/check_defaults.py keeps the code in step:
+#   in:     each file must still contain the phrase (the place the default is set or stated)
+#   forbid: the pattern must appear in no file under the given folders (a default the rules exclude)
+# A change to a default changes this file and the files it names, in the same pull request.
+defaults:
+  - id: source-host
+    area: Where sources run
+    value: "A cloud VM of your own in the workspace's cloud (SOURCE_HOST=vm); local Podman only for tests that stay on the laptop"
+    why: "Serverless pipelines can't reach a laptop; a VM runs every engine the same way"
+    in:
+      - {file: skills/lfc-test-settings/SKILL.md, has: "`vm` (recommended"}
+      - {file: skills/lfc-source-podman/SKILL.md, has: "serverless"}
+  - id: cloud-region
+    area: Cloud and region
+    value: "The workspace's own cloud and region (from its metastore); Azure when there's a choice"
+    why: "Reads stay in one region (no egress charge); an Azure NSG holds about 760 address ranges, an AWS security group 60 rules"
+    in:
+      - {file: skills/lfc-source-firewall/SKILL.md, has: "Which cloud: the workspace's first"}
+      - {file: skills/lfc-source-setup/SKILL.md, has: "about 760 CIDRs"}
+      - {file: skills/lfc-source-cloud-vm/references/azure-vm.md, has: 'LOCATION="$AZ_REGION"'}
+  - id: firewall
+    area: Firewall
+    value: "Your laptop's /32 (rechecked each session) and the workspace region's serverless egress (Databricks' ip-ranges.json), only the database ports (30000-30063 on a VM), never 0.0.0.0/0; one shared NSG per Azure region; refresh at least monthly"
+    why: "Open only what Lakeflow Connect and your laptop need; the egress list changes about monthly"
+    in:
+      - {file: skills/lfc-source-firewall/SKILL.md, has: "Never open `0.0.0.0/0`"}
+      - {file: skills/lfc-source-firewall/references/azure.md, has: "PORTS=30000-30063"}
+      - {file: skills/lfc-source-firewall/scripts/serverless-egress.sh, has: "refresh at least monthly"}
+    forbid:
+      - {in: [skills], pattern: "all 0.0.0.0/0 md5"}
+  - id: workspace
+    area: Workspace
+    value: "The saved profile (DATABRICKS_PROFILE, WORKSPACES); ready.sh checks it and turns on a connector preview that's off when you're a workspace admin (--no-enable: read-only); the target catalog is LFC_CATALOG, else the workspace's default"
+    why: "A test needs the connector previews on and a catalog it can write to"
+    in:
+      - {file: skills/lfc-workspace-setup/scripts/ready.sh, has: "DATABRICKS_PROFILE"}
+      - {file: skills/lfc-workspace-setup/scripts/ready.sh, has: "--no-enable makes it read-only"}
+  - id: logins
+    area: Logins
+    value: "An expired workspace login is covered by your Azure CLI or account login; a login is asked for only when those fail, the account's first"
+    why: "One account login covers every workspace in the account"
+    in:
+      - {file: skills/account-token-fallback/scripts/ws-token.sh, has: "the account login first"}
+  - id: compute
+    area: Compute
+    value: "Tests set serverless: true on every pipeline and gateway (LFC_SERVERLESS); the public skills leave it unset and switch on failure"
+    why: "The test firewall allows only the serverless ranges"
+    in:
+      - {file: env.sh, has: 'LFC_SERVERLESS="${LFC_SERVERLESS:-true}"'}
+  - id: resource-group
+    area: Azure resource group
+    value: "An existing group you pick once (AZ_RESOURCE_GROUP); never created, re-tagged or deleted"
+    why: "A subscription allows only so many groups; az group create on an existing one replaces its tags"
+    in:
+      - {file: skills/lfc-source-setup/SKILL.md, has: "Never create, re-tag or delete a group"}
+      - {file: skills/lfc-source-eventhubs/scripts/eventhubs.sh, has: "never creates one"}
+  - id: credentials
+    area: Passwords and TLS
+    value: "Passwords are generated (Lfc1 and 24 hex digits) into 0600 files or the OS keyring, never printed; connections use TLS with the server's certificate trusted, never TLS off"
+    why: "No secret in code or chat; test servers have self-signed certificates"
+    in:
+      - {file: skills/lfc-source-setup/SKILL.md, has: "openssl rand -hex 12"}
+      - {file: skills/lfc-source-setup/SKILL.md, has: "trustServerCertificate"}
+    forbid:
+      - {in: [skills], pattern: "openssl rand -base64"}
+      - {in: [skills], pattern: "/tmp/admin_pw"}
+      - {in: [skills], pattern: "/tmp/admin_password"}
+  - id: tags-cleanup
+    area: Tags and cleanup
+    value: "Everything created is tagged owner (OWNER), purpose=lfc-test, created, CreatedBy=<skill>, RemoveAfter=today + REMOVE_AFTER_DAYS (7; GCP labels: remove_after); cleanup deletes only what carries its own CreatedBy tag"
+    why: "Shared subscriptions and workspaces: never delete someone else's resource"
+    in:
+      - {file: skills/lfc-test-settings/scripts/settings.sh, has: "remove-after)"}
+      - {file: skills/lfc-source-azure-sql/scripts/sqldb.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
+      - {file: skills/lfc-source-azure-sql/scripts/mi.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
+      - {file: skills/lfc-source-azure-flexserver/scripts/flex.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
+      - {file: skills/lfc-source-eventhubs/scripts/eventhubs.sh, has: "CreatedBy=$MINE"}
+    forbid:
+      - {in: [skills], pattern: "removal_date"}
+  - id: approval
+    area: Before creating
+    value: "A plan (a diagram for a pipeline) and one yes before anything is created; the headless matrix prompts say yes in their text"
+    why: "Cloud resources bill by the hour"
+    in:
+      - {file: skills/lfc-source-setup/SKILL.md, has: "Ask before creating anything"}
+      - {file: skills/lfc-pipeline-diagram/SKILL.md, has: "planned"}
+  - id: channel
+    area: Pipeline channel
+    value: "CURRENT, except the Kafka connector (Beta), which runs on PREVIEW"
+    why: "A Beta connector is only on the PREVIEW channel"
+    in:
+      - {file: skills/lfc-kafka-freshness-test/scripts/pipeline.sh, has: 'channel: "PREVIEW"'}
+  - id: data
+    area: Test data
+    value: "Generated inside the database: 1,000,000 rows a table on PostgreSQL, 100,000 on MySQL (ROWS), TPC models at scale factor 1"
+    why: "Only SQL travels; MySQL's inserts are slower, so its default is smaller"
+    in:
+      - {file: skills/lfc-source-datagen/scripts/fill.sh, has: "ROWS=${ROWS:-1000000}"}
+      - {file: skills/lfc-source-datagen/scripts/fill.sh, has: "ROWS=${ROWS:-100000}"}
+exceptions:   # stated, not defaults: where a script differs on purpose, until it changes
+  - "SQL Server Always On (lfc-source-podman ag-up.sh) publishes 1533/1534 by default; on a VM pass PORT_P and PORT_S from 30000-30063, the range its NSG opens"
+  - "The Zerobus harness (zerobus-debezium-test) still connects to its own PostgreSQL and YugabyteDB containers with TLS off and the images' fixed passwords; moving them to TLS and generated passwords needs a run on a VM"

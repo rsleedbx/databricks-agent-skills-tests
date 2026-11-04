@@ -19,14 +19,16 @@ Both support Change Tracking (CT) and CDC. Both incur data transfer costs if Dat
 
 ## Inputs to collect
 
+**Saved settings first** (**lfc-test-settings**): `AZ_SUBSCRIPTION`, `AZ_REGION`, `AZ_RESOURCE_GROUP` and `OWNER` come from `settings.sh env`; `settings.sh require AZ_SUBSCRIPTION AZ_REGION AZ_RESOURCE_GROUP OWNER` lists only what to ask. The rest below is per database.
+
 | Input | Source | Example |
 |-------|--------|---------|
-| Azure region | `az account list-locations` | `eastus`, `westeurope` |
-| Resource group | Ask whether the user has their own; otherwise the team's shared test group, `<resource-group>` (check it with `az group show -n <resource-group>`). The user is free to choose a different one. Don't create one without asking | `<resource-group>` |
-| Subscription ID | `az account show` | Confirm with user |
-| Owner tag | Your name/email prefix | `jane-doe` |
+| Azure region | `AZ_REGION` (saved) | `eastus`, `westeurope` |
+| Resource group | `AZ_RESOURCE_GROUP` (saved): an existing group the user picked; never created, re-tagged or deleted | `<resource-group>` |
+| Subscription ID | `AZ_SUBSCRIPTION` (saved), on every `az` call | `<subscription id>` |
+| Owner tag | `OWNER` (saved) | `jane-doe` |
 | Replication mode | Query-based only / CT / CDC / BOTH | See parent [engine-sqlserver.md](../lfc-source-setup/references/engine-sqlserver.md) |
-| **SQL Database:** Service Objective (SKU) | Default | `GP_S_Gen5_2` for testing |
+| **SQL Database:** Service Objective (SKU) | Default | `GP_S_Gen5_1` for testing (sqldb.sh's `VCORES=1`) |
 | **SQL Database:** Storage (GB) | Minimum 32 | `32`, `64` |
 | **SQL MI:** vCore count | Must be 4, 8, 16, 24, 32, 40, 64, or 80 | `4` (minimum) |
 | **SQL MI:** Storage (GB) | Minimum 32 | `32`, `128` |
@@ -47,8 +49,8 @@ az account show --query "{Name: name, SubscriptionId: id, State: state}" -o tabl
 
 # Name the subscription on every az call (--subscription <subscription_id>); az account set would change the default for all of them
 
-# Resource group: the user's own, or the team's shared test group. Check it exists; create one only if the user asks
-az group exists --name <resource_group>
+# Resource group: the saved AZ_RESOURCE_GROUP (lfc-test-settings), an existing one; never created here
+az group exists --subscription "$AZ_SUBSCRIPTION" --name "$AZ_RESOURCE_GROUP"
 ```
 
 **Identities are per resource.** Each resource records the identity it was created with (the create's `IDENTITY` line: Azure tenant and subscription, AWS profile and account, GCP account and project), and every later call for it passes that identity explicitly. Never rely on the CLI's current default: one login can reach several tenants, accounts and projects. Keep the values in your private env file, not in the repo.

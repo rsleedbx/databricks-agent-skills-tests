@@ -12,7 +12,9 @@
 #   the VNet gets in until lfc-source-firewall syncs the laptop and Databricks egress ranges into <SUBNET>-nsg.
 #   wait: polls until Succeeded (first instance in a subnet: 4-6 hours; later ones 30-60 min); exit 1 Failed, 2 timeout.
 #   endpoint: prints <name>.public.<dns zone>.database.windows.net,3342. stop/start: pause and resume compute (General
-#   Purpose). delete: the instance only (the subnet stays until Azure removes its virtual cluster, which takes hours).
+#   Purpose). delete: the instance only (the subnet stays until Azure removes its virtual cluster, which takes hours),
+#   and only when its CreatedBy tag is lfc-source-azure-sql (or, made before that tag, purpose=lfc-test with this
+#   owner); not found exits 3, a failed lookup 1, another's 2. Tags as sqldb.sh (RemoveAfter: REMOVE_AFTER_DAYS).
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/../../secret-handling/scripts/pw.sh"   # pw/pw_check: a password file or keyring:<name>
 CMD=${1:?plan|create|wait|status|endpoint|stop|start|delete}
@@ -25,6 +27,17 @@ plan|create) SUBSCRIPTION=${SUBSCRIPTION:-$(az account show --query id -o tsv)} 
 esac
 az_require "$SUBSCRIPTION" "${TENANT_ID:-}" || exit 1
 A=(--resource-group "$RG" --subscription "$SUBSCRIPTION")
+# what create tags, and the only thing delete removes (lfc-test-settings: OWNER, REMOVE_AFTER_DAYS)
+MINE=lfc-source-azure-sql; ST=$(cd "$(dirname "$0")" && pwd)/../../lfc-test-settings/scripts/settings.sh
+TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)" CreatedBy=$MINE RemoveAfter="$(bash "$ST" remove-after)")
+ours() {   # ours "<az show command>": 0 when its CreatedBy tag is this skill's; with no CreatedBy (made before it), purpose=lfc-test and this owner
+  local t; t=$($1 "${A[@]}" -n "$MI_NAME" --query tags -o json 2> "${TMPDIR:-/tmp}/ours.$$") || {
+    grep -q ResourceNotFound "${TMPDIR:-/tmp}/ours.$$" && { echo "$MI_NAME not found: nothing to delete"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 3; }
+    echo "couldn't read $MI_NAME's tags; nothing deleted:"; cat "${TMPDIR:-/tmp}/ours.$$"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 1; }
+  rm -f "${TMPDIR:-/tmp}/ours.$$"
+  printf '%s' "${t:-null}" | jq -e --arg m "$MINE" --arg o "${OWNER:-$USER}" 'if (.CreatedBy // "") != "" then .CreatedBy == $m else ((.purpose // "") == "lfc-test" and (.owner // "") == $o) end' > /dev/null \
+    || { echo "$MI_NAME wasn't made by this skill for ${OWNER:-$USER} (tags: $(printf '%s' "${t:-null}" | jq -c .)): not deleted"; return 2; }
+}
 NSG=$SUBNET-nsg; RT=$SUBNET-rt
 mi() { az sql mi show "${A[@]}" -n "$MI_NAME" -o json 2>/dev/null; }
 
@@ -49,7 +62,6 @@ plan|create)
   echo "instance   $MI_NAME GP_Gen5 ${VCORES:-4} vCores, ${STORAGE_GB:-32} GB, pricing ${PRICING:-Regular}, public data endpoint 3342 $(mi >/dev/null && echo '(exists)' || echo '(new)')"
   [ "$CMD" = plan ] && exit 0
   : "${ADMIN_PW_FILE:?}"; pw_check "$ADMIN_PW_FILE" || exit 2
-  TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)")
   az network nsg show "${A[@]}" -n "$NSG" -o none 2>/dev/null || az network nsg create "${A[@]}" -n "$NSG" -l "$LOCATION" --tags "${TAGS[@]}" -o none
   if ! az network route-table show "${A[@]}" -n "$RT" -o none 2>/dev/null; then
     az network route-table create "${A[@]}" -n "$RT" -l "$LOCATION" --tags "${TAGS[@]}" -o none
@@ -85,6 +97,7 @@ endpoint)
   f=$(mi | yq -p json '.fullyQualifiedDomainName // ""'); [ -n "$f" ] || { echo "no instance $MI_NAME"; exit 1; }
   echo "${f%%.*}.public.${f#*.},3342" ;;
 stop|start) az sql mi "$CMD" "${A[@]}" --mi "$MI_NAME" -o none && echo "$CMD: $MI_NAME" ;;
-delete) az sql mi delete "${A[@]}" -n "$MI_NAME" --yes --no-wait && echo "deleting $MI_NAME (the subnet, NSG and route table stay)" ;;
+delete) ours "az sql mi show" || exit $?
+  az sql mi delete "${A[@]}" -n "$MI_NAME" --yes --no-wait && echo "deleting $MI_NAME (the subnet, NSG and route table stay)" ;;
 *) echo "unknown $CMD"; exit 2 ;;
 esac

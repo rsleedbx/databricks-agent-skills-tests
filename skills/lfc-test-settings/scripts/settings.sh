@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# settings.sh setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|env|azure: the answers a test
+# settings.sh setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|defaults|remove-after|env|azure: the answers a test
 #   skill asks for once (cloud accounts, region, workspaces, Podman or a VM, catalog, resource group, owner), kept per user
 #   in one file outside the repo, so later runs read them instead of asking or listing again. File: $LFC_TESTS_SETTINGS,
 #   default ~/.lfc/tests/settings.env (mode 600, folder 700); lines KEY=value, shell-quoted, never committed.
 #   setup         the first run (or a refresh): one parallel pass over what changes rarely (Azure subscriptions, AWS
-#                 profiles and their accounts, Databricks workspace profiles and whether each login works, local Podman),
+#                 profiles and their accounts, GCP projects from the gcloud config, Databricks workspace profiles and
+#                 whether each login works, local Podman),
 #                 next to what's saved, so every question is asked at once. Then `set` the answers and `checked`.
 #   show          every key and value (no secrets belong here: passwords stay in their own 0600 files)
 #   get KEY       the value; exit 1 if it isn't set
@@ -13,6 +14,9 @@
 #                 (no CLI calls); notes on stderr when the settings were last checked over 30 days ago
 #   AZ_RESOURCE_GROUP is an existing group, asked for: setup suggests the groups in AZ_SUBSCRIPTION tagged with the az
 #   user as Owner or Creator. A subscription allows only so many groups, so the skills never create, re-tag or delete one.
+#   defaults      the defaults the test skills use unless the user says otherwise (the repo's defaults.yaml), one line each, and
+#                 the stated exceptions: what to tell the user before the first test; setup shows them first
+#   remove-after  the RemoveAfter tag date for a new test resource: today + REMOVE_AFTER_DAYS (default 7), YYYY-MM-DD
 #   checked       record today as SETTINGS_CHECKED (after setup, or after a failed call made you re-check a value)
 #   env           export lines for eval: eval "$(settings.sh env)"
 #   workspaces    the workspace profiles of `databricks auth profiles`, numbered, by cloud: host, and whether the login
@@ -22,8 +26,8 @@
 #                 default marked "default": what to show the user when AZ_SUBSCRIPTION is missing
 set -uo pipefail
 F=${LFC_TESTS_SETTINGS:-$HOME/.lfc/tests/settings.env}
-SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")   # its own subcommands, as bash: no exec bit or ./ needed
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+SELF_DIR=$(cd "$(dirname "$0")" && pwd); SELF=$SELF_DIR/$(basename "$0")   # its own subcommands, as bash: no exec bit or ./ needed
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 TO=(perl -e 'alarm shift; exec @ARGV or die "$ARGV[0]: $!\n"')   # TO <seconds> <cmd>...: timeout(1) isn't on macOS
 valid() { case $1 in ''|*[!A-Z0-9_]*|[0-9]*) return 1 ;; esac; }
 value() {   # value KEY: the saved value, unquoted by the shell that wrote it
@@ -60,6 +64,12 @@ case $cmd in
       [ "${age:-0}" -le 30 ] || echo "settings: last checked $c ($age days ago): run setup to refresh them" >&2
     fi
     exit $miss ;;
+  defaults)
+    yq -r '.defaults[] | "- " + .area + ": " + .value' "$SELF_DIR/../../../defaults.yaml" || exit 1
+    yq -r '.exceptions[] | "- (exception) " + .' "$SELF_DIR/../../../defaults.yaml" ;;
+  remove-after)
+    d=$(value REMOVE_AFTER_DAYS 2>/dev/null || true); case $d in ''|*[!0-9]*) d=7;; esac
+    jq -rn --argjson d "$d" 'now + $d * 86400 | strftime("%Y-%m-%d")' ;;
   checked) init || exit 1; bash "$SELF" set "SETTINGS_CHECKED=$(date -u +%Y-%m-%d)" ;;
   setup)
     T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT
@@ -67,6 +77,8 @@ case $cmd in
     { command -v aws > /dev/null && for p in $(aws configure list-profiles 2>/dev/null); do   # config only: no network
         a=$(aws configure get sso_account_id --profile "$p" 2>/dev/null); r=$(aws configure get region --profile "$p" 2>/dev/null)
         printf '%s\t%s\t%s\n' "$p" "${a:-?}" "${r:-?}"; done; } > "$T/aws" 2>/dev/null &
+    { command -v gcloud > /dev/null && { "${TO[@]}" 30 gcloud config configurations list --format='value(name,properties.core.project,properties.compute.region,is_active)' 2>/dev/null \
+        | awk -F'\t' '{printf "%s\t%s\t%s%s\n", $1, ($2 == "" ? "?" : $2), ($3 == "" ? "?" : $3), ($4 == "True" ? "\tactive" : "")}'; }; } > "$T/gcp" 2>/dev/null &   # config only: no network
     { command -v databricks > /dev/null && bash "$SELF" workspaces; } > "$T/dbx" 2>/dev/null &
     { if command -v podman > /dev/null; then
         if [ "$(uname -s)" = Darwin ]; then
@@ -87,10 +99,12 @@ case $cmd in
         fi
       fi; } > "$T/rg" 2>&1 &
     wait
+    echo "== defaults: used unless you say otherwise (tell the user, and ask what to change)"; bash "$SELF" defaults; echo
     echo "== saved ($F)"; [ -f "$F" ] && cat "$F"; echo
     echo "== Azure resource group for every test resource (AZ_RESOURCE_GROUP: an existing one; skills never create or delete a group)"; cat "$T/rg"; echo
     echo "== Azure subscriptions (name, id, tenant, saved/default)"; cat "$T/azure"; echo
     echo "== AWS profiles (profile, account, region)"; cat "$T/aws"; echo
+    echo "== GCP configurations (name, project, region, active)"; cat "$T/gcp"; echo
     echo "== Databricks workspace profiles: which do you work in often? (number, cloud, profile, login, host)"; cat "$T/dbx"; echo
     echo "== local Podman"; cat "$T/podman" ;;
   workspaces)
