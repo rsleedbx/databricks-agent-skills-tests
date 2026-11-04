@@ -100,4 +100,4 @@ defaults:
       - {file: skills/lfc-source-datagen/scripts/fill.sh, has: "ROWS=${ROWS:-100000}"}
 exceptions:   # stated, not defaults: where a script differs on purpose, until it changes
   - "SQL Server Always On (lfc-source-podman ag-up.sh) publishes 1533/1534 by default; on a VM pass PORT_P and PORT_S from 30000-30063, the range its NSG opens"
-  - "The Zerobus harness (zerobus-debezium-test) still connects to its own PostgreSQL and YugabyteDB containers with TLS off and the images' fixed passwords; moving them to TLS and generated passwords needs a run on a VM"
+  - "The Zerobus harness (zerobus-debezium-test) runs its CockroachDB container --insecure (no TLS, no password); its PostgreSQL, YugabyteDB and SQL Server containers use TLS and generated passwords (changed without a run: the next run on a VM shows whether they connect)"
