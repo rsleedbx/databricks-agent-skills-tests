@@ -40,6 +40,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 ## lfc-downstream-history
 
 - `skills/lfc-downstream-history/scripts/sqlserver-history-snapshot.sh` SCD type 2 history of an SCD type 1 destination table from periodic snapshots (history-snapshot.py: AUTO CDC FROM SNA...
+- `skills/lfc-downstream-history/scripts/sqlserver-scd2-history-snapshot.sh` keep an SCD type 2 destination table's versions across a full refresh (history-snapshot-scd2.py: AUTO CDC FROM SNAPSH...
 
 ## lfc-kafka-freshness-test
 

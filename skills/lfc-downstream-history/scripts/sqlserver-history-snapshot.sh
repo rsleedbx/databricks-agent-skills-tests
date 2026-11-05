@@ -16,7 +16,8 @@ set -uo pipefail
 : "${HISTORY_NB:?}"
 lfc_init histsnap
 TB=histsnap_$E; FP_TABLES=$TB
-if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; fi
+# a fresh database gets the utility objects (without them: INGESTION_GATEWAY_DDL_OBJECTS_MISSING); SRC_DB has them already
+if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; src_util; fi
 HS=${S}_history; HT="\`$CATALOG\`.$HS"; DP=""
 cleanup_all() {
   if [ "${KEEP:-0}" != 1 ]; then
@@ -28,11 +29,14 @@ cleanup_all() {
 trap cleanup_all EXIT
 
 src >/dev/null <<EOF || { echo "source setup failed"; exit 2; }
+IF NOT EXISTS (SELECT 1 FROM sys.change_tracking_databases WHERE database_id = DB_ID())
+  ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON (CHANGE_RETENTION = 3 DAYS, AUTO_CLEANUP = ON);
 CREATE TABLE lfcddemo.$TB (id INT NOT NULL PRIMARY KEY, v VARCHAR(20));
 INSERT INTO lfcddemo.$TB (id, v) VALUES (1, 'a1'), (2, 'b1'), (3, 'c1'), (4, 'd1'), (5, 'e1');
-ALTER TABLE lfcddemo.$TB ENABLE CHANGE_TRACKING;
-GRANT SELECT, VIEW CHANGE TRACKING ON lfcddemo.$TB TO $CONN_USER;
 EOF
+# change tracking through the utility objects' procedure (it also sets up the DDL capture; a plain ALTER TABLE ...
+# ENABLE CHANGE_TRACKING leaves INGESTION_GATEWAY_DDL_OBJECTS_MISSING), with the connection login's grants
+track ct "$TB"
 pipelines_create "$(obj "$TB")"
 update; [ "$(q "SELECT COUNT(*) FROM $T.$TB" 2>&1)" = 5 ] || update
 

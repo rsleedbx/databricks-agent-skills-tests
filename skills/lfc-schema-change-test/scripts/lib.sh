@@ -115,12 +115,15 @@ src_util() {
 # which looks like a product result. One call per table made ~3 SSH calls a table and lost one of 200 (2026-10-23).
 track() {
   local kind=$1 n left proc=lakeflowSetupChangeDataCapture tv="(SELECT object_id FROM sys.tables WHERE is_tracked_by_cdc = 1)"; shift
-  [ "$kind" = ct ] && { proc=lakeflowSetupChangeTracking; tv="(SELECT object_id FROM sys.change_tracking_tables)"; }
+  local ddl=""
+  [ "$kind" = ct ] && { proc=lakeflowSetupChangeTracking; tv="(SELECT object_id FROM sys.change_tracking_tables)"; ddl=", @CreateDdlSupportingObjects = 1"; }
   untracked() { printf "SET NOCOUNT ON; SELECT STRING_AGG(n, ' ') FROM (VALUES %s) v(n) WHERE OBJECT_ID('lfcddemo.' + n) IS NULL OR OBJECT_ID('lfcddemo.' + n) NOT IN %s;\n" \
     "$(printf "('%s')," "$@" | sed 's/,$//')" "$tv" | src | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//; s/^NULL$//'; }
   left="$*"
   for n in 1 2 3; do
-    echo "EXEC dbo.$proc @Tables = '$(printf 'lfcddemo.%s,' $left | sed 's/,$//')', @User = '$CONN_USER';" | src > "$W/track.out" 2>&1
+    # change tracking: utility objects 1.7 create the DDL audit table and trigger only on request, and the pipelines
+    # still need them (INGESTION_GATEWAY_DDL_OBJECTS_MISSING without them, dlt 18.3.10)
+    echo "EXEC dbo.$proc @Tables = '$(printf 'lfcddemo.%s,' $left | sed 's/,$//')', @User = '$CONN_USER'${ddl:-};" | src > "$W/track.out" 2>&1
     left=$(untracked "$@"); [ -z "$left" ] && break
     echo "track $kind: not tracked after try $n: $left ($(grep -i -m1 -E 'error|msg [0-9]' "$W/track.out" | cut -c1-160))" >&2; sleep 10
   done

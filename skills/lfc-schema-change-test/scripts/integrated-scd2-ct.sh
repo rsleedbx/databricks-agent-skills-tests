@@ -52,8 +52,8 @@ SQL
 curl -fsSL -o "$W/u.sql" https://learn.microsoft.com/en-us/azure/databricks/_extras/documents/utility_script.sql
 $SRC_SQL "$DB" < "$W/u.sql" >/dev/null
 $SRC_SQL "$DB" >/dev/null <<SQL
-EXEC dbo.lakeflowSetupChangeTracking @Tables = 'lfcddemo.s1ct', @User = '$CONN_USER';
-EXEC dbo.lakeflowSetupChangeTracking @Tables = 'lfcddemo.s2ct', @User = '$CONN_USER';
+EXEC dbo.lakeflowSetupChangeTracking @Tables = 'lfcddemo.s1ct', @User = '$CONN_USER', @CreateDdlSupportingObjects = 1;
+EXEC dbo.lakeflowSetupChangeTracking @Tables = 'lfcddemo.s2ct', @User = '$CONN_USER', @CreateDdlSupportingObjects = 1;
 EXEC dbo.lakeflowSetupChangeDataCapture @Tables = 'lfcddemo.s2cdc', @User = '$CONN_USER';
 EXEC dbo.lakeflowFixPermissions @User = '$CONN_USER', @Tables = 'SCHEMAS:lfcddemo';
 SQL
