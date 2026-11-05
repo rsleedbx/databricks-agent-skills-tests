@@ -9,6 +9,10 @@
 #   slot-sql.sh --env prints the host OS, the Podman version, the image and digest, and the VM instead (SRC_ENV).
 set -euo pipefail
 : "${SLOT_HOST:?set SLOT_HOST}" "${SLOT_NAME:?set SLOT_NAME}"
+# The admin route's login shell parses the remote command line (no forced command there): plain names only, both routes.
+for w in "$SLOT_NAME" ${1:+"$1"}; do
+  case $w in --env) ;; *[!A-Za-z0-9_.-]*|"") echo "slot-sql: a database name is letters, digits, _ . -: $w" >&2; exit 2 ;; esac
+done
 if [ -n "${SLOT_OWNER:-}" ]; then
   case $SLOT_OWNER in *[!a-z0-9-]*) echo "slot-sql: SLOT_OWNER is an owner name (a-z, 0-9, -): $SLOT_OWNER" >&2; exit 2 ;; esac
   : "${SLOT_ADMIN_KEY:?SLOT_OWNER needs SLOT_ADMIN_KEY (the VM admin login)}"
