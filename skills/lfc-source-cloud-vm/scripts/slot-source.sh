@@ -3,6 +3,7 @@
 # contract 1) for a database from slot.sh up. up.json is its JSON line (the last line on stdin). sql_cmd is slot-sql.sh
 # with this database and your slot key, so SRC_SQL reaches the database through the VM's forced command.
 #   Needs SLOT_HOST (the VM's address for ssh). Optional SLOT_KEY (the private key; slot-sql.sh's default otherwise).
+#   SLOT_OWNER + SLOT_ADMIN_KEY (+ SLOT_ADMIN_USER): another owner's database, reached through the VM admin login.
 #   --connection: the password is left out (the UC connection holds it). Without it the contract has the password, so it
 #   needs --out (a file, mode 600); nothing secret is printed. --facts: the facts JSON the contract points to (must exist).
 #   Prints the file's path with --out, else the JSON (only when it has no password).
@@ -30,6 +31,12 @@ SQL_CMD="env SLOT_HOST=$SLOT_HOST SLOT_NAME=$NAME"
 if [ -n "${SLOT_KEY:-}" ]; then
   case $SLOT_KEY in *[[:space:]]*) echo "slot-source: SLOT_KEY has a space: slot-sql.sh is a word in the contract" >&2; exit 2 ;; esac
   SQL_CMD="$SQL_CMD SLOT_KEY=$SLOT_KEY"
+fi
+if [ -n "${SLOT_OWNER:-}" ]; then
+  for v in "$SLOT_OWNER" "${SLOT_ADMIN_KEY:-}" "${SLOT_ADMIN_USER:-azureuser}"; do
+    case $v in *[[:space:]]*|"") echo "slot-source: SLOT_OWNER needs SLOT_ADMIN_KEY, all without spaces" >&2; exit 2 ;; esac
+  done
+  SQL_CMD="$SQL_CMD SLOT_OWNER=$SLOT_OWNER SLOT_ADMIN_KEY=$SLOT_ADMIN_KEY SLOT_ADMIN_USER=${SLOT_ADMIN_USER:-azureuser}"
 fi
 SQL_CMD="$SQL_CMD $SQL_CLIENT"
 if [ -n "$FACTS" ]; then
