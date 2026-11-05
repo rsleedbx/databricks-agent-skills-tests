@@ -9,11 +9,15 @@
 #   versions  one row per version as the source had it: src_start_at, src_end_at; a refresh's reload of an unchanged
 #             live row is joined to the version before it; a dropped open version ends where the next one starts.
 # The snapshot comes from a function (it runs when the flow runs, not while the pipeline builds its graph): it fails the
-# update while a full refresh has emptied the table, and when the table is empty after rows were written to it. The guards read the source's Delta history with filters and count() only: no rows come back to Python (a collect()
+# update while a full refresh is reloading the table (a DLT REFRESH after the last snapshot, and no end of the reload
+# in the ingestion pipeline's events after it), while it is emptied, and when it is empty after rows were written to it.
+# The guards read the source's Delta history with filters and count() only: no rows come back to Python (a collect()
 # is flagged as unsupported in a pipeline). A snapshot's version is the time it was taken, in ms; a new one is
 # taken when the source has a commit after the last one.
-# Settings: src (the SCD type 2 table), keys (comma-separated key columns, default id), allow_empty (true: a snapshot
-# with no rows may close every version; default false: such a run fails). Run it after each ingestion
+# Settings: src (the SCD type 2 table, catalog.schema.table), keys (comma-separated key columns, default id),
+# allow_empty (true: a snapshot with no rows may close every version; default false: such a run fails), reload_check
+# (events, the default: the run-as identity needs to see the ingestion pipeline; history: the Delta history rules
+# only, which can't tell a reload written in several commits is unfinished). Run it after each ingestion
 # update; versions made and dropped between two of its runs are not seen. `spark` comes from the pipeline runtime.
 # ruff: noqa: F821
 import time
@@ -26,6 +30,7 @@ from pyspark.sql.types import StructType
 SRC = spark.conf.get("src")
 KEYS = [k.strip() for k in spark.conf.get("keys", "id").split(",") if k.strip()]
 ALLOW_EMPTY = spark.conf.get("allow_empty", "false").lower() == "true"
+RELOAD_CHECK = spark.conf.get("reload_check", "events")
 SCHEMA = spark.read.table(SRC).schema
 DATA = [f.name for f in SCHEMA.fields if f.name not in KEYS and f.name not in ("__START_AT", "__END_AT")]
 
@@ -100,11 +105,53 @@ def committed_since(latest_ms):
     return h.where(F.expr(f"unix_millis(timestamp) > {int(latest_ms)}")).limit(1).count() > 0
 
 
+def reload_done(message, src):
+    """An ingestion pipeline event that says a full refresh of src has been applied (the lifecycle event, or the
+    snapshot progress event where the lifecycle events are off)."""
+    return src in message and ("Full Refresh completed for dataset" in message or
+                               ("Snapshot of" in message and "APPLIED" in message))
+
+
+def completed_ms(since_ms):
+    """The newest time the source's ingestion pipeline logged the end of a full refresh of the table, looking back to
+    since_ms (the last snapshot) and at most 10000 events; None when there is none. A full refresh reloads the table in
+    one commit or several, and nothing in the table marks the end: only the ingestion pipeline's events do."""
+    from datetime import datetime
+
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient()
+    pid = w.tables.get(SRC).pipeline_id
+    if not pid:
+        raise RuntimeError(f"{SRC} has no ingestion pipeline: set reload_check=history to guard by its Delta history only")
+    for n, e in enumerate(w.pipelines.list_pipeline_events(pipeline_id=pid, max_results=250)):
+        ts = int(datetime.fromisoformat(e.timestamp or "").timestamp() * 1000)
+        if (since_ms is not None and ts < since_ms) or n >= 10000:
+            return None
+        if reload_done(e.message or "", SRC.replace("`", "")):
+            return ts
+    return None
+
+
+def reload_pending(latest_ms):
+    """True while a full refresh newer than the last snapshot has no end event after it (fails closed: no end event
+    found counts as not finished)."""
+    h = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50").where("operation = 'DLT REFRESH'")
+    if latest_ms is not None:
+        h = h.where(F.expr(f"unix_millis(timestamp) > {int(latest_ms)}"))
+    if h.limit(1).count() == 0:
+        return False
+    done = completed_ms(latest_ms)
+    return done is None or h.where(F.expr(f"unix_millis(timestamp) > {done}")).limit(1).count() > 0
+
+
 def next_snapshot(latest_version):
     """The snapshot source: (the table's rows, the time in ms), or None to take no snapshot this run. The flow calls
     it until it returns None: after the first snapshot, only a source commit after the last snapshot makes another."""
     if latest_version is not None and not committed_since(latest_version):
         return None
+    if RELOAD_CHECK == "events" and reload_pending(latest_version):
+        raise RuntimeError(f"{SRC} is being reloaded by a full refresh (no end of the reload in its ingestion pipeline's "
+                           "events yet): run this pipeline again after the ingestion update finishes")
     in_refresh, had_rows = source_state()
     if in_refresh:
         raise RuntimeError(f"{SRC} is being reloaded by a full refresh (DLT REFRESH, no write with rows yet): "
@@ -132,7 +179,8 @@ def versions():
     h = spark.read.table("history")
     # __START_AT / __END_AT here are snapshot versions: the source table's commit time in ms
     seen_at, gone_at = F.timestamp_millis(F.col("__START_AT")), F.timestamp_millis(F.col("__END_AT"))
-    dropped = F.col("__END_AT").isNotNull()          # gone from the source table: a full refresh dropped it
+    dropped = F.col("__END_AT").isNotNull()          # gone from the source table: a full refresh removed it
+    # (its end stays the source's when the source recorded one: dropped_by_refresh says the row left the table, not when)
     # A row with no source start (src_start empty) came from a snapshot: the first load (before every CDC version of
     # its key) or a full refresh's reload (after every version the refresh dropped: a drop of this key at or before
     # the time this pipeline first saw the row). The reload is placed at that time.

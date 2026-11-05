@@ -43,7 +43,7 @@ DP=$(dbx pipelines create -o json --json "{\"name\":\"$HS\",\"catalog\":\"$CATAL
   \"configuration\":{\"src\":\"$CATALOG.$S.$TB\",\"keys\":\"id\"},\"libraries\":[{\"notebook\":{\"path\":\"$HISTORY_NB\"}}]}" | yq '.pipeline_id')
 [ -n "$DP" ] && [ "$DP" != null ] || { echo "history pipeline create failed"; exit 2; }
 echo "LINK history pipeline $(dbx auth describe -o json 2>/dev/null | yq -r '.details.host // ""')/pipelines/$DP"
-# hupdate: one history update; HSTATE, HERRS. A platform rollout abort (nothing written) is run once more; no update
+# hupdate: one history update; HSTATE, HERRS, HUPD (its update ID). A platform rollout abort (nothing written) is run once more; no update
 # ID (an expired login, an API error) stops the run.
 HRETRY=0
 hupdate() {
@@ -51,13 +51,15 @@ hupdate() {
   for n in 1 2; do
     u=$(dbx pipelines start-update "$DP" --json '{}' -o json | yq '.update_id')
     [ -n "$u" ] && [ "$u" != null ] || { echo "history start-update failed: stopping the run"; exit 2; }
+    HUPD=$u
     for _ in $(seq 1 60); do HSTATE=$(dbx pipelines get-update "$DP" "$u" -o json | yq '.update.state')
       case $HSTATE in COMPLETED|FAILED|CANCELED) break;; esac; sleep 10; done
     dbx api get "/api/2.0/pipelines/$DP/events?max_results=250" -o json > "$W/hev.json"
     HERRS=$(U=$u yq -r '.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.error_class // ""' "$W/hev.json" | grep -v '^$' | sort -u | tr '\n' ' ')
     [ "$HSTATE" = COMPLETED ] && break
-    # the first line of the error, for the log (the pipeline is deleted at cleanup)
-    U=$u yq -r '[.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.message // ""] | map(select(. != "")) | .[0] // ""' "$W/hev.json" | head -1 | cut -c1-300 | sed 's/^/  history error: /'
+    # the error, for the log (the pipeline is deleted at cleanup): a Python exception's own line, else the first line
+    U=$u yq -r '[.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.message // ""] | map(select(. != "")) | .[0] // ""' "$W/hev.json" > "$W/herr.txt"
+    { grep -E '^[A-Za-z.]*(Error|Exception): ' "$W/herr.txt" | tail -1 || head -1 "$W/herr.txt"; } | cut -c1-300 | sed 's/^/  history error: /'
     dbx pipelines stop "$DP" >/dev/null 2>&1
     # run once more after a platform rollout abort (nothing written), or after a read of the table at a moment its
     # schema didn't resolve (UNRESOLVED_COLUMN, seen right after a stopped ingestion update): the next run catches up
@@ -104,7 +106,7 @@ if [ "$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)" = "$V0" ];
     [ $RUNS -ge 30 ] && break
     hupdate >/dev/null; RUNS=$((RUNS + 1)); OV=$(open_versions)
     # a run inside the reload's empty window must fail on the guard, not snapshot an empty table (all versions closed)
-    GUARD=$(U=$(yq -r '.events[0].origin.update_id // ""' "$W/hev.json") yq -r '.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.message // ""' "$W/hev.json" 2>/dev/null | grep -c "being reloaded by a full refresh")
+    GUARD=$(U=$HUPD yq -r '.events[] | select(.origin.update_id == strenv(U)) | .error.exceptions[]?.message // ""' "$W/hev.json" 2>/dev/null | grep -c "being reloaded by a full refresh")
     if [ "$HSTATE" = COMPLETED ] && [ "${OV:-0}" = 0 ]; then BADRUN="${BADRUN:-}$RUNS "; fi
     [ "$HSTATE" = COMPLETED ] && [[ "${OV:-}" =~ ^[0-9]+$ ]] && [ "$OV" -gt 0 ] && READ=$((READ + 1))
     [ "$HSTATE" = FAILED ] && [ "${GUARD:-0}" -gt 0 ] && GUARDED=$((GUARDED + 1))
@@ -116,7 +118,7 @@ if [ "$(q "SELECT MAX(version) FROM (DESCRIBE HISTORY $T.$TB)" 2>&1)" = "$V0" ];
   [ "$st" = COMPLETED ] || { echo "refresh apply not completed ($st): finishing it with update"; EARLY_STOP=0 update; }
 fi
 if [ $((READ + GUARDED)) = 0 ]; then claim guard FAIL "no history run during the refresh completed or was stopped by the guard ($RUNS runs): nothing to judge"
-elif [ -z "$BADRUN" ]; then claim guard PASS "$RUNS history runs during the refresh: none closed every version ($GUARDED stopped by the guard in the empty window)"
+elif [ -z "$BADRUN" ]; then claim guard PASS "$RUNS history runs during the refresh: none closed every version ($GUARDED stopped by the guard while the refresh was reloading the table)"
 else claim guard FAIL "history runs $BADRUN completed with no open version: a snapshot of the emptied table"; fi
 # the claims after this point only mean something if the refresh was applied: a DLT REFRESH after the gap's version
 NREF=$(q "SELECT COUNT(*) FROM (DESCRIBE HISTORY $T.$TB) WHERE operation = 'DLT REFRESH' AND version > $V0" 2>&1)
