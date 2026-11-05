@@ -6,7 +6,8 @@
 #   ls [--all]                                your databases (--all: everyone's): engine, state, port, created, last up
 #   up <engine> <name> [--from <master> | --empty] [--park] [--edition <edition>]
 #      --edition (SQL Server only, a new database): Developer (default), Express, Standard, Enterprise, Evaluation or
-#      EnterpriseCore, the container's MSSQL_PID; kept in the record, so a parked database starts as the same edition
+#      EnterpriseCore, the container's MSSQL_PID; kept in the record, so a parked database starts as the same edition.
+#      Express has no SQL Server Agent: CDC's capture jobs don't run there (no changes, no error); change tracking works
 #                                             start <name>: resume it if it exists, else clone a master (fs_clone:
 #                                             juicefs clone or an XFS reflink) or start empty. Engines: postgres, mysql,
 #                                             sqlserver, oracle, mariadb, db2, informix, cockroachdb, yugabytedb.
@@ -370,6 +371,7 @@ case $CMD in
       [ "$E" = sqlserver ] || die "--edition is for sqlserver only"
       case $EDITION in Developer|Express|Standard|Enterprise|Evaluation|EnterpriseCore) ;;
         *) die "edition $EDITION: Developer, Express, Standard, Enterprise, Evaluation or EnterpriseCore" ;; esac
+      [ "$EDITION" = Express ] && echo "slot: Express has no SQL Server Agent: CDC won't capture changes there; change tracking works" >&2
     fi
     exec 9>"$LOCK"; lock
     M=$(meta "$OWNER" "$N"); D=$ROOT/dbs/$OWNER/$N; C=$(cname "$OWNER" "$N")

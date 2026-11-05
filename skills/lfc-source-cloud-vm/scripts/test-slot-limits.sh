@@ -65,6 +65,7 @@ rm -f "$T/limits"; rm -f "$T"/run/lfc-slot-*
 err=$(slot dave up sqlserver ex --empty --edition Express 2>&1 >/dev/null)
 ok "--edition Express: the container gets MSSQL_PID=Express" '[[ $err == *"MSSQL_PID=Express"* ]] && [[ $err != *"MSSQL_PID=Developer"* ]]'
 ok "--edition Express: kept in the record" '[ "$(jq -r .edition "$T/state/dave/ex.json")" = Express ]'
+ok "--edition Express: warns that CDC won't capture (no Agent)" '[[ $err == *"Express has no SQL Server Agent"* ]]'
 err=$(slot dave up sqlserver ex 2>&1 >/dev/null)
 ok "a later up without --edition: the recorded edition" '[[ $err == *"MSSQL_PID=Express"* ]]'
 err=$(slot dave up sqlserver ex --edition Standard 2>&1 >/dev/null); rc=$?

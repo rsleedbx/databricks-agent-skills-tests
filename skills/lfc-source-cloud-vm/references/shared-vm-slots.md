@@ -11,7 +11,7 @@ On the VM as root (`slot.sh [--owner <owner>] <command>`), or from a laptop thro
 | `masters` | lists the masters (`$ROOT/masters`) |
 | `up <engine> <name> --from <master>` | clones the master and starts it |
 | `up <engine> <name> --empty` | starts an empty database |
-| `up sqlserver <name> --empty --edition Express` | a new SQL Server database of another edition (Developer by default; Express, Standard, Enterprise, Evaluation, EnterpriseCore), kept in its record: a resume starts the same edition |
+| `up sqlserver <name> --empty --edition Express` | a new SQL Server database of another edition (Developer by default; Express, Standard, Enterprise, Evaluation, EnterpriseCore), kept in its record: a resume starts the same edition. Express has no SQL Server Agent, so CDC doesn't capture there (no changes, no error); use change tracking |
 | `up <engine> <name>` | resumes a parked database (no change if it's running) |
 | `park <name>` | stops the container; the data stays |
 | `clone <name> <new name>` | copies your database to a new parked one (`up` starts it, with its own port and `lfc_user` password): `juicefs clone` on a JuiceFS volume, `cp --reflink=always` on XFS, so blocks are shared and it takes seconds; a running database is stopped for the copy and started again |
