@@ -1,18 +1,22 @@
 """Offline checks of history-snapshot-scd2.py's guards: refresh_in_progress and empty_after_rows (the notebook needs a
 pipeline runtime, so only its pure functions are loaded, from its source), and that the DataFrame form the pipeline runs
-(source_state, committed_since) gives the same answers on the same history (local Spark; skipped without pyspark/Java)."""
+(source_state, committed_since) gives the same answers on the same history (local Spark; skipped without pyspark/Java).
+Also: the ingestion events reader with a fake SDK, the order of next_snapshot's guards, and versions."""
 import ast
 import os
+import re
+import sys
+import types
 import unittest
 
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "history-snapshot-scd2.py")
-NAMES = {"WRITES", "ROW_METRICS", "count", "wrote_rows", "reload_done", "refresh_in_progress", "empty_after_rows"}
+NAMES = {"WRITES", "ROW_METRICS", "count", "wrote_rows", "reload_done", "completed_ms", "refresh_in_progress", "empty_after_rows"}
 with open(SRC) as fh:
     tree = ast.parse(fh.read())
 code = ast.Module(body=[n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in NAMES) or
                         (isinstance(n, ast.Assign) and {t.id for t in n.targets if isinstance(t, ast.Name)} & NAMES)],
                   type_ignores=[])
-g = {}
+g = {"re": re}
 exec(compile(code, SRC, "exec"), g)  # noqa: S102  (the notebook's own functions)
 ROWS = {"numTargetRowsInserted": "4"}
 NONE = {"numTargetRowsInserted": "0", "numTargetRowsUpdated": "0", "numOutputRows": "0"}
@@ -65,6 +69,45 @@ class ReloadDone(unittest.TestCase):
         self.assertTrue(f("Snapshot of main.s.t has been APPLIED.", t))
         self.assertFalse(f("Full Refresh requested for dataset: main.s.t.", t))
         self.assertFalse(f("Full Refresh completed for dataset: main.s.other.", t))
+        self.assertFalse(f("Full Refresh completed for dataset: main.s.t2.", t))       # a sibling with a longer name
+        self.assertFalse(f("Full Refresh completed for dataset: main.s.t_x.", t))
+        self.assertFalse(f("Full Refresh completed for dataset: x.main.s.t.", t))
+        self.assertTrue(f("Full Refresh completed for dataset: main.s.t", "`main`.`s`.`T`"))  # backticks, case
+
+
+class CompletedMs(unittest.TestCase):
+    """completed_ms with a fake databricks.sdk: events newest first, timestamps as the API gives them."""
+
+    def run_with(self, events, pipeline_id="p1", since=None):
+        def ev(ts, msg):
+            return types.SimpleNamespace(timestamp=ts, message=msg)
+        client = types.SimpleNamespace(
+            tables=types.SimpleNamespace(get=lambda _n: types.SimpleNamespace(pipeline_id=pipeline_id)),
+            pipelines=types.SimpleNamespace(list_pipeline_events=lambda **_k: iter([ev(*e) for e in events])))
+        sdk = types.ModuleType("databricks.sdk"); sdk.WorkspaceClient = lambda: client
+        old = {k: sys.modules.get(k) for k in ("databricks", "databricks.sdk")}
+        sys.modules.update({"databricks": types.ModuleType("databricks"), "databricks.sdk": sdk})
+        try:
+            g["SRC"] = "main.s.t"
+            return g["completed_ms"](since)
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+    def test_cases(self):
+        done = ("2026-11-04T21:27:46.530Z", "Full Refresh completed for dataset: main.s.t.")
+        other = ("2026-11-04T21:30:00.000Z", "Full Refresh completed for dataset: main.s.t2.")
+        asked = ("2026-11-04T20:44:36.283Z", "Full Refresh requested for dataset: main.s.t.")
+        ms = 1793827666530                                            # 2026-11-04T21:27:46.530Z
+        self.assertEqual(self.run_with([other, done, asked]), ms)
+        self.assertEqual(self.run_with([other, done, asked], since=ms - 1), ms)
+        self.assertIsNone(self.run_with([other, done, asked], since=ms + 1))   # older than the last snapshot
+        self.assertIsNone(self.run_with([other, asked]))
+        with self.assertRaisesRegex(RuntimeError, "no ingestion pipeline"):
+            self.run_with([done], pipeline_id=None)
 
 
 class LocalSpark(unittest.TestCase):
@@ -132,7 +175,7 @@ class DataFrameForm(LocalSpark):
         """A DLT REFRESH after the last snapshot (ms) is pending until an end event after it; none found: pending."""
         self.load([(10, "MERGE", ROWS), (11, "DLT REFRESH", {}), (12, "MERGE", ROWS)])    # refresh at 11 000 ms
         for latest, done, want in [(10_500, None, True), (10_500, 11_500, False), (10_500, 10_800, True),
-                                   (11_500, None, False), (None, 12_000, False), (None, None, True)]:
+                                   (11_500, None, False)]:
             with self.subTest(latest=latest, done=done):
                 self.g["completed_ms"] = lambda _since, d=done: d
                 self.assertEqual(self.g["reload_pending"](latest), want)
@@ -168,6 +211,11 @@ RUN_VERSIONS = [
 ]
 
 
+def rowsort(rows):
+    """Rows in a fixed order; None sorts first."""
+    return sorted(rows, key=lambda r: tuple("" if x is None else str(x) for x in r))
+
+
 class Versions(LocalSpark):
     """versions() on hand-built history tables (AUTO CDC FROM SNAPSHOT's output, as the run above wrote it)."""
 
@@ -190,10 +238,10 @@ class Versions(LocalSpark):
                                                         ).drop("src_start_ts", "src_end_ts").withColumnsRenamed({"s_ts": "src_start_ts", "e_ts": "src_end_ts"})
         self.g["KEYS"] = list(keys)
         out = self.g["versions"]().selectExpr(*keys, "v", "CAST(src_start_at AS STRING)", "CAST(src_end_at AS STRING)", "dropped_by_refresh")
-        return sorted(tuple(r) for r in out.collect())
+        return rowsort(tuple(r) for r in out.collect())
 
     def test_run(self):
-        self.assertEqual(self.versions(RUN), sorted(RUN_VERSIONS))
+        self.assertEqual(self.versions(RUN), rowsort(RUN_VERSIONS))
 
     def test_second_refresh(self):
         """A second refresh at T5 reloads 4=d2 (its CDC version is dropped) under the snapshot key, which held d1:
@@ -202,7 +250,7 @@ class Versions(LocalSpark):
         rows = [r for r in RUN if r[0] != 4] + [
             (4, "d1", "", None, S4, TS4, T0, T5), (4, "d2", S4, TS4, None, None, T4, T5), (4, "d2", "", None, None, None, T5, None)]
         want = [v for v in RUN_VERSIONS if v[0] != 4] + [(4, "d1", None, TS4, True), (4, "d2", TS4, None, False)]
-        self.assertEqual(self.versions(rows), sorted(want))
+        self.assertEqual(self.versions(rows), rowsort(want))
 
     def test_changed_reload(self):
         """A refresh reloads a value the history never saw (1 -> a2 in the gap): a1 ends when the history saw the reload."""
@@ -213,7 +261,63 @@ class Versions(LocalSpark):
     def test_composite_keys(self):
         rows = [(k, 7, *r) for k, *r in RUN]
         want = [(k, 7, *v) for k, *v in RUN_VERSIONS]
-        self.assertEqual(self.versions(rows, keys=("id", "part")), sorted(want))
+        self.assertEqual(self.versions(rows, keys=("id", "part")), rowsort(want))
+
+
+class NextSnapshot(LocalSpark):
+    """The order of next_snapshot's checks, with the helpers stubbed."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        import time
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "next_snapshot")
+        cls.g.update({"time": time, "KEYS": ["id"], "DATA": ["v"], "SRC": "src", "UPDATE_START_MS": 5_000})
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), SRC, "exec"), cls.g)  # noqa: S102
+
+    def call(self, latest, rows=1, check="events", allow_empty=False, since=True, pending=False, state=(False, True)):
+        calls = []
+        df = self.spark.sql("SELECT 1 AS id, 'a' AS v, TIMESTAMP'2026-11-04 10:00:00' AS __START_AT, "
+                            "CAST(NULL AS TIMESTAMP) AS __END_AT").limit(rows)
+        self.g.update({"RELOAD_CHECK": check, "ALLOW_EMPTY": allow_empty, "SCHEMA": df.schema,
+                       "committed_since": lambda _l: since, "source_state": lambda: state,
+                       "reload_pending": lambda _l: calls.append("pending") or pending,
+                       "spark": types.SimpleNamespace(read=types.SimpleNamespace(table=lambda _n: df))})
+        return self.g["next_snapshot"](latest), calls
+
+    def test_order(self):
+        self.assertIsNone(self.call(6_000)[0])                         # a snapshot already taken in this update
+        self.assertIsNone(self.call(4_000, since=False)[0])            # nothing new since the last one
+        with self.assertRaisesRegex(RuntimeError, "being reloaded"):
+            self.call(4_000, pending=True)
+        snap, calls = self.call(4_000, pending=True, check="history")  # history only: the events aren't read
+        self.assertEqual(calls, [])
+        self.assertGreater(snap[1], 4_000)
+        _, calls = self.call(None, pending=True)                       # the first snapshot: no event check
+        self.assertEqual(calls, [])
+        with self.assertRaisesRegex(RuntimeError, "being reloaded"):
+            self.call(4_000, state=(True, True))
+        with self.assertRaisesRegex(RuntimeError, "empty after rows"):
+            self.call(4_000, rows=0)
+        self.assertEqual(self.call(4_000, rows=0, allow_empty=True)[0][0].count(), 0)
+        self.assertEqual(self.call(4_000, rows=0, state=(False, False))[0][0].count(), 0)   # never had rows
+
+
+class KnownLimits(Versions):
+    """What the route gets wrong (SKILL.md, what it can't keep)."""
+
+    @unittest.expectedFailure
+    def test_value_back_then_refresh(self):
+        """4: d1 (first load) -> d2 -> d1 by CDC, then a full refresh reloads 4=d1 with no source start: same key
+        (4, '') and same data as the first-load row, so AUTO CDC updates that row in place (src_end isn't tracked) and
+        its end is lost (inferred from AUTO CDC's rules; this case wasn't run). The right answer: three versions."""
+        S5, TS5, T6 = "0000003000000001", "2026-11-04 22:00:00", 1793832000000
+        rows = [(4, "d1", "", None, None, None, T0, None),              # src_end S4 overwritten by the reload
+                (4, "d2", S4, TS4, S5, TS5, T4, T6), (4, "d1", S5, TS5, None, None, T6 - 1, T6)]
+        self.assertEqual(self.versions(rows), rowsort([(4, "d1", None, TS4, True), (4, "d1", TS5, None, False),
+                                                       (4, "d2", TS4, TS5, True)]))
+
+    test_run = test_second_refresh = test_changed_reload = test_composite_keys = None
 
 
 if __name__ == "__main__":

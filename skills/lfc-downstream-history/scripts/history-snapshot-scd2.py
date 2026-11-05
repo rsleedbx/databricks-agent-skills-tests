@@ -12,14 +12,15 @@
 # update while a full refresh is reloading the table (a DLT REFRESH after the last snapshot, and no end of the reload
 # in the ingestion pipeline's events after it), while it is emptied, and when it is empty after rows were written to it.
 # The guards read the source's Delta history with filters and count() only: no rows come back to Python (a collect()
-# is flagged as unsupported in a pipeline). A snapshot's version is the time it was taken, in ms; a new one is
-# taken when the source has a commit after the last one.
+# is flagged as unsupported in a pipeline). A snapshot's version is the time it was taken, in ms; one is taken per
+# update, when the source has a commit after the last one.
 # Settings: src (the SCD type 2 table, catalog.schema.table), keys (comma-separated key columns, default id),
 # allow_empty (true: a snapshot with no rows may close every version; default false: such a run fails), reload_check
 # (events, the default: the run-as identity needs to see the ingestion pipeline; history: the Delta history rules
 # only, which can't tell a reload written in several commits is unfinished). Run it after each ingestion
 # update; versions made and dropped between two of its runs are not seen. `spark` comes from the pipeline runtime.
 # ruff: noqa: F821
+import re
 import time
 
 import dlt
@@ -31,6 +32,7 @@ SRC = spark.conf.get("src")
 KEYS = [k.strip() for k in spark.conf.get("keys", "id").split(",") if k.strip()]
 ALLOW_EMPTY = spark.conf.get("allow_empty", "false").lower() == "true"
 RELOAD_CHECK = spark.conf.get("reload_check", "events")
+UPDATE_START_MS = int(time.time() * 1000)  # the notebook runs again at the start of each update
 SCHEMA = spark.read.table(SRC).schema
 DATA = [f.name for f in SCHEMA.fields if f.name not in KEYS and f.name not in ("__START_AT", "__END_AT")]
 
@@ -108,8 +110,9 @@ def committed_since(latest_ms):
 def reload_done(message, src):
     """An ingestion pipeline event that says a full refresh of src has been applied (the lifecycle event, or the
     snapshot progress event where the lifecycle events are off)."""
-    return src in message and ("Full Refresh completed for dataset" in message or
-                               ("Snapshot of" in message and "APPLIED" in message))
+    named = re.search(rf"(?<![\w`.]){re.escape(src.replace('`', '').lower())}(?![\w`])", message.lower())
+    return bool(named) and ("Full Refresh completed for dataset" in message or
+                            ("Snapshot of" in message and "APPLIED" in message))
 
 
 def completed_ms(since_ms):
@@ -124,10 +127,10 @@ def completed_ms(since_ms):
     if not pid:
         raise RuntimeError(f"{SRC} has no ingestion pipeline: set reload_check=history to guard by its Delta history only")
     for n, e in enumerate(w.pipelines.list_pipeline_events(pipeline_id=pid, max_results=250)):
-        ts = int(datetime.fromisoformat(e.timestamp or "").timestamp() * 1000)
+        ts = int(datetime.fromisoformat((e.timestamp or "").replace("Z", "+00:00")).timestamp() * 1000)  # noqa: FURB162  (Python < 3.11)
         if (since_ms is not None and ts < since_ms) or n >= 10000:
             return None
-        if reload_done(e.message or "", SRC.replace("`", "")):
+        if reload_done(e.message or "", SRC):
             return ts
     return None
 
@@ -135,9 +138,8 @@ def completed_ms(since_ms):
 def reload_pending(latest_ms):
     """True while a full refresh newer than the last snapshot has no end event after it (fails closed: no end event
     found counts as not finished)."""
-    h = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50").where("operation = 'DLT REFRESH'")
-    if latest_ms is not None:
-        h = h.where(F.expr(f"unix_millis(timestamp) > {int(latest_ms)}"))
+    h = spark.sql(f"DESCRIBE HISTORY {SRC} LIMIT 50").where(
+        F.expr(f"operation = 'DLT REFRESH' AND unix_millis(timestamp) > {int(latest_ms)}"))
     if h.limit(1).count() == 0:
         return False
     done = completed_ms(latest_ms)
@@ -146,10 +148,12 @@ def reload_pending(latest_ms):
 
 def next_snapshot(latest_version):
     """The snapshot source: (the table's rows, the time in ms), or None to take no snapshot this run. The flow calls
-    it until it returns None: after the first snapshot, only a source commit after the last snapshot makes another."""
-    if latest_version is not None and not committed_since(latest_version):
+    it until it returns None: one snapshot per update (a snapshot's version is the time it was taken), and after the
+    first, only when the source has a commit after the last snapshot. The first snapshot skips the event check: the
+    history is empty, so there is nothing to close (the table-history rules still apply)."""
+    if latest_version is not None and (latest_version >= UPDATE_START_MS or not committed_since(latest_version)):
         return None
-    if RELOAD_CHECK == "events" and reload_pending(latest_version):
+    if RELOAD_CHECK == "events" and latest_version is not None and reload_pending(latest_version):
         raise RuntimeError(f"{SRC} is being reloaded by a full refresh (no end of the reload in its ingestion pipeline's "
                            "events yet): run this pipeline again after the ingestion update finishes")
     in_refresh, had_rows = source_state()
