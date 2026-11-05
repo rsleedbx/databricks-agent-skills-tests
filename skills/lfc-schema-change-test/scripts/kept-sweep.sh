@@ -8,7 +8,7 @@
 # Daily from a scheduler:
 #   kept-sweep.sh            # expired runs only
 #   kept-sweep.sh --dry-run  # list what would be deleted; the file is left as it is
-# shellcheck disable=SC2034  # S, STG, SLOT, E, AP, GW, EXTRA_* in the subshell are read by lib.sh's delete_run
+# shellcheck disable=SC2034  # S, STG, SLOT, E, AP, GW, EXTRA_*, KEEP_SOURCE in the subshell are read by lib.sh's delete_run
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 KEPT=${LFC_KEPT:-$HOME/.local/state/lfc-tests/kept.jsonl}
@@ -20,7 +20,8 @@ done
 [ -s "$KEPT" ] || { echo "no kept runs ($KEPT)"; exit 0; }
 gone() {   # gone <kind> <name>: the object reads back as not found (anything else, an auth error too, is not gone)
   local out; out=$("${DATABRICKS_CLI:-databricks}" "$1" get "$2" --profile "$PROFILE" 2>&1) && return 1
-  grep -qiE 'does not exist|RESOURCE_DOES_NOT_EXIST|not found' <<<"$out"
+  # the CLI's texts (2026-11-05): "The specified pipeline <id> was not found.", "Schema '<name>' does not exist."
+  grep -qE 'RESOURCE_DOES_NOT_EXIST|does not exist\.|The specified pipeline [^ ]+ was not found' <<<"$out"
 }
 # read a snapshot: lines appended while the sweep runs are carried over at the end, not read twice
 today=$(date -u +%F); keep=$(mktemp); snap=$(mktemp); cp "$KEPT" "$snap"; n_read=$(wc -l < "$snap"); rc=0
@@ -39,8 +40,8 @@ while IFS= read -r line <&3; do
   if (
     PROFILE=$(jq -r .profile <<<"$line"); CONNECTION=$(jq -r .connection <<<"$line"); CATALOG=$(jq -r .catalog <<<"$line")
     SRC_SQL=$(jq -r .src_sql <<<"$line"); CONN_USER=$(jq -r .conn_user <<<"$line"); ENGINE=$(jq -r .engine <<<"$line")
-    SOURCE_JSON=$(jq -r '.source_json // ""' <<<"$line")
-    export PROFILE CONNECTION CATALOG SRC_SQL CONN_USER ENGINE
+    SOURCE_JSON=$(jq -r '.source_json // ""' <<<"$line"); KEEP_SOURCE=$(jq -r '.keep_source // "0"' <<<"$line")
+    export PROFILE CONNECTION CATALOG SRC_SQL CONN_USER ENGINE KEEP_SOURCE
     if [ -n "$SOURCE_JSON" ] && [ -r "$SOURCE_JSON" ]; then export SOURCE_JSON; else unset SOURCE_JSON; fi
     EXTRA_PIPELINES=$(jq -r '(.extra_pipelines // []) | join(" ")' <<<"$line"); EXTRA_SCHEMAS=$(jq -r '(.extra_schemas // []) | join(" ")' <<<"$line")
     EXTRA_SQL=$(jq -r '.extra_sql // ""' <<<"$line")
@@ -54,6 +55,7 @@ while IFS= read -r line <&3; do
     for p in ${AP:-} ${GW:-} $EXTRA_PIPELINES; do gone pipelines "$p" || { echo "  pipeline $p: not deleted"; bad=1; }; done
     for x in "$CATALOG.$S" ${STG:+"$CATALOG.$STG"} $EXTRA_SCHEMAS; do gone schemas "$x" || { echo "  schema $x: not deleted"; bad=1; }; done
     [ "$E" = none ] || [ "${DB_LEFT:-0}" = 0 ] || { echo "  source database $DB: not dropped"; bad=1; }
+    [ "${SLOT_LEFT:-0}" = 0 ] || { echo "  replication slot $SLOT: not dropped"; bad=1; }
     exit $bad
   ) < /dev/null; then :; else echo "  failed: kept for the next sweep"; echo "$line" >> "$keep"; rc=1; fi
 done 3< "$snap"

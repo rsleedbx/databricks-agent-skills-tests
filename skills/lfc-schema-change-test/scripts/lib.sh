@@ -349,7 +349,7 @@ drop_slot() {
   for _ in 1 2 3; do
     echo "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '$SLOT' AND NOT active;" | $SRC_SQL postgres > "$W/slot.out" 2>&1
     n=$(echo "SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name = '$SLOT';" | $SRC_SQL postgres)
-    [ "${n//[[:space:]]/}" = 0 ] && return 0; sleep 30
+    [ "${n//[[:space:]]/}" = 0 ] && return 0; sleep "${LFC_RETRY_SLEEP:-30}"
   done
   return 1
 }
@@ -372,11 +372,11 @@ keep_run() {
     --arg catalog "$CATALOG" --arg s "${S:-}" --arg stg "${STG:-}" --arg engine "$ENGINE" --arg db "$([ "$(src_owned)" = 1 ] && echo "$DB")" \
     --arg src_db "$DB" --arg slot "${SLOT:-}" --arg conn "$CONNECTION" --arg conn_user "$CONN_USER" --arg src_sql "$SRC_SQL" \
     --arg source_json "${SOURCE_JSON:-}" --arg kept "$(date -u +%FT%TZ)" --argjson stopped "$stopped" --arg slot_dropped "$slot_dropped" \
-    --arg xp "$EXTRA_PIPELINES" --arg xs "$EXTRA_SCHEMAS" --arg xsql "$EXTRA_SQL" \
+    --arg keep_source "${KEEP_SOURCE:-0}" --arg xp "$EXTRA_PIPELINES" --arg xs "$EXTRA_SCHEMAS" --arg xsql "$EXTRA_SQL" \
     '{id: $id, kept: $kept, delete_after: $after, host: $host, profile: $profile, catalog: $catalog, schema: $s, staging: $stg,
       pipelines: ([$ap, $gw] | map(select(. != "" and . != "null"))), stopped: $stopped, engine: $engine, db: $db,
       src_db: $src_db, slot: $slot, slot_dropped: $slot_dropped, connection: $conn, conn_user: $conn_user, src_sql: $src_sql,
-      source_json: $source_json, extra_pipelines: ($xp | split(" ") | map(select(. != ""))),
+      source_json: $source_json, keep_source: $keep_source, extra_pipelines: ($xp | split(" ") | map(select(. != ""))),
       extra_schemas: ($xs | split(" ") | map(select(. != ""))), extra_sql: $xsql}' >> "$LFC_KEPT"
   kept_unlock
   echo "kept until $after ($([ "$stopped" = true ] && echo stopped || echo "STOP FAILED")$([ "$slot_dropped" = true ] && echo ", slot dropped"); delete earlier: kept-sweep.sh --now $S): ${host:+$host/pipelines/}${AP:-} ${GW:+gateway $GW,} schemas $CATALOG.$S${STG:+ and $STG}${EXTRA_SCHEMAS:+ $EXTRA_SCHEMAS}${DB:+, source database $DB}"
@@ -384,18 +384,22 @@ keep_run() {
 # delete_run: delete the pipelines, the schemas and (when this run made it) the source database; then EXTRA_*.
 # kept-sweep.sh calls it with the variables of a kept run.
 delete_run() {
-  [ -n "${AP:-}" ] && [ "$AP" != null ] && dbx pipelines delete "$AP"; [ -n "${GW:-}" ] && [ "$GW" != null ] && dbx pipelines delete "$GW"; sleep 15
+  [ -n "${AP:-}" ] && [ "$AP" != null ] && dbx pipelines delete "$AP"; [ -n "${GW:-}" ] && [ "$GW" != null ] && dbx pipelines delete "$GW"; sleep "${LFC_DELETE_WAIT:-15}"
   for p in $EXTRA_PIPELINES; do dbx pipelines delete "$p"; done
   dbx schemas delete "$CATALOG.$S" --force 2>/dev/null; dbx schemas delete "$CATALOG.$STG" --force 2>/dev/null
   for x in $EXTRA_SCHEMAS; do dbx schemas delete "$x" --force 2>/dev/null; done
   [ -n "$EXTRA_SQL" ] && [ "$(src_owned)" != 1 ] && { echo "$EXTRA_SQL" | src >/dev/null || echo "EXTRA_SQL failed in $DB"; }
+  # shellcheck disable=SC2034  # SLOT_LEFT: read by kept-sweep.sh
+  SLOT_LEFT=0   # PostgreSQL, a source database the run didn't create: its slot (dropping the database drops an owned one)
+  # shellcheck disable=SC2034
+  if [ "$ENGINE" = postgres ] && [ -n "${SLOT:-}" ] && [ "$(src_owned)" != 1 ]; then drop_slot || { SLOT_LEFT=1; echo "replication slot $SLOT not dropped"; }; fi
   local left=0
   if [ "$(src_owned)" = 1 ] && [ "$ENGINE" = postgres ]; then
     for _ in 1 2 3; do   # the slot is held while the deleted gateway's session lingers
       printf "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '%s' AND NOT active;\nDROP DATABASE IF EXISTS %s WITH (FORCE);\n" "$SLOT" "$DB" \
         | $SRC_SQL postgres > "$W/drop.out" 2>&1
       left=$(printf "SELECT (SELECT COUNT(*) FROM pg_database WHERE datname = '%s') + (SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name = '%s');\n" "$DB" "$SLOT" | $SRC_SQL postgres)
-      [ "${left//[[:space:]]/}" = 0 ] && break; sleep 30
+      [ "${left//[[:space:]]/}" = 0 ] && break; sleep "${LFC_RETRY_SLEEP:-30}"
     done
     [ "${left//[[:space:]]/}" = 0 ] || { echo "source database $DB or slot $SLOT not dropped:"; tail -3 "$W/drop.out"; }
   elif [ "$(src_owned)" = 1 ] && [ "${KEEP_SOURCE:-0}" = 1 ]; then
@@ -407,7 +411,7 @@ delete_run() {
       printf "IF DB_ID(N'%s') IS NOT NULL BEGIN ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]; END\n" \
         "$DB" "$DB" "$DB" | $SRC_SQL master >> "$W/drop.out" 2>&1
       left=$(printf "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = '%s';\n" "$DB" | $SRC_SQL master)
-      [ "${left//[[:space:]]/}" = 0 ] && break; sleep 30
+      [ "${left//[[:space:]]/}" = 0 ] && break; sleep "${LFC_RETRY_SLEEP:-30}"
     done
     [ "${left//[[:space:]]/}" = 0 ] || { echo "source database $DB not dropped:"; tail -3 "$W/drop.out"; }
   fi
