@@ -73,6 +73,8 @@ class ReloadDone(unittest.TestCase):
         self.assertFalse(f("Full Refresh completed for dataset: main.s.t_x.", t))
         self.assertFalse(f("Full Refresh completed for dataset: x.main.s.t.", t))
         self.assertTrue(f("Full Refresh completed for dataset: main.s.t", "`main`.`s`.`T`"))  # backticks, case
+        self.assertTrue(f("Snapshot of `main`.`s`.`t` has been APPLIED.", t))           # a quoted name in the event
+        self.assertFalse(f("Snapshot of `main`.`s`.`t2` has been APPLIED.", t))
 
 
 class CompletedMs(unittest.TestCase):

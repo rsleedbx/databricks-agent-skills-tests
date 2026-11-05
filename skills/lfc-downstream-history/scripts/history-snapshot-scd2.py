@@ -110,7 +110,8 @@ def committed_since(latest_ms):
 def reload_done(message, src):
     """An ingestion pipeline event that says a full refresh of src has been applied (the lifecycle event, or the
     snapshot progress event where the lifecycle events are off)."""
-    named = re.search(rf"(?<![\w`.]){re.escape(src.replace('`', '').lower())}(?![\w`])", message.lower())
+    # names compared without backticks: the event may quote the name (`catalog`.`schema`.`table`) or not
+    named = re.search(rf"(?<![\w.]){re.escape(src.replace('`', '').lower())}(?!\w)", message.replace("`", "").lower())
     return bool(named) and ("Full Refresh completed for dataset" in message or
                             ("Snapshot of" in message and "APPLIED" in message))
 
