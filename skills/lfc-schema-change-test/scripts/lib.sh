@@ -388,7 +388,10 @@ delete_run() {
   for p in $EXTRA_PIPELINES; do dbx pipelines delete "$p"; done
   dbx schemas delete "$CATALOG.$S" --force 2>/dev/null; dbx schemas delete "$CATALOG.$STG" --force 2>/dev/null
   for x in $EXTRA_SCHEMAS; do dbx schemas delete "$x" --force 2>/dev/null; done
-  [ -n "$EXTRA_SQL" ] && [ "$(src_owned)" != 1 ] && { echo "$EXTRA_SQL" | src >/dev/null || echo "EXTRA_SQL failed in $DB"; }
+  # shellcheck disable=SC2034  # EXTRA_LEFT: read by kept-sweep.sh
+  EXTRA_LEFT=0
+  # shellcheck disable=SC2034
+  [ -n "$EXTRA_SQL" ] && [ "$(src_owned)" != 1 ] && { echo "$EXTRA_SQL" | src >/dev/null || { EXTRA_LEFT=1; echo "EXTRA_SQL failed in $DB"; }; }
   # shellcheck disable=SC2034  # SLOT_LEFT: read by kept-sweep.sh
   SLOT_LEFT=0   # PostgreSQL, a source database the run didn't create: its slot (dropping the database drops an owned one)
   # shellcheck disable=SC2034

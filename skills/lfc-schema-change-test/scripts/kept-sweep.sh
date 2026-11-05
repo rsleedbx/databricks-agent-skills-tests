@@ -54,8 +54,10 @@ while IFS= read -r line <&3; do
     bad=0
     for p in ${AP:-} ${GW:-} $EXTRA_PIPELINES; do gone pipelines "$p" || { echo "  pipeline $p: not deleted"; bad=1; }; done
     for x in "$CATALOG.$S" ${STG:+"$CATALOG.$STG"} $EXTRA_SCHEMAS; do gone schemas "$x" || { echo "  schema $x: not deleted"; bad=1; }; done
-    [ "$E" = none ] || [ "${DB_LEFT:-0}" = 0 ] || { echo "  source database $DB: not dropped"; bad=1; }
+    # exactly 0: an empty count means the source query failed, not that the database is gone
+    [ "$E" = none ] || [ "${DB_LEFT-}" = 0 ] || { echo "  source database $DB: not dropped (count: ${DB_LEFT:-no answer})"; bad=1; }
     [ "${SLOT_LEFT:-0}" = 0 ] || { echo "  replication slot $SLOT: not dropped"; bad=1; }
+    [ "${EXTRA_LEFT:-0}" = 0 ] || { echo "  extra SQL: failed"; bad=1; }
     exit $bad
   ) < /dev/null; then :; else echo "  failed: kept for the next sweep"; echo "$line" >> "$keep"; rc=1; fi
 done 3< "$snap"

@@ -19,14 +19,18 @@ case "$1 $2" in
   "pipelines get"|"schemas get")
     grep -qx "$3" "$FT/alive" 2>/dev/null && { echo '{}'; exit 0; }
     grep -qx "$3" "$FT/authfail" 2>/dev/null && { echo "Error: profile p not found in the config file" >&2; exit 1; }
-    echo "Error: RESOURCE_DOES_NOT_EXIST: $3 does not exist" >&2; exit 1;;
+    # the CLI's own texts (checked 2026-11-05)
+    [ "$1" = pipelines ] && echo "Error: The specified pipeline $3 was not found." >&2
+    [ "$1" = schemas ] && echo "Error: Schema '$3' does not exist." >&2
+    exit 1;;
   "auth describe") echo '{"details": {"host": "https://ws.example"}}';;
   "pipelines stop") grep -qx "$3" "$FT/stopfail" 2>/dev/null && { echo "Error: invalid access token" >&2; exit 1; };;
 esac
 exit 0
 EOF
 # the fake source: SQL logged to $FT/sql; every query answers $FT/srcout (default 0: nothing left)
-printf '#!/usr/bin/env bash\ncat >> "$FT/sql"; cat "$FT/srcout" 2>/dev/null || echo 0\n' > "$T/src.sh"
+# ($FT/srcfail: the source can't be reached, exit 1 with no answer)
+printf '#!/usr/bin/env bash\n[ -e "$FT/srcfail" ] && exit 1\ncat >> "$FT/sql"; cat "$FT/srcout" 2>/dev/null || echo 0\n' > "$T/src.sh"
 chmod +x "$T/databricks" "$T/src.sh"
 export FT=$T DATABRICKS_CLI=$T/databricks LFC_KEPT=$T/kept.jsonl LFC_RETRY_SLEEP=0 LFC_DELETE_WAIT=0
 env_lib() { echo "PROFILE=p CONNECTION=c CATALOG=main SRC_SQL=$T/src.sh CONN_USER=u"; }
@@ -65,6 +69,12 @@ ok "PostgreSQL kept, slot still there: warned and recorded slot_dropped=false" \
 : > "$LFC_KEPT"; at_exit 0 DB=existing_db "EXTRA_SQL='DROP TABLE IF EXISTS lfcddemo.t9;'"
 ok "KEEP_DAYS=0 on a source database the run didn't create: EXTRA_SQL runs, the database stays" \
   'grep -q "DROP TABLE IF EXISTS lfcddemo.t9;" "$T/sql" && ! grep -q "DROP DATABASE" "$T/sql"'
+
+: > "$LFC_KEPT"; at_exit "" KEEP_SOURCE=1
+ok "keep_run records KEEP_SOURCE" 'jq -e ".keep_source == \"1\"" "$LFC_KEPT" >/dev/null'
+: > "$LFC_KEPT"; at_exit 0 DB=existing_db ENGINE=postgres SLOT=slot2
+ok "KEEP_DAYS=0, PostgreSQL on a source database the run didn't create: its slot is dropped, the database stays" \
+  'grep -q "slot_name = .slot2." "$T/sql" && ! grep -q "DROP DATABASE" "$T/sql"'
 
 # --- the sweep -----------------------------------------------------------------------------------------------------
 rec() {   # rec <id> <delete_after> <pipeline>: a kept run on a source database of its own
@@ -108,4 +118,13 @@ ok "sweep: keep_source=1 deletes the pipelines but not the source database" '! g
 rec extra 2026-10-08 ap_extra | jq -c '.db = "" | .src_db = "existing_db" | .extra_sql = "DROP TABLE IF EXISTS lfcddemo.t8;"' > "$LFC_KEPT"; : > "$T/sql"
 bash "$S/kept-sweep.sh" > "$T/out" 2>&1
 ok "sweep: extra_sql runs on the existing source database, which stays" 'grep -q "DROP TABLE IF EXISTS lfcddemo.t8;" "$T/sql" && ! grep -q "DROP DATABASE" "$T/sql" && [ ! -s "$LFC_KEPT" ]'
+rec slotleft 2026-10-08 ap_slotleft | jq -c '.engine = "postgres" | .slot = "slot3" | .db = "" | .src_db = "existing_db"' > "$LFC_KEPT"; echo 1 > "$T/srcout"
+bash "$S/kept-sweep.sh" > "$T/out" 2>&1; rc=$?; rm -f "$T/srcout"
+ok "sweep: a slot still there keeps the record, exit 1" '[ $rc = 1 ] && grep -q "replication slot slot3: not dropped" "$T/out" && [ "$(jq -r .id "$LFC_KEPT")" = slotleft ]'
+rec unreach 2026-10-08 ap_unreach > "$LFC_KEPT"; touch "$T/srcfail"
+bash "$S/kept-sweep.sh" > "$T/out" 2>&1; rc=$?
+ok "sweep: an unreachable source (no answer) keeps the record, exit 1" '[ $rc = 1 ] && grep -q "not dropped (count: no answer)" "$T/out" && [ "$(jq -r .id "$LFC_KEPT")" = unreach ]'
+rec xsqlfail 2026-10-08 ap_x | jq -c '.db = "" | .src_db = "existing_db" | .extra_sql = "DROP TABLE t7;"' > "$LFC_KEPT"
+bash "$S/kept-sweep.sh" > "$T/out" 2>&1; rc=$?; rm -f "$T/srcfail"
+ok "sweep: a failed extra SQL keeps the record, exit 1" '[ $rc = 1 ] && grep -q "extra SQL: failed" "$T/out" && [ "$(jq -r .id "$LFC_KEPT")" = xsqlfail ]'
 exit $fail
