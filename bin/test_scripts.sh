@@ -61,6 +61,7 @@ check "results/*.md: nothing internal" python3 -c "import sys, glob, re; sys.pat
 check "recall.py runs" sh -c "python3 '$SK/lfc-test-results/scripts/recall.py' > /dev/null"
 check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scripts/test-secret-scripts.sh' > /dev/null"
 check "keep-catalogs.sh on a fake CLI" sh -c "'$SK/lfc-workspace-setup/scripts/test-keep-catalogs.sh' > /dev/null"
+check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
 check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
 WC=$SK/lfc-workload-contract/scripts

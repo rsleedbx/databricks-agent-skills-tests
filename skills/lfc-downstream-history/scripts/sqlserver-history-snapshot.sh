@@ -19,11 +19,9 @@ TB=histsnap_$E; FP_TABLES=$TB
 # a fresh database gets the utility objects (without them: INGESTION_GATEWAY_DDL_OBJECTS_MISSING); SRC_DB has them already
 if [ -n "${SRC_DB:-}" ]; then DB=$SRC_DB; else src_db <<<"SELECT 1;"; src_util; fi
 HS=${S}_history; HT="\`$CATALOG\`.$HS"; DP=""
-cleanup_all() {
-  if [ "${KEEP:-0}" != 1 ]; then
-    [ -n "$DP" ] && dbx pipelines delete "$DP"; sleep 5; dbx schemas delete "$CATALOG.$HS" --force 2>/dev/null
-    [ -n "${SRC_DB:-}" ] && echo "DROP TABLE IF EXISTS lfcddemo.$TB;" | src >/dev/null && echo "source table lfcddemo.$TB dropped"
-  fi
+cleanup_all() {   # the history pipeline, its schema and (on an existing source database) the source table go with the run
+  EXTRA_PIPELINES="${DP:-}"; EXTRA_SCHEMAS="${HS:+$CATALOG.$HS}"
+  [ -n "${SRC_DB:-}" ] && EXTRA_SQL="DROP TABLE IF EXISTS lfcddemo.$TB;"
   cleanup
 }
 trap cleanup_all EXIT

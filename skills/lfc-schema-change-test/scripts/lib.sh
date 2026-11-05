@@ -34,7 +34,7 @@ ENGINE=${ENGINE:-sqlserver}   # sqlserver | postgres
 MODE=${MODE:-standard}   # standard: gateway + ingestion pipeline; integrated: one pipeline (connector_type CDC)
 case $MODE in standard|integrated) ;; *) echo "MODE must be standard or integrated"; exit 2;; esac
 [ "$MODE" = integrated ] && WAIT=0   # integrated CDC reads the source inside each update
-dbx() { databricks "$@" --profile "$PROFILE"; }
+dbx() { "${DATABRICKS_CLI:-databricks}" "$@" --profile "$PROFILE"; }   # DATABRICKS_CLI: another CLI (a test stub)
 RESULTS=(); FAILED=0
 claim() { RESULTS+=("| \`$1\` | $2 | $3 |"); [ "$2" = PASS ] || FAILED=1; echo "$2 $1: $3"; }
 observe() { RESULTS+=("| \`$1\` | OBSERVED | $2 |"); echo "OBSERVED $1: $2"; }   # no expected answer yet
@@ -325,34 +325,70 @@ settle_rows() {
 src_owned() { [[ "${DB:-}" == *"_${E:-none}" ]] && echo 1 || echo 0; }
 LFC_KEPT=${LFC_KEPT:-$HOME/.local/state/lfc-tests/kept.jsonl}
 KEEP_DAYS=${KEEP_DAYS:-7}
+# A script's own resources besides AP, GW, S and STG (space-separated): kept and deleted with the run.
+#   EXTRA_PIPELINES="<id> ..."  EXTRA_SCHEMAS="<catalog>.<schema> ..."  EXTRA_SQL="<SQL run in $DB when the run is deleted>"
+EXTRA_PIPELINES=${EXTRA_PIPELINES:-}; EXTRA_SCHEMAS=${EXTRA_SCHEMAS:-}; EXTRA_SQL=${EXTRA_SQL:-}
 cleanup() {
   [ "${KEEP:-0}" = 1 ] && { echo "KEEP=1: left $DB, $GWN, $APN, $CATALOG.$S"; return; }
   if [ "$KEEP_DAYS" != 0 ]; then keep_run; rm -rf "${W:?}"; return; fi
   delete_run
   rm -rf "${W:?}"
 }
+# kept_lock / kept_unlock: one writer of $LFC_KEPT at a time (keep_run's append, kept-sweep.sh's rewrite); a mkdir lock,
+# as flock isn't on macOS. A lock older than 10 minutes is taken over (a writer that died).
+kept_lock() {
+  local n=0; mkdir -p "$(dirname "$LFC_KEPT")"
+  until mkdir "$LFC_KEPT.lock" 2>/dev/null; do
+    n=$((n + 1)); [ $n -ge 600 ] && { rm -rf "${LFC_KEPT:?}.lock"; n=0; }; sleep 1
+  done
+}
+kept_unlock() { rm -rf "${LFC_KEPT:?}.lock"; }
+# drop_slot: (PostgreSQL) drop the run's replication slot; retried while a stopped or deleted pipeline's session lingers
+drop_slot() {
+  local n
+  for _ in 1 2 3; do
+    echo "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '$SLOT' AND NOT active;" | $SRC_SQL postgres > "$W/slot.out" 2>&1
+    n=$(echo "SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name = '$SLOT';" | $SRC_SQL postgres)
+    [ "${n//[[:space:]]/}" = 0 ] && return 0; sleep 30
+  done
+  return 1
+}
 # keep_run: stop the pipelines (a continuous gateway too) and record the run in $LFC_KEPT with a delete-after date.
-# A stopped pipeline costs nothing. Trade-off: a kept PostgreSQL slot holds WAL on the source for the week (a quiet test
-# database writes little; a busy shared server: KEEP_DAYS=0 or set max_slot_wal_keep_size).
+# A stopped pipeline costs nothing. PostgreSQL: the slot is dropped now, so no WAL is held for the week; the kept
+# tables stay readable, the pipeline can't resume from its position (a full refresh would).
 keep_run() {
-  local p after host
-  for p in ${AP:-} ${GW:-}; do [ -n "$p" ] && [ "$p" != null ] && dbx pipelines stop "$p" >/dev/null 2>&1; done
+  local p after host stopped=true slot_dropped=""
+  for p in ${AP:-} ${GW:-} $EXTRA_PIPELINES; do
+    [ -n "$p" ] && [ "$p" != null ] || continue
+    dbx pipelines stop "$p" >/dev/null 2>&1 || { stopped=false; echo "WARNING: could not stop pipeline $p: it may still be running" >&2; }
+  done
+  if [ "$ENGINE" = postgres ] && [ -n "${SLOT:-}" ]; then
+    if drop_slot; then slot_dropped=true; else slot_dropped=false; echo "WARNING: replication slot $SLOT not dropped: it holds WAL until it is" >&2; fi
+  fi
   after=$(jq -rn --argjson d "$KEEP_DAYS" 'now + $d * 86400 | strftime("%Y-%m-%d")')
   host=$(dbx auth describe -o json 2>/dev/null | jq -r '.details.host // ""')
-  mkdir -p "$(dirname "$LFC_KEPT")"
+  kept_lock
   jq -nc --arg id "${S:-}" --arg after "$after" --arg host "$host" --arg profile "$PROFILE" --arg ap "${AP:-}" --arg gw "${GW:-}" \
     --arg catalog "$CATALOG" --arg s "${S:-}" --arg stg "${STG:-}" --arg engine "$ENGINE" --arg db "$([ "$(src_owned)" = 1 ] && echo "$DB")" \
-    --arg slot "${SLOT:-}" --arg conn "$CONNECTION" --arg conn_user "$CONN_USER" --arg src_sql "$SRC_SQL" --arg kept "$(date -u +%FT%TZ)" \
+    --arg src_db "$DB" --arg slot "${SLOT:-}" --arg conn "$CONNECTION" --arg conn_user "$CONN_USER" --arg src_sql "$SRC_SQL" \
+    --arg source_json "${SOURCE_JSON:-}" --arg kept "$(date -u +%FT%TZ)" --argjson stopped "$stopped" --arg slot_dropped "$slot_dropped" \
+    --arg xp "$EXTRA_PIPELINES" --arg xs "$EXTRA_SCHEMAS" --arg xsql "$EXTRA_SQL" \
     '{id: $id, kept: $kept, delete_after: $after, host: $host, profile: $profile, catalog: $catalog, schema: $s, staging: $stg,
-      pipelines: ([$ap, $gw] | map(select(. != "" and . != "null"))), engine: $engine, db: $db, slot: $slot,
-      connection: $conn, conn_user: $conn_user, src_sql: $src_sql}' >> "$LFC_KEPT"
-  echo "kept until $after (stopped; delete earlier: kept-sweep.sh --now $S): ${host:+$host/pipelines/}${AP:-} ${GW:+gateway $GW,} schemas $CATALOG.$S${STG:+ and $STG}${DB:+, source database $DB}"
+      pipelines: ([$ap, $gw] | map(select(. != "" and . != "null"))), stopped: $stopped, engine: $engine, db: $db,
+      src_db: $src_db, slot: $slot, slot_dropped: $slot_dropped, connection: $conn, conn_user: $conn_user, src_sql: $src_sql,
+      source_json: $source_json, extra_pipelines: ($xp | split(" ") | map(select(. != ""))),
+      extra_schemas: ($xs | split(" ") | map(select(. != ""))), extra_sql: $xsql}' >> "$LFC_KEPT"
+  kept_unlock
+  echo "kept until $after ($([ "$stopped" = true ] && echo stopped || echo "STOP FAILED")$([ "$slot_dropped" = true ] && echo ", slot dropped"); delete earlier: kept-sweep.sh --now $S): ${host:+$host/pipelines/}${AP:-} ${GW:+gateway $GW,} schemas $CATALOG.$S${STG:+ and $STG}${EXTRA_SCHEMAS:+ $EXTRA_SCHEMAS}${DB:+, source database $DB}"
 }
-# delete_run: delete the pipelines, the schemas and (when this run made it) the source database. kept-sweep.sh calls it
-# with the variables of a kept run.
+# delete_run: delete the pipelines, the schemas and (when this run made it) the source database; then EXTRA_*.
+# kept-sweep.sh calls it with the variables of a kept run.
 delete_run() {
   [ -n "${AP:-}" ] && [ "$AP" != null ] && dbx pipelines delete "$AP"; [ -n "${GW:-}" ] && [ "$GW" != null ] && dbx pipelines delete "$GW"; sleep 15
+  for p in $EXTRA_PIPELINES; do dbx pipelines delete "$p"; done
   dbx schemas delete "$CATALOG.$S" --force 2>/dev/null; dbx schemas delete "$CATALOG.$STG" --force 2>/dev/null
+  for x in $EXTRA_SCHEMAS; do dbx schemas delete "$x" --force 2>/dev/null; done
+  [ -n "$EXTRA_SQL" ] && [ "$(src_owned)" != 1 ] && { echo "$EXTRA_SQL" | src >/dev/null || echo "EXTRA_SQL failed in $DB"; }
   local left=0
   if [ "$(src_owned)" = 1 ] && [ "$ENGINE" = postgres ]; then
     for _ in 1 2 3; do   # the slot is held while the deleted gateway's session lingers

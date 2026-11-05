@@ -28,7 +28,7 @@ case $TRACK in ct|cdc) ;; *) echo "TRACK must be ct or cdc"; exit 2;; esac
 lfc_init samename
 SB=${S}_b; [ "$CASE" = flowname ] && SB=${S}_raw; TB="\`$CATALOG\`.$SB"
 conf case "$CASE"; conf track "$TRACK"
-trap 'cleanup; [ "${KEEP:-0}" = 1 ] || dbx schemas delete "$CATALOG.$SB" --force 2>/dev/null' EXIT
+trap 'EXTRA_SCHEMAS+=" $CATALOG.$SB"; cleanup' EXIT   # $SB is kept and deleted with the run
 src_db <<'EOF'
 CREATE TABLE lfcddemo.orders (id INT NOT NULL PRIMARY KEY, v VARCHAR(20));
 GO

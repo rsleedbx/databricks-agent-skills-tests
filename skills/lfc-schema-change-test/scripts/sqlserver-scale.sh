@@ -130,7 +130,7 @@ else
   done < "$W/src.tsv"
 fi
 # the extra destination schemas go with the rest at cleanup
-trap 'for d in ${DEST[@]+"${DEST[@]}"}; do dbx schemas delete "$CATALOG.$d" --force 2>/dev/null; done; cleanup' EXIT
+trap 'for d in ${DEST[@]+"${DEST[@]}"}; do EXTRA_SCHEMAS+=" $CATALOG.$d"; done; cleanup' EXIT   # kept and deleted with the run
 dest() {   # dest <schema.table> -> its destination table
   local s=${1%%.*} t=${1#*.}
   if [ "$OBJECTS" = schema ]; then echo "\`$CATALOG\`.${S}_$s.$t"; else echo "$T.${t}_${s##*_}"; fi
