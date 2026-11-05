@@ -157,7 +157,10 @@ def next_snapshot(latest_version):
         raise RuntimeError(f"{SRC} is being reloaded by a full refresh (no end of the reload in its ingestion pipeline's "
                            "events yet): run this pipeline again after the ingestion update finishes")
     in_refresh, had_rows = source_state()
-    if in_refresh:
+    # the table-history rule: for reload_check=history and the first snapshot (after that, the events say whether the
+    # reload finished, and a refresh of an empty source writes no rows: this rule would never let it through)
+    by_history = RELOAD_CHECK != "events" or latest_version is None
+    if in_refresh and by_history and not ALLOW_EMPTY:
         raise RuntimeError(f"{SRC} is being reloaded by a full refresh (DLT REFRESH, no write with rows yet): "
                            "run this pipeline again after the ingestion update finishes")
     table = spark.read.table(SRC)

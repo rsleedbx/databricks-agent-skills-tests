@@ -296,7 +296,11 @@ class NextSnapshot(LocalSpark):
         _, calls = self.call(None, pending=True)                       # the first snapshot: no event check
         self.assertEqual(calls, [])
         with self.assertRaisesRegex(RuntimeError, "being reloaded"):
-            self.call(4_000, state=(True, True))
+            self.call(4_000, state=(True, True), check="history")      # the table-history rule
+        with self.assertRaisesRegex(RuntimeError, "being reloaded"):
+            self.call(None, state=(True, True))                        # the first snapshot: the same rule
+        self.assertIsNotNone(self.call(4_000, state=(True, True))[0])  # events say the reload finished
+        self.assertEqual(self.call(4_000, rows=0, state=(True, True), check="history", allow_empty=True)[0][0].count(), 0)
         with self.assertRaisesRegex(RuntimeError, "empty after rows"):
             self.call(4_000, rows=0)
         self.assertEqual(self.call(4_000, rows=0, allow_empty=True)[0][0].count(), 0)

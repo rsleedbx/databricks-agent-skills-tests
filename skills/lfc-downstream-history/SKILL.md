@@ -68,7 +68,7 @@ A full refresh reloads an SCD type 2 table with one row per live key: its older 
 - Snapshots: from a function, at most one per update (a source that keeps committing doesn't keep the update going), when the source has a commit after the last one; the guards use filters and `count()` only, so the pipeline logs no unsupported `DataFrame.collect`.
 - Guards, each failing the update (run it again after the ingestion update):
   - A full refresh reloading the table: a `DLT REFRESH` after the last snapshot with no end of the reload after it in the ingestion pipeline's events ("Full Refresh completed for dataset: ..." or "Snapshot of ... APPLIED"); no such event counts as not finished. The first snapshot skips this check (the history is empty: nothing to close). The reload can take several commits (one per Auto Loader batch of the snapshot's files) and nothing in the table marks its end. The run-as identity needs to see the ingestion pipeline; `reload_check=history` uses the table's history only (a `DLT REFRESH` with no write of rows after it), which can't tell a reload in several commits is unfinished.
-  - The table empty after rows were written to it; `allow_empty=true` lets such a snapshot through, for a table that is meant to be empty.
+  - The table empty after rows were written to it; `allow_empty=true` lets such a snapshot through, for a table that is meant to be empty (also a refresh of an empty source with `reload_check=history`, which writes no rows after `DLT REFRESH`).
 - `history` has `pipelines.reset.allowed = false`: a full refresh of this pipeline keeps it and rebuilds only `versions` (tested).
 - Offline tests ([tests/test_history_snapshot_scd2.py](tests/test_history_snapshot_scd2.py)): the guards' rules, their DataFrame form on the same histories, the event match, `__START_AT` as a struct or a plain column, and `versions` on a recorded run's `history` table, a second refresh and composite keys. The Spark tests need pyspark and Java 17 or 21; without them they are skipped.
 - What it can't keep:
@@ -79,7 +79,7 @@ A full refresh reloads an SCD type 2 table with one row per live key: its older 
 Result, integrated CDC, SQL Server 2022, one workspace (7 of 7 claims):
 
 - Load and a normal sync: each update, delete and insert opens or closes a version, as in the destination.
-- A gap, then a full refresh of the destination (one row per live key afterwards) with 20 history runs back to back while it was applied: the guard stopped the 18 that ran after `DLT REFRESH` until the ingestion update logged the end of the reload; none closed every version. After it, `versions` holds every version seen before the refresh, deleted keys closed, and each unchanged key as one version.
+- A gap, then a full refresh of the destination (one row per live key afterwards) with 30 history runs back to back while it was applied: the guard stopped the 28 that ran after `DLT REFRESH` until the ingestion update logged the end of the reload; none closed every version. After it, `versions` holds every version seen before the refresh, deleted keys closed, and each unchanged key as one version.
 - The end-of-reload event comes when the ingestion update finishes, not when the rows are written: history runs wait for the whole update. With an ingestion pipeline in continuous mode this wasn't tested.
 - A 2,000,000-row table's full refresh reloaded in one commit; several commits weren't seen.
 - The next change: a new version. A run with nothing new: no change.
