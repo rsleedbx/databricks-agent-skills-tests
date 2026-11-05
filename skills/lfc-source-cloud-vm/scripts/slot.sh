@@ -4,7 +4,10 @@
 # bash32: exempt (runs on the Linux VM)
 #   masters                                   the masters a database can start from ($ROOT/masters)
 #   ls [--all]                                your databases (--all: everyone's): engine, state, port, created, last up
-#   up <engine> <name> [--from <master> | --empty] [--park]
+#   up <engine> <name> [--from <master> | --empty] [--park] [--edition <edition>]
+#      --edition (SQL Server only, a new database): Developer (default), Express, Standard, Enterprise, Evaluation or
+#      EnterpriseCore, the container's MSSQL_PID; kept in the record, so a parked database starts as the same edition.
+#      Express has no SQL Server Agent: CDC's capture jobs don't run there (no changes, no error); change tracking works
 #                                             start <name>: resume it if it exists, else clone a master (fs_clone:
 #                                             juicefs clone or an XFS reflink) or start empty. Engines: postgres, mysql,
 #                                             sqlserver, oracle, mariadb, db2, informix, cockroachdb, yugabytedb.
@@ -252,6 +255,9 @@ start_db() {
   podman rm -f "$C" >/dev/null 2>&1 || true
   VOLS=(-v "$D:$MNT:$VOLOPT")
   [ "$E" = informix ] && VOLS+=(-v "$D/cfg:/opt/ibm/config:U,Z")
+  # SQL Server: the edition in the record (Developer when none) is the container's MSSQL_PID
+  local ed; ed=$(field "$M" edition)
+  [ "$E" = sqlserver ] && [ -n "$ed" ] && RUNOPTS=("${RUNOPTS[@]/MSSQL_PID=Developer/MSSQL_PID=$ed}")
   podman run -d -q --name "$C" --label lfc-slot.owner="$OWNER" --label lfc-slot.name="$N" --label lfc.engine="$E" --label lfc.purpose=slot "${RUNOPTS[@]}" \
     --env-file "$STATE/$OWNER/$N.env" -p "$P:$CPORT" "${VOLS[@]}" "$IMAGE" "${ARGS[@]}" >/dev/null 9>&-   # the container must not inherit the lock
 }
@@ -358,12 +364,21 @@ case $CMD in
 
   up)
     E=${1:-}; N=${2:-}; shift 2 || usage; name_ok "$N"; engine "$E"
-    FROM="" EMPTY=0 PARK=0
-    while [ $# -gt 0 ]; do case $1 in --from) FROM=${2:-}; shift 2 ;; --empty) EMPTY=1; shift ;; --park) PARK=1; shift ;; *) usage ;; esac; done
+    FROM="" EMPTY=0 PARK=0 EDITION=""
+    while [ $# -gt 0 ]; do case $1 in --from) FROM=${2:-}; shift 2 ;; --empty) EMPTY=1; shift ;; --park) PARK=1; shift ;;
+                                      --edition) EDITION=${2:-}; shift 2 ;; *) usage ;; esac; done
+    if [ -n "$EDITION" ]; then
+      [ "$E" = sqlserver ] || die "--edition is for sqlserver only"
+      case $EDITION in Developer|Express|Standard|Enterprise|Evaluation|EnterpriseCore) ;;
+        *) die "edition $EDITION: Developer, Express, Standard, Enterprise, Evaluation or EnterpriseCore" ;; esac
+      [ "$EDITION" = Express ] && echo "slot: Express has no SQL Server Agent: CDC won't capture changes there; change tracking works" >&2
+    fi
     exec 9>"$LOCK"; lock
     M=$(meta "$OWNER" "$N"); D=$ROOT/dbs/$OWNER/$N; C=$(cname "$OWNER" "$N")
     if [ -f "$M" ]; then
       [ "$(field "$M" engine)" = "$E" ] || die "$N is a $(field "$M" engine) database"
+      have=$(field "$M" edition); have=${have:-Developer}
+      [ -z "$EDITION" ] || [ "$EDITION" = "$have" ] || die "$N is a SQL Server $have database (the edition is set when it is made)"
     fi
     if running "$OWNER" "$N"; then :; else
       # the owner's limit of running databases (LIMITS, else MAX_PER_OWNER), then the VM's limit (MAX_RUNNING)
@@ -412,8 +427,9 @@ case $CMD in
         fi
         pw > "$STATE/$OWNER/$N.login"
         P=$(free_port)
-        jq -n --arg e "$E" --arg p "$P" --arg c "$(now)" --arg f "${FROM:-empty}" --arg i "$IMAGE" \
-          '{engine: $e, port: ($p | tonumber), created: $c, from: $f, image: $i}' > "$M"
+        jq -n --arg e "$E" --arg p "$P" --arg c "$(now)" --arg f "${FROM:-empty}" --arg i "$IMAGE" --arg ed "$EDITION" \
+          '{engine: $e, port: ($p | tonumber), created: $c, from: $f, image: $i}
+           + (if $ed == "" then {} else {edition: $ed} end)' > "$M"
         umask 022
       fi
       P=$(field "$M" port)
