@@ -300,6 +300,10 @@ class NextSnapshot(LocalSpark):
         with self.assertRaisesRegex(RuntimeError, "being reloaded"):
             self.call(None, state=(True, True))                        # the first snapshot: the same rule
         self.assertIsNotNone(self.call(4_000, state=(True, True))[0])  # events say the reload finished
+        # a refresh of an empty source (events mode, after the first snapshot): refused as emptied unless allow_empty
+        with self.assertRaisesRegex(RuntimeError, "empty after rows"):
+            self.call(4_000, rows=0, state=(True, True))
+        self.assertEqual(self.call(4_000, rows=0, state=(True, True), allow_empty=True)[0][0].count(), 0)
         self.assertEqual(self.call(4_000, rows=0, state=(True, True), check="history", allow_empty=True)[0][0].count(), 0)
         with self.assertRaisesRegex(RuntimeError, "empty after rows"):
             self.call(4_000, rows=0)
