@@ -6,7 +6,7 @@ parent: lfc-source-setup
 
 # Schema-change tests
 
-Each script answers one schema-evolution question by running it: it creates a **fresh database** on a source you control, standard CDC pipelines on serverless, makes the source change, reads back the pipeline's state, error class and destination rows, and prints one PASS or FAIL row per claim. It deletes the pipelines, the schemas and the source database at the end, also on failure (`KEEP=1` keeps them).
+Each script answers one schema-evolution question by running it: it creates a **fresh database** on a source you control, standard CDC pipelines on serverless, makes the source change, reads back the pipeline's state, error class and destination rows, and prints one PASS or FAIL row per claim. At the end, also on failure, it stops the pipelines and keeps them, the schemas and the source database for 7 days (`KEEP_DAYS`, listed in `~/.local/state/lfc-tests/kept.jsonl`), so a result can still be read back; [scripts/kept-sweep.sh](scripts/kept-sweep.sh) deletes them once that date passes, or earlier with `--now <schema>`. `KEEP_DAYS=0` deletes at the end; `KEEP=1` leaves everything running.
 
 **Test it as a black box.** Treat Lakeflow Connect as a process whose behavior isn't known: change the input (rows and DDL on the source, with known values), read the output (the destination rows; the gateway's staging files in between), and compare. Expectations from the docs or the code are what a run checks, not what it assumes. **State each case as a one-line example of input and output**, not as a description: "`id = 1` set to `i0`, `i1` … `i59`, 2 s apart → SCD type 2 kept all 60 versions; SCD type 1: the gateway staged all 60, the destination shows `i59` (one ingestion update applied them all)". A script prints these as `EXAMPLE` observations. Row-by-row tables (`example` in [scripts/lib.sh](scripts/lib.sh), the result's *Input and output* section) are backing evidence, shown only when the line isn't enough (a gap, an order, a timing).
 
@@ -113,3 +113,7 @@ The rules that make the comparison valid:
 - Run each mechanism with and without the setup script (`none` and `utility-1.7`), on the same cases. The two columns are the comparison; a difference between them is a finding.
 - A case passes only when its destination row is verified. "Pipeline created" and "update COMPLETED" are not passes, and a batch that ran every DDL before one update can't verify a row of a table that had no error of its own. Run those cases alone.
 - Every run records the runtime (DBR version, channel, dp build), the setup script version, and, when a result rests on a code change, which release builds have it (the change's commit and the builds checked) and the flag's observed rollout value if one decides it. Record the method (`batch` or `one-case-at-a-time`) and anything that didn't run in the file's `caveats`.
+
+## Trade-offs
+
+- Kept runs (7 days by default): a result can be read back after the run, at the cost of a week of stopped pipelines, schemas and a source database. A kept PostgreSQL slot holds WAL on the source for that week; on a busy shared server use `KEEP_DAYS=0` or set `max_slot_wal_keep_size`.

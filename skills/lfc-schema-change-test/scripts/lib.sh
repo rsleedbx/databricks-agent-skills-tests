@@ -16,8 +16,10 @@
 #   expect <want> <sql>        query; after an early stop that didn't give <want>, one more update and query again
 #   errs_for <table>, needs_refresh <table>, q <sql>, claim, observe, result_md <title>
 #
-# FP_TABLES (space-separated destination tables) drives the integrated-CDC early stop. The EXIT trap deletes the
-# pipelines, the schemas and the source database (KEEP=1 keeps them).
+# FP_TABLES (space-separated destination tables) drives the integrated-CDC early stop. The EXIT trap stops the
+# pipelines and keeps them, the schemas and the source database for KEEP_DAYS days (default 7), recorded in $LFC_KEPT;
+# kept-sweep.sh deletes them after that, or earlier on request. KEEP_DAYS=0 deletes at exit; KEEP=1 leaves everything
+# as it is (running) and unrecorded.
 export PATH=/opt/homebrew/bin:$PATH
 # SOURCE_JSON=<contract file> (lfc-source-contract): the source comes from it (SRC_SQL, CONN_USER, CONNECTION, ...); the
 # variables it doesn't give stay as they are in the environment. LFC_SOURCE_ENV: where source-env.sh is (parallel.sh sets it)
@@ -321,8 +323,34 @@ settle_rows() {
 # variable src_db sets: a script that pipes into src_db (`... | src_db`) runs it in a subshell, and the variable was lost,
 # so cleanup left those databases behind while reporting none left.
 src_owned() { [[ "${DB:-}" == *"_${E:-none}" ]] && echo 1 || echo 0; }
+LFC_KEPT=${LFC_KEPT:-$HOME/.local/state/lfc-tests/kept.jsonl}
+KEEP_DAYS=${KEEP_DAYS:-7}
 cleanup() {
   [ "${KEEP:-0}" = 1 ] && { echo "KEEP=1: left $DB, $GWN, $APN, $CATALOG.$S"; return; }
+  if [ "$KEEP_DAYS" != 0 ]; then keep_run; rm -rf "${W:?}"; return; fi
+  delete_run
+  rm -rf "${W:?}"
+}
+# keep_run: stop the pipelines (a continuous gateway too) and record the run in $LFC_KEPT with a delete-after date.
+# A stopped pipeline costs nothing. Trade-off: a kept PostgreSQL slot holds WAL on the source for the week (a quiet test
+# database writes little; a busy shared server: KEEP_DAYS=0 or set max_slot_wal_keep_size).
+keep_run() {
+  local p after host
+  for p in ${AP:-} ${GW:-}; do [ -n "$p" ] && [ "$p" != null ] && dbx pipelines stop "$p" >/dev/null 2>&1; done
+  after=$(jq -rn --argjson d "$KEEP_DAYS" 'now + $d * 86400 | strftime("%Y-%m-%d")')
+  host=$(dbx auth describe -o json 2>/dev/null | jq -r '.details.host // ""')
+  mkdir -p "$(dirname "$LFC_KEPT")"
+  jq -nc --arg id "${S:-}" --arg after "$after" --arg host "$host" --arg profile "$PROFILE" --arg ap "${AP:-}" --arg gw "${GW:-}" \
+    --arg catalog "$CATALOG" --arg s "${S:-}" --arg stg "${STG:-}" --arg engine "$ENGINE" --arg db "$([ "$(src_owned)" = 1 ] && echo "$DB")" \
+    --arg slot "${SLOT:-}" --arg conn "$CONNECTION" --arg conn_user "$CONN_USER" --arg src_sql "$SRC_SQL" --arg kept "$(date -u +%FT%TZ)" \
+    '{id: $id, kept: $kept, delete_after: $after, host: $host, profile: $profile, catalog: $catalog, schema: $s, staging: $stg,
+      pipelines: ([$ap, $gw] | map(select(. != "" and . != "null"))), engine: $engine, db: $db, slot: $slot,
+      connection: $conn, conn_user: $conn_user, src_sql: $src_sql}' >> "$LFC_KEPT"
+  echo "kept until $after (stopped; delete earlier: kept-sweep.sh --now $S): ${host:+$host/pipelines/}${AP:-} ${GW:+gateway $GW,} schemas $CATALOG.$S${STG:+ and $STG}${DB:+, source database $DB}"
+}
+# delete_run: delete the pipelines, the schemas and (when this run made it) the source database. kept-sweep.sh calls it
+# with the variables of a kept run.
+delete_run() {
   [ -n "${AP:-}" ] && [ "$AP" != null ] && dbx pipelines delete "$AP"; [ -n "${GW:-}" ] && [ "$GW" != null ] && dbx pipelines delete "$GW"; sleep 15
   dbx schemas delete "$CATALOG.$S" --force 2>/dev/null; dbx schemas delete "$CATALOG.$STG" --force 2>/dev/null
   local left=0
@@ -347,9 +375,10 @@ cleanup() {
     done
     [ "${left//[[:space:]]/}" = 0 ] || { echo "source database $DB not dropped:"; tail -3 "$W/drop.out"; }
   fi
+  # shellcheck disable=SC2034  # read by kept-sweep.sh
+  DB_LEFT=${left//[[:space:]]/}   # 0 when the source database is gone (kept-sweep.sh checks it)
   if [ "${KEEP_SOURCE:-0}" = 1 ]; then echo "cleanup: pipelines and schemas deleted; source database $DB kept"
   else echo "cleanup: pipelines and schemas deleted; source database left: ${left//[[:space:]]/}"; fi
-  rm -rf "${W:?}"
 }
 
 # metric <name> <number>: a number this run measured (seconds, rows, tables, ...). record_run saves them with the run's
