@@ -11,7 +11,11 @@ Prints FAIL and WARN lines and exits 1 on any FAIL:
         skill uses and not in --base. Each is reported once, with the files that use it. Also: a reference file
         SKILL.md doesn't link; a pipeline example with the deprecated `target:` (use `schema:`); agents/openai.yaml
         text cut off or in the generator's "Use $<skill> for ..." form (hand-write it); a skill script with no test
-        in the repo's tests/ that names the skill
+        in the repo's tests/ that names the skill; a description over 200 characters without ". Use when" (the
+        generator cuts it); a markdown link inside a code block (it won't render); a bare `<file>.md` mention of a
+        reference file (write `references/<file>.md` or a link)
+  FAIL  (also) a `references/<file>.md` path, own or another skill's, that isn't in the checkout or, with --base, at
+        the base (a link into another skill isn't checked by validate: merge that skill first, or name only the skill)
 
   python3 .claude/skills/public-skill-conventions/scripts/conventions-check.py ../databricks-agent-skills/skills databricks-lakeflow-connect --base upstream/main
 """
@@ -29,6 +33,9 @@ WORDING = re.compile(r"(?i)\b(tested|seen on|last seen|in our tests|we ran)\b")
 ERR_HEAD = re.compile(r"(?i)\b(error|symptom|issue|problem|trap)\b")
 TABLE = re.compile(r"^(\|[^\n]*\|)\n\|[ :|-]+\|$", re.M)
 FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.S)
+REFPATH = re.compile(r"(?<![\w-])references/([a-z0-9][\w.-]*\.md)")
+SKILLNAME = re.compile(r"databricks-[a-z0-9-]+")
+CODE_LINK = re.compile(r"\[[^\]\n]+\]\((?:https?://|\.{0,2}/?[\w-]+(?:/[\w.-]+)*\.md)[^)\s]*\)")
 TARGET = re.compile(r'^\s*(target:\s*\S|"target"\s*:)', re.M)  # pipeline `target` is deprecated for `schema`
 
 
@@ -114,6 +121,36 @@ def main() -> int:
         if (short and short.group(1).rstrip().endswith(("...", "\u2026"))) or f"Use ${name} for " in y:
             say("WARN", str(oa.relative_to(root)), "generated text (cut off, or 'Use $<skill> for ...'): hand-write "
                 "short_description and default_prompt so the skill reads apart from its siblings")
+    desc = re.search(r'^description:\s*"?(.*?)"?$', md, re.M)
+    if desc and len(desc.group(1)) > 200 and ". Use when" not in desc.group(1):
+        say("WARN", "SKILL.md", f"description is {len(desc.group(1))} characters with no '. Use when': the generated "
+            "short description is cut at ~197; shorten it or write '<what it does>. Use when ...'")
+    refs = {p.name for p in (me / "references").glob("*.md")} if (me / "references").is_dir() else set()
+    bare = re.compile(r"(?<![\w/(\[.-])(" + "|".join(map(re.escape, sorted(refs))) + r")(?![\w-])") if refs else None
+    git = ["git", "-C", str(root.parent)]
+    seen: set[tuple[str, str]] = set()
+    for p, t in texts(me).items():
+        rel = str(p.relative_to(root))
+        for c in FENCE.findall(t):
+            if CODE_LINK.search(c):
+                say("WARN", rel, f"markdown link inside a code block won't render: {CODE_LINK.search(c).group(0)[:80]}")
+        for i, line in enumerate(t.split("\n"), 1):
+            if bare and bare.search(line):
+                say("WARN", f"{rel}:{i}", f"bare '{bare.search(line).group(1)}': write references/<file>.md or a link")
+            for m in REFPATH.finditer(line):
+                near = [x for x in SKILLNAME.findall(line[max(0, m.start() - 60):m.start()]) if (root / x).is_dir()]
+                skill, f = (near[-1] if near else name), m.group(1)
+                if (skill, f) in seen:
+                    continue
+                seen.add((skill, f))
+                target = root / skill / "references" / f
+                if not target.is_file():
+                    say("FAIL", f"{rel}:{i}", f"{skill}/references/{f} doesn't exist")
+                elif base and skill != name and subprocess.run(
+                        [*git, "cat-file", "-e", f"{base}:./{target.relative_to(root.parent)}"],
+                        capture_output=True).returncode:
+                    say("FAIL", f"{rel}:{i}", f"{skill}/references/{f} isn't at {base}: merge that change first or "
+                        "name only the skill")
     tests = root.parent / "tests"
     scripts = list((me / "scripts").glob("*.py")) if (me / "scripts").is_dir() else []
     if scripts and tests.is_dir() and not any(name in t.read_text() for t in tests.glob("*_test.py")):
