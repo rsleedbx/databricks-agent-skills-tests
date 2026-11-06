@@ -2,7 +2,8 @@
 # test-slot-limits.sh: checks slot.sh's per-owner limits against a fake podman and flock (no VM, no containers): the
 #   LIMITS lookup (owner line, default line, a key missing from the owner's line, a key that starts like another, no
 #   file), `up` at the limit stopping without parking, and `up --park` parking just enough, the earliest started
-#   first; `masters` on a VM without masters (no lines, exit 0) and with one (its folder, not its .engine file). One
+#   first; `masters` on a VM without masters (no lines, exit 0) and with one (its folder, not its .engine file);
+#   SQL Server --edition (the container's MSSQL_PID, kept in the record, the refusals). One
 #   PASS/FAIL line per check; exit 1 on any FAIL.
 # bash32: exempt (slot.sh runs on the Linux VM; this runs it with the bash on PATH)
 set -uo pipefail
@@ -23,7 +24,8 @@ case "$1" in
 esac
 EOF
 printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/flock"
-chmod +x "$T/bin/podman" "$T/bin/flock"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/chown"   # a SQL Server data folder is chowned to its uid on the VM
+chmod +x "$T/bin/podman" "$T/bin/flock" "$T/bin/chown"
 slot() { FT=$T PATH="$T/bin:$PATH" ROOT=$T/root STATE=$T/state LOCK=$T/lock LIMITS=$T/limits MAX_RUNNING=99 \
            HOST=192.0.2.1 bash "$S/slot.sh" --owner "$@"; }
 db() {   # db <owner> <name> [<start time>]: a postgres database record, running when a start time is given
@@ -58,4 +60,21 @@ out=$(slot carol masters); rc=$?
 ok "no masters: no lines, exit 0" '[ $rc = 0 ] && [ -z "$out" ]'
 install -d "$T/root/masters/postgres16-tpc-sf1"; echo postgres > "$T/root/masters/postgres16-tpc-sf1.engine"
 ok "masters: the folders only" '[ "$(slot carol masters)" = postgres16-tpc-sf1 ]'
+# SQL Server --edition: the container's MSSQL_PID, kept in the record (the fake podman refuses run and prints its words)
+rm -f "$T/limits"; rm -f "$T"/run/lfc-slot-*
+err=$(slot dave up sqlserver ex --empty --edition Express 2>&1 >/dev/null)
+ok "--edition Express: the container gets MSSQL_PID=Express" '[[ $err == *"MSSQL_PID=Express"* ]] && [[ $err != *"MSSQL_PID=Developer"* ]]'
+ok "--edition Express: kept in the record" '[ "$(jq -r .edition "$T/state/dave/ex.json")" = Express ]'
+ok "--edition Express: warns that CDC won't capture (no Agent)" '[[ $err == *"Express has no SQL Server Agent"* ]]'
+err=$(slot dave up sqlserver ex 2>&1 >/dev/null)
+ok "a later up without --edition: the recorded edition" '[[ $err == *"MSSQL_PID=Express"* ]]'
+err=$(slot dave up sqlserver ex --edition Standard 2>&1 >/dev/null); rc=$?
+ok "another edition for an existing database: refused" '[ $rc = 1 ] && [[ $err == *"ex is a SQL Server Express database"* ]]'
+err=$(slot dave up sqlserver dv --empty 2>&1 >/dev/null)
+ok "no --edition: Developer, no edition in the record" '[[ $err == *"MSSQL_PID=Developer"* ]] && [ -z "$(jq -r ".edition // empty" "$T/state/dave/dv.json")" ]'
+err=$(slot dave up sqlserver bad --empty --edition Web 2>&1 >/dev/null); rc=$?
+ok "an unknown edition: refused, nothing made" '[ $rc = 1 ] && [[ $err == *"edition Web"* ]] && [ ! -f "$T/state/dave/bad.json" ]'
+err=$(slot dave up postgres pg --empty --edition Express 2>&1 >/dev/null); rc=$?
+ok "--edition on another engine: refused" '[ $rc = 1 ] && [[ $err == *"--edition is for sqlserver only"* ]]'
+
 exit $fail

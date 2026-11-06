@@ -49,6 +49,25 @@ slot_through_ssh() {   # the contract's SRC_SQL reaches the database through the
   grep -q '^ARGV ssh .*slot@203.0.113.10 sql pg1 mydb' "$T/log.slot" && grep -q 'SELECT 1' "$T/log.slot"
 }
 check "slot-source: SRC_SQL reaches the database through ssh (slot-sql.sh, fake ssh)" slot_through_ssh
+slot_for_owner() {   # another owner's database: sql_cmd goes through the VM admin login as that owner
+  printf '%s\n' "$UP" | SLOT_HOST=203.0.113.10 SLOT_KEY="$T/key" SLOT_OWNER=shreya-sharma-chen SLOT_ADMIN_KEY="$T/admin" \
+    "$SLOT/slot-source.sh" --connection c1 --out "$T/slot-owner.json" > /dev/null || return 1
+  : > "$T/log.owner"; export PATH=$FB:$PATH FAKE_LOG=$T/log.owner; eval "$(exports_of_path "$T/slot-owner.json")"
+  printf 'SELECT 2;\n' | $SRC_SQL mydb > /dev/null 2>&1
+  grep -q "^ARGV ssh -i $T/admin .*azureuser@203.0.113.10 sudo /usr/local/sbin/lfc-slot --owner shreya-sharma-chen sql pg1 mydb" "$T/log.owner"
+}
+check "slot-source for another owner: SRC_SQL goes through the admin login as that owner" slot_for_owner
+bad_owner() { SLOT_HOST=h SLOT_NAME=pg1 SLOT_OWNER='x;y' SLOT_ADMIN_KEY=k "$SLOT/slot-sql.sh" < /dev/null > /dev/null 2>&1; [ $? = 2 ]; }
+check "slot-sql: an owner name with other characters is refused" bad_owner
+shell_words() {   # names that the admin login's shell would parse are refused before ssh runs
+  : > "$T/log.sh"; export PATH=$FB:$PATH FAKE_LOG=$T/log.sh
+  for w in 'a;b' 'a b' '$(id)'; do
+    SLOT_HOST=h SLOT_NAME="$w" SLOT_OWNER=o SLOT_ADMIN_KEY=k "$SLOT/slot-sql.sh" < /dev/null > /dev/null 2>&1; [ $? = 2 ] || return 1
+    SLOT_HOST=h SLOT_NAME=pg1 SLOT_OWNER=o SLOT_ADMIN_KEY=k "$SLOT/slot-sql.sh" "$w" < /dev/null > /dev/null 2>&1; [ $? = 2 ] || return 1
+  done
+  [ ! -s "$T/log.sh" ]
+}
+check "slot-sql: a database name with shell characters is refused, no ssh" shell_words
 
 rm -rf "${T:?}"
 echo; [ $fails -eq 0 ] && echo "all passed" || echo "$fails failed"; exit $((fails > 0))

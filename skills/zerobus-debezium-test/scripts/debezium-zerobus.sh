@@ -271,7 +271,8 @@ q() { export Q=$1; sql; }
 # src: SQL from stdin on the source, tab-separated with a header row
 case $SOURCE in
   crdb) src() { vm "$PODMAN exec -i $SRCC cockroach sql --insecure --format=tsv"; };;
-  yb)   src() { vm "$PODMAN exec -i $SRCC bin/ysqlsh -h yugabytedb -U yugabyte -d $SRC_DB -q -A -z -P footer=off -v ON_ERROR_STOP=1 | tr '\\000' '\\t'"; };;
+  # YugabyteDB: --secure (TLS + a password); PGPASSWORD and PGSSLMODE=require come from src.pgenv on the host
+  yb)   src() { vm "$PODMAN exec -i --env-file $RD/src.pgenv $SRCC bin/ysqlsh -h yugabytedb -U yugabyte -d $SRC_DB -q -A -z -P footer=off -v ON_ERROR_STOP=1 | tr '\\000' '\\t'"; };;
   # the root password stays in the container's environment (MYSQL_ROOT_PASSWORD), off the host's command lines
   # utf8mb4: the client's default is latin1, and CAST(x AS CHAR) converts to the connection's character set, so a
   # digest (CRC32 of the row's text) over latin1 bytes differed from Databricks' UTF-8 for every non-ASCII value
@@ -596,12 +597,14 @@ elif [ "$SOURCE" = mssql ]; then
   SRC_VERSION=$(echo "SELECT CONCAT('SQL Server ', CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR(32)), ' ', CAST(SERVERPROPERTY('Edition') AS VARCHAR(64)));" | src | tail -1 | cut -c1-80)
   snap_select() { msel "$1" --side source --prefix "$MPFX"; }   # the rows now; at T they're in the snapT files
 elif [ "$SOURCE" = pg ]; then
-  # logical decoding (wal_level=logical), a slot and a sender per database. The password: a file on the host and the
+  # logical decoding (wal_level=logical), a slot and a sender per database; TLS with the image's self-signed (snakeoil)
+  # certificate, which clients trust with sslmode=require (the socket psql inside the container needs none). The password: a file on the host and the
   # container's env (the fill, the UC connection and Debezium read the file), off every command line
   vm "umask 077; mkdir -p $RD && P=\$(head -c 18 /dev/urandom | base64 | tr -d '/+=') && echo \$P > $RD/src.pw && echo POSTGRES_PASSWORD=\$P > $RD/src.env \
     && $PODMAN network create $NET >/dev/null && $PODMAN run -d --name $SRCC --network $NET --network-alias postgres --env-file $RD/src.env \
     $([ "$SCHEMA_VIA" = connection ] && echo "-p $SRC_PORT:5432") $SRC_IMAGE -c wal_level=logical -c max_replication_slots=$((NSRC + 4)) \
-    -c max_wal_senders=$((NSRC + 4)) >/dev/null" || { echo "PostgreSQL start failed"; exit 2; }
+    -c max_wal_senders=$((NSRC + 4)) -c ssl=on -c ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem \
+    -c ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key >/dev/null" || { echo "PostgreSQL start failed"; exit 2; }
   for _ in $(seq 1 60); do vm "$PODMAN exec $SRCC pg_isready -U postgres -h 127.0.0.1" >/dev/null 2>&1 && break; sleep 2; done
   for i in $(seq 1 "$NSRC"); do use "$i"
     T0=$SECONDS; vm "$PODMAN exec $SRCC psql -U postgres -q -c 'CREATE DATABASE $SRC_DB'" >/dev/null && echo "CREATE SCHEMA $SRC_DB;" | src >/dev/null \
@@ -619,14 +622,18 @@ elif [ "$SOURCE" = pg ]; then
   SRC_VERSION=$(echo 'SELECT version();' | src | tail -1 | cut -c1-80)
   snap_select() { msel "$1" --side source --prefix "$MPFX"; }   # the rows now; at T they're in the snapT files
 else
-  vm "$PODMAN network create $NET >/dev/null && $PODMAN run -d --name $SRCC --network $NET --network-alias yugabytedb \
-    $([ "$SCHEMA_VIA" = connection ] && echo "-p $SRC_PORT:5433") $SRC_IMAGE bin/yugabyted start --background=false --advertise_address=yugabytedb >/dev/null" || { echo "YugabyteDB start failed"; exit 2; }
-  for _ in $(seq 1 60); do vm "$PODMAN exec $SRCC bin/ysqlsh -h yugabytedb -U yugabyte -c 'SELECT 1'" >/dev/null 2>&1 && break; sleep 3; done
+  # --secure: TLS (single node: yugabyted makes the certificates) and authentication, the yugabyte user's password
+  # from YSQL_PASSWORD. The password: a file on the host and the container's env, off every command line, as pg's
+  vm "umask 077; mkdir -p $RD && P=\$(head -c 18 /dev/urandom | base64 | tr -d '/+=') && echo \$P > $RD/src.pw && echo YSQL_PASSWORD=\$P > $RD/src.env \
+    && printf 'PGPASSWORD=%s\nPGSSLMODE=require\n' \$P > $RD/src.pgenv \
+    && $PODMAN network create $NET >/dev/null && $PODMAN run -d --name $SRCC --network $NET --network-alias yugabytedb --env-file $RD/src.env \
+    $([ "$SCHEMA_VIA" = connection ] && echo "-p $SRC_PORT:5433") $SRC_IMAGE bin/yugabyted start --background=false --secure --advertise_address=yugabytedb >/dev/null" || { echo "YugabyteDB start failed"; exit 2; }
+  for _ in $(seq 1 60); do vm "$PODMAN exec --env-file $RD/src.pgenv $SRCC bin/ysqlsh -h yugabytedb -U yugabyte -c 'SELECT 1'" >/dev/null 2>&1 && break; sleep 3; done
   for i in $(seq 1 "$NSRC"); do use "$i"
-    T0=$SECONDS; vm "$PODMAN exec $SRCC bin/ysqlsh -h yugabytedb -U yugabyte -c 'CREATE DATABASE $SRC_DB'" >/dev/null && echo "CREATE SCHEMA $SRC_DB;" | src >/dev/null \
+    T0=$SECONDS; vm "$PODMAN exec --env-file $RD/src.pgenv $SRCC bin/ysqlsh -h yugabytedb -U yugabyte -c 'CREATE DATABASE $SRC_DB'" >/dev/null && echo "CREATE SCHEMA $SRC_DB;" | src >/dev/null \
       && srcq < "$W/ddl.run" >/dev/null || { echo "YugabyteDB setup of $SRC_DB failed"; exit 2; }
     echo "$SRC_DB: $NT tables created in $((SECONDS - T0))s"
-    [ "$EMPTY" = 1 ] || fill yugabytedb 5433 yugabyte yugabyte "$SRC_DB" || { echo "fill of $SRC_DB failed: $(tail -3 "$W/fill.out" | tr '\n' ' ' | cut -c1-300)"; exit 2; }
+    [ "$EMPTY" = 1 ] || fill yugabytedb 5433 yugabyte @file "$SRC_DB" || { echo "fill of $SRC_DB failed: $(tail -3 "$W/fill.out" | tr '\n' ' ' | cut -c1-300)"; exit 2; }
     cdc_sql "$SRC_DB" "$i" | src >/dev/null || { echo "YugabyteDB setup of $SRC_DB failed"; exit 2; }
     # T: the slot's consistent snapshot, a hybrid time (microseconds << 12). Debezium streams from the slot, with no
     # snapshot of its own; the dump reads as of T with yb_read_time.
@@ -759,7 +766,7 @@ if [ "$PHASE" -ge 2 ] && [ "$SOURCE" != mysql ]; then
       for t in $TABLES; do printf '\\o /tmp/snap/%s/%s.csv\nCOPY (SELECT * FROM %s."%s") TO STDOUT WITH (FORMAT csv, HEADER);\n' "$i" "$t" "$SRC_DB" "$t"; done \
         | { [ "$SOURCE" = yb ] && printf 'SET yb_read_time TO %s;\n' "$T_US"; cat; } > "$W/export-$i.sql"   # PostgreSQL: nothing writes yet
       PSQLC=$([ "$SOURCE" = yb ] && echo "bin/ysqlsh -h yugabytedb -U yugabyte" || echo "psql -U postgres")
-      vm "$PODMAN exec $SRCC sh -c 'rm -rf /tmp/snap/$i; mkdir -p /tmp/snap/$i'" && vm "$PODMAN exec -i $SRCC $PSQLC -d $SRC_DB -q -v ON_ERROR_STOP=1" \
+      vm "$PODMAN exec $SRCC sh -c 'rm -rf /tmp/snap/$i; mkdir -p /tmp/snap/$i'" && vm "$PODMAN exec -i $([ "$SOURCE" = yb ] && echo "--env-file $RD/src.pgenv") $SRCC $PSQLC -d $SRC_DB -q -v ON_ERROR_STOP=1" \
         < "$W/export-$i.sql" > "$W/export-$i.out" 2>&1 || { echo "COPY in $SRC_DB failed: $(head -c 200 "$W/export-$i.out")"; exit 2; }
       # PostgreSQL: the rows at T as the checks render them, for the history check (it can't read as of T later)
       [ "$SOURCE" = pg ] && for t in $TABLES; do msql select "$t" --side source | src > "$W/snapT-$i-$t.tsv" || { echo "rows at T of $t failed"; exit 2; }; done
@@ -955,7 +962,8 @@ debezium.source.database.port=1433
 debezium.source.database.user=sa
 debezium.source.database.password=@SRC_PW@
 debezium.source.database.names=$SRC_DB
-debezium.source.database.encrypt=false
+debezium.source.database.encrypt=true
+debezium.source.database.trustServerCertificate=true
 debezium.source.table.include.list=$(include)
 debezium.source.include.schema.changes=false
 debezium.source.decimal.handling.mode=string
@@ -971,6 +979,7 @@ debezium.source.database.port=5432
 debezium.source.database.user=postgres
 debezium.source.database.password=@SRC_PW@
 debezium.source.database.dbname=$SRC_DB
+debezium.source.database.sslmode=require
 debezium.source.plugin.name=pgoutput
 debezium.source.slot.name=dbz_slot_$i
 debezium.source.publication.name=dbz_pub
@@ -985,8 +994,9 @@ debezium.source.topic.prefix=yb$i
 debezium.source.database.hostname=yugabytedb
 debezium.source.database.port=5433
 debezium.source.database.user=yugabyte
-debezium.source.database.password=yugabyte
+debezium.source.database.password=@SRC_PW@
 debezium.source.database.dbname=$SRC_DB
+debezium.source.database.sslmode=require
 debezium.source.plugin.name=pgoutput
 debezium.source.slot.name=dbz_slot_$i
 debezium.source.publication.name=dbz_pub
@@ -1021,8 +1031,8 @@ debezium.sink.zerobus.json.flexible.fields.encoding=string
 debezium.sink.zerobus.max.record.bytes=10000000
 EOF
 cat "$W/secret.line" >> "$W/application.properties"
-# the password goes in on the host, from its file (MySQL's mysql.pw, PostgreSQL's src.pw)
-PWF=$(case $SOURCE in (mysql) echo "$RD/mysql.pw";; (pg|mssql|oracle|db2|informix) echo "$RD/src.pw";; esac)
+# the password goes in on the host, from its file (MySQL's mysql.pw, the others' src.pw)
+PWF=$(case $SOURCE in (mysql) echo "$RD/mysql.pw";; (pg|yb|mssql|oracle|db2|informix) echo "$RD/src.pw";; esac)
 vm "umask 077; mkdir -p $RD/src$i$PK/data && cat > $RD/src$i$PK/application.properties$([ -n "$PWF" ] && echo " && sed -i \"s|@MYSQL_PW@|\$(cat $PWF)|; s|@SRC_PW@|\$(cat $PWF)|\" $RD/src$i$PK/application.properties")" < "$W/application.properties"; rm -f "$W/application.properties"
 # :U gives the mounted files to the container user (Debezium runs as a non-root user), so the secret stays 0600
 DBZS="$DBZS${DBZS:+ }${DBZC[$i]}$PK"
@@ -1166,8 +1176,9 @@ tasks.max=1
 database.hostname=yugabytedb
 database.port=5433
 database.user=yugabyte
-database.password=yugabyte
+database.password=@SRC_PW@
 database.dbname=$SRC_DB
+database.sslmode=require
 topic.prefix=yb$i
 plugin.name=pgoutput
 slot.name=dbz_slot_$i
@@ -1192,7 +1203,8 @@ transforms.route.replacement=${ROUTE#*|}
 EOF
 } > "$W/connector$i.properties"
 done; use 1
-for f in worker $(seq -f 'connector%g' 1 "$NSRC"); do vm "umask 077; cat > $RD/cfg/$f.properties" < "$W/$f.properties"; rm -f "$W/$f.properties"; done
+# YugabyteDB's password goes in on the host, from src.pw (CockroachDB runs --insecure: none)
+for f in worker $(seq -f 'connector%g' 1 "$NSRC"); do vm "umask 077; cat > $RD/cfg/$f.properties$([ "$SOURCE" = yb ] && echo " && sed -i \"s|@SRC_PW@|\$(cat $RD/src.pw)|\" $RD/cfg/$f.properties")" < "$W/$f.properties"; rm -f "$W/$f.properties"; done
 vm "C=\$HOME/.cache/dbz-zerobus; $PODMAN run -d --name $DBZ --network $NET -v $RD/cfg:/cfg:ro,U -v $RD/data:/data:U -v \$C/plugins:/plugins:ro,Z \
   -v \$C/cp:/extra:ro,Z -e CLASSPATH=/extra/zerobus-sink.jar --entrypoint /opt/kafka/bin/connect-standalone.sh $CONNECT_IMAGE \
   /cfg/worker.properties $(for i in $(seq 1 "$NSRC"); do printf '/cfg/connector%s.properties ' "$i"; done)>/dev/null" || { echo "Kafka Connect start failed"; exit 2; }
@@ -1319,7 +1331,7 @@ if [ "$PHASE" -ge 2 ]; then
   else
   # the schema: columns, types and primary keys from each source's information_schema, through a UC connection
   CONN=$PREFIX-$SOURCE-dbz-$E; export CONN VM_IP SRC_PORT
-  case $SOURCE in crdb) export DB_USER=root DB_PASS=unused-insecure-node;; yb) export DB_USER=yugabyte DB_PASS=yugabyte;;
+  case $SOURCE in crdb) export DB_USER=root DB_PASS=unused-insecure-node;; yb) DB_PASS=$(vm "cat $RD/src.pw"); export DB_USER=yugabyte DB_PASS;;
     pg) DB_PASS=$(vm "cat $RD/src.pw"); export DB_USER=postgres DB_PASS;; esac
   yq -n -o json '.name = strenv(CONN) | .connection_type = "POSTGRESQL" |
     .options = {"host": strenv(VM_IP), "port": strenv(SRC_PORT), "user": strenv(DB_USER), "password": strenv(DB_PASS), "trustServerCertificate": "true"}' > "$W/conn.json"

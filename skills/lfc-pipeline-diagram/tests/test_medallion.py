@@ -188,6 +188,16 @@ class Drawing(unittest.TestCase):
         self.assertIn("PROD --- FW --- ZB", out)
         self.assertIn("change capture: binlog", out)
 
+    def test_zerobus_capture_per_engine(self):
+        def run(engine):
+            return diagram("--ingest", "zerobus", "--engine", engine, "--bronze", "main.demo_zb.cdc_log")
+        out = run("sqlserver")
+        self.assertIn("change tables cdc.<capture instance>_CT", out)
+        self.assertNotIn("utility objects", out)                          # Lakeflow Connect's, not Debezium's
+        out = run("yugabytedb")
+        self.assertIn("source: database host, YugabyteDB", out)
+        self.assertIn("change capture: logical replication", out)
+
     def test_zerobus_needs_engine_and_bronze(self):
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "pipeline-diagram.py"), "--ingest", "zerobus"],
                            capture_output=True, text=True, check=False)

@@ -61,6 +61,7 @@ check "results/*.md: nothing internal" python3 -c "import sys, glob, re; sys.pat
 check "recall.py runs" sh -c "python3 '$SK/lfc-test-results/scripts/recall.py' > /dev/null"
 check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scripts/test-secret-scripts.sh' > /dev/null"
 check "keep-catalogs.sh on a fake CLI" sh -c "'$SK/lfc-workspace-setup/scripts/test-keep-catalogs.sh' > /dev/null"
+check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
 check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
 WC=$SK/lfc-workload-contract/scripts
@@ -94,6 +95,7 @@ check "q.sh missing.sql" sh -c "'$SK/shell-json-scripting/scripts/q.sh' '$SK/lfc
 check "q.py missing.sql" sh -c "uv run -q '$SK/shell-json-scripting/scripts/q.py' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
 check "zerobus-sdk-freshness-test: producer.py's run file (dups_sent, Kafka errors, a dead stream, a failed flush), report.py's counts, the probe's timeout (fake SDKs)" python3 -m unittest -q "$SK/zerobus-sdk-freshness-test/tests/test_scripts.py"
 check "pipeline-diagram.py on saved pipeline JSON (gateway on an AG, integrated, Kafka)" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_pipeline_diagram.py"
+check "history-snapshot-scd2.py: the guards (a reload not finished, an emptied table); with pyspark + Java 17/21 also their DataFrame form and versions" python3 -m unittest -q "$SK/lfc-downstream-history/tests/test_history_snapshot_scd2.py"
 check "medallion.py: layer counts, how each table is written; the medallion box and the Zerobus drawing" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_medallion.py"
 check "pipeline-diagram.py's model table counts match the statschema schemas" python3 "$R/bin/check_model_counts.py"
 

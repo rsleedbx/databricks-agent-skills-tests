@@ -84,6 +84,7 @@ A connection whose host is a managed service's names the service and its cloud i
 | PostgreSQL | logical replication: slot and publication (pgoutput) | The pipeline's `source_configurations` |
 | Query-based | a SELECT per run on a cursor column | `connector_type` other than `CDC` |
 | SaaS | the connector's API, one pipeline | Connection type not a database |
+| Zerobus (`--ingest zerobus`) | the engine's log reader as Debezium uses it: SQL Server CDC without the utility objects; also Db2 ASN, Informix CDC API, CockroachDB changefeed, YugabyteDB logical replication | `--engine` |
 
 The capture step is drawn on the node the connection points at (the secondary, when `--secondary` is the target).
 

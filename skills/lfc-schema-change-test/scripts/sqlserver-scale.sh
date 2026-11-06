@@ -104,7 +104,7 @@ if [ "$REUSED" = 0 ]; then
 src_util
 for i in $(seq 1 "$COPIES"); do echo "$(copy "$i")"; done | paste -sd, - > "$W/schemas.txt"
 SCHEMAS=$(cat "$W/schemas.txt")
-echo "EXEC dbo.lakeflowSetupChangeTracking @Tables = 'SCHEMAS:$SCHEMAS', @User = '$CONN_USER';" | src > "$W/ct.out" 2>&1
+echo "EXEC dbo.lakeflowSetupChangeTracking @Tables = 'SCHEMAS:$SCHEMAS', @User = '$CONN_USER', @CreateDdlSupportingObjects = 1;" | src > "$W/ct.out" 2>&1
 printf "SET NOCOUNT ON; SELECT SCHEMA_NAME(t.schema_id) + '.' + t.name FROM sys.tables t WHERE SCHEMA_NAME(t.schema_id) LIKE '%s[_]%%' AND NOT EXISTS (SELECT 1 FROM sys.key_constraints k WHERE k.parent_object_id = t.object_id AND k.type = 'PK');\n" "$MODEL" | src | tr -d ' ' | grep -v '^$' > "$W/keyless.txt"
 while read -r k; do echo "EXEC dbo.lakeflowSetupChangeDataCapture @Tables = '$k', @User = '$CONN_USER';"; done < "$W/keyless.txt" | src > "$W/cdc.out" 2>&1
 echo "EXEC dbo.lakeflowFixPermissions @User = '$CONN_USER', @Tables = 'SCHEMAS:$SCHEMAS';" | src >/dev/null
@@ -130,7 +130,7 @@ else
   done < "$W/src.tsv"
 fi
 # the extra destination schemas go with the rest at cleanup
-trap 'for d in ${DEST[@]+"${DEST[@]}"}; do dbx schemas delete "$CATALOG.$d" --force 2>/dev/null; done; cleanup' EXIT
+trap 'for d in ${DEST[@]+"${DEST[@]}"}; do EXTRA_SCHEMAS+=" $CATALOG.$d"; done; cleanup' EXIT   # kept and deleted with the run
 dest() {   # dest <schema.table> -> its destination table
   local s=${1%%.*} t=${1#*.}
   if [ "$OBJECTS" = schema ]; then echo "\`$CATALOG\`.${S}_$s.$t"; else echo "$T.${t}_${s##*_}"; fi

@@ -39,7 +39,7 @@ usage: pipeline-diagram.py --pipeline <ingestion pipeline id> [--profile P] [opt
   --producer TEXT --producer-host TEXT     what writes to the topic and where it runs (default: not drawn)
   --probe TEXT                   a reader timing the table, e.g. "freshness probe: SQL warehouse, every 5 s"
   Zerobus instead of Lakeflow Connect (no --pipeline):
-  --ingest zerobus --engine mysql|postgresql|sqlserver|oracle|db2|informix|cockroachdb|mariadb
+  --ingest zerobus --engine mysql|postgresql|sqlserver|oracle|db2|informix|cockroachdb|yugabytedb|mariadb
   --bronze CATALOG.SCHEMA.TABLE[,...]   the table(s) Zerobus appends to   --producer TEXT (default Debezium Server)
   -o FILE                        write there instead of stdout (a .md file gets the Mermaid in a fenced block)
 """
@@ -56,14 +56,15 @@ CLOUD_NAMES = {"aws": "AWS", "azure": "Azure", "gcp": "Google Cloud", "laptop": 
 DB_TYPES = {"SQLSERVER", "ORACLE", "MYSQL", "POSTGRESQL", "MARIADB"}
 
 
-def capture_text(engine, mode, spec_src, connector_type):
-    """How changes leave the source, per engine: (short label, one-line detail)."""
+def capture_text(engine, mode, spec_src, connector_type, lfc=True):
+    """How changes leave the source, per engine: (short label, one-line detail). lfc=False: read by another tool
+    (Debezium), so nothing Lakeflow Connect adds on the source (SQL Server's utility objects)."""
     if connector_type and connector_type.upper() not in ("CDC", ""):
         return ("query-based", "cursor column", "a SELECT per run on a cursor column (updated-at or increasing id); deletes need a separate scan")
     if engine == "SQLSERVER":
-        cdc = ("CDC", "change tables cdc.*_CT", ("SQL Server's capture job copies the transaction log into change tables"
-                                                 " cdc.<capture instance>_CT; the utility objects (ALTER TABLE trigger,"
-                                                 " tracking table, 3 procedures) handle schema changes"))
+        cdc = ("CDC", "change tables cdc.*_CT", "SQL Server's capture job copies the transaction log into change tables"
+                                                " cdc.<capture instance>_CT" + ("; the utility objects (ALTER TABLE trigger,"
+                                                " tracking table, 3 procedures) handle schema changes" if lfc else ""))
         ct = ("change tracking", "CHANGETABLE", "CHANGETABLE(CHANGES ...) joined to the table: the latest version of each changed row")
         if mode == "cdc":
             return cdc
@@ -84,6 +85,9 @@ def capture_text(engine, mode, spec_src, connector_type):
         return ("changefeed", "CHANGEFEED", "a CockroachDB changefeed on the tables")
     if engine == "SAAS":
         return ("API reads", "REST API", "the connector's API calls each update: incremental by a cursor field where the API has one, else a full read")
+    if engine == "YUGABYTEDB":
+        return ("logical replication", "slot / publication", "YugabyteDB's PostgreSQL-compatible logical replication,"
+                                                             " decoded by pgoutput: a replication slot and a publication")
     if engine in ("POSTGRESQL", "POSTGRES"):
         sc = (spec_src or {}).get("postgres", {}).get("slot_config", {})
         slot = sc.get("slot_name", "<slot>"); pub = sc.get("publication_name", "<publication>")
@@ -325,10 +329,11 @@ def zerobus_model(a, host):
     if a.facts is None:
         a.facts = None
     names = {"SQLSERVER": "SQL Server", "POSTGRESQL": "PostgreSQL", "MYSQL": "MySQL", "MARIADB": "MariaDB",
-             "ORACLE": "Oracle", "DB2": "Db2", "INFORMIX": "Informix", "COCKROACHDB": "CockroachDB"}
+             "ORACLE": "Oracle", "DB2": "Db2", "INFORMIX": "Informix", "COCKROACHDB": "CockroachDB",
+             "YUGABYTEDB": "YugabyteDB"}
     return {
         # Debezium reads SQL Server through its CDC change tables, never change tracking
-        "saas": False, "integrated": False, "capture": capture_text(eng, "cdc" if eng == "SQLSERVER" else None, None, None),
+        "saas": False, "integrated": False, "capture": capture_text(eng, "cdc" if eng == "SQLSERVER" else None, None, None, lfc=False),
         "source_cloud": CLOUD_NAMES.get(a.source_cloud or "", a.source_cloud or "source"),
         "source_host": a.source_host or "database host", "engine": names.get(eng, eng.title()),
         "nodes": nodes, "firewall": a.firewall, "workspace_cloud": workspace_cloud(host),

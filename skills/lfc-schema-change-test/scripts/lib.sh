@@ -16,8 +16,10 @@
 #   expect <want> <sql>        query; after an early stop that didn't give <want>, one more update and query again
 #   errs_for <table>, needs_refresh <table>, q <sql>, claim, observe, result_md <title>
 #
-# FP_TABLES (space-separated destination tables) drives the integrated-CDC early stop. The EXIT trap deletes the
-# pipelines, the schemas and the source database (KEEP=1 keeps them).
+# FP_TABLES (space-separated destination tables) drives the integrated-CDC early stop. The EXIT trap stops the
+# pipelines and keeps them, the schemas and the source database for KEEP_DAYS days (default 7), recorded in $LFC_KEPT;
+# kept-sweep.sh deletes them after that, or earlier on request. KEEP_DAYS=0 deletes at exit; KEEP=1 leaves everything
+# as it is (running) and unrecorded.
 export PATH=/opt/homebrew/bin:$PATH
 # SOURCE_JSON=<contract file> (lfc-source-contract): the source comes from it (SRC_SQL, CONN_USER, CONNECTION, ...); the
 # variables it doesn't give stay as they are in the environment. LFC_SOURCE_ENV: where source-env.sh is (parallel.sh sets it)
@@ -32,7 +34,7 @@ ENGINE=${ENGINE:-sqlserver}   # sqlserver | postgres
 MODE=${MODE:-standard}   # standard: gateway + ingestion pipeline; integrated: one pipeline (connector_type CDC)
 case $MODE in standard|integrated) ;; *) echo "MODE must be standard or integrated"; exit 2;; esac
 [ "$MODE" = integrated ] && WAIT=0   # integrated CDC reads the source inside each update
-dbx() { databricks "$@" --profile "$PROFILE"; }
+dbx() { "${DATABRICKS_CLI:-databricks}" "$@" --profile "$PROFILE"; }   # DATABRICKS_CLI: another CLI (a test stub)
 RESULTS=(); FAILED=0
 claim() { RESULTS+=("| \`$1\` | $2 | $3 |"); [ "$2" = PASS ] || FAILED=1; echo "$2 $1: $3"; }
 observe() { RESULTS+=("| \`$1\` | OBSERVED | $2 |"); echo "OBSERVED $1: $2"; }   # no expected answer yet
@@ -115,12 +117,15 @@ src_util() {
 # which looks like a product result. One call per table made ~3 SSH calls a table and lost one of 200 (2026-10-23).
 track() {
   local kind=$1 n left proc=lakeflowSetupChangeDataCapture tv="(SELECT object_id FROM sys.tables WHERE is_tracked_by_cdc = 1)"; shift
-  [ "$kind" = ct ] && { proc=lakeflowSetupChangeTracking; tv="(SELECT object_id FROM sys.change_tracking_tables)"; }
+  local ddl=""
+  [ "$kind" = ct ] && { proc=lakeflowSetupChangeTracking; tv="(SELECT object_id FROM sys.change_tracking_tables)"; ddl=", @CreateDdlSupportingObjects = 1"; }
   untracked() { printf "SET NOCOUNT ON; SELECT STRING_AGG(n, ' ') FROM (VALUES %s) v(n) WHERE OBJECT_ID('lfcddemo.' + n) IS NULL OR OBJECT_ID('lfcddemo.' + n) NOT IN %s;\n" \
     "$(printf "('%s')," "$@" | sed 's/,$//')" "$tv" | src | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//; s/^NULL$//'; }
   left="$*"
   for n in 1 2 3; do
-    echo "EXEC dbo.$proc @Tables = '$(printf 'lfcddemo.%s,' $left | sed 's/,$//')', @User = '$CONN_USER';" | src > "$W/track.out" 2>&1
+    # change tracking: utility objects 1.7 create the DDL audit table and trigger only on request, and the pipelines
+    # still need them (INGESTION_GATEWAY_DDL_OBJECTS_MISSING without them, dlt 18.3.10)
+    echo "EXEC dbo.$proc @Tables = '$(printf 'lfcddemo.%s,' $left | sed 's/,$//')', @User = '$CONN_USER'${ddl:-};" | src > "$W/track.out" 2>&1
     left=$(untracked "$@"); [ -z "$left" ] && break
     echo "track $kind: not tracked after try $n: $left ($(grep -i -m1 -E 'error|msg [0-9]' "$W/track.out" | cut -c1-160))" >&2; sleep 10
   done
@@ -318,17 +323,86 @@ settle_rows() {
 # variable src_db sets: a script that pipes into src_db (`... | src_db`) runs it in a subshell, and the variable was lost,
 # so cleanup left those databases behind while reporting none left.
 src_owned() { [[ "${DB:-}" == *"_${E:-none}" ]] && echo 1 || echo 0; }
+LFC_KEPT=${LFC_KEPT:-$HOME/.local/state/lfc-tests/kept.jsonl}
+KEEP_DAYS=${KEEP_DAYS:-7}
+# A script's own resources besides AP, GW, S and STG (space-separated): kept and deleted with the run.
+#   EXTRA_PIPELINES="<id> ..."  EXTRA_SCHEMAS="<catalog>.<schema> ..."  EXTRA_SQL="<SQL run in $DB when the run is deleted>"
+EXTRA_PIPELINES=${EXTRA_PIPELINES:-}; EXTRA_SCHEMAS=${EXTRA_SCHEMAS:-}; EXTRA_SQL=${EXTRA_SQL:-}
 cleanup() {
   [ "${KEEP:-0}" = 1 ] && { echo "KEEP=1: left $DB, $GWN, $APN, $CATALOG.$S"; return; }
-  [ -n "${AP:-}" ] && [ "$AP" != null ] && dbx pipelines delete "$AP"; [ -n "${GW:-}" ] && [ "$GW" != null ] && dbx pipelines delete "$GW"; sleep 15
+  if [ "$KEEP_DAYS" != 0 ]; then keep_run; rm -rf "${W:?}"; return; fi
+  delete_run
+  rm -rf "${W:?}"
+}
+# kept_lock / kept_unlock: one writer of $LFC_KEPT at a time (keep_run's append, kept-sweep.sh's rewrite); a mkdir lock,
+# as flock isn't on macOS. A lock older than 10 minutes is taken over (a writer that died).
+kept_lock() {
+  local n=0; mkdir -p "$(dirname "$LFC_KEPT")"
+  until mkdir "$LFC_KEPT.lock" 2>/dev/null; do
+    n=$((n + 1)); [ $n -ge 600 ] && { rm -rf "${LFC_KEPT:?}.lock"; n=0; }; sleep 1
+  done
+}
+kept_unlock() { rm -rf "${LFC_KEPT:?}.lock"; }
+# drop_slot: (PostgreSQL) drop the run's replication slot; retried while a stopped or deleted pipeline's session lingers
+drop_slot() {
+  local n
+  for _ in 1 2 3; do
+    echo "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '$SLOT' AND NOT active;" | $SRC_SQL postgres > "$W/slot.out" 2>&1
+    n=$(echo "SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name = '$SLOT';" | $SRC_SQL postgres)
+    [ "${n//[[:space:]]/}" = 0 ] && return 0; sleep "${LFC_RETRY_SLEEP:-30}"
+  done
+  return 1
+}
+# keep_run: stop the pipelines (a continuous gateway too) and record the run in $LFC_KEPT with a delete-after date.
+# A stopped pipeline costs nothing. PostgreSQL: the slot is dropped now, so no WAL is held for the week; the kept
+# tables stay readable, the pipeline can't resume from its position (a full refresh would).
+keep_run() {
+  local p after host stopped=true slot_dropped=""
+  for p in ${AP:-} ${GW:-} $EXTRA_PIPELINES; do
+    [ -n "$p" ] && [ "$p" != null ] || continue
+    dbx pipelines stop "$p" >/dev/null 2>&1 || { stopped=false; echo "WARNING: could not stop pipeline $p: it may still be running" >&2; }
+  done
+  if [ "$ENGINE" = postgres ] && [ -n "${SLOT:-}" ]; then
+    if drop_slot; then slot_dropped=true; else slot_dropped=false; echo "WARNING: replication slot $SLOT not dropped: it holds WAL until it is" >&2; fi
+  fi
+  after=$(jq -rn --argjson d "$KEEP_DAYS" 'now + $d * 86400 | strftime("%Y-%m-%d")')
+  host=$(dbx auth describe -o json 2>/dev/null | jq -r '.details.host // ""')
+  kept_lock
+  jq -nc --arg id "${S:-}" --arg after "$after" --arg host "$host" --arg profile "$PROFILE" --arg ap "${AP:-}" --arg gw "${GW:-}" \
+    --arg catalog "$CATALOG" --arg s "${S:-}" --arg stg "${STG:-}" --arg engine "$ENGINE" --arg db "$([ "$(src_owned)" = 1 ] && echo "$DB")" \
+    --arg src_db "$DB" --arg slot "${SLOT:-}" --arg conn "$CONNECTION" --arg conn_user "$CONN_USER" --arg src_sql "$SRC_SQL" \
+    --arg source_json "${SOURCE_JSON:-}" --arg kept "$(date -u +%FT%TZ)" --argjson stopped "$stopped" --arg slot_dropped "$slot_dropped" \
+    --arg keep_source "${KEEP_SOURCE:-0}" --arg xp "$EXTRA_PIPELINES" --arg xs "$EXTRA_SCHEMAS" --arg xsql "$EXTRA_SQL" \
+    '{id: $id, kept: $kept, delete_after: $after, host: $host, profile: $profile, catalog: $catalog, schema: $s, staging: $stg,
+      pipelines: ([$ap, $gw] | map(select(. != "" and . != "null"))), stopped: $stopped, engine: $engine, db: $db,
+      src_db: $src_db, slot: $slot, slot_dropped: $slot_dropped, connection: $conn, conn_user: $conn_user, src_sql: $src_sql,
+      source_json: $source_json, keep_source: $keep_source, extra_pipelines: ($xp | split(" ") | map(select(. != ""))),
+      extra_schemas: ($xs | split(" ") | map(select(. != ""))), extra_sql: $xsql}' >> "$LFC_KEPT"
+  kept_unlock
+  echo "kept until $after ($([ "$stopped" = true ] && echo stopped || echo "STOP FAILED")$([ "$slot_dropped" = true ] && echo ", slot dropped"); delete earlier: kept-sweep.sh --now $S): ${host:+$host/pipelines/}${AP:-} ${GW:+gateway $GW,} schemas $CATALOG.$S${STG:+ and $STG}${EXTRA_SCHEMAS:+ $EXTRA_SCHEMAS}${DB:+, source database $DB}"
+}
+# delete_run: delete the pipelines, the schemas and (when this run made it) the source database; then EXTRA_*.
+# kept-sweep.sh calls it with the variables of a kept run.
+delete_run() {
+  [ -n "${AP:-}" ] && [ "$AP" != null ] && dbx pipelines delete "$AP"; [ -n "${GW:-}" ] && [ "$GW" != null ] && dbx pipelines delete "$GW"; sleep "${LFC_DELETE_WAIT:-15}"
+  for p in $EXTRA_PIPELINES; do dbx pipelines delete "$p"; done
   dbx schemas delete "$CATALOG.$S" --force 2>/dev/null; dbx schemas delete "$CATALOG.$STG" --force 2>/dev/null
+  for x in $EXTRA_SCHEMAS; do dbx schemas delete "$x" --force 2>/dev/null; done
+  # shellcheck disable=SC2034  # EXTRA_LEFT: read by kept-sweep.sh
+  EXTRA_LEFT=0
+  # shellcheck disable=SC2034
+  [ -n "$EXTRA_SQL" ] && [ "$(src_owned)" != 1 ] && { echo "$EXTRA_SQL" | src >/dev/null || { EXTRA_LEFT=1; echo "EXTRA_SQL failed in $DB"; }; }
+  # shellcheck disable=SC2034  # SLOT_LEFT: read by kept-sweep.sh
+  SLOT_LEFT=0   # PostgreSQL, a source database the run didn't create: its slot (dropping the database drops an owned one)
+  # shellcheck disable=SC2034
+  if [ "$ENGINE" = postgres ] && [ -n "${SLOT:-}" ] && [ "$(src_owned)" != 1 ]; then drop_slot || { SLOT_LEFT=1; echo "replication slot $SLOT not dropped"; }; fi
   local left=0
   if [ "$(src_owned)" = 1 ] && [ "$ENGINE" = postgres ]; then
     for _ in 1 2 3; do   # the slot is held while the deleted gateway's session lingers
       printf "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '%s' AND NOT active;\nDROP DATABASE IF EXISTS %s WITH (FORCE);\n" "$SLOT" "$DB" \
         | $SRC_SQL postgres > "$W/drop.out" 2>&1
       left=$(printf "SELECT (SELECT COUNT(*) FROM pg_database WHERE datname = '%s') + (SELECT COUNT(*) FROM pg_replication_slots WHERE slot_name = '%s');\n" "$DB" "$SLOT" | $SRC_SQL postgres)
-      [ "${left//[[:space:]]/}" = 0 ] && break; sleep 30
+      [ "${left//[[:space:]]/}" = 0 ] && break; sleep "${LFC_RETRY_SLEEP:-30}"
     done
     [ "${left//[[:space:]]/}" = 0 ] || { echo "source database $DB or slot $SLOT not dropped:"; tail -3 "$W/drop.out"; }
   elif [ "$(src_owned)" = 1 ] && [ "${KEEP_SOURCE:-0}" = 1 ]; then
@@ -340,13 +414,14 @@ cleanup() {
       printf "IF DB_ID(N'%s') IS NOT NULL BEGIN ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]; END\n" \
         "$DB" "$DB" "$DB" | $SRC_SQL master >> "$W/drop.out" 2>&1
       left=$(printf "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = '%s';\n" "$DB" | $SRC_SQL master)
-      [ "${left//[[:space:]]/}" = 0 ] && break; sleep 30
+      [ "${left//[[:space:]]/}" = 0 ] && break; sleep "${LFC_RETRY_SLEEP:-30}"
     done
     [ "${left//[[:space:]]/}" = 0 ] || { echo "source database $DB not dropped:"; tail -3 "$W/drop.out"; }
   fi
+  # shellcheck disable=SC2034  # read by kept-sweep.sh
+  DB_LEFT=${left//[[:space:]]/}   # 0 when the source database is gone (kept-sweep.sh checks it)
   if [ "${KEEP_SOURCE:-0}" = 1 ]; then echo "cleanup: pipelines and schemas deleted; source database $DB kept"
   else echo "cleanup: pipelines and schemas deleted; source database left: ${left//[[:space:]]/}"; fi
-  rm -rf "${W:?}"
 }
 
 # metric <name> <number>: a number this run measured (seconds, rows, tables, ...). record_run saves them with the run's
