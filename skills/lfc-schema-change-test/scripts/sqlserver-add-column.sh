@@ -47,7 +47,7 @@ echo "run $E: source database $DB, catalog $CATALOG, schemas $S and $STG"
 
 # sql "<statement>": run on the warehouse, print rows tab-separated
 sql() {
-  yq -n -o json '.warehouse_id = strenv(WAREHOUSE) | .wait_timeout = "50s" | .statement = strenv(Q)' > "$W/st.json"
+  yq -n -o json '.warehouse_id = strenv(WAREHOUSE) | .wait_timeout = "50s" | .format = "JSON_ARRAY" | .disposition = "INLINE" | .statement = strenv(Q)' > "$W/st.json"
   dbx api post /api/2.0/sql/statements --json @"$W/st.json" > "$W/st.out"
   [ "$(yq '.status.state' "$W/st.out")" = SUCCEEDED ] || { yq '.status.state + ": " + (.status.error.message // "")' "$W/st.out" | cut -c1-300 >&2; return 1; }
   yq -r '.result.data_array[] | @tsv' "$W/st.out"
