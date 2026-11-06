@@ -30,21 +30,22 @@ pipelines_create "$OBJS"
 count() { q "SELECT COUNT(*) FROM $T.$1" 2>&1; }
 cval() { q "SELECT COALESCE(CAST(SUM(CASE WHEN c = 7 THEN 1 ELSE 0 END) AS STRING), 'no c') FROM $T.$1" 2>&1; }   # rows with c = 7
 cols() { q "SELECT CONCAT_WS(',', COLLECT_LIST(column_name)) FROM \`$CATALOG\`.information_schema.columns WHERE table_schema = '$S' AND table_name = '$1'" 2>&1; }
-# up to 4 updates until each table has <want rows> or an error
+# up to 4 updates until each table has <want> rows or an error that needs a full refresh (hand-off errors such as
+# FLOW_SCHEMA_CHANGED clear on a later update)
 wait_rows() {   # wait_rows <want> <table...>
   local want=$1 n t; shift
   for _ in 1 2 3 4; do
     sleep "$WAIT"; update
-    n=0; for t in "$@"; do { [ -n "$(errs_for $t)" ] || [ "$(count $t)" = "$want" ]; } && n=$((n + 1)); done
+    n=0; for t in "$@"; do { needs_refresh $t || [ "$(count $t)" = "$want" ]; } && n=$((n + 1)); done
     [ $n -eq $# ] && return 0
   done
 }
-# up to 4 updates until each table has <want> rows with c = 7, or an error
+# up to 4 updates until each table has <want> rows with c = 7, or an error that needs a full refresh
 wait_c() {   # wait_c <want> <table...>
   local want=$1 n t; shift
   for _ in 1 2 3 4; do
     sleep "$WAIT"; update
-    n=0; for t in "$@"; do { [ -n "$(errs_for $t)" ] || [ "$(cval $t)" = "$want" ]; } && n=$((n + 1)); done
+    n=0; for t in "$@"; do { needs_refresh $t || [ "$(cval $t)" = "$want" ]; } && n=$((n + 1)); done
     [ $n -eq $# ] && return 0
   done
 }
@@ -69,8 +70,8 @@ for m in $MODES; do
   if [[ "$e" == *ADD_COLUMN_WITH_BACKFILL* ]]; then claim "direct-$m-needs-refresh" PASS "ADD c NOT NULL DEFAULT 7: ${e% }"
   else observe "direct-$m-needs-refresh" "errors: ${e:-none}; rows $(count direct_$m); columns $(cols direct_$m)"; fi
   e=$(errs_for staged_$m)
-  [ -z "${e// /}" ] && [ "$(count staged_$m)" = 11 ] && [[ ",$(cols staged_$m)," == *,c,* ]] \
-    && claim "staged-$m-1-add-nullable" PASS "no error; 11 rows; c in the destination; rows with c = 7: $(cval staged_$m)" \
+  ! needs_refresh staged_$m && [ "$(count staged_$m)" = 11 ] && [[ ",$(cols staged_$m)," == *,c,* ]] \
+    && claim "staged-$m-1-add-nullable" PASS "no refresh needed; 11 rows; c in the destination; rows with c = 7: $(cval staged_$m)" \
     || claim "staged-$m-1-add-nullable" FAIL "errors: ${e:-none} $(msgs_for staged_$m | head -1); rows $(count staged_$m); columns $(cols staged_$m)"
 done
 
@@ -84,8 +85,8 @@ done
 wait_c 11 staged_cdc staged_ct
 for m in $MODES; do
   e=$(errs_for staged_$m)
-  [ -z "${e// /}" ] && [ "$(cval staged_$m)" = 11 ] \
-    && claim "staged-$m-2-backfill-by-update" PASS "no error; all 11 rows have c = 7" \
+  ! needs_refresh staged_$m && [ "$(cval staged_$m)" = 11 ] \
+    && claim "staged-$m-2-backfill-by-update" PASS "no refresh needed; all 11 rows have c = 7" \
     || claim "staged-$m-2-backfill-by-update" FAIL "errors: ${e:-none} $(msgs_for staged_$m | head -1); rows with c = 7: $(cval staged_$m) of $(count staged_$m)"
 done
 
@@ -100,8 +101,8 @@ done
 wait_rows 12 staged_cdc staged_ct
 for m in $MODES; do
   e=$(errs_for staged_$m)
-  [ -z "${e// /}" ] && [ "$(count staged_$m)" = 12 ] && [ "$(cval staged_$m)" = 12 ] \
-    && claim "staged-$m-3-default-later" PASS "no error; 12 rows, all with c = 7 (the new row from the default)" \
+  ! needs_refresh staged_$m && [ "$(count staged_$m)" = 12 ] && [ "$(cval staged_$m)" = 12 ] \
+    && claim "staged-$m-3-default-later" PASS "no refresh needed; 12 rows, all with c = 7 (the new row from the default)" \
     || claim "staged-$m-3-default-later" FAIL "errors: ${e:-none} $(msgs_for staged_$m | head -1); rows $(count staged_$m); with c = 7: $(cval staged_$m)"
 done
 
