@@ -75,7 +75,8 @@ lfc_init() {
 
 # sql "<statement>": run on the warehouse, print rows tab-separated
 sql() {
-  yq -n -o json '.warehouse_id = strenv(WAREHOUSE) | .wait_timeout = "50s" | .statement = strenv(Q)' > "$W/st.json"
+  # JSON_ARRAY + INLINE: without them some warehouses answer with an Arrow attachment and no data_array
+  yq -n -o json '.warehouse_id = strenv(WAREHOUSE) | .wait_timeout = "50s" | .format = "JSON_ARRAY" | .disposition = "INLINE" | .statement = strenv(Q)' > "$W/st.json"
   dbx api post /api/2.0/sql/statements --json @"$W/st.json" > "$W/st.out"
   # a statement still running after the 50 s wait (a count over hundreds of tables): poll it, up to 15 minutes
   local id st n=0; st=$(yq '.status.state' "$W/st.out"); id=$(yq '.statement_id' "$W/st.out")
@@ -140,11 +141,13 @@ fill() {
 # --- pipelines ------------------------------------------------------------------------------------------------------
 obj() { echo "{\"table\":{\"source_catalog\":\"$DB\",\"source_schema\":\"lfcddemo\",\"source_table\":\"$1\",\"destination_catalog\":\"$CATALOG\",\"destination_schema\":\"$S\",\"table_configuration\":{\"scd_type\":\"${SCD:-SCD_TYPE_1}\"${2:+,$2}}}}"; }
 AFR='"auto_full_refresh_policy":{"enabled":true,"min_interval_hours":1}'
-# gateway_create: a serverless continuous gateway with its own staging schema $STG. Sets GW
+# gateway_create: a continuous gateway with its own staging schema $STG, serverless (GATEWAY_COMPUTE=classic: a classic
+# cluster with the default node type; dogfood-azure's serverless gateway failed with DeploymentException on 2026-11-06). Sets GW
 gateway_create() {
-  local pc=${PIPELINE_CONF:-'{}'}
+  local pc=${PIPELINE_CONF:-'{}'} compute='"serverless":true'
+  [ "${GATEWAY_COMPUTE:-serverless}" = classic ] && compute='"clusters":[{"label":"default"}]'
   dbx schemas create "$STG" "$CATALOG" >/dev/null 2>&1
-  GW=$(dbx pipelines create -o json --json "{\"name\":\"$GWN\",\"catalog\":\"$CATALOG\",\"schema\":\"$STG\",\"serverless\":true,\"continuous\":true,\"configuration\":$pc,
+  GW=$(dbx pipelines create -o json --json "{\"name\":\"$GWN\",\"catalog\":\"$CATALOG\",\"schema\":\"$STG\",$compute,\"continuous\":true,\"configuration\":$pc,
     \"gateway_definition\":{\"connection_name\":\"$CONNECTION\",\"gateway_storage_catalog\":\"$CATALOG\",\"gateway_storage_schema\":\"$STG\",\"gateway_storage_name\":\"$GWN\"}}" | yq '.pipeline_id')
   [ -n "$GW" ] && [ "$GW" != null ] || { echo "gateway create failed"; exit 2; }
 }
@@ -485,7 +488,7 @@ result_md() {
     echo "# $1 run $E"
     echo
     echo "- Date (UTC): $(date -u +%F)"
-    [ "$MODE" = standard ] && echo "- Mode: standard CDC, serverless gateway and ingestion pipeline" || echo "- Mode: integrated CDC, one serverless pipeline"
+    [ "$MODE" = standard ] && echo "- Mode: standard CDC, ${GATEWAY_COMPUTE:-serverless} gateway, serverless ingestion pipeline" || echo "- Mode: integrated CDC, one serverless pipeline"
     echo "$runtime"
     [ -n "${SRC_ENV:-}" ] && $SRC_ENV | sed 's/^/- /'
     [ -n "${SHAPE_TABLES:-}" ] && echo "- Test schema: $SHAPE_TABLES tables, $SHAPE_COLUMNS columns in all"

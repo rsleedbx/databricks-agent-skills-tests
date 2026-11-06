@@ -20,7 +20,7 @@ fi
 PREFIX=${PREFIX:-$(dbx current-user me -o json | yq '.userName' | cut -d@ -f1 | tr -d '.-' | tr 'A-Z' 'a-z')}
 E=$(date +%s); DB=${PREFIX}_scd2ct_$E; S=${PREFIX}_scd2ct_$E; W=$(mktemp -d); T="\`$CATALOG\`.$S"
 WAREHOUSE=$(dbx warehouses list -o json | yq '[.[] | select(.enable_serverless_compute)][0].id'); export WAREHOUSE
-q() { export Q=$1; yq -n -o json '.warehouse_id = strenv(WAREHOUSE) | .wait_timeout = "50s" | .statement = strenv(Q)' > "$W/st.json"
+q() { export Q=$1; yq -n -o json '.warehouse_id = strenv(WAREHOUSE) | .wait_timeout = "50s" | .format = "JSON_ARRAY" | .disposition = "INLINE" | .statement = strenv(Q)' > "$W/st.json"
   dbx api post /api/2.0/sql/statements --json @"$W/st.json" -o json > "$W/st.out"; yq -r '.result.data_array[] | @tsv' "$W/st.out" 2>/dev/null || yq '.status.error.message' "$W/st.out"; }
 TABLES="s1ct s2ct s2cdc"
 cleanup() {
