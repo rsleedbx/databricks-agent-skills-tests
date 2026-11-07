@@ -1,6 +1,6 @@
 ---
 name: public-skill-conventions
-description: "Write or change a skill in the public Databricks agent skills repo so it follows what the other skills there do: frontmatter, file names, section names, error tables, links, release stages, wording, the generated bundle, version and sign-off. Use before committing a change to a public skill, and when a reviewer asks why a skill looks different from the others."
+description: "Write or change a skill in the public Databricks agent skills repo so it follows what the other skills there do: docs first, frontmatter, file names, section names, error tables, links, release stages, wording, the generated bundle, version and sign-off, and small focused PRs. Use before writing or committing a change to a public skill, before opening its PR, and when a reviewer asks why a skill looks different from the others."
 ---
 
 # Conventions of the public Databricks skills
@@ -12,6 +12,13 @@ python3 .claude/skills/public-skill-conventions/scripts/conventions-check.py <sk
 ```
 
 It compares the skill with every other skill in that checkout, and with its own SKILL.md section names and table headers at `--base`. `FAIL` lines break a rule below; `WARN` lines are a section name or an error table header no other skill uses (keep one only if the skill needs it), an unlinked reference file, a pipeline `target:`, generated `agents/openai.yaml` text, or a script with no offline test.
+
+## Before writing
+
+- **Docs first.** Read the feature's docs pages before anything else, and link them. The skill adds only what the pages don't say and what an eval case shows an agent gets wrong without the line. A finding from your own tests goes in only after that check; when the docs page is wrong or silent, the fix is usually a docs feedback item, not skill text.
+- **The docs are the authority both ways.** Don't claim more than a page says (a setting or source no page names), and don't deny more either ("not supported, don't even try it" when the docs are only silent): say no docs page covers it and point to the documented route.
+- **Small, and no external dependencies.** No other systems' setup (cloud vault roles and tenants, cloud networking, managed-database parameters, other tools), and no fetching or scraping pages around the fetch tool: point to the docs page or the **databricks-docs** skill. What a docs page or `databricks bundle schema` already holds stays there; grow a skill by a row in a table of page links, not a section per combination.
+- **Follow the prior example.** Before adding a file, an eval case or a PR, open the closest existing one (the example a reviewer cites first) and match where it lives, its fields, the PR template's sections and the evidence it shows. Where yours can't match, say why in the PR.
 
 ## Frontmatter and files
 
@@ -44,3 +51,11 @@ It compares the skill with every other skill in that checkout, and with its own 
 
 - One signed-off commit per batch of changes (`git commit -s`, the repo's DCO check), with a message that says what an agent gets.
 - Rebase the branch onto the upstream default branch before a review, so the compare shows only this change; check the skill folder is the same before and after.
+
+## Pull requests
+
+- **Small and focused:** one skill and one change per PR. Don't stack PRs or make one depend on another; when a change needs another skill's change first, land that one first. Every open PR and its dependencies is something a reviewer has to keep track of.
+- **Keep it current:** rebase onto the default branch before each push. A PR that falls far behind needs a large catch-up that reviewers then re-read.
+- **Only what was asked:** in a review round, change the lines the comments name. A cleanup or a restructure elsewhere is its own PR, or is said up front in the reply.
+- **Evidence:** eval results per case in three columns (no skills, the default branch's skills, this PR), and the size of each changed skill at the default branch, the head last reviewed and this PR.
+- **Check with a small run:** a change no eval case's prompt or rubric touches needs no run (say so in the PR); otherwise run only the cases it touches.
