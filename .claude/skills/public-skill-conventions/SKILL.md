@@ -46,6 +46,7 @@ It compares the skill with every other skill in that checkout, and with its own 
 - **When content moves** (files merged, deleted, a skill split): `python3 .claude/skills/public-skill-conventions/scripts/moved-lines.py <skills-repo>/skills <skill> --base upstream/main --links` lists the options, states, roles, limits and docs URLs the skill had at the base that no skill has now, and the other skills' lines naming it. Carry each term over or say in the PR why it's dropped; point each link to the skill that owns its topic now. `--lines` adds every line with no close match (long after a rewrite).
 - **Links:** Databricks hosts only. Docs links cloud-neutral, `https://docs.databricks.com/<path>` (it redirects to the reader's cloud), not `/aws/en/`, `/azure/` or `learn.microsoft.com/azure/databricks`. Relative links between the skill's files.
 - **Nothing outside the repo:** no test repos, tickets, chat channels, internal tools, or account and resource names, in the skill or in the repo's `CLAUDE.md` and README. Placeholders (`<PROFILE>`, `<catalog>`) for anything the user picks.
+- **No tool assumed beyond the Databricks CLI:** to read a value, name the field and the command whose JSON holds it (`update.config.serverless` in `databricks pipelines get-update <id> <update-id> -o json`), not a `| jq` or `| grep` pipeline; the agent picks how to read it.
 - **Profiles:** `--profile <PROFILE>` on CLI examples; never pick one for the user (the parent skill says how to choose).
 
 ## Committing
