@@ -93,5 +93,6 @@ layers:
       - scripts_index.py
       - test_check_layers.py
       - test_lint_bash32.py
+      - test_coverage_page.py
       - test_results_dir.py
       - test_scripts.sh

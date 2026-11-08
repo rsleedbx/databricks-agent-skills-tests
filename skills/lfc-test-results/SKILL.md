@@ -26,6 +26,7 @@ uv run $S/recall.py --engine oracle                   # everything about one eng
 uv run $S/recall.py --test icdc,scdc --outcome blocked,fail --all
 uv run $S/recall.py --grep "not supported in your workspace"
 uv run $S/recall.py --coverage                        # test x engine grid of the newest outcomes
+uv run $S/coverage_page.py --write docs/lakeflow-connect-database.md   # after adding records: regenerate the by-database table
 uv run $S/recall.py --combos --test zerobus           # per route and topology: engine x model grid of the newest outcomes
 uv run $S/recall.py --workspace classic --storage juicefs --all
 ```
