@@ -1,6 +1,6 @@
 ---
 name: skill-token-budget
-description: "Write or change a skill (SKILL.md, its scripts and references) so an agent loads as few tokens as the task needs: SKILL.md under 5,000 tokens, detail in references/ read only at the step that needs it, scripts run from their usage line instead of read, short output. Use when creating a skill, adding to one, splitting one that bin/lint_scripts.py reports too large, or adding a script."
+description: "Write or change a skill (SKILL.md, its scripts and references) so an agent loads as few tokens as the task needs: SKILL.md under 5,000 tokens, detail in references/ read only at the step that needs it, scripts run from their usage line instead of read, short output. Use when creating a skill, adding to one, splitting one that bin/lint_scripts.py reports too large, or adding a script. Every line must be one the agent needs."
 ---
 
 # Writing skills for a small token budget
@@ -32,6 +32,32 @@ Tokens are about characters / 4. A script an agent reads instead of runs costs i
 **Output stays short:** a script prints counts, pass/fail and the links to what it created, and writes the details to a file it names. Make the summary the default or a `--summary` flag. Tool output fills context as fast as SKILL.md does.
 
 **Small rules that save tokens and errors:** one JSON value is `jq -r '.path'`, several are `yq -p json -o shell` + `eval` ([shell-json-scripting](../../../skills/shell-json-scripting/SKILL.md)); `rm -r` on a variable is `"${VAR:?}/..."`; a flag a script reads only as `$1` is passed first.
+
+## Write it condensed
+
+Do this while writing and on every change, not after a reviewer asks. The reader is an agent that runs the text, so test every line in SKILL.md, references/, scripts/, assets/ and the skill's eval cases: **would the agent get the task wrong without it?** If not, cut it.
+
+| Cut | Keep instead |
+|---|---|
+| General knowledge: SQL, Spark, Postgres, cloud or networking explainers; what CDC, SCD2, MERGE or OAuth is; generic security hygiene; diagrams; positioning; billing; "contact support" | nothing |
+| Restated docs the skill already sends the agent to: table and option lists, release-stage boilerplate, per-connector summaries | the pointer, plus the one trap the page doesn't make obvious |
+| Anything a sibling skill owns (CLI basics, pipelines, bundles, jobs, UC grants and connections); grep the sibling first | a one-line pointer to the sibling |
+| The same rule, row or error cause in two places | one owner; a link, or nothing, elsewhere |
+| Mirrors of upstream data (scraped catalogs, docs indexes, copied limits tables) the agent can derive from a URL pattern or `llms.txt` | only the fields that aren't on the page |
+| Invented conventions stated as rules (names, defaults) | only what the docs or a real constraint backs |
+| Reference files under ~30 lines; indexes of indexes | merged into the parent |
+
+- **Keep, tersely:** exact syntax, flag names, JSON shapes, version and runtime gates, limits, preview toggles, error classes with cause and fix, the gotchas that make the obvious approach fail, decision gates and routing, and one minimal example per pattern (not one per variant).
+- **Behavior that works but the docs don't support:** label it undocumented, make the documented route the default, and keep the other as the fallback.
+- **Style:** bullets over prose, one fact per line, no restated heading, no "Note that".
+
+Before each commit, check:
+1. Every relative link and anchor resolves. Nothing in the repo links into a removed file or heading: grep `skills/`, `experimental/`, `metaplugin/`, `hooks/` and `internal/skill-source-map.yml`, and run public-skill-conventions' `moved-lines.py --links`.
+2. `python3 scripts/skills.py validate` passes. If the description or routing changed, so do the router tests.
+3. Eval cases that cite removed content are updated.
+4. The skill's evals run before and after the change. A case that regresses gets its judge's reason read first. If the rubric requires the route the cut made the fallback, fix the rubric. Otherwise add back only the line that fixes the case, and say which line in the PR.
+
+The PR text (or the reply to a review) reports: bytes per file before and after; a table of the cuts (file:line range, reason, where the kept fact lives now); the evals before and after; the lines added back; and any facts that look wrong.
 
 ## Check
 
