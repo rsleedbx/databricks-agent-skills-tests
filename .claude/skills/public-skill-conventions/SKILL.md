@@ -1,6 +1,6 @@
 ---
 name: public-skill-conventions
-description: "Write or change a skill in the public Databricks agent skills repo so it follows what the other skills there do: frontmatter, file names, section names, error tables, links, release stages, wording, the generated bundle, version and sign-off. Use before committing a change to a public skill, and when a reviewer asks why a skill looks different from the others."
+description: "Write or change a skill in the public Databricks agent skills repo so it follows what the other skills there do: docs first, frontmatter, file names, section names, error tables, links, release stages, wording, the generated bundle, version and sign-off, and small focused PRs. Use before writing or committing a change to a public skill, before opening its PR, and when a reviewer asks why a skill looks different from the others."
 ---
 
 # Conventions of the public Databricks skills
@@ -12,6 +12,14 @@ python3 .claude/skills/public-skill-conventions/scripts/conventions-check.py <sk
 ```
 
 It compares the skill with every other skill in that checkout, and with its own SKILL.md section names and table headers at `--base`. `FAIL` lines break a rule below; `WARN` lines are a section name or an error table header no other skill uses (keep one only if the skill needs it), an unlinked reference file, a pipeline `target:`, generated `agents/openai.yaml` text, or a script with no offline test.
+
+## Before writing
+
+- **Docs first.** Read the feature's docs pages before anything else, and link them. The skill adds only what the pages don't say and what an eval case shows an agent gets wrong without the line. A finding from your own tests goes in only after that check; when the docs page is wrong or silent, the fix is usually a docs feedback item, not skill text.
+- **The docs are the authority both ways.** Don't claim more than a page says (a setting or source no page names), and don't deny more either ("not supported, don't even try it" when the docs are only silent). Where a page is silent, give the agent the documented route as the action and a way to check the result (validate the bundle, test the connection with a read), the way the other skills do; don't write notes about what the docs lack ("the docs don't say", "assume it doesn't"). The docs change, so don't record what they lack either: leave a missing combination as "-" and have the agent look for its page (the page-name pattern) before building, following it if it exists.
+- **How to find out, not what it is today.** Product behavior changes between releases, and a skill that states today's answer (which mode a source has, which capture wins when both are on, a release stage, a default, which fix an error needs) is then wrong with full confidence. Write the question, where the current answer is (the page and section, `databricks bundle schema`, `bundle validate`, a CLI's `-h`, the event log, a query on the source), and a check the agent runs on the result. A trap the docs don't state becomes a check the agent always runs ("confirm the declared key is unique before creating"), with no claim about whether the product checks it ("create doesn't check" is today's behavior too): if the product starts checking, the agent's check is only redundant.
+- **Small, and no external dependencies.** No other systems' setup (cloud vault roles and tenants, cloud networking, managed-database parameters, other tools), and no fetching or scraping pages around the fetch tool: point to the docs page or the **databricks-docs** skill. What a docs page or `databricks bundle schema` already holds stays there; grow a skill by a row in a table of page links, not a section per combination.
+- **Follow the prior example.** Before adding a file, an eval case or a PR, open the closest existing one (the example a reviewer cites first) and match where it lives, its fields, the PR template's sections and the evidence it shows. Where yours can't match, say why in the PR.
 
 ## Frontmatter and files
 
@@ -38,9 +46,18 @@ It compares the skill with every other skill in that checkout, and with its own 
 - **When content moves** (files merged, deleted, a skill split): `python3 .claude/skills/public-skill-conventions/scripts/moved-lines.py <skills-repo>/skills <skill> --base upstream/main --links` lists the options, states, roles, limits and docs URLs the skill had at the base that no skill has now, and the other skills' lines naming it. Carry each term over or say in the PR why it's dropped; point each link to the skill that owns its topic now. `--lines` adds every line with no close match (long after a rewrite).
 - **Links:** Databricks hosts only. Docs links cloud-neutral, `https://docs.databricks.com/<path>` (it redirects to the reader's cloud), not `/aws/en/`, `/azure/` or `learn.microsoft.com/azure/databricks`. Relative links between the skill's files.
 - **Nothing outside the repo:** no test repos, tickets, chat channels, internal tools, or account and resource names, in the skill or in the repo's `CLAUDE.md` and README. Placeholders (`<PROFILE>`, `<catalog>`) for anything the user picks.
+- **No tool assumed beyond the Databricks CLI:** to read a value, name the field and the command whose JSON holds it (`update.config.serverless` in `databricks pipelines get-update <id> <update-id> -o json`), not a `| jq` or `| grep` pipeline; the agent picks how to read it.
 - **Profiles:** `--profile <PROFILE>` on CLI examples; never pick one for the user (the parent skill says how to choose).
 
 ## Committing
 
 - One signed-off commit per batch of changes (`git commit -s`, the repo's DCO check), with a message that says what an agent gets.
 - Rebase the branch onto the upstream default branch before a review, so the compare shows only this change; check the skill folder is the same before and after.
+
+## Pull requests
+
+- **Small and focused:** one skill and one change per PR. Don't stack PRs or make one depend on another; when a change needs another skill's change first, land that one first. Every open PR and its dependencies is something a reviewer has to keep track of.
+- **Keep it current:** rebase onto the default branch before each push. A PR that falls far behind needs a large catch-up that reviewers then re-read.
+- **Only what was asked:** in a review round, change the lines the comments name. A cleanup or a restructure elsewhere is its own PR, or is said up front in the reply.
+- **Evidence:** eval results per case in three columns (no skills, the default branch's skills, this PR), and the size of each changed skill at the default branch, the head last reviewed and this PR.
+- **Check with a small run:** a change no eval case's prompt or rubric touches needs no run (say so in the PR); otherwise run only the cases it touches.
