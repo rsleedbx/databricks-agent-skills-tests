@@ -2,6 +2,7 @@
 *.tmp
 conn.json
 __pycache__/
+.ruff_cache/
 .venv/
 
 # a live browser session (lfc_ui.auth save): never commit
