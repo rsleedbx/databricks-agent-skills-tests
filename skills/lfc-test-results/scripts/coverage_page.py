@@ -56,7 +56,8 @@ def status(recs):
         return "pass"
     if all(r["outcome"] == "expected-stop" for r in recs):
         return "not-offered"
-    return next(r["outcome"] for r in reversed(recs) if r["outcome"] != "expected-stop")
+    # a product result (fail, partial) outranks the environment (blocked), whatever their order
+    return next((r["outcome"] for r in reversed(recs) if r["outcome"] not in ("expected-stop", "blocked")), "blocked")
 
 
 def cell(recs, engine, test, prompt):

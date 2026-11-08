@@ -35,6 +35,11 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(cp.status([rec("2026-10-16", "blocked"), rec("2026-10-25", "partial"),
                                     rec("2026-10-26", "expected-stop")]), "partial")
 
+    def test_blocked_never_hides_a_failure(self):
+        self.assertEqual(cp.status([rec("2026-10-16", "pass"), rec("2026-10-17", "fail"), rec("2026-10-18", "blocked")]), "fail")
+        self.assertEqual(cp.status([rec("2026-10-17", "fail"), rec("2026-10-18", "blocked")]), "fail")
+        self.assertEqual(cp.status([rec("2026-10-17", "blocked"), rec("2026-10-18", "expected-stop")]), "blocked")
+
     def test_no_records(self):
         self.assertIsNone(cp.status([]))
 
