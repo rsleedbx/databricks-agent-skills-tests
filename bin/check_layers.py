@@ -121,7 +121,8 @@ def load_model(root: Path) -> Model:
 def check_inventory(model: Model, root: Path) -> None:
     """Every skill dir and every bin file is listed; every listed skill exists (pending names may be absent)."""
     skills_root = root / "skills"
-    on_disk = {p.name for p in skills_root.iterdir() if p.is_dir()} if skills_root.is_dir() else set()
+    # tool caches and hidden folders (.ruff_cache, __pycache__) aren't skills
+    on_disk = {p.name for p in skills_root.iterdir() if p.is_dir() and not p.name.startswith((".", "__"))} if skills_root.is_dir() else set()
     for name in sorted(on_disk):
         if name not in model.node_layer:
             model.problems.append(f"unknown skill {name}: add it to layers.yaml, to the layer it belongs to")

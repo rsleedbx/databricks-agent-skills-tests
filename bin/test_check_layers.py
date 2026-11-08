@@ -88,6 +88,13 @@ class Edges(unittest.TestCase):
         self.assertEqual(stale, [])
         self.assertGreaterEqual(sum(e["allowed"] for e in edges), 5)
 
+    def test_tool_caches_are_not_skills(self):
+        root = tree({})
+        for d in ("skills/.ruff_cache", "skills/__pycache__"):
+            (root / d).mkdir()
+        _, problems, _, _ = run(root)
+        self.assertEqual(problems, [])
+
     def test_each_path_form_is_found(self):
         root = tree({"skills/flow/SKILL.md": "../../util/a and skills/util and $SK/util/b and ${SK}/util/c "
                                              "and util/scripts/d and .claude/skills/util/e\n"})
