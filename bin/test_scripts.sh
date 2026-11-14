@@ -64,6 +64,7 @@ check "coverage_page.py cell rules" python3 -m unittest -q "$R/bin/test_coverage
 check "docs/lakeflow-connect-database.md table matches results/runs" python3 "$SK/lfc-test-results/scripts/coverage_page.py" --check "$R/docs/lakeflow-connect-database.md"
 check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scripts/test-secret-scripts.sh' > /dev/null"
 check "keep-catalogs.sh on a fake CLI" sh -c "'$SK/lfc-workspace-setup/scripts/test-keep-catalogs.sh' > /dev/null"
+check "postgres-tpch-cdc.sh verify(): rule counts, a failed or empty verify query is an error (stub client)" sh -c "'$SK/lfc-schema-change-test/scripts/test-tpch-verify.sh' > /dev/null"
 check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
 check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
