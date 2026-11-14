@@ -5,7 +5,8 @@
 # used, and each pipeline gets its own publication and slot, both named $SLOT)
 #
 #   lfc_init <short-name>      pre-flight checks; sets PREFIX, WAREHOUSE, E (epoch), DB, S, STG, GWN, APN, W, T
-#   src_db  <<'EOF' ... EOF    create the fresh source database $DB and run the T-SQL in it (schema lfcddemo, tables)
+#   src_db  <<'EOF' ... EOF    create the fresh source database $DB and run the T-SQL in it (schema lfcddemo, tables;
+#                              PostgreSQL: the schema is SRC_SCHEMA, default lfcddemo, which obj and the publication use too)
 #   src_util                   install the utility objects in $DB
 #   src <<'EOF' ... EOF        run T-SQL in $DB
 #   obj <table> [json]         one ingestion object (SCD=SCD_TYPE_2 for type 2; extra table_configuration JSON)
@@ -31,6 +32,8 @@ fi
 LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WAIT=${GATEWAY_WAIT:-90}
 ENGINE=${ENGINE:-sqlserver}   # sqlserver | postgres
+SRC_SCHEMA=${SRC_SCHEMA:-lfcddemo}   # the source schema the tables live in (SQL Server: always lfcddemo)
+[ "$ENGINE" = postgres ] || SRC_SCHEMA=lfcddemo
 MODE=${MODE:-standard}   # standard: gateway + ingestion pipeline; integrated: one pipeline (connector_type CDC)
 case $MODE in standard|integrated) ;; *) echo "MODE must be standard or integrated"; exit 2;; esac
 [ "$MODE" = integrated ] && WAIT=0   # integrated CDC reads the source inside each update
@@ -47,7 +50,8 @@ EXAMPLES=()
 md_rows() { awk -F'\t' '{printf "|"; for (i = 1; i <= NF; i++) printf " %s |", $i; print ""}'; }
 md_head() { echo "| ${1//|/ | } |"; echo "|$(echo "$1" | tr -cd '|' | sed 's/|/---|/g')---|"; }
 example() {
-  local in out; in=$(printf 'SET NOCOUNT ON; %s\n' "$3" | src 2>&1 | md_rows); out=$(q "$5" 2>&1 | md_rows)
+  local in out pre='SET NOCOUNT ON; '; [ "$ENGINE" = postgres ] && pre=''   # NOCOUNT: T-SQL only
+  in=$(printf '%s%s\n' "$pre" "$3" | src 2>&1 | md_rows); out=$(q "$5" 2>&1 | md_rows)
   EXAMPLES+=("### $1" "" "Input (source):" "" "$(md_head "$2")" "$in" "" "Output (destination):" "" "$(md_head "$4")" "$out" "")
   printf 'EXAMPLE %s\n%s\n%s\n' "$1" "$in" "$out"
 }
@@ -95,9 +99,9 @@ src_db() {
   if [ "$ENGINE" = postgres ]; then
     echo "CREATE DATABASE $DB;" | $SRC_SQL postgres >/dev/null || { echo "source setup failed"; exit 2; }
     SRC_CREATED=1
-    { echo "CREATE SCHEMA lfcddemo;"; cat
-      printf 'GRANT CONNECT ON DATABASE %s TO %s;\nGRANT USAGE ON SCHEMA lfcddemo TO %s;\nGRANT SELECT ON ALL TABLES IN SCHEMA lfcddemo TO %s;\nALTER DEFAULT PRIVILEGES IN SCHEMA lfcddemo GRANT SELECT ON TABLES TO %s;\n' \
-        "$DB" "$CONN_USER" "$CONN_USER" "$CONN_USER" "$CONN_USER"; } | $SRC_SQL "$DB" >/dev/null || { echo "source setup failed"; exit 2; }
+    { echo "CREATE SCHEMA $SRC_SCHEMA;"; cat
+      printf 'GRANT CONNECT ON DATABASE %s TO %s;\nGRANT USAGE ON SCHEMA %s TO %s;\nGRANT SELECT ON ALL TABLES IN SCHEMA %s TO %s;\nALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT ON TABLES TO %s;\n' \
+        "$DB" "$CONN_USER" "$SRC_SCHEMA" "$CONN_USER" "$SRC_SCHEMA" "$CONN_USER" "$SRC_SCHEMA" "$CONN_USER"; } | $SRC_SQL "$DB" >/dev/null || { echo "source setup failed"; exit 2; }
     return
   fi
   { printf 'CREATE DATABASE %s;\nGO\nUSE %s;\nGO\nCREATE SCHEMA lfcddemo;\nGO\n' "$DB" "$DB"; cat
@@ -135,11 +139,11 @@ track() {
 }
 # fill <table> <n> [first id]: n rows (id, v='before')
 fill() {
-  [ "$ENGINE" = postgres ] && { printf "INSERT INTO lfcddemo.%s (id, v) SELECT g, 'before' FROM generate_series(%s, %s) g;\n" "$1" "${3:-1}" "$(( ${3:-1} + $2 - 1 ))" | src >/dev/null; return; }
+  [ "$ENGINE" = postgres ] && { printf "INSERT INTO $SRC_SCHEMA.%s (id, v) SELECT g, 'before' FROM generate_series(%s, %s) g;\n" "$1" "${3:-1}" "$(( ${3:-1} + $2 - 1 ))" | src >/dev/null; return; }
   printf "INSERT INTO lfcddemo.%s (id, v) SELECT TOP %s %s + ROW_NUMBER() OVER (ORDER BY (SELECT 1)) - 1, 'before' FROM sys.all_objects;\n" "$1" "$2" "${3:-1}" | src >/dev/null; }
 
 # --- pipelines ------------------------------------------------------------------------------------------------------
-obj() { echo "{\"table\":{\"source_catalog\":\"$DB\",\"source_schema\":\"lfcddemo\",\"source_table\":\"$1\",\"destination_catalog\":\"$CATALOG\",\"destination_schema\":\"$S\",\"table_configuration\":{\"scd_type\":\"${SCD:-SCD_TYPE_1}\"${2:+,$2}}}}"; }
+obj() { echo "{\"table\":{\"source_catalog\":\"$DB\",\"source_schema\":\"$SRC_SCHEMA\",\"source_table\":\"$1\",\"destination_catalog\":\"$CATALOG\",\"destination_schema\":\"$S\",\"table_configuration\":{\"scd_type\":\"${SCD:-SCD_TYPE_1}\"${2:+,$2}}}}"; }
 AFR='"auto_full_refresh_policy":{"enabled":true,"min_interval_hours":1}'
 # gateway_create: a continuous gateway with its own staging schema $STG, serverless (GATEWAY_COMPUTE=classic: a classic
 # cluster with the default node type; dogfood-azure's serverless gateway failed with DeploymentException on 2026-11-06). Sets GW
@@ -160,7 +164,7 @@ pipelines_create() {
     SRCDEF="\"connection_name\":\"$CONNECTION\",\"connector_type\":\"CDC\""
   fi
   # Postgres: one publication per pipeline, for the whole test schema (PostgreSQL 15+), so a table added later is in it
-  [ "$ENGINE" = postgres ] && { echo "CREATE PUBLICATION ${SLOT}_pub FOR TABLES IN SCHEMA lfcddemo;" | src >/dev/null || { echo "publication create failed"; exit 2; }; }
+  [ "$ENGINE" = postgres ] && { echo "CREATE PUBLICATION ${SLOT}_pub FOR TABLES IN SCHEMA $SRC_SCHEMA;" | src >/dev/null || { echo "publication create failed"; exit 2; }; }
   [ "$ENGINE" = postgres ] && SRCDEF+=",\"source_type\":\"POSTGRESQL\",\"source_configurations\":[{\"catalog\":{\"source_catalog\":\"$DB\",\"postgres\":{\"slot_config\":{\"slot_name\":\"$SLOT\",\"publication_name\":\"${SLOT}_pub\"}}}}]"
   # CREATE_SOFT=1: a refused create returns 1 with the error in CREATE_ERR (a test whose question is "is it refused?")
   # PIPELINE_CONF='{"pipelines.<key>":"<value>"}': pipeline settings (a knob under test), on the gateway too; recorded with the run
@@ -470,7 +474,7 @@ record_run() {
 src_shape() {
   local r
   if [ "$ENGINE" = postgres ]; then
-    r=$(printf "SELECT COUNT(DISTINCT table_name) || ' ' || COUNT(*) FROM information_schema.columns WHERE table_schema = 'lfcddemo';\n" | src 2>/dev/null | head -1)
+    r=$(printf "SELECT COUNT(DISTINCT table_name) || ' ' || COUNT(*) FROM information_schema.columns WHERE table_schema = '$SRC_SCHEMA';\n" | src 2>/dev/null | head -1)
   else
     r=$(printf "SET NOCOUNT ON; SELECT CONCAT(COUNT(DISTINCT c.object_id), ' ', COUNT(*)) FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id WHERE SCHEMA_NAME(t.schema_id) = 'lfcddemo' AND (t.is_tracked_by_cdc = 1 OR t.object_id IN (SELECT object_id FROM sys.change_tracking_tables));\n" | src 2>/dev/null | head -1)
   fi

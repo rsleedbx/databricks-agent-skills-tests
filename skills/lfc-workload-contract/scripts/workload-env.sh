@@ -4,7 +4,8 @@
 # field, a bad name or value, a path that isn't there, a secret in the file, a contract version this script doesn't read).
 #   Exports WL_MODEL, WL_SCALE, WL_DIALECT, WL_TABLES (space-separated), WL_NTABLES, WL_DDL (the DDL file), WL_FILL (fill_cmd),
 #   WL_FILL_IN_BUNDLE (fill_cmd as it runs from an unpacked bundle: each absolute word becomes its base name), and WL_BUNDLE
-#   (bundle_cmd; unset when the file has none). Nothing else is set, and no password is ever in the file.
+#   (bundle_cmd; unset when the file has none), and WL_VERIFY (verify: the model's rule checks; unset when the file has
+#   none). Nothing else is set, and no password is ever in the file.
 set -uo pipefail
 set -f                                    # the command words are split on spaces only: no globbing
 [ $# -ge 1 ] || { sed -n 2,7p "$0"; exit 2; }
@@ -40,6 +41,8 @@ PROBLEMS=$(jq -r '
     (if has("fill_cmd") | not then "missing fill_cmd"
      elif (.fill_cmd | safe_words) | not then "fill_cmd must be words separated by one space: letters, digits, _ . / - (no quotes or shell operators)"
      else empty end),
+    (if has("verify") and .verify != null and ((.verify | safe_path) | not)
+       then "verify must be an absolute path of letters, digits, _ . / - (no spaces)" else empty end),
     (if has("bundle_cmd") and .bundle_cmd != null and ((.bundle_cmd | safe_words) | not)
        then "bundle_cmd must be words separated by one space: letters, digits, _ . / - (no quotes or shell operators)" else empty end),
     (keys[] | select(test("password|passwd|secret|token|credential|pwd"; "i")) | "\(.) is a secret: a workload file holds no secrets")
@@ -50,6 +53,8 @@ PROBLEMS=$(jq -r '
 FILE_PROBLEMS=""
 DDL=$(jq -r '.ddl' "$F")
 [ -f "$DDL" ] || FILE_PROBLEMS="ddl $DDL is not a file"
+VF=$(jq -r '.verify // ""' "$F")
+[ -z "$VF" ] || [ -f "$VF" ] || FILE_PROBLEMS="${FILE_PROBLEMS:+$FILE_PROBLEMS, }verify $VF is not a file"
 for w in $(jq -r '[.fill_cmd, (.bundle_cmd // "")] | join(" ")' "$F"); do
   case $w in /*) [ -f "$w" ] || FILE_PROBLEMS="${FILE_PROBLEMS:+$FILE_PROBLEMS, }$w is not a file" ;; esac
 done
@@ -64,5 +69,6 @@ jq -r '
   "export WL_DDL=" + (.ddl | @sh),
   "export WL_FILL=" + (.fill_cmd | @sh),
   "export WL_FILL_IN_BUNDLE=" + (.fill_cmd | split(" ") | map(if startswith("/") then (split("/") | .[-1]) else . end) | join(" ") | @sh),
-  (if (.bundle_cmd // null) != null then "export WL_BUNDLE=" + (.bundle_cmd | @sh) else "unset WL_BUNDLE" end)
+  (if (.bundle_cmd // null) != null then "export WL_BUNDLE=" + (.bundle_cmd | @sh) else "unset WL_BUNDLE" end),
+  (if (.verify // null) != null then "export WL_VERIFY=" + (.verify | @sh) else "unset WL_VERIFY" end)
 ' "$F"

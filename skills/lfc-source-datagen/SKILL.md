@@ -23,7 +23,7 @@ How the planner works (every row from one integer, resuming, keys only at the en
 
 ## A workload for a model
 
-[`scripts/workload.sh`](scripts/workload.sh) `--model <model> --sf <scale> --dialect tsql --out <dir>` shapes one of statschema's models (its `schemas/` folder) at a scale, and writes `<dir>/workload.json` (the workload contract, lfc-workload-contract) with the model's DDL, its tables, and this folder's `copies.sh` (fill) and `bundle.sh` (bundle) as the commands. A test takes that file as `WORKLOAD_JSON`. Only `tsql` (SQL Server) has a fill command so far. It needs uv.
+[`scripts/workload.sh`](scripts/workload.sh) `--model <model> --sf <scale> --dialect <tsql|postgres> --out <dir> [--spec]` shapes one of statschema's models (its `schemas/` folder) at a scale, and writes `<dir>/workload.json` (the workload contract, lfc-workload-contract) with the model's DDL, its tables, and this folder's `copies.sh` (fill) and `bundle.sh` (bundle) as the commands. A test takes that file as `WORKLOAD_JSON`. `tsql` (SQL Server) and `postgres` have a fill command so far. `--spec` takes TPC-H or TPC-B as `tpc/tpc-schema.sh` writes them from the spec in place of statschema's model, and for TPC-H on `postgres` adds `verify` (the spec's checks). It needs uv.
 
 ## Make a dataset
 
