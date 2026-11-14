@@ -12,6 +12,7 @@
 #              output (-At, | between fields, as fill.sh needs). Default: psql. SRC (fill.sh's row source) defaults
 #              to series (generate_series), so a database without lfc_seed.seed fills.
 #   DIR        the planner files (default: sqlserver/ or postgres/ next to this script)
+#   FILL       the fill command, run as FILL <ms|pg> <schema> (default: fill.sh next to this script; test-copies.sh stubs it)
 #
 # Prints one line per copy, "done <schema> <seconds>s" or "failed <schema> <reason>", then "all done" or
 # "finished with failures"; exits 1 if any copy failed. A copy already filled is filled again only to its target
@@ -19,7 +20,7 @@
 # SQL Server (ms) and PostgreSQL (pg) so far; the other engines' fill.sh paths are the same and can be added here.
 set -uo pipefail
 E=$1 MODEL_SQL=$2 MODEL=$3 FIRST=$4 LAST=$5 PAR=${6:-4}
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd); FILL=${FILL:-bash $HERE/fill.sh}
 case $E in
   ms) export MSSQL=${MSSQL:-$HERE/sq} DIR=${DIR:-$HERE/sqlserver}
       export RE=$(grep -o -E '^CREATE TABLE \[[A-Za-z_0-9]+\]' "$MODEL_SQL" | sed -E 's/.*\[(.*)\]/\1/' | paste -sd'|' -) ;;
@@ -27,7 +28,7 @@ case $E in
       export RE=$(grep -o -E '^CREATE TABLE "?[A-Za-z_0-9]+"?' "$MODEL_SQL" | sed -E 's/^CREATE TABLE "?([A-Za-z_0-9]+)"?/\1/' | paste -sd'|' -) ;;
   *) echo "copies.sh: ms or pg so far"; exit 2 ;;
 esac
-export E HERE MODEL MODEL_SQL
+export E HERE MODEL MODEL_SQL FILL
 [ -n "$RE" ] || { echo "copies.sh: no CREATE TABLE in $MODEL_SQL"; exit 2; }
 
 one() {
@@ -44,7 +45,7 @@ one() {
       || { echo "failed $s DDL: $(grep -m1 Msg "/tmp/copies-$s.ddl.out")"; return 1; }
   fi
   for n in 1 2 3; do
-    bash "$HERE/fill.sh" "$E" "$s" > "/tmp/copies-$s.fill.out" 2>&1 && { echo "done $s $(( $(date +%s) - t0 ))s"; return 0; }
+    $FILL "$E" "$s" > "/tmp/copies-$s.fill.out" 2>&1 && { echo "done $s $(( $(date +%s) - t0 ))s"; return 0; }
     sleep $((n * 20))
   done
   echo "failed $s fill: $(grep -m1 -E 'Msg [0-9]|ERROR|no rows added' "/tmp/copies-$s.fill.out")"; return 1

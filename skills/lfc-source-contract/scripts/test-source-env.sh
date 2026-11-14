@@ -101,6 +101,12 @@ for pair in sqlserver:sqlcmd postgres:psql cockroachdb:psql yugabytedb:psql mysq
 done
 check "sqlserver: the database is an argument (-d mydb), the server and port in -S" grep -q 'ARGV sqlcmd .*-S 203.0.113.10,1433 .*-d mydb' "$T/log.sqlserver"
 check "postgres: -p 5432 and -d mydb" grep -q 'ARGV psql .*-p 5432 .*-d mydb' "$T/log.postgres"
+pg_extra_args() {   # arguments after the database reach psql after the defaults, so -F '|' wins over the tab (fill.sh's client)
+  local log=$T/log.pgx; : > "$log"; export PATH=$FB:$PATH FAKE_LOG=$log; eval "$(exports_of postgres)"
+  printf 'SELECT 1;\n' | $SRC_SQL mydb -F '|' > /dev/null 2>&1
+  grep -q "^ARGV psql .*-d mydb .*-F 	 -F |\$" "$log"
+}
+check "postgres: arguments after the database go to psql last (-F '|' for fill.sh)" pg_extra_args
 check "oracle: the password is in the SQL (CONNECT on stdin)" grep -q 'CONNECT lfc_user/' "$T/log.oracle"
 
 rm -rf "${T:?}"

@@ -43,9 +43,13 @@ PSQL=${FILL_PSQL:-"$SRC_SQL $DB -F |"} $WL_FILL "$WL_DDL" "$WL_MODEL" 1 1 1 > "$
 srows() { echo "SELECT $(for t in $TABLES; do printf '(SELECT COUNT(*) FROM %s.%s),' "$X" "$t"; done | sed 's/,$//');" | src | tr '\t' ' '; }
 tail -1 "$W/fill.out" | grep -qx "all done" && claim source-fill PASS "$WL_NTABLES TPC-H tables at SF $WL_SCALE filled in $(( $(date +%s) - T0 ))s ($(srows | tr ' ' '\n' | awk '{s += $1} END {print s}') rows)" \
   || { claim source-fill FAIL "$(tail -2 "$W/fill.out" | tr '\n' ' ' | cut -c1-200)"; exit 1; }
-verify() { { echo "SET search_path = $X;"; cat "$WL_VERIFY"; } | src | grep '^bad' | cut -f2- | tr '\t' '\n' | awk '$1 != 0' | wc -l | tr -d ' '; }
+verify() {   # how many of the workload's verify rules are broken; "error" when the query fails or prints no "bad" row
+  local o; o=$({ echo "SET search_path = $X;"; cat "$WL_VERIFY"; } | src) && echo "$o" | grep -q '^bad' || { echo error; return; }
+  echo "$o" | grep '^bad' | cut -f2- | tr '\t' '\n' | awk '$1 != 0' | wc -l | tr -d ' '
+}
+broken() { [ "$1" = error ] && echo "the verify query failed or printed no rule" || echo "$1 TPC-H rules broken"; }
 b=$(verify); [ "$b" = 0 ] && claim source-spec-rules PASS "the workload's verify: every TPC-H rule holds on the source (keys, prices, 4 lines per order, ship/commit/receipt dates)" \
-  || claim source-spec-rules FAIL "$b TPC-H rules broken on the source"
+  || claim source-spec-rules FAIL "$(broken "$b") on the source"
 
 # --- the pipelines --------------------------------------------------------------------------------------------------
 OBJS=""; for t in $TABLES; do OBJS+="${OBJS:+,}$(obj "$t")"; done
@@ -92,7 +96,7 @@ for i in $(seq 1 "$ROUNDS"); do
     || claim "round-$i" FAIL "source $(srows) $(echo "$SFP" | src | tr '\t' ' ') vs destination $(drows) $(q "$DFP" 2>&1 | tr '\t' ' '); $ERRS"
 done
 b=$(verify); [ "$b" = 0 ] && claim source-spec-rules-after PASS "the workload's verify: every TPC-H rule still holds on the source after the rounds" \
-  || claim source-spec-rules-after FAIL "$b TPC-H rules broken on the source after the rounds"
+  || claim source-spec-rules-after FAIL "$(broken "$b") on the source after the rounds"
 
 # --- the destination keeps the spec's date rules (what a late-shipment or lead-time query relies on) ----------------
 DR=$(q "SELECT SUM(CASE WHEN DATEDIFF(l.l_shipdate, o.o_orderdate) NOT BETWEEN 1 AND 121 THEN 1 ELSE 0 END), SUM(CASE WHEN DATEDIFF(l.l_commitdate, o.o_orderdate) NOT BETWEEN 30 AND 90 THEN 1 ELSE 0 END), SUM(CASE WHEN DATEDIFF(l.l_receiptdate, l.l_shipdate) NOT BETWEEN 1 AND 30 THEN 1 ELSE 0 END), COUNT(*) FROM $T.lineitem l JOIN $T.orders o ON o.o_orderkey = l.l_orderkey" 2>&1 | tr '\t' ' ')
