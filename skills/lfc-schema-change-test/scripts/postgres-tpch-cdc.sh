@@ -18,7 +18,8 @@
 #   (Lakebase: lfc-source-contract's lakebase-sql.sh, the project owner). The workload must be TPC-H on postgres with
 #   its verify file (workload.sh --spec).
 #   Optional: ROUNDS (3), NEW (orders added per round, 100), DEL (orders deleted, 40), UPD (lineitem rows updated, 200),
-#   FILL_PSQL (the client the fill uses; default "$SRC_SQL <db> -F |"), MODE, KEEP, KEEP_DAYS, OUT (the result
+#   FILL_PSQL (the client the fill uses, psql output with | between fields; default "$SRC_SQL <db> -F |", which needs a
+#   client that passes arguments after the database to psql: sql-client.sh and lakebase-sql.sh do; checked before the fill), MODE, KEEP, KEEP_DAYS, OUT (the result
 #   markdown), as lib.sh.
 #   Prints one row per claim (PASS/FAIL) and exits 1 if one failed.
 set -uo pipefail
@@ -39,7 +40,10 @@ FP_TABLES=$TABLES
 # --- the source: one copy of the workload, filled inside the database ------------------------------------------------
 src_db < /dev/null
 T0=$(date +%s)
-PSQL=${FILL_PSQL:-"$SRC_SQL $DB -F |"} $WL_FILL "$WL_DDL" "$WL_MODEL" 1 1 1 > "$W/fill.out" 2>&1
+FILL_PSQL=${FILL_PSQL:-"$SRC_SQL $DB -F |"}
+[ "$(echo "SELECT 1, 2;" | $FILL_PSQL 2> /dev/null)" = "1|2" ] \
+  || { claim source-fill FAIL "the fill client ($FILL_PSQL) doesn't print fields with | between them; set FILL_PSQL to one that does"; exit 1; }
+PSQL=$FILL_PSQL $WL_FILL "$WL_DDL" "$WL_MODEL" 1 1 1 > "$W/fill.out" 2>&1
 srows() { echo "SELECT $(for t in $TABLES; do printf '(SELECT COUNT(*) FROM %s.%s),' "$X" "$t"; done | sed 's/,$//');" | src | tr '\t' ' '; }
 tail -1 "$W/fill.out" | grep -qx "all done" && claim source-fill PASS "$WL_NTABLES TPC-H tables at SF $WL_SCALE filled in $(( $(date +%s) - T0 ))s ($(srows | tr ' ' '\n' | awk '{s += $1} END {print s}') rows)" \
   || { claim source-fill FAIL "$(tail -2 "$W/fill.out" | tr '\n' ' ' | cut -c1-200)"; exit 1; }
@@ -69,7 +73,8 @@ same && claim snapshot PASS "every table's rows and the fingerprint match the so
 # their 4 lines (dates and prices as the copied order's, so every rule holds); DEL of the oldest orders and their lines;
 # UPD lines get the round's comment, another ship mode and a new receipt date that stays ship + 1 .. 30.
 round() {
-  cat <<EOF | src > "$W/round$1.out" 2>&1
+  cat <<EOF | src > "$W/round$1.out" 2>&1 && ! grep -q -E '^(psql:.*)?ERROR|^ROLLBACK' "$W/round$1.out"
+\\set ON_ERROR_STOP on
 BEGIN;
 CREATE TEMP TABLE nk AS SELECT k, ROW_NUMBER() OVER (ORDER BY k) AS rn FROM generate_series((SELECT MAX(o_orderkey) FROM $X.orders) + 1, (SELECT MAX(o_orderkey) FROM $X.orders) + 32 * ($NEW / 8 + 1)) k WHERE (k - 1) % 32 < 8 ORDER BY k LIMIT $NEW;
 CREATE TEMP TABLE so AS SELECT o_orderkey AS ok, ROW_NUMBER() OVER (ORDER BY o_orderkey) AS rn FROM (SELECT o_orderkey FROM $X.orders ORDER BY o_orderkey DESC LIMIT $NEW) x;
