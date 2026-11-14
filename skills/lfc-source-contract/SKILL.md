@@ -82,6 +82,19 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 - [scripts/test-source-env.sh](scripts/test-source-env.sh): offline checks on [scripts/fixtures/](scripts/fixtures/) (each engine, the refusals, the default clients on fake clients).
 - **lfc-source-eventhubs** `eventhubs.sh up --source-json <file>`: writes the contract for an Event Hubs namespace's Kafka endpoint.
 - **lfc-source-cloud-vm** `scripts/slot-source.sh`: writes the contract for a slot database from `slot.sh up`'s JSON. Its `sql_cmd` runs `slot-sql.sh` for that database and key; that skill's `test-slot-source.sh` checks it end to end through a fake ssh.
+- [scripts/lakebase-sql.sh](scripts/lakebase-sql.sh) `[database]`: the `sql_cmd` for a Lakebase project (below).
+
+## Lakebase as the source
+
+A Lakebase project stands in for a customer's PostgreSQL when the point is to test Lakeflow Connect's PostgreSQL connector: same workspace, no VM, no firewall. (To get Lakebase data into Unity Catalog for its own sake, Lakebase's Lakehouse Sync needs no connector.) The contract is the same as for any PostgreSQL, so a test written against it runs unchanged on a customer's own database: change the file, not the test.
+
+```json
+{"contract": 1, "name": "lakebase", "engine": "postgres", "host": "<endpoint host>", "port": 5432,
+ "user": "<replication role>", "database": "databricks_postgres", "connection": "<UC connection>",
+ "sql_cmd": "env LB_PROJECT=<project> LB_PROFILE=<profile> /abs/path/lakebase-sql.sh"}
+```
+
+`lakebase-sql.sh` runs as the project owner through `databricks psql` (no password, an OAuth token per call, renewed from the account login when the workspace's has expired); `postgres` as the database means `databricks_postgres`. Before a run, as in **databricks-lakeflow-connect**'s Lakebase reference: turn on the project's password logins (`enable_pg_native_login`), create the connection's role with `LOGIN REPLICATION` and a generated password, and the UC `POSTGRESQL` connection from it. Tested on 2026-11-14 (PostgreSQL 17.12): as the owner, `CREATE DATABASE` and `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` work, which **lfc-schema-change-test**'s `lib.sh` uses.
 
 ## Use
 

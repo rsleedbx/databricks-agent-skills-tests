@@ -8,7 +8,7 @@ Every ✅ below ran end to end in a real workspace: source database, UC connecti
 | Lakebase | ✅ Azure | [✅ Azure, with a DML round trip](../prompts/lfc-matrix/qbc-lakebase.txt) | [✅ Azure](../prompts/lfc-matrix/fcqbc-lakebase.txt) | not offered | ✅ AWS (serverless gateway), by hand |
 | MySQL 8.4 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-mysql.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-mysql.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/icdc-mysql.txt) | ⚠️ AWS; ⛔ Azure |
 | Oracle 23ai Free | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-oracle.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-oracle.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/icdc-oracle.txt) | not offered ([docs](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/oracle-integrated-overview)) |
-| PostgreSQL 16 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-pg.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-pg.txt) | not offered | ✅ AWS (serverless gateway), by hand; ⛔ Azure |
+| PostgreSQL 16 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-pg.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-pg.txt) | not offered | [✅ AWS (serverless gateway)](../prompts/lfc-matrix/scdc-pg.txt); ⛔ Azure |
 | SQL Server 2022 | ✅ AWS, Azure | [✅ AWS, Azure](../prompts/lfc-matrix/qbc-sqlserver.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/fcqbc-sqlserver.txt) | [✅ AWS, Azure](../prompts/lfc-matrix/icdc-sqlserver.txt) | [✅ AWS, Azure (serverless gateway)](../prompts/lfc-matrix/scdc-sqlserver.txt) |
 
 ✅ passed (no newer failure) · ⚠️ partial · ❌ failed · ⛔ blocked by the workspace or environment · not offered: every run stopped correctly because the product doesn't offer it · –: no run recorded
