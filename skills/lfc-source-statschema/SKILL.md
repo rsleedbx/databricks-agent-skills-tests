@@ -100,8 +100,9 @@ A TPC benchmark: `$PY $S/shape.py $S/../schemas/tpcc.yaml --sf 10 > shaped.yaml`
 | Foreign keys | Every value is a parent key: the parent's codec at a parent row drawn uniformly, by zipf, or by the source's share of parents with children and its hot parents |
 | Indexes, unique keys, check constraints | Indexes and unique keys as in the source; checks left out (a cross-column check can fail: statistics don't relate columns) |
 | Tables without a primary key | Stay without one (Postgres: `REPLICA IDENTITY FULL`); a timestamp (one second per row) or an integer column numbers the rows |
+| Dates in order (`temporal_ordering_constraints`, `"a <= b"`, `<`, `>=`, `>`) | An `offset` rule (`distribution: offset`, `distribution_params: {from: a, min: 1, max: 30}`, days or seconds) makes `b` the formula of `a` plus each offset equally often, so the order holds in every engine. A constraint without one gets `GREATEST(b, a)`, logged: the order holds, but many rows sit at `a` |
 
-**Not reproduced:** relationships between columns (dates in order, totals of lines), real text values, the physical order of rows.
+**Not reproduced:** other relationships between columns (totals of lines, dates across tables), real text values, the physical order of rows. For TPC-H with the spec's dates across tables (ship = order + 1..121, commit = order + 30..90), prices and lines per order, which its `tpch-verify.sql` checks, use lfc-source-datagen's `scripts/tpc/tpc-schema.sh tpch`.
 
 ## Measured (4 vCPUs, Podman VM, Postgres 16 and MySQL 8.4)
 

@@ -16,7 +16,7 @@
 #   Foreign keys without a rule: the parent's key formula at a parent row drawn uniformly, or zipf if fk_distribution says so.
 #   Keys: a key from rules gets lfc:n from the rules (sequential, cyclic, block, block_cyclic form a mixed radix); a
 #   composite key without rules is numbered from its first two columns; a table without a key numbers its first integer column.
-import argparse, datetime, decimal, json, math, sys, zlib
+import argparse, datetime, decimal, json, math, re, sys, zlib
 import yaml
 
 ap = argparse.ArgumentParser()
@@ -364,6 +364,35 @@ for tn in order:
             val = place(f"({perm(tn, name, 'j', rows)}) * {d} DIV {rows}", d)
         if p > 0: val = f"CASE WHEN {perm(tn, name, 'z', rows)} < {round(p * rows)} THEN NULL ELSE {val} END"
         v[name] = val
+
+    # 3. order between columns. An offset rule (distribution: offset, distribution_params: {from: <column>, min, max}, in
+    #    days for a date, seconds for a timestamp) is the other column's formula plus min .. max, each equally often, so the
+    #    order holds by construction. Then each temporal_ordering_constraints entry ("a <= b", "a < b", ">=", ">"): one an
+    #    offset already keeps is checked; any other pair gets b = GREATEST(b, a), which piles b's low values onto a's
+    def offset_of(c):                           # (from, min, max) of an offset rule, or None
+        g = c.get("generation") or {}
+        if g.get("distribution") != "offset": return None
+        pr = g.get("distribution_params") or {}
+        return pr.get("from"), int(pr.get("min", 0)), int(pr.get("max", 0))
+    for c in t["columns"]:
+        o = offset_of(c)
+        if not o: continue
+        src, lo_o, hi_o = o
+        if src not in v or src not in cols or kind(cols[src]) != kind(c) or hi_o < lo_o:
+            log(f"{tn}.{c['name']}: offset from {src} needs a {kind(c)} column of this table with a formula, and min <= max: left as is"); continue
+        put(c["name"], ("v", f"({v[src]}) + {lo_o} + {draw(tn, c['name'], 'o', hi_o - lo_o + 1)}"))
+    for con in t.get("temporal_ordering_constraints") or []:
+        m = re.fullmatch(r"\s*(\w+)\s*(<=|<|>=|>)\s*(\w+)\s*", con)
+        if not m or m[1] not in cols or m[3] not in cols:
+            log(f"{tn}: ordering {con!r}: not two columns of this table; not enforced"); continue
+        a_, b_, strict = (m[1], m[3], m[2] == "<") if m[2] in ("<=", "<") else (m[3], m[1], m[2] == ">")
+        o = offset_of(cols[b_])
+        if o and o[0] == a_ and o[1] >= (1 if strict else 0) and b_ in v:
+            log(f"{tn}: {con} holds: {b_} is {a_} + {o[1]} .. {o[2]}"); continue
+        if a_ not in v or b_ not in v or b_ in pk:
+            log(f"{tn}: ordering {con!r}: {a_} and {b_} need formulas, and {b_} can't be a key; not enforced"); continue
+        put(b_, ("v", f"GREATEST({v[b_]}, ({v[a_]}) + {1 if strict else 0})"))
+        log(f"{tn}: {con} by GREATEST: {b_} below {a_}{' + 1' if strict else ''} is raised to it, so many rows sit there (an offset rule keeps {b_}'s spread)")
 
     # the shaped table: statschema's format, tags in the column comments and in lfc_tags (ddl.py writes the table comment)
     nt = {k: x for k, x in t.items() if k not in ("row_count_per_sf",)}
