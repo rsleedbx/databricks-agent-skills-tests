@@ -9,7 +9,8 @@
 # resolve_load_order() produces the right sequence automatically.
 #
 # Temporal ordering constraints on lineitem dates are expressed as
-# temporal_ordering_constraints and enforced by a post-generation fix-up step.
+# temporal_ordering_constraints; l_receiptdate is l_shipdate + 1 .. 30 days (an offset rule, as in the spec), so
+# shape.py's formulas keep the order without a fix-up step.
 #
 # TPC-H spec reference: https://tpc.org/tpch/
 
@@ -492,7 +493,7 @@ tables:
 
   # ── lineitem ──────────────────────────────────────────────────────────────
   # Average 4 line items per order → 6,000,000 per SF.
-  # Temporal constraint: l_shipdate <= l_receiptdate (enforced post-generation).
+  # Temporal constraint: l_shipdate <= l_receiptdate (l_receiptdate's offset rule keeps it).
   #
   # Skew control — change fk_distribution on fk_lineitem_orders:
   #   fk_distribution: uniform                              # standard TPC-H
@@ -616,11 +617,10 @@ tables:
       - name: l_receiptdate
         type: date
         not_null: true
-        description: "Receipt date — always >= l_shipdate (enforced post-generation)"
+        description: "Receipt date — l_shipdate + 1 .. 30 days (TPC-H spec), so always > l_shipdate"
         generation:
-          min_value: "1992-01-04"
-          max_value: "1999-01-01"
-          distribution: uniform
+          distribution: offset
+          distribution_params: {from: l_shipdate, min: 1, max: 30}
       - name: l_shipinstruct
         type: string
         length: 25

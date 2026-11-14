@@ -1,0 +1,32 @@
+{
+  "id": "statschema-date-order-ignored",
+  "title": "statschema temporal ordering constraints weren't applied",
+  "kind": "tooling",
+  "status": "fixed",
+  "applies": {
+    "source": [
+      "*"
+    ],
+    "route": [
+      "*"
+    ],
+    "layer": [
+      "test"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-14",
+    "by": "lfc-source-statschema schemas/tpch.yaml, shape.py at SF 0.1 on Postgres 14"
+  },
+  "symptom": "296,006 of 600,000 lineitem rows (49.3%) had l_receiptdate before l_shipdate (TPC-H SF 0.1, Postgres 14)",
+  "cause": "shape.py drew each column on its own and never read temporal_ordering_constraints; the schema said a post-generation fix-up step enforced them, and none ran",
+  "effect": "A TPC-H copy from statschema's schema broke the spec's date order, so lead-time and late-shipment queries returned nonsense",
+  "fix": "An offset rule (distribution: offset, from: <column>, min, max) makes a column the other's formula plus the offset; temporal_ordering_constraints are checked, and a pair without an offset gets GREATEST, logged. tpch.yaml: l_receiptdate = l_shipdate + 1 .. 30 days. Filled at SF 0.1 on Postgres: 600,000 rows, 0 out of order, each gap of 1 .. 30 days 20,000 times",
+  "where": [
+    "skills/lfc-source-statschema/scripts/shape.py",
+    "skills/lfc-source-statschema/schemas/tpch.yaml"
+  ]
+}
