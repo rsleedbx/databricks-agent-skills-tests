@@ -69,13 +69,16 @@ check "source contract: source-env.sh on the fixtures and the default clients" s
 WC=$SK/lfc-workload-contract/scripts
 check "workload contract: every statschema schema is model format 1 (validate-model.py)" python3 "$WC/validate-model.py" "$SK"/lfc-source-statschema/schemas/*.yaml
 check "workload contract: workload-env.sh and validate-model.py on their fixtures" sh -c "'$WC/test-workload-env.sh' > /dev/null"
-wl_offline() {   # workload.sh writes a tpcb workload that workload-env.sh accepts (4 tables); a postgres dialect is refused
+wl_offline() {   # workload.sh writes a tpcb workload that workload-env.sh accepts (4 tables); a postgres spec tpch one with
+                 # its verify file (8 tables); a dialect without a fill command (oracle) is refused
   bash "$DG/workload.sh" --model tpcb --sf 0.01 --dialect tsql --out "$T/wl" > /dev/null 2>&1 || return 1
-  ( eval "$(bash "$WC/workload-env.sh" "$T/wl/workload.json")" && [ "$WL_NTABLES" = 4 ] && [ "$WL_MODEL" = tpcb ] && [ -f "$WL_DDL" ] ) || return 1
-  bash "$DG/workload.sh" --model tpcb --sf 1 --dialect postgres --out "$T/wl2" > /dev/null 2>&1 && return 1
+  ( eval "$(bash "$WC/workload-env.sh" "$T/wl/workload.json")" && [ "$WL_NTABLES" = 4 ] && [ "$WL_MODEL" = tpcb ] && [ -f "$WL_DDL" ] && [ -z "${WL_VERIFY:-}" ] ) || return 1
+  bash "$DG/workload.sh" --model tpch --sf 0.1 --dialect postgres --spec --out "$T/wl3" > /dev/null 2>&1 || return 1
+  ( eval "$(bash "$WC/workload-env.sh" "$T/wl3/workload.json")" && [ "$WL_NTABLES" = 8 ] && [ "$WL_DIALECT" = postgres ] && grep -q "'bad: ship" "$WL_VERIFY" ) || return 1
+  bash "$DG/workload.sh" --model tpcb --sf 1 --dialect oracle --out "$T/wl2" > /dev/null 2>&1 && return 1
   return 0
 }
-check "workload.sh: a tpcb workload at SF 0.01 that workload-env.sh accepts; a postgres dialect refused" wl_offline
+check "workload.sh: a tpcb workload at SF 0.01 and a postgres spec tpch one (with verify) that workload-env.sh accepts; oracle refused" wl_offline
 check "slot-source.sh: a slot's contract, and its SRC_SQL through slot-sql.sh and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
 check "masters-export, slot-vm-setup masters, and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
 check "moved-lines.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-moved-lines.sh' > /dev/null"

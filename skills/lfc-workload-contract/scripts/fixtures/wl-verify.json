@@ -1,0 +1,1 @@
+{"contract": 1, "model": "tpch", "scale": 0.1, "dialect": "postgres", "tables": ["region", "nation"], "ddl": "__FX__/model.sql", "fill_cmd": "bash __FX__/fake-fill.sh pg", "verify": "__FX__/model.sql"}
