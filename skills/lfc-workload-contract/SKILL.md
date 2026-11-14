@@ -42,11 +42,12 @@ Other keys are ignored. Tables may sit at indent 0 or 2, and columns in block or
 | `contract` | yes | `1` | |
 | `model` | yes | a lowercase name; copies are named `<model>_NNNN` | `WL_MODEL` |
 | `scale` | yes | a number above 0 (the scale factor the model was shaped at) | `WL_SCALE` |
-| `dialect` | yes | the DDL's dialect (`tsql` today: the fill command is for SQL Server) | `WL_DIALECT` |
+| `dialect` | yes | the DDL's dialect (`tsql` or `postgres`: the fill command's engine) | `WL_DIALECT` |
 | `tables` | yes | the model's table names as the DDL creates them; each a plain identifier | `WL_TABLES` (space-separated), `WL_NTABLES` |
 | `ddl` | yes | absolute path of the DDL file, one copy's `CREATE TABLE` statements with unqualified names | `WL_DDL` |
 | `fill_cmd` | yes | the fill command (below): words separated by one space | `WL_FILL` |
 | `bundle_cmd` | no | the bundle command (below) | `WL_BUNDLE` (unset when absent) |
+| `verify` | no | absolute path of the model's rule checks for the dialect (below) | `WL_VERIFY` (unset when absent) |
 
 Paths are absolute, and a command's words are letters, digits, `_ . / -` and single spaces, so no quoting is needed. A workload file holds no secret: a key named like a password, secret or token is refused.
 
@@ -56,9 +57,17 @@ Paths are absolute, and a command's words are letters, digits, `_ . / -` and sin
 MSSQL='<client command>' $WL_FILL "$WL_DDL" "$WL_MODEL" <first copy> <last copy> [<parallel>]
 ```
 
-It creates copies `<model>_<first>` .. `<model>_<last>` (four digits) in the target database, each with the DDL's tables, and fills them. A copy that exists is reused and a copy already filled is resumed, so a rerun continues. The client is the command the fill calls for SQL: for `tsql` it reads SQL on stdin, connects to the target database, and prints rows with `-y 0` (the variable is `MSSQL`). `<parallel>` (default 4) is how many copies fill at once.
+It creates copies `<model>_<first>` .. `<model>_<last>` (four digits) in the target database, each with the DDL's tables, and fills them. A copy that exists is reused and a copy already filled is resumed, so a rerun continues. The client is the command the fill calls for SQL: for `tsql` it reads SQL on stdin, connects to the target database, and prints rows with `-y 0` (the variable is `MSSQL`); for `postgres` it reads SQL on stdin, connects to the target database, and keeps psql's own output (`-At`, `|` between fields; the variable is `PSQL`). `<parallel>` (default 4) is how many copies fill at once.
 
 Its output: one line per copy, `done <schema> <seconds>s` or `failed <schema> <reason>`, then the last line `all done` (exit 0) or `finished with failures` (exit 1). A consumer reads only those.
+
+### The verify file
+
+```bash
+{ echo "SET search_path = <model>_NNNN;"; cat "$WL_VERIFY"; } | <client>
+```
+
+SQL for the dialect with unqualified table names, run in one copy's schema. Each row that starts with `bad` is a check: its label, then counts, which must all be 0. Other rows (row counts, key ranges) are for a reader. `workload.sh --spec` writes it for TPC-H on `postgres` (the spec's keys, prices, lines per order, and the dates across tables).
 
 ### The bundle command
 
@@ -73,7 +82,7 @@ It writes one portable archive. Unpacked into a folder, every file named in `fil
 ## Producers and consumers
 
 - **Producer**: the shape layer's `workload.sh` in lfc-source-datagen. It runs statschema's `shape.py` and `ddl.py`, checks the model file with `validate-model.py`, and writes `model.yaml`, `model.sql` and `workload.json` for one model at one scale. It checks its own workload file with `workload-env.sh` before it returns. The fill and bundle commands it writes are datagen's `copies.sh` and `bundle.sh`.
-- **Consumers**: the Lakeflow tests that need many tables. The first is lfc-schema-change-test's `sqlserver-scale.sh` (`WORKLOAD_JSON`); it runs the fill locally with `BUILD_HERE=1`, or bundles it and runs it on the source VM.
+- **Consumers**: the Lakeflow tests that need many tables. The first is lfc-schema-change-test's `sqlserver-scale.sh` (`WORKLOAD_JSON`); it runs the fill locally with `BUILD_HERE=1`, or bundles it and runs it on the source VM. `postgres-tpch-cdc.sh` fills one copy of the spec TPC-H on a PostgreSQL source and runs `verify` before and after its change rounds.
 - A consumer may use only the exports above. It doesn't read the model file, the DDL's contents, or the fill's options.
 
 ## What a producer guarantees

@@ -31,6 +31,11 @@ no_bundle_unsets() {   # no bundle_cmd in the file: WL_BUNDLE is unset, even whe
   local f; f=$(render wl-no-bundle.json)
   ( WL_BUNDLE=stale; eval "$("$WE" "$f")"; [ -z "${WL_BUNDLE+x}" ] && [ "$WL_NTABLES" = 4 ] )
 }
+verify_exported() {   # verify in the file: WL_VERIFY is its path; without it (the valid file), WL_VERIFY is unset
+  local f g; f=$(render wl-verify.json); g=$(render wl-valid.json)
+  ( eval "$("$WE" "$f")"; [ "$WL_VERIFY" = "$FX/model.sql" ] && [ "$WL_DIALECT" = postgres ] ) &&
+  ( WL_VERIFY=stale; eval "$("$WE" "$g")"; [ -z "${WL_VERIFY+x}" ] )
+}
 secret_not_printed() { refused wl-secret.json "a secret" && ! grep -q hunter2 "$T/e"; }
 usage() { local out; out=$("$WE" 2>&1); [ $? = 2 ] || return 1; case $out in *'workload-env.sh <workload.json>'*) ;; *) return 1 ;; esac; }
 unreadable() { "$WE" "$T/none.json" > /dev/null 2>&1; [ $? = 2 ]; }
@@ -55,6 +60,8 @@ check "table listed twice: refused" refused wl-dup-table.json "listed twice"
 check "fill_cmd with quotes: refused" refused wl-quote-fill.json "fill_cmd must be words"
 check "fill_cmd names a file that isn't there: refused" refused wl-fill-missing.json "is not a file"
 check "a password in the file: refused, and its value not printed" secret_not_printed
+check "verify: WL_VERIFY is its path; unset without it" verify_exported
+check "verify names a file that isn't there: refused" refused wl-verify-missing.json "verify" "is not a file"
 
 echo "== validate-model.py"
 check "fixtures: model format 1 checks" bash "$HERE/test-validate-model.sh"
