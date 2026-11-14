@@ -374,6 +374,7 @@ for tn in order:
         if g.get("distribution") != "offset": return None
         pr = g.get("distribution_params") or {}
         return pr.get("from"), int(pr.get("min", 0)), int(pr.get("max", 0))
+    offset_done = set()                         # columns whose offset rule was applied (a rejected one keeps its formula)
     for c in t["columns"]:
         o = offset_of(c)
         if not o: continue
@@ -381,13 +382,14 @@ for tn in order:
         if src not in v or src not in cols or kind(cols[src]) != kind(c) or hi_o < lo_o:
             log(f"{tn}.{c['name']}: offset from {src} needs a {kind(c)} column of this table with a formula, and min <= max: left as is"); continue
         put(c["name"], ("v", f"({v[src]}) + {lo_o} + {draw(tn, c['name'], 'o', hi_o - lo_o + 1)}"))
+        offset_done.add(c["name"])
     for con in t.get("temporal_ordering_constraints") or []:
         m = re.fullmatch(r"\s*(\w+)\s*(<=|<|>=|>)\s*(\w+)\s*", con)
         if not m or m[1] not in cols or m[3] not in cols:
             log(f"{tn}: ordering {con!r}: not two columns of this table; not enforced"); continue
         a_, b_, strict = (m[1], m[3], m[2] == "<") if m[2] in ("<=", "<") else (m[3], m[1], m[2] == ">")
         o = offset_of(cols[b_])
-        if o and o[0] == a_ and o[1] >= (1 if strict else 0) and b_ in v:
+        if o and o[0] == a_ and o[1] >= (1 if strict else 0) and b_ in offset_done:
             log(f"{tn}: {con} holds: {b_} is {a_} + {o[1]} .. {o[2]}"); continue
         if a_ not in v or b_ not in v or b_ in pk:
             log(f"{tn}: ordering {con!r}: {a_} and {b_} need formulas, and {b_} can't be a key; not enforced"); continue

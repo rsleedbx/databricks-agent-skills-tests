@@ -35,6 +35,7 @@ check "results dir: checkout, LFC_TESTS_RESULTS, an installed plugin copy" pytho
 check "SCRIPTS.md is current" python3 "$R/bin/scripts_index.py" --check
 check "layers: every skill and bin script is in layers.yaml, every cross-skill reference is allowed or in layers-baseline.txt" python3 "$R/bin/check_layers.py"
 check "check_layers: unit tests on a fixture tree" python3 -m unittest -q "$R/bin/test_check_layers.py"
+check "shape.py order between columns: offset spread, GREATEST fallback, a rejected offset rule (fixture, every row)" python3 -m unittest -q "$R/bin/test_shape_order.py"
 for w in tpcb tpcc tpch tpcdi tpcds tpce; do
   check "shape.py $w" sh -c "uv run -q '$SS/shape.py' '$SK/lfc-source-statschema/schemas/$w.yaml' --sf 0.1 --expected '$T/$w.exp.json' > '$T/$w.yaml'"
   for d in postgres mysql tsql oracle db2 informix databricks; do
