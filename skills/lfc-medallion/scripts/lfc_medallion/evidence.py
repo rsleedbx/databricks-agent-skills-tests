@@ -122,13 +122,16 @@ def _engine_sql(s: str) -> dict:
                     "JOIN sys.columns col ON col.object_id = fkc.parent_object_id "
                     "AND col.column_id = fkc.parent_column_id "
                     f"JOIN sys.tables pt ON pt.object_id = fk.referenced_object_id WHERE sc.name = {s}",
-            "activity": "SELECT t.name AS table_name, MAX(p.rows) AS live, SUM(o.leaf_insert_count) AS ins, "
+            # rows summed per table on their own; the counters over the heap or clustered index (index 0 or 1),
+            # one row per partition, so a partitioned table's partitions aren't multiplied by each other
+            "activity": "SELECT t.name AS table_name, r.live, SUM(o.leaf_insert_count) AS ins, "
                         "SUM(o.leaf_update_count) AS upd, SUM(o.leaf_delete_count) AS del FROM sys.tables t "
                         "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
-                        "JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
+                        "JOIN (SELECT object_id, SUM(rows) AS live FROM sys.partitions WHERE index_id IN (0, 1) "
+                        "GROUP BY object_id) r ON r.object_id = t.object_id "
                         "LEFT JOIN sys.dm_db_index_operational_stats(DB_ID(), NULL, NULL, NULL) o "
-                        "ON o.object_id = t.object_id AND o.index_id = p.index_id "
-                        f"WHERE sc.name = {s} GROUP BY t.name",
+                        "ON o.object_id = t.object_id AND o.index_id IN (0, 1) "
+                        f"WHERE sc.name = {s} GROUP BY t.name, r.live",
             "rows": "SELECT t.name AS table_name, SUM(p.rows) AS live FROM sys.tables t "
                     "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
                     "JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
@@ -383,8 +386,15 @@ def table_plan(spark, catalog: str, schema: str, connection: str | None = None, 
         engine = (engine or connection_engine(connection, workspace)).upper()
         if engine not in ENGINES:
             fallback, connection = f" (connection type {engine}: no catalog queries for it, bronze used)", None
-    s = connection_schema(spark, connection, database or source_schema or schema, source_schema or schema, engine) \
-        if connection else bronze_schema(spark, catalog, schema, workspace, count_rows)
+    if connection:
+        # MySQL: the database is the schema; elsewhere the source schema defaults to the bronze one's name
+        source = source_schema or (database if engine == "MYSQL" and database else schema)
+        s = connection_schema(spark, connection, database or source, source, engine)
+        if not s["tables"]:
+            raise ValueError(f"connection {connection} ({engine}): no tables in database {database or source}, "
+                             f"schema {source} (check database and source_schema)")
+    else:
+        s = bronze_schema(spark, catalog, schema, workspace, count_rows)
     s["evidence"] += fallback
     inferred = {(t["name"], tuple(fk["columns"])) for t in s["tables"] for fk in t.get("fk_constraints") or []
                 if fk.get("inferred")}
@@ -399,17 +409,22 @@ def table_plan(spark, catalog: str, schema: str, connection: str | None = None, 
             t["why"] += "; foreign keys inferred from names: " + ", ".join(sorted(fks))
     apply_hints(p, hints)
     route = {**ROUTE, **(routes or {})}
-    rows = {t["name"]: t.get("row_count") or 0 for t in s["tables"]}
+    rows = {t["name"]: t.get("row_count") for t in s["tables"]}
     for n, t in p["tables"].items():
         t["route"] = route[t["role"]]
         a = s["activity"].get(n)
         if a and t["route"] != "pipeline" and t.get("decided_by") != "hint":
             # changes: updates and deletes, and inserts (the source's counters: only those beyond the rows there now,
             # the rest being its load; bronze: every insert after the snapshot)
-            ins = max(0, a["inserts"] - rows[n]) if connection else a["inserts"]
+            ins = max(0, a["inserts"] - (rows[n] or 0)) if connection else a["inserts"]
             changes = ins + a["updates"] + a["deletes"]
+            if changes < busy_changes:
+                continue
+            if rows[n] is None:   # count_rows=False: the per-row rate can't be checked, so no override
+                t["why"] += f"; {changes} changes recorded, rows not counted: busy not checked"
+                continue
             per_row = changes / max(rows[n], 1)
-            if changes >= busy_changes and per_row >= busy_per_row:
+            if per_row >= busy_per_row:
                 t["route"] = "pipeline"
                 t["why"] += f"; busy ({changes} changes recorded, {per_row:.1f} per row): pipeline"
     p["evidence"] = s["evidence"]

@@ -267,6 +267,11 @@ class Engines(unittest.TestCase):
             self.assertTrue({"columns", "keys", "activity"} <= set(q), engine)
             for kind, sql in q.items():
                 self.assertNotIn("ORDER BY", sql.upper(), (engine, kind))
+        sqlserver = evidence._engine_sql("'east'")["SQLSERVER"]["activity"]   # rows summed apart from the counters
+        self.assertIn("SUM(rows) AS live FROM sys.partitions", sqlserver)
+        self.assertNotIn("MAX(p.rows)", sqlserver)
+        for engine, q in evidence._engine_sql("'east'").items():
+            for kind, sql in q.items():
                 self.assertIn("'east'", sql, (engine, kind))
                 self.assertIn(" AS ORD" if kind in ("columns",) else "", sql.upper())
 
@@ -285,6 +290,19 @@ class Engines(unittest.TestCase):
         self.assertEqual(s["activity"], {})
         self.assertEqual({t["name"]: t.get("row_count") for t in s["tables"]}, {"nation": 25, "supplier": 500})
         self.assertIn("no counters", s["evidence"])
+
+    def test_mysql_schema_is_the_database(self):
+        spark = Connection.Spark()
+        with self.assertRaises(AssertionError):   # the fake answers PostgreSQL's key query only; the first query counts
+            table_plan(spark, "main", "sales_bronze_east", connection="my", database="shop", engine="MYSQL")
+        self.assertIn("table_schema = \\'shop\\'", spark.queries[0])
+
+    def test_no_tables_found_is_an_error(self):
+        class Empty(Connection.Spark):
+            def sql(self, q):
+                return R(collect=list)
+        with self.assertRaisesRegex(ValueError, "no tables in database shop, schema nope"):
+            table_plan(Empty(), "main", "b", connection="c", database="shop", source_schema="nope", engine="POSTGRESQL")
 
     def test_engine_from_the_connection_and_fallback(self):
         class W:
@@ -352,6 +370,31 @@ class Busy(unittest.TestCase):
     def test_quiet_dimension_stays(self):
         t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "32"})])
         self.assertEqual(t["route"], "merge")
+
+    def test_no_row_counts_no_override(self):
+        history = [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "7500"})]
+        spark = BronzeSpark({"solo": (["pk"], [("pk", "int")], 10, history)})
+        t = table_plan(spark, "main", "s", count_rows=False)["tables"]["solo"]
+        self.assertEqual(t["route"], "merge")
+        self.assertIn("rows not counted: busy not checked", t["why"])
+
+    def test_through_the_connection_the_load_isnt_change(self):
+        class Spark(Connection.Spark):
+            def __init__(self, ins):
+                super().__init__()
+                self.ins = ins
+
+            def sql(self, q):
+                if "pg_stat_user_tables" in q:
+                    return R(collect=lambda: [R(table_name="nation", live=1000, ins=self.ins, upd=0, **{"del": 0}),
+                                              R(table_name="supplier", live=500, ins=500, upd=3, **{"del": 0})])
+                return super().sql(q)
+        kw = {"connection": "pg_conn", "database": "sales", "source_schema": "east", "engine": "POSTGRESQL"}
+        quiet = table_plan(Spark(1000), "main", "s", **kw)["tables"]["nation"]
+        self.assertEqual(quiet["route"], "merge")   # only its load
+        busy = table_plan(Spark(4000), "main", "s", **kw)["tables"]["nation"]
+        self.assertEqual(busy["route"], "pipeline")
+        self.assertIn("busy (3000 changes recorded, 3.0 per row)", busy["why"])
 
     def test_threshold_and_hint(self):
         h = [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "50"})]
