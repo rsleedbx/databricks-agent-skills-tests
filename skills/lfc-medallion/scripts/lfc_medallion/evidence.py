@@ -20,6 +20,7 @@ current without putting each one in the pipeline's graph (ROUTE; `routes` overri
 import json
 
 from . import discover, roles
+from .stack import spark_string
 
 ROUTE = {"fact": "pipeline", "log": "pipeline", "queue": "pipeline",
          "dimension": "merge", "lookup": "merge", "bridge": "merge"}
@@ -38,20 +39,21 @@ def _rows(spark, query):
     return spark.sql(query).collect()
 
 
-def _lit(s: str) -> str:
+def pg_string(s: str) -> str:
+    """A PostgreSQL string literal ('' is a quote), for the query remote_query runs on the source."""
     return "'" + str(s).replace("'", "''") + "'"
 
 
 # --- 1. the source, through a Unity Catalog connection (PostgreSQL) ------------------------------------------------
 
 def _remote(spark, connection, database, query):
-    return _rows(spark, f"SELECT * FROM remote_query({_lit(connection)}, database => {_lit(database)}, "
-                        f"query => {_lit(query)})")
+    return _rows(spark, f"SELECT * FROM remote_query({spark_string(connection)}, database => {spark_string(database)}, "
+                        f"query => {spark_string(query)})")
 
 
 def connection_schema(spark, connection: str, database: str, schema: str) -> dict:
     """Columns, keys, foreign keys, row counts and activity of a PostgreSQL schema, read through the connection."""
-    s = _lit(schema)
+    s = pg_string(schema)
     cols = _remote(spark, connection, database,
                    "SELECT table_name, column_name, data_type FROM information_schema.columns "
                    f"WHERE table_schema = {s} ORDER BY table_name, ordinal_position")

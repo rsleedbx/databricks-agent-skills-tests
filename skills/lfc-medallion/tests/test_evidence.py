@@ -161,7 +161,7 @@ class Connection(unittest.TestCase):
         self.assertEqual(s["activity"]["supplier"]["updates"], 3)
         start = "SELECT * FROM remote_query('pg_conn', database => 'sales'"
         self.assertTrue(all(q.startswith(start) for q in spark.queries))
-        self.assertIn("table_schema = ''east''", spark.queries[0])   # the schema name quoted inside the quoted query
+        self.assertIn("table_schema = \\'east\\'", spark.queries[0])   # PostgreSQL's 'east', inside Spark's string
 
     def test_plan_through_the_connection(self):
         p = table_plan(self.Spark(), "main", "sales_bronze_east", connection="pg_conn", database="sales",
