@@ -114,6 +114,28 @@ quiet table costs a metadata read, not a MERGE. New bronze columns are added fir
 gets `__START_AT`. The targets have the change data feed and row tracking on, so the silver views reading them still
 refresh incrementally.
 
+## Switching a table between the routes, on request
+
+A switch costs a whole copy of the table (or a full recompute of the pipeline's view) and a full recompute of the
+views that read it, so the plan only proposes. `routes_to_apply(spark, catalog, target, planned)` gives each table the
+route it keeps, unless an operator tags `<target>.all_<table>` to ask for the other:
+
+```sql
+ALTER TABLE main.sales_silver.all_nation SET TAGS ('lfc_medallion_route' = 'pipeline');          -- merge -> pipeline
+ALTER MATERIALIZED VIEW main.sales_silver.all_nation SET TAGS ('lfc_medallion_route' = 'merge');  -- pipeline -> merge
+```
+
+The next run applies it, in this order (a job task before the pipeline):
+
+| Direction | The job task | The pipeline |
+|---|---|---|
+| pipeline to `merge` | leaves the table out (`stack_all(skip=...)`); `merge_all(take_over=True)` drops the view the pipeline left in place, unrefreshed, and copies the table whole | doesn't define it |
+| `merge` to pipeline | `release()` drops merge_all's table and its state | defines the view again and computes it in full |
+
+The tag goes with the object it sits on, so a request is used up by the switch. A table the plan routes differently
+from its current route, untagged, stays and is reported in the proposals. A table that doesn't exist yet takes the
+plan's route.
+
 ## Tested
 
 The same layering with three sources of eight tables each (TPC-H, PostgreSQL through Lakeflow Connect standard CDC):
@@ -137,12 +159,17 @@ fact; `information_schema` lists a pipeline's backing tables next to its streami
 partsupp, region, supplier), into a scratch schema: every target equal to the pipeline's own `all_<table>` view in both
 directions (`EXCEPT ALL`: 0 and 0) after the first copy, after a nation renamed and one inserted, and after that one
 deleted and the name restored; each change MERGEd only the one table and source it touched (17 of 18 unchanged).
+Switching, on the same pipeline (silver and gold compared with a baseline by row counts and a checksum over every
+column): all six dimensions from the pipeline to `merge` (the views taken over, 18 copies); then one table tagged back
+to the pipeline (released, the view recomputed), then tagged to `merge` again (taken over, copied); then a run with no
+tag (nothing switched, every view `NO_OP`). Each time silver and gold equal the baseline; a switch recomputed only the
+moved table and the two silver views reading it (the fact lines `NO_OP`, gold row-based).
 Not run yet: more than three sources; bronze of an append-only or SCD type 2 destination (offline tests only).
 
 ## Trade-offs
 
-- Moving a table to the `merge` route: remove it from the pipeline (`skip`) before `merge_all` writes a table of the
-  same name; a pipeline's materialized view and a job's table can't share one.
+- A switch is a full copy or recompute of the table and its readers; that's why it waits for a tag. Between the job
+  task and the pipeline, a released table's name is empty: read `all_<table>` only through the pipeline's views.
 
 - Every table is stacked, including ones silver doesn't use: storage and an update step each (`NO_OP` when unchanged).
 - A schema that matches the prefix but isn't a source is read as one; `only` lists the sources instead.
