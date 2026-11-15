@@ -242,6 +242,13 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
     return report
 
 
+def merged_targets(spark, catalog: str, target: str) -> set[str]:
+    """The target tables merge_all finished merging at least once (in its state)."""
+    if not _rows(spark, f"SHOW TABLES IN {_q(catalog)}.{_q(target)} LIKE {spark_string(STATE)}"):
+        return set()
+    return {r.target_table for r in _rows(spark, f"SELECT DISTINCT target_table FROM {_fq(catalog, target, STATE)}")}
+
+
 def release(spark, catalog: str, target: str, tables: list[str], name: str = "all_{table}",
             force: bool = False) -> list[str]:
     """Hand tables back to the pipeline (the route back from `merge`): drop merge_all's tables and their state, so the

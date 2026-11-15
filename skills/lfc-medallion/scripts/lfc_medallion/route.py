@@ -62,24 +62,31 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         f"SELECT DISTINCT table_name, route FROM `{catalog}`.`{target}`.{PLAN}").collect()} \
         if _has(spark, catalog, target, PLAN) else {}
     apply, proposed = merge.routes_to_apply(spark, catalog, target, planned, name=name, previous=previous)
+    # merged before: merge_all's state has the table (a merge finished), not just a plan that said so
+    established = {t for t in planned if name.format(table=t) in merge.merged_targets(spark, catalog, target)}
+    skip = set()
     for table in [t for t, r in apply.items() if r == "merge"]:   # merge_all needs every source's key
         keyless = [s for s in sources if table in held[s] and not evidence.recorded_keys(
             spark, f"`{catalog}`.`{prefix}{s}`.`{table}`", f"{catalog}.{prefix}{s}.{table}", workspace)]
-        if keyless:
+        if keyless and table in established:   # keep the table and route; no merge this run
+            skip.add(table)
+            proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}",
+                               "kept": "merge, retried next run"}
+        elif keyless:
             apply[table] = "pipeline"
             proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}"}
     # first, the routes being applied: a run that dies mid-switch leaves previous= to finish it next time
     write_plan(spark, catalog, target, rows, apply, proposed)
     released = merge.release(spark, catalog, target, sorted(t for t, r in apply.items() if r == "pipeline"), name=name)
     done = {}
-    for table in sorted(t for t, r in apply.items() if r == "merge"):
+    for table in sorted(t for t, r in apply.items() if r == "merge" and t not in skip):
         try:
             report = merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column, name=name,
                                      workspace=workspace, take_over=True)
             done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
             error = str(e).splitlines()[0][:200]
-            if previous.get(table) == "merge":   # merged before: keep the table and its route, retry next run
+            if table in established:   # merged before: keep the table and its route, retry next run
                 proposed[table] = {**proposed.get(table, {}), "failed": error, "kept": "merge, retried next run"}
                 continue
             apply[table] = "pipeline"   # a first take-over that failed: back to the pipeline

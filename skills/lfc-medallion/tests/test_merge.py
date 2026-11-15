@@ -285,6 +285,12 @@ class Switch(unittest.TestCase):
         self.assertIn("DROP TABLE IF EXISTS `main`.`shop_silver`.`all_nation`", spark.done)
         self.assertNotIn("all_lines", " ".join(spark.done))
 
+    def test_merged_targets(self):
+        from lfc_medallion.merge import merged_targets
+        spark = Spark(state={("all_nation", "east"): 5})
+        self.assertEqual(merged_targets(spark, "main", "shop_silver"), {"all_nation"})
+        self.assertEqual(merged_targets(Spark(), "main", "shop_silver"), set())
+
     def test_release_without_state(self):
         from lfc_medallion import release
         self.assertEqual(release(Spark(), "main", "shop_silver", ["nation"]), [])

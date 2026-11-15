@@ -61,7 +61,7 @@ def table_plan(spark, catalog, schema, hints=None, workspace=None):
 
 
 class MergeRoute(unittest.TestCase):
-    def run_route(self, spark, apply=None, keys=lambda table, source: True, fail=(), **kw):
+    def run_route(self, spark, apply=None, keys=lambda table, source: True, fail=(), established=(), **kw):
         calls = {"merged": [], "released": []}
 
         def routes_to_apply(spark, catalog, target, planned, name, previous):
@@ -87,6 +87,7 @@ class MergeRoute(unittest.TestCase):
                 mock.patch.object(route.discover, "tables", lambda spark, c, p, names: {
                     s: set(PLANS[s]) for s in names}), \
                 mock.patch.object(route.evidence, "recorded_keys", recorded_keys), \
+                mock.patch.object(route.merge, "merged_targets", lambda *a: {f"all_{t}" for t in established}), \
                 mock.patch.object(route.evidence, "table_plan", table_plan), \
                 mock.patch.object(route.merge, "routes_to_apply", routes_to_apply), \
                 mock.patch.object(route.merge, "release", release), \
@@ -147,11 +148,31 @@ class Retry(unittest.TestCase):
     def test_failure_on_a_table_merged_before_keeps_it(self):   # a transient error isn't a reason to switch back
         spark = Spark(plan={"lines": "pipeline", "nation": "merge", "part": "merge"})
         out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
-                                    fail=("part",))
+                                    fail=("part",), established=("nation", "part"))
         self.assertEqual(out["merge"], ["nation", "part"])
         self.assertEqual(calls["forced"], [])   # nothing force-released
         self.assertEqual(out["proposed"]["part"]["kept"], "merge, retried next run")
         self.assertEqual({r[1]: r[6] for r in spark.written[1]}["part"], "merge")
+
+
+class Established(unittest.TestCase):
+    run_route = MergeRoute.run_route
+
+    def test_plan_saying_merge_isnt_proof(self):   # a first take-over whose run died: the plan says merge, no state
+        spark = Spark(plan={"lines": "pipeline", "nation": "merge", "part": "merge"})
+        out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
+                                    fail=("part",), established=("nation",))
+        self.assertEqual(calls["forced"], ["part"])   # treated as a first take-over: back to the pipeline
+        self.assertNotIn("part", out["merge"])
+
+    def test_keyless_established_table_kept(self):   # a key missing for a while doesn't hand back a merged table
+        spark = Spark()
+        out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "pipeline"},
+                                    keys=lambda table, source: table != "nation", established=("nation",))
+        self.assertEqual(out["merge"], ["nation"])
+        self.assertNotIn("nation", calls["merged"])   # no merge this run
+        self.assertNotIn("nation", calls["released"])
+        self.assertEqual(out["proposed"]["nation"]["kept"], "merge, retried next run")
 
 
 class PlanWrites(unittest.TestCase):
