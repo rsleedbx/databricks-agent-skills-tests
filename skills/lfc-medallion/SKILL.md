@@ -82,7 +82,14 @@ The same layering with three sources of eight tables each (TPC-H, PostgreSQL thr
 one changed line and one renamed reference row (a nation) each refreshed row-based in every layer, and the tables the
 change didn't touch did nothing (`NO_OP`); before the split, one silver view of 18 joins recomputed in full.
 Installed from this repo's archive URL in that pipeline, `stack_all` defined the same views as the hand-written file
-had: every view `NO_OP` on the next update, nothing recomputed. Not run yet: more than three sources; a MERGE job for the `merge` route.
+had: every view `NO_OP` on the next update, nothing recomputed. `table_plan` on that TPC-H bronze (PostgreSQL source, one line of business), against TPC-H's truth file
+(cdc-table-plan): through the connection and from bronze alike, 6 of 8 roles and 8 of 8 routes. `region` and `nation`
+come out dimensions, not lookups: the lookup rule needs a fixed size, which only a scaled model shows (a collected
+schema can't), so a hint settles them; both are routed to `merge` either way. Found on the way, both fixed: a
+SELECT-only login doesn't see constraints in `information_schema` (keys come from `pg_catalog`); `SHOW TBLPROPERTIES`
+doesn't return the keys property (the Unity Catalog API does); a two-column foreign key (lineitem to partsupp) needs
+inferring from bronze, or partsupp looks like a fact.
+Not run yet: more than three sources; a MERGE job for the `merge` route.
 
 ## Trade-offs
 
