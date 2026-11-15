@@ -52,13 +52,37 @@ The archive URL, not `lfc-medallion @ git+https://...`: the pipeline passes the 
 spaces split it and pip looks for `lfc-medallion` on PyPI (`ENVIRONMENT_PIP_INSTALL_ERROR`). A branch or tag name in
 place of `main` pins a version. Offline tests: `python3 -m unittest skills/lfc-medallion/tests/test_stack.py`.
 
+## Fact or dimension: `table_plan`
+
+Facts change all the time; dimensions rarely. With a few tables both can be views in one pipeline. With hundreds of
+sources or thousands of tables, every table in the pipeline's graph lengthens each update's start, so the quiet ones
+are better kept by a MERGE job. `table_plan` decides each table's role from evidence, then hints:
+
+```python
+from lfc_medallion import table_plan
+p = table_plan(spark, "main", "sales_bronze_east")                          # bronze only
+p = table_plan(spark, "main", "sales_bronze_east", connection="pg_conn",    # the source's own catalog
+               database="sales", source_schema="east", hints={"nation": "lookup"})
+p["tables"]["lineitem"]   # role, silver (scd1, scd2, append), route (pipeline, merge), confidence, decided_by, why
+```
+
+| Evidence, in order | What it gives |
+|---|---|
+| The source through the Unity Catalog connection (`remote_query`; PostgreSQL) | declared primary and foreign keys, row counts, inserts / updates / deletes since its statistics were reset |
+| Bronze | the key Lakeflow Connect records (table property `spark.internal.streaming_table.apply_changes.keys`, internal and undocumented), row counts, each MERGE's inserts / updates / deletes after the snapshot (table history), foreign keys inferred from names (`l_suppkey` -> `s_suppkey`) |
+| `hints` | `{table: role}` or `{table: {role, silver}}`; they win (`decided_by: hint`, the guess kept in `guessed`) |
+
+The rules are cdc-table-plan's (its accuracy against the TPC specifications and Mautic is in that skill's SKILL.md);
+they live in `lfc_medallion.roles`, and its `classify.py` runs them from files. Routes: facts, logs and queues go to the
+pipeline; dimensions, lookups and bridges to a MERGE job (`routes` overrides per role).
+
 ## Tested
 
 The same layering with three sources of eight tables each (TPC-H, PostgreSQL through Lakeflow Connect standard CDC):
 one changed line and one renamed reference row (a nation) each refreshed row-based in every layer, and the tables the
 change didn't touch did nothing (`NO_OP`); before the split, one silver view of 18 joins recomputed in full.
 Installed from this repo's archive URL in that pipeline, `stack_all` defined the same views as the hand-written file
-had: every view `NO_OP` on the next update, nothing recomputed. Not run yet: more than three sources.
+had: every view `NO_OP` on the next update, nothing recomputed. Not run yet: more than three sources; a MERGE job for the `merge` route.
 
 ## Trade-offs
 

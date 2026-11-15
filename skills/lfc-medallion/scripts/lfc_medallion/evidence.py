@@ -1,0 +1,198 @@
+"""evidence: what each table is (fact, dimension, ...) decided from what the data shows, then the hints.
+
+table_plan() builds one schema in lfc-source-statschema's canonical form (columns and types, primary and foreign keys,
+row counts, inserts / updates / deletes) and runs roles.plan over it. The evidence comes from, in order:
+
+1. the source itself, through the Unity Catalog connection Lakeflow Connect already reads it with (`connection`):
+   declared primary and foreign keys and the database's own counters (PostgreSQL: information_schema and
+   pg_stat_user_tables, through remote_query). Nothing is installed on the source.
+2. bronze, when there's no connection: the primary key Lakeflow Connect records on each destination table (the table
+   property spark.internal.streaming_table.apply_changes.keys: internal, not documented), column types, row counts,
+   the inserts / updates / deletes of each MERGE in the table's history after the first (the snapshot), and foreign
+   keys inferred from names (a column whose name, after its table's prefix, is another table's one-column key:
+   l_suppkey -> supplier.s_suppkey), each marked as inferred in the table's `why`.
+3. hints: {table: role} or {table: {role, silver}} from someone who knows the data, which win (decided_by: hint).
+
+Each table also gets a route: where a pipeline builds it. Facts, logs and queues change all the time, so they stay in
+the incremental pipeline; dimensions, lookups and bridges change rarely, so with many tables a MERGE job can keep them
+current without putting each one in the pipeline's graph (ROUTE; `routes` overrides it per role).
+"""
+import json
+
+from . import discover, roles
+
+ROUTE = {"fact": "pipeline", "log": "pipeline", "queue": "pipeline",
+         "dimension": "merge", "lookup": "merge", "bridge": "merge"}
+TYPES = {"decimal": "decimal", "double": "double", "float": "float", "real": "real", "numeric": "numeric",
+         "timestamp": "timestamp", "timestamp_ntz": "timestamp", "timestamp with time zone": "timestamptz",
+         "timestamp without time zone": "timestamp", "date": "date", "datetime": "datetime"}
+
+
+def canonical_type(t: str) -> str:
+    """A Spark or PostgreSQL type as the canonical schema names the ones the rules look at; any other as it is."""
+    t = str(t).lower()
+    return TYPES.get(t.split("(")[0].strip(), t)
+
+
+def _rows(spark, query):
+    return spark.sql(query).collect()
+
+
+def _lit(s: str) -> str:
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+# --- 1. the source, through a Unity Catalog connection (PostgreSQL) ------------------------------------------------
+
+def _remote(spark, connection, database, query):
+    return _rows(spark, f"SELECT * FROM remote_query({_lit(connection)}, database => {_lit(database)}, "
+                        f"query => {_lit(query)})")
+
+
+def connection_schema(spark, connection: str, database: str, schema: str) -> dict:
+    """Columns, keys, foreign keys, row counts and activity of a PostgreSQL schema, read through the connection."""
+    s = _lit(schema)
+    cols = _remote(spark, connection, database,
+                   "SELECT table_name, column_name, data_type FROM information_schema.columns "
+                   f"WHERE table_schema = {s} ORDER BY table_name, ordinal_position")
+    keys = _remote(spark, connection, database,
+                   "SELECT tc.table_name, tc.constraint_type, tc.constraint_name, kcu.column_name, "
+                   "ccu.table_name AS parent_table FROM information_schema.table_constraints tc "
+                   "JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema "
+                   "AND kcu.constraint_name = tc.constraint_name "
+                   "LEFT JOIN information_schema.constraint_column_usage ccu ON tc.constraint_type = 'FOREIGN KEY' "
+                   "AND ccu.constraint_schema = tc.constraint_schema AND ccu.constraint_name = tc.constraint_name "
+                   f"WHERE tc.table_schema = {s} AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY') "
+                   "ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position")
+    stats = _remote(spark, connection, database, "SELECT relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del "
+                    f"FROM pg_stat_user_tables WHERE schemaname = {s}")
+    tables = {}
+    for r in cols:
+        tables.setdefault(r.table_name, {"name": r.table_name, "columns": []})["columns"].append(
+            {"name": r.column_name, "type": canonical_type(r.data_type)})
+    fks = {}
+    for r in keys:
+        t = tables.get(r.table_name)
+        if not t:
+            continue
+        if r.constraint_type == "PRIMARY KEY":
+            for c in t["columns"]:
+                if c["name"] == r.column_name:
+                    c["primary_key"] = True
+        else:
+            fks.setdefault((r.table_name, r.constraint_name), {"columns": [], "parent_table": r.parent_table})[
+                "columns"].append(r.column_name)
+    for (t, _), fk in fks.items():
+        tables[t].setdefault("fk_constraints", []).append(fk)
+    activity = {}
+    for r in stats:
+        if r.relname in tables:
+            tables[r.relname]["row_count"] = int(r.n_live_tup or 0)
+            activity[r.relname] = {"inserts": int(r.n_tup_ins or 0), "updates": int(r.n_tup_upd or 0),
+                                   "deletes": int(r.n_tup_del or 0)}
+    return {"tables": list(tables.values()), "activity": activity, "evidence": f"connection {connection}"}
+
+
+# --- 2. bronze, as Lakeflow Connect wrote it ------------------------------------------------------------------------
+
+KEYS_PROPERTY = "spark.internal.streaming_table.apply_changes.keys"
+
+
+def history_activity(spark, table: str) -> dict:
+    """Inserts, updates and deletes in the table's MERGEs after the first one that inserted rows (the snapshot)."""
+    total, seen_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, False
+    history = f"SELECT version, operation, operationMetrics FROM (DESCRIBE HISTORY {table}) ORDER BY version"
+    for r in _rows(spark, history):
+        if r.operation != "MERGE":
+            continue
+        m = r.operationMetrics or {}
+        m = json.loads(m) if isinstance(m, str) else m
+        ins = int(m.get("numTargetRowsInserted") or 0)
+        if not seen_snapshot:
+            seen_snapshot = ins > 0
+            continue
+        total["inserts"] += ins
+        total["updates"] += int(m.get("numTargetRowsMatchedUpdated") or m.get("numTargetRowsUpdated") or 0)
+        total["deletes"] += int(m.get("numTargetRowsMatchedDeleted") or m.get("numTargetRowsDeleted") or 0)
+    return total
+
+
+def infer_foreign_keys(tables: list[dict]) -> None:
+    """Add a foreign key where a column's name, after its table's prefix, is another table's one-column key (TPC:
+    l_suppkey -> s_suppkey), or is that key's own name (ORM: orders.customer_id -> customer.customer_id)."""
+    def bare(col):
+        return col.split("_", 1)[1] if "_" in col else col
+    keys = {}
+    for t in tables:
+        pk = [c["name"] for c in t["columns"] if c.get("primary_key")]
+        if len(pk) == 1:
+            keys.setdefault(bare(pk[0]), []).append((t["name"], pk[0]))
+            keys.setdefault(pk[0], []).append((t["name"], pk[0]))
+    for t in tables:
+        declared = {c for fk in t.get("fk_constraints") or [] for c in fk["columns"]}
+        for c in t["columns"]:
+            if c["name"] in declared:
+                continue
+            match = [(p, k) for p, k in keys.get(c["name"], []) + keys.get(bare(c["name"]), []) if p != t["name"]]
+            if len({p for p, _ in match}) == 1:
+                t.setdefault("fk_constraints", []).append({"columns": [c["name"]], "parent_table": match[0][0],
+                                                           "inferred": True})
+
+
+def bronze_schema(spark, catalog: str, schema: str) -> dict:
+    """Columns, keys, row counts and activity of one bronze schema; foreign keys inferred from names."""
+    tables, activity = [], {}
+    for name in sorted(discover.tables(spark, catalog, "", [schema])[schema]):
+        fq = f"`{catalog}`.`{schema}`.`{name}`"
+        props = {r.key: r.value for r in _rows(spark, f"SHOW TBLPROPERTIES {fq}")}
+        pk = json.loads(props.get(KEYS_PROPERTY) or "[]")
+        cols = []
+        for r in _rows(spark, f"DESCRIBE TABLE {fq}"):   # the columns, up to the first blank or "# ..." section
+            if not r.col_name or r.col_name.startswith("#"):
+                break
+            col = {"name": r.col_name, "type": canonical_type(r.data_type)}
+            cols.append({**col, "primary_key": True} if r.col_name in pk else col)
+        n = _rows(spark, f"SELECT COUNT(*) AS n FROM {fq}")[0].n
+        tables.append({"name": name, "columns": cols, "row_count": int(n)})
+        activity[name] = history_activity(spark, fq)
+    infer_foreign_keys(tables)
+    return {"tables": tables, "activity": activity, "evidence": f"bronze {catalog}.{schema}"}
+
+
+# --- the plan --------------------------------------------------------------------------------------------------------
+
+def apply_hints(p: dict, hints: dict | None) -> dict:
+    """Hints win over the evidence: {table: role} or {table: {role, silver}}; decided_by: hint, the guess kept."""
+    for n, h in (hints or {}).items():
+        h = h if isinstance(h, dict) else {"role": h}
+        t = p["tables"].get(n)
+        if t is None:
+            raise ValueError(f"hint for {n}: no such table")
+        if h.get("role") not in roles.SILVER:
+            raise ValueError(f"hint for {n}: role {h.get('role')!r} isn't one of {', '.join(roles.SILVER)}")
+        silver = list(h.get("silver") or roles.SILVER[h["role"]])
+        t.update(guessed=f"{t['role']} {'+'.join(t['silver'])}", role=h["role"], silver=silver, confidence="high",
+                 decided_by="hint")
+        t.pop("ask", None)
+    return p
+
+
+def table_plan(spark, catalog: str, schema: str, connection: str | None = None, database: str | None = None,
+               source_schema: str | None = None, hints: dict | None = None, routes: dict | None = None) -> dict:
+    """Each table's role, silver and route, with its evidence: from the source through `connection` (database and
+    source_schema name it there) when given, else from bronze `catalog.schema`; then the hints."""
+    s = connection_schema(spark, connection, database, source_schema or schema) if connection else \
+        bronze_schema(spark, catalog, schema)
+    inferred = {(t["name"], tuple(fk["columns"])) for t in s["tables"] for fk in t.get("fk_constraints") or []
+                if fk.get("inferred")}
+    p = roles.plan({"tables": s["tables"]}, 1, s["activity"], schema)
+    for n, t in p["tables"].items():
+        fks = [f"{','.join(c)}" for (tn, c) in inferred if tn == n]
+        if fks:
+            t["why"] += "; foreign keys inferred from names: " + ", ".join(sorted(fks))
+    apply_hints(p, hints)
+    route = {**ROUTE, **(routes or {})}
+    for t in p["tables"].values():
+        t["route"] = route[t["role"]]
+    p["evidence"] = s["evidence"]
+    return p
