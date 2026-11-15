@@ -161,15 +161,21 @@ def merge_sql(tgt: str, src: str, source: str, source_column: str, key: list[str
 
 
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
-              only=None, name: str = "all_{table}", keys: dict | None = None, workspace=None) -> dict:
+              only=None, name: str = "all_{table}", keys: dict | None = None, workspace=None,
+              take_over: bool = False) -> dict:
     """Keep <catalog>.<target>.<name> current for each table in `tables`, from every source (schema <prefix><source>)
-    that has it. keys: {table: [columns]} where the recorded key isn't the one to use. Returns, per target table and
+    that has it. keys: {table: [columns]} where the recorded key isn't the one to use. take_over: a target that is
+    still a view (the pipeline's, left over when the table moved to this route) is dropped and the table copied whole;
+    without it, a view there is an error (a pipeline still defining it would recreate it). Returns, per target table and
     source, what was done: copied (first read or after a full refresh), merged (from the change feed) or unchanged,
     and the version read."""
     names = discover.sources(spark, catalog, prefix, only)
     held = discover.tables(spark, catalog, prefix, names)
     state = _state(spark, catalog, target)
-    existing = {r.tableName for r in _rows(spark, f"SHOW TABLES IN {_q(catalog)}.{_q(target)}")}
+    kinds = {r.table_name: r.table_type for r in _rows(
+        spark, f"SELECT table_name, table_type FROM {_q(catalog)}.information_schema.tables "
+               f"WHERE table_schema = {spark_string(target)}")}
+    existing = set(kinds)
     report, fresh_targets = {}, {}
     for table in tables:
         out_name = name.format(table=table)
@@ -185,6 +191,13 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
                                  f"give keys={{{table!r}: [...]}}")
             if "__START_AT" in {c for c, _ in cols} and "__START_AT" not in key:
                 key.append("__START_AT")   # SCD type 2: a row per version of the key
+            if kinds.get(out_name) in ("MATERIALIZED_VIEW", "VIEW"):   # a pipeline's view (moved to this route)
+                if not take_over:
+                    raise ValueError(f"{catalog}.{target}.{out_name} is a view (a pipeline's?): leave it out of the "
+                                     "pipeline (stack_all skip=...), then take_over=True drops it for the table")
+                spark.sql(f"DROP {kinds[out_name].replace('_', ' ')} {tgt}")
+                existing.discard(out_name)
+                kinds.pop(out_name)
             created = out_name not in existing   # made now (or dropped by hand since): every source copied
             have = set() if created else {c for c, _ in columns(spark, tgt)}
             _ensure_target(spark, tgt, not created, source_column, cols, have)
@@ -227,3 +240,17 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
             for g in gone:
                 report[out_name][g] = {"done": "removed"}
     return report
+
+
+def release(spark, catalog: str, target: str, tables: list[str], name: str = "all_{table}") -> list[str]:
+    """Hand tables back to the pipeline (the route back from `merge`): drop merge_all's tables and their state, so the
+    pipeline's views can take the names. Only tables merge_all wrote (in its state) are dropped. Returns those."""
+    st = _fq(catalog, target, STATE)
+    if not _rows(spark, f"SHOW TABLES IN {_q(catalog)}.{_q(target)} LIKE {spark_string(STATE)}"):
+        return []
+    written = {r.target_table for r in _rows(spark, f"SELECT DISTINCT target_table FROM {st}")}
+    dropped = [name.format(table=t) for t in tables if name.format(table=t) in written]
+    for out_name in dropped:
+        spark.sql(f"DROP TABLE IF EXISTS {_fq(catalog, target, out_name)}")
+        spark.sql(f"DELETE FROM {st} WHERE target_table = {spark_string(out_name)}")
+    return dropped

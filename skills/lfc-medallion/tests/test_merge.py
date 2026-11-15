@@ -24,7 +24,7 @@ class Spark:
     """Sources east and west under prefix shop_bronze_, each with `nation`; target schema shop_silver."""
 
     def __init__(self, versions=None, state=None, history=None, cols=None, keys=("n_nationkey",), targets=(),
-                 ids=None, tables=None, gaps=None):
+                 ids=None, tables=None, gaps=None, views=()):
         self.versions = versions or {"east": 5, "west": 7}
         # state: (target, source) -> version, or (version, table id); ids: source -> its table's id now
         self.ids = ids or {}
@@ -32,6 +32,7 @@ class Spark:
                       for k, v in (state or {}).items()}
         self.tables = tables or {}   # source -> its tables (default: nation)
         self.gaps = gaps or {}   # source -> versions log retention dropped
+        self.views = set(views)   # targets that are still a pipeline's materialized views
         self.history = history or {}   # source -> [(version, operation, params, metrics)]
         self.cols = cols or {"east": COLS, "west": COLS}
         self.keys = list(keys)
@@ -47,6 +48,13 @@ class Spark:
         elif q.startswith("SHOW TABLES IN") and "shop_bronze_" in q:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(tableName=t) for t in self.tables.get(source, ["nation"])]
+        elif "information_schema.tables" in q:   # the target schema's tables and their kinds
+            rows = [R(table_name=t, table_type="MANAGED") for t in self.targets] + \
+                   [R(table_name=v, table_type="MATERIALIZED_VIEW") for v in self.views]
+        elif q.startswith("SHOW TABLES IN") and "LIKE" in q:   # release(): is there a state table
+            rows = [R(tableName=STATE)] if self.state else []
+        elif q.startswith("SELECT DISTINCT target_table"):
+            rows = [R(target_table=t) for t, _ in self.state]
         elif q.startswith("SHOW TABLES IN"):
             rows = [R(tableName=t) for t in self.targets]
         elif q.startswith("SHOW TBLPROPERTIES"):
@@ -244,6 +252,35 @@ class Boundaries(unittest.TestCase):
         spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7})   # state, but no target
         report = run(spark)
         self.assertEqual({s: x["done"] for s, x in report["all_nation"].items()}, {"east": "copied", "west": "copied"})
+
+
+class Switch(unittest.TestCase):
+    """Moving a table between the pipeline and this route, both ways."""
+
+    def test_pipeline_view_is_refused_without_take_over(self):
+        spark = Spark(views={"all_nation"})
+        with self.assertRaisesRegex(ValueError, "is a view .* take_over=True"):
+            run(spark)
+        self.assertFalse(any(q.startswith("DROP") for q in spark.done))
+
+    def test_take_over_drops_the_view_and_copies(self):
+        spark = Spark(views={"all_nation"}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7})
+        report = run(spark, take_over=True)
+        self.assertIn("DROP MATERIALIZED VIEW `main`.`shop_silver`.`all_nation`", spark.done)
+        self.assertTrue(any(q.startswith("CREATE TABLE `main`.`shop_silver`.`all_nation`") for q in spark.done))
+        self.assertEqual({d: x["done"] for d, x in report["all_nation"].items()}, {"east": "copied", "west": "copied"})
+
+    def test_release_hands_tables_back(self):
+        from lfc_medallion import release
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation", "all_x"})
+        self.assertEqual(release(spark, "main", "shop_silver", ["nation", "x"]), ["all_nation"])   # only what it wrote
+        self.assertIn("DROP TABLE IF EXISTS `main`.`shop_silver`.`all_nation`", spark.done)
+        self.assertNotIn("all_x", " ".join(spark.done))
+        self.assertTrue(any(q.startswith(f"DELETE FROM `main`.`shop_silver`.`{STATE}`") for q in spark.done))
+
+    def test_release_without_state(self):
+        from lfc_medallion import release
+        self.assertEqual(release(Spark(), "main", "shop_silver", ["nation"]), [])
 
 
 class Removed(unittest.TestCase):
