@@ -103,6 +103,7 @@ check "q.sh missing.sql" sh -c "'$SK/shell-json-scripting/scripts/q.sh' '$SK/lfc
 check "q.py missing.sql" sh -c "uv run -q '$SK/shell-json-scripting/scripts/q.py' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
 check "zerobus-sdk-freshness-test: producer.py's run file (dups_sent, Kafka errors, a dead stream, a failed flush), report.py's counts, the probe's timeout (fake SDKs)" python3 -m unittest -q "$SK/zerobus-sdk-freshness-test/tests/test_scripts.py"
 check "pipeline-diagram.py on saved pipeline JSON (gateway on an AG, integrated, Kafka)" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_pipeline_diagram.py"
+check "lfc_medallion merge_all: copy, change-feed MERGE, unchanged, full refresh, new column, SCD type 2 key, stack_all skip (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_merge.py"
 check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
   check "classify.py $m: every role as its truth file says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth "$SK/cdc-table-plan/truth/$m.yaml"

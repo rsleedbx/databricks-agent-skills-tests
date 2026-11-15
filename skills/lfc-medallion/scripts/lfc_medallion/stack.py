@@ -40,13 +40,13 @@ def stacked(spark, catalog: str, prefix: str, table: str, names: list[str], sour
 
 
 def stack_all(dp, spark, catalog: str, prefix: str, source_column: str = "_source", only=None,
-              name: str = "all_{table}") -> dict[str, list[str]]:
+              name: str = "all_{table}", skip=()) -> dict[str, list[str]]:
     """Define one materialized view per table found in any source (named by `name`), stacked from the sources that
-    have it. Returns {view name: [sources]} for logging or checks."""
+    have it, except the tables in `skip` (those merge_all keeps, the `merge` route). Returns {view name: [sources]}."""
     names = discover.sources(spark, catalog, prefix, only)
     held = discover.tables(spark, catalog, prefix, names)
     defined = {}
-    for table in sorted(set().union(*held.values())):
+    for table in sorted(set().union(*held.values()) - set(skip)):
         having = [s for s in names if table in held[s]]
         view = name.format(table=table)
         dp.materialized_view(name=view, comment=f"{table} of every source in one table, with its source in "
