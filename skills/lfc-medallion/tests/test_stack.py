@@ -87,7 +87,7 @@ class Stack(unittest.TestCase):
                          "SELECT 'east' AS `division`, * FROM `main`.`shop_bronze_east`.`orders`")
 
     def test_quote_in_a_source_name(self):
-        self.assertIn("SELECT 'o''brien' AS", source_sql("c", "p_", "t", "o'brien"))
+        self.assertIn("SELECT 'o\\'brien' AS", source_sql("c", "p_", "t", "o'brien"))
 
     def test_every_table_one_view(self):
         dp = FakeDp()

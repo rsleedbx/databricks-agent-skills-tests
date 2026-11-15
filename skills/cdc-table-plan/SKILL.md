@@ -18,6 +18,10 @@ So the plan is built in three passes, each recorded in the plan as `decided_by`:
 | 2. Review | for public software, its docs or its code: `--review review.yaml` corrects a table with a citation | `docs` |
 | 3. Edit | the customer, in `plan.yaml` | `customer` |
 
+The rules are in `lfc-medallion`'s package (`lfc_medallion.roles`), so a pipeline or job decides the same way from
+Unity Catalog (its `table_plan`: the source's catalog through the connection, or bronze, then hints); `classify.py`
+runs them from files.
+
 ## Run
 
 ```bash

@@ -18,9 +18,15 @@ In a Lakeflow Spark Declarative Pipelines source file:
 from . import discover
 
 
+def spark_string(s: str) -> str:
+    """A Spark SQL string literal. Spark escapes with a backslash: '' isn't a quote there ('a''b' is two strings
+    joined), so a quote or backslash in a name is backslashed."""
+    return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 def source_sql(catalog: str, prefix: str, table: str, source: str, source_column: str = "_source") -> str:
     """One source's rows: SELECT '<source>' AS <source_column>, * FROM <catalog>.<prefix><source>.<table>."""
-    return (f"SELECT '{source.replace(chr(39), chr(39) * 2)}' AS `{source_column}`, * "
+    return (f"SELECT {spark_string(source)} AS `{source_column}`, * "
             f"FROM `{catalog}`.`{prefix}{source}`.`{table}`")
 
 

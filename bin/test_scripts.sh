@@ -103,6 +103,10 @@ check "q.sh missing.sql" sh -c "'$SK/shell-json-scripting/scripts/q.sh' '$SK/lfc
 check "q.py missing.sql" sh -c "uv run -q '$SK/shell-json-scripting/scripts/q.py' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
 check "zerobus-sdk-freshness-test: producer.py's run file (dups_sent, Kafka errors, a dead stream, a failed flush), report.py's counts, the probe's timeout (fake SDKs)" python3 -m unittest -q "$SK/zerobus-sdk-freshness-test/tests/test_scripts.py"
 check "pipeline-diagram.py on saved pipeline JSON (gateway on an AG, integrated, Kafka)" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_pipeline_diagram.py"
+check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
+for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
+  check "classify.py $m: every role as its truth file says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth "$SK/cdc-table-plan/truth/$m.yaml"
+done
 check "lfc_medallion: sources and tables found, one n:1 view per table, a table some sources lack (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_stack.py"
 check "history-snapshot-scd2.py: the guards (a reload not finished, an emptied table); with pyspark + Java 17/21 also their DataFrame form and versions" python3 -m unittest -q "$SK/lfc-downstream-history/tests/test_history_snapshot_scd2.py"
 check "medallion.py: layer counts, how each table is written; the medallion box and the Zerobus drawing" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_medallion.py"
