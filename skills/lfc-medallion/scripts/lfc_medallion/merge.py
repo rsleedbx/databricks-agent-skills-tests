@@ -55,6 +55,11 @@ def latest_version(spark, fq: str) -> int:
     return int(_rows(spark, f"SELECT MAX(version) AS v FROM (DESCRIBE HISTORY {fq})")[0].v)
 
 
+def table_id(spark, fq: str) -> str:
+    """The table's id (DESCRIBE DETAIL): a dropped and recreated table has a new one, and its history starts over."""
+    return str(_rows(spark, f"DESCRIBE DETAIL {fq}")[0].id)
+
+
 DATA_OPS = ("MERGE", "WRITE", "STREAMING UPDATE", "DELETE", "UPDATE")   # their metrics say how many rows
 NO_DATA_OPS = ("OPTIMIZE", "VACUUM START", "VACUUM END", "SET TBLPROPERTIES", "UNSET TBLPROPERTIES", "ADD COLUMNS",
                "CHANGE COLUMN", "RENAME COLUMN", "UPGRADE PROTOCOL", "DLT SETUP", "ADD CONSTRAINT", "DROP CONSTRAINT",
@@ -85,26 +90,31 @@ def since(spark, fq: str, version: int) -> tuple[bool, bool]:
         m = json.loads(m) if isinstance(m, str) else m
         if r.operation not in DATA_OPS or not any(k in m for k in ROW_METRICS):
             changed = True   # can't tell: read the change feed
-        elif sum(evidence._write_counts(r.operation, m)):
-            changed = True
+        elif sum(evidence._write_counts(r.operation, m)) or \
+                any(int(v or 0) for k, v in m.items() if k.startswith("numTargetRows") and k != "numTargetRowsCopied"):
+            changed = True   # also MERGE's WHEN NOT MATCHED BY SOURCE updates and deletes
     return refreshed, changed
 
 
 def _state(spark, catalog, target) -> dict:
-    spark.sql(f"CREATE TABLE IF NOT EXISTS {_fq(catalog, target, STATE)} (target_table STRING, source STRING, "
-              "version BIGINT, updated_at TIMESTAMP) COMMENT 'lfc_medallion merge_all: the version of each source "
+    st = _fq(catalog, target, STATE)
+    spark.sql(f"CREATE TABLE IF NOT EXISTS {st} (target_table STRING, source STRING, version BIGINT, "
+              "table_id STRING, updated_at TIMESTAMP) COMMENT 'lfc_medallion merge_all: the version of each source "
               "table read into each target'")
-    return {(r.target_table, r.source): int(r.version)
-            for r in _rows(spark, f"SELECT target_table, source, version FROM {_fq(catalog, target, STATE)}")}
+    if "table_id" not in {r.col_name for r in _rows(spark, f"DESCRIBE TABLE {st}")}:   # a state from before
+        spark.sql(f"ALTER TABLE {st} ADD COLUMNS (table_id STRING)")
+    return {(r.target_table, r.source): (int(r.version), r.table_id)
+            for r in _rows(spark, f"SELECT target_table, source, version, table_id FROM {st}")}
 
 
-def _save_state(spark, catalog, target, target_table, source, version):
+def _save_state(spark, catalog, target, target_table, source, version, tid):
     spark.sql(f"MERGE INTO {_fq(catalog, target, STATE)} s USING (SELECT {spark_string(target_table)} AS target_table, "
-              f"{spark_string(source)} AS source, {int(version)} AS version) n "
+              f"{spark_string(source)} AS source, {int(version)} AS version, {spark_string(tid)} AS table_id) n "
               "ON s.target_table = n.target_table AND s.source = n.source "
-              "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.updated_at = current_timestamp() "
-              "WHEN NOT MATCHED THEN INSERT (target_table, source, version, updated_at) "
-              "VALUES (n.target_table, n.source, n.version, current_timestamp())")
+              "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
+              "s.updated_at = current_timestamp() "
+              "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, updated_at) "
+              "VALUES (n.target_table, n.source, n.version, n.table_id, current_timestamp())")
 
 
 def _ensure_target(spark, tgt: str, exists: bool, source_column: str, cols, have: set) -> None:
@@ -142,9 +152,12 @@ def merge_sql(tgt: str, src: str, source: str, source_column: str, key: list[str
     ins_cols = ", ".join(_q(c) for c in names)
     ins_vals = ", ".join(f"c.{_q(c)}" for c in names)
     update = f"WHEN MATCHED THEN UPDATE SET {sets} " if sets else ""
+    # a whole copy: this source's rows the copy doesn't have go in the same MERGE, so it's one atomic statement
+    stale = f" WHEN NOT MATCHED BY SOURCE AND t.{_q(source_column)} = {lit} THEN DELETE" if since is None else ""
     return (f"MERGE INTO {tgt} t USING ({rows}) c ON {on} "
             "WHEN MATCHED AND c.`__lfc_change` = 'delete' THEN DELETE "
-            f"{update}WHEN NOT MATCHED AND c.`__lfc_change` != 'delete' THEN INSERT ({ins_cols}) VALUES ({ins_vals})")
+            f"{update}WHEN NOT MATCHED AND c.`__lfc_change` != 'delete' THEN INSERT ({ins_cols}) VALUES ({ins_vals})"
+            f"{stale}")
 
 
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
@@ -175,14 +188,18 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
             have = {c for c, _ in columns(spark, tgt)} if out_name in existing else set()
             _ensure_target(spark, tgt, out_name in existing, source_column, cols, have)
             existing.add(out_name)
-            now, last = latest_version(spark, src), state.get((out_name, s))
+            now, tid = latest_version(spark, src), table_id(spark, src)
+            last, last_id = state.get((out_name, s), (None, None))
+            # a recreated table: a new id, or (no id saved yet) a version below the one saved; its history starts over
+            if last is not None and (last_id and last_id != tid or now < last):
+                last = -1
             if last is not None and now == last:
                 report[out_name][s] = {"done": "unchanged", "version": now}
                 continue
-            refreshed, changed = (False, 0) if last is None else since(spark, src, last)
-            whole = last is None or refreshed
+            refreshed, changed = (False, False) if last is None or last < 0 else since(spark, src, last)
+            whole = last is None or last < 0 or refreshed
             if not whole and not changed:   # new versions, no rows written: nothing to MERGE
-                _save_state(spark, catalog, target, out_name, s, now)
+                _save_state(spark, catalog, target, out_name, s, now, tid)
                 report[out_name][s] = {"done": "unchanged", "version": now}
                 continue
             data = [c for c, _ in cols]
@@ -193,11 +210,9 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
                 # the change data vacuumed or expired, or the feed off: the error class varies, so copy on any
                 except Exception as e:  # noqa: BLE001
                     whole, done = True, f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})"
-            if whole:
-                if last is not None:   # a full refresh, or an unreadable change feed: this source's rows again
-                    spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} = {spark_string(s)}")
+            if whole:   # the first read, a full refresh, a recreated table, an unreadable change feed: one MERGE
                 spark.sql(merge_sql(tgt, src, s, source_column, key, data, None, now))
-            _save_state(spark, catalog, target, out_name, s, now)
+            _save_state(spark, catalog, target, out_name, s, now, tid)
             report[out_name][s] = {"done": done, "version": now}
         # sources gone (schema dropped, table removed, left out by `only`): their rows and state go too
         current = [x for x in names if table in held[x]]

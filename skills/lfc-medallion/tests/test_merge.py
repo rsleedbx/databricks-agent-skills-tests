@@ -23,9 +23,14 @@ COLS = [("n_nationkey", "int"), ("n_name", "string")]
 class Spark:
     """Sources east and west under prefix shop_bronze_, each with `nation`; target schema shop_silver."""
 
-    def __init__(self, versions=None, state=None, history=None, cols=None, keys=("n_nationkey",), targets=()):
+    def __init__(self, versions=None, state=None, history=None, cols=None, keys=("n_nationkey",), targets=(),
+                 ids=None, tables=None):
         self.versions = versions or {"east": 5, "west": 7}
-        self.state = dict(state or {})
+        # state: (target, source) -> version, or (version, table id); ids: source -> its table's id now
+        self.ids = ids or {}
+        self.state = {k: v if isinstance(v, tuple) else (v, self.ids.get(k[1], f"id-{k[1]}"))
+                      for k, v in (state or {}).items()}
+        self.tables = tables or {}   # source -> its tables (default: nation)
         self.history = history or {}   # source -> [(version, operation, params, metrics)]
         self.cols = cols or {"east": COLS, "west": COLS}
         self.keys = list(keys)
@@ -39,11 +44,18 @@ class Spark:
         if q.startswith("SHOW SCHEMAS"):
             rows = [R(databaseName=f"shop_bronze_{s}") for s in self.versions]
         elif q.startswith("SHOW TABLES IN") and "shop_bronze_" in q:
-            rows = [R(tableName="nation")]
+            source = quoted[1][len("shop_bronze_"):]
+            rows = [R(tableName=t) for t in self.tables.get(source, ["nation"])]
         elif q.startswith("SHOW TABLES IN"):
             rows = [R(tableName=t) for t in self.targets]
         elif q.startswith("SHOW TBLPROPERTIES"):
             rows = [R(key=evidence.KEYS_PROPERTY, value=json.dumps(self.keys))]
+        elif q.startswith("DESCRIBE DETAIL"):
+            source = quoted[1][len("shop_bronze_"):]
+            rows = [R(id=self.ids.get(source, f"id-{source}"))]
+        elif q.startswith("DESCRIBE TABLE") and STATE in q:
+            names = ("target_table", "source", "version", "table_id", "updated_at")
+            rows = [R(col_name=c, data_type="") for c in names]
         elif q.startswith("DESCRIBE TABLE"):
             schema, table = quoted[1], quoted[2]
             source = schema[len("shop_bronze_"):]
@@ -57,7 +69,7 @@ class Spark:
             rows = [R(version=h[0], operation=h[1], operationParameters=h[2],
                       operationMetrics=h[3] if len(h) > 3 else {}) for h in history if h[0] > since]
         elif q.startswith("SELECT target_table, source, version"):
-            rows = [R(target_table=t, source=s, version=v) for (t, s), v in self.state.items()]
+            rows = [R(target_table=t, source=s, version=v, table_id=i) for (t, s), (v, i) in self.state.items()]
         elif q.startswith("CREATE TABLE IF NOT EXISTS"):
             pass
         else:
@@ -65,9 +77,10 @@ class Spark:
             if q.startswith("CREATE TABLE"):
                 self.targets.add(quoted[2])
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
-                saved = r"SELECT '([^']+)' AS target_table, '([^']+)' AS source, (\d+) AS version"
-                t, s, v = re.search(saved, q).groups()
-                self.state[(t, s)] = int(v)
+                saved = (r"SELECT '([^']+)' AS target_table, '([^']+)' AS source, (\d+) AS version, "
+                         r"'([^']+)' AS table_id")
+                t, s, v, i = re.search(saved, q).groups()
+                self.state[(t, s)] = (int(v), i)
         return R(collect=lambda: rows)
 
     def merges(self):
@@ -91,7 +104,8 @@ class FirstAndLater(unittest.TestCase):
         self.assertEqual(len(m), 2)
         self.assertIn("FROM `main`.`shop_bronze_east`.`nation` VERSION AS OF 5", m[0])   # the version saved
         self.assertNotIn("table_changes", m[0])
-        self.assertEqual(spark.state, {("all_nation", "east"): 5, ("all_nation", "west"): 7})
+        versions = {k: v for k, (v, _) in spark.state.items()}
+        self.assertEqual(versions, {("all_nation", "east"): 5, ("all_nation", "west"): 7})
 
     def test_later_read_merges_the_change_feed(self):
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
@@ -107,7 +121,7 @@ class FirstAndLater(unittest.TestCase):
         self.assertIn("WHEN MATCHED AND c.`__lfc_change` = 'delete' THEN DELETE", m)
         self.assertIn("WHEN MATCHED THEN UPDATE SET t.`n_name` = c.`n_name`", m)
         self.assertNotIn("CREATE TABLE `main`", " ".join(spark.done))   # the target exists
-        self.assertEqual(spark.state[("all_nation", "east")], 9)
+        self.assertEqual(spark.state[("all_nation", "east")][0], 9)
 
     def test_new_versions_without_rows_written_are_unchanged(self):   # an ingestion update touches every table
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
@@ -118,7 +132,7 @@ class FirstAndLater(unittest.TestCase):
         report = run(spark)
         self.assertEqual(report["all_nation"]["east"], {"done": "unchanged", "version": 9})
         self.assertEqual(spark.merges(), [])
-        self.assertEqual(spark.state[("all_nation", "east")], 9)   # read up to 9: not looked at again
+        self.assertEqual(spark.state[("all_nation", "east")][0], 9)   # read up to 9: not looked at again
 
     def test_unknown_operation_or_missing_metrics_reads_the_feed(self):
         for h in ([(8, "SOMETHING NEW", {}, {})], [(8, "MERGE", {}, {})]):
@@ -143,8 +157,8 @@ class FirstAndLater(unittest.TestCase):
                          targets={"all_nation"})
         done = run(spark)["all_nation"]["east"]["done"]
         self.assertTrue(done.startswith("copied (change feed unreadable: [DELTA_CHANGE_DATA_FILE_NOT_FOUND]"), done)
-        self.assertIn("DELETE FROM `main`.`shop_silver`.`all_nation` WHERE `division` = 'east'", spark.done)
-        self.assertEqual(spark.state[("all_nation", "east")], 9)
+        self.assertIn("WHEN NOT MATCHED BY SOURCE AND t.`division` = 'east' THEN DELETE", spark.merges()[-1])
+        self.assertEqual(spark.state[("all_nation", "east")][0], 9)
 
     def test_removed_source_goes(self):   # north was read before; its schema is gone now
         spark = Spark(versions={"east": 5, "west": 7}, targets={"all_nation"},
@@ -160,14 +174,66 @@ class FirstAndLater(unittest.TestCase):
                       history={"east": [(8, "CREATE OR REPLACE TABLE", {})]}, targets={"all_nation"})
         report = run(spark)
         self.assertEqual(report["all_nation"]["east"]["done"], "copied")
-        self.assertIn("DELETE FROM `main`.`shop_silver`.`all_nation` WHERE `division` = 'east'", spark.done)
         (m,) = spark.merges()
         self.assertNotIn("table_changes", m)
+        self.assertIn("WHEN NOT MATCHED BY SOURCE AND t.`division` = 'east' THEN DELETE", m)   # one atomic MERGE
+        self.assertFalse(any(q.startswith("DELETE FROM `main`.`shop_silver`.`all_nation`") for q in spark.done))
 
     def test_overwrite_counts_as_a_refresh(self):
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(6, "WRITE", {"mode": "Overwrite"})]}, targets={"all_nation"})
         self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied")
+
+
+class Recreated(unittest.TestCase):
+    def test_new_table_id_copies(self):   # dropped and recreated: a new id, the version even back at 0
+        state = {("all_nation", "east"): (5, "old"), ("all_nation", "west"): 7}
+        spark = Spark(versions={"east": 2, "west": 7}, state=state, targets={"all_nation"})
+        self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied")
+        self.assertEqual(spark.state[("all_nation", "east")], (2, "id-east"))
+
+    def test_lower_version_without_an_id_copies(self):   # a state from before ids were kept
+        state = {("all_nation", "east"): (5, None), ("all_nation", "west"): 7}
+        spark = Spark(versions={"east": 2, "west": 7}, state=state, targets={"all_nation"})
+        self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied")
+
+    def test_not_matched_by_source_changes_count(self):
+        h = [(8, "MERGE", {}, {"numTargetRowsInserted": "0", "numTargetRowsNotMatchedBySourceDeleted": "3",
+                               "numTargetRowsCopied": "40"})]
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": h}, targets={"all_nation"})
+        self.assertEqual(run(spark)["all_nation"]["east"]["done"], "merged")
+
+    def test_copied_rows_alone_arent_a_change(self):
+        h = [(8, "MERGE", {}, {"numTargetRowsInserted": "0", "numTargetRowsCopied": "40"})]
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": h}, targets={"all_nation"})
+        self.assertEqual(run(spark)["all_nation"]["east"]["done"], "unchanged")
+
+
+class Removed(unittest.TestCase):
+    def deletes(self, spark):
+        return [q for q in spark.done if q.startswith("DELETE FROM `main`.`shop_silver`.`all_nation`")]
+
+    def test_left_out_by_only(self):
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"})
+        report = run(spark, only="east")
+        self.assertEqual(report["all_nation"]["west"], {"done": "removed"})
+        want = "DELETE FROM `main`.`shop_silver`.`all_nation` WHERE `division` IN ('west')"
+        self.assertEqual(self.deletes(spark), [want])
+
+    def test_schema_still_there_table_gone(self):
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"},
+                      tables={"west": ["orders"]})
+        report = run(spark)
+        self.assertEqual(report["all_nation"]["west"], {"done": "removed"})
+        self.assertNotIn("east", " ".join(self.deletes(spark)))
+
+    def test_nothing_deleted_without_a_target(self):   # no source has the table, and its target was dropped by hand
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      tables={"east": ["orders"], "west": ["orders"]})
+        run(spark)
+        self.assertEqual(self.deletes(spark), [])
 
 
 class Shapes(unittest.TestCase):
