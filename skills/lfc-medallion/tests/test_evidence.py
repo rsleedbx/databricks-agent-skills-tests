@@ -23,10 +23,14 @@ TPCH = {
                [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "25"})]),
     "supplier": (["s_suppkey"], [("s_suppkey", "int"), ("s_name", "string"), ("s_nationkey", "int")], 500, [SNAP]),
     "customer": (["c_custkey"], [("c_custkey", "int"), ("c_name", "string"), ("c_nationkey", "int")], 7500, [SNAP]),
+    "part": (["p_partkey"], [("p_partkey", "int"), ("p_name", "string")], 10000, [SNAP]),
+    "partsupp": (["ps_partkey", "ps_suppkey"], [("ps_partkey", "int"), ("ps_suppkey", "int"), ("ps_availqty", "int"),
+                                                ("ps_supplycost", "decimal(15,2)")], 40000, [SNAP]),
     "orders": (["o_orderkey"], [("o_orderkey", "int"), ("o_custkey", "int"), ("o_totalprice", "decimal(15,2)"),
                                 ("o_orderdate", "date")], 75000, [SNAP, ("MERGE", {"numTargetRowsInserted": "1"})]),
     "lineitem": (["l_orderkey", "l_linenumber"],
-                 [("l_orderkey", "int"), ("l_linenumber", "int"), ("l_suppkey", "int"), ("l_quantity", "decimal(15,2)"),
+                 [("l_orderkey", "int"), ("l_linenumber", "int"), ("l_partkey", "int"), ("l_suppkey", "int"),
+                  ("l_quantity", "decimal(15,2)"),
                   ("l_extendedprice", "decimal(15,2)")], 300000,
                  [("CREATE TABLE", {}), SNAP, ("DELETE", {}), ("MERGE", {"numTargetRowsInserted": "4"}),
                   ("MERGE", {"numTargetRowsMatchedUpdated": "2", "numTargetRowsDeleted": "1"})]),
@@ -87,7 +91,8 @@ class Bronze(unittest.TestCase):
                for n, t in self.by.items() for fk in t.get("fk_constraints") or []}
         self.assertTrue({("nation", ("n_regionkey",), "region"), ("supplier", ("s_nationkey",), "nation"),
                          ("orders", ("o_custkey",), "customer"), ("lineitem", ("l_orderkey",), "orders"),
-                         ("lineitem", ("l_suppkey",), "supplier")} <= fks, fks)
+                         ("lineitem", ("l_suppkey",), "supplier"), ("partsupp", ("ps_suppkey",), "supplier"),
+                         ("lineitem", ("l_partkey", "l_suppkey"), "partsupp")} <= fks, fks)
         self.assertNotIn(("lineitem", ("l_linenumber",), "orders"), fks)
 
 
@@ -129,7 +134,8 @@ class Plan(unittest.TestCase):
         t = p["tables"]
         self.assertEqual((t["lineitem"]["role"], t["lineitem"]["route"]), ("fact", "pipeline"))
         self.assertEqual(t["orders"]["role"], "fact")
-        for n in ("supplier", "customer", "nation", "region"):
+        self.assertEqual((t["partsupp"]["role"], t["partsupp"]["route"]), ("bridge", "merge"))
+        for n in ("supplier", "customer", "nation", "region", "part"):
             self.assertIn(t[n]["role"], ("dimension", "lookup"), (n, t[n]["why"]))
             self.assertEqual(t[n]["route"], "merge")
         self.assertIn("inferred from names", t["lineitem"]["why"])
@@ -149,7 +155,7 @@ class Plan(unittest.TestCase):
             table_plan(BronzeSpark(), "main", "sales_bronze_east", hints={"nation": "reference"})
 
     def test_routes_override(self):
-        routes = {"dimension": "pipeline", "lookup": "pipeline"}
+        routes = {"dimension": "pipeline", "lookup": "pipeline", "bridge": "pipeline"}
         p = table_plan(BronzeSpark(), "main", "sales_bronze_east", routes=routes)
         self.assertTrue(all(t["route"] == "pipeline" for t in p["tables"].values()))
 

@@ -125,7 +125,8 @@ def history_activity(spark, table: str) -> dict:
 
 def infer_foreign_keys(tables: list[dict]) -> None:
     """Add a foreign key where a column's name, after its table's prefix, is another table's one-column key (TPC:
-    l_suppkey -> s_suppkey), or is that key's own name (ORM: orders.customer_id -> customer.customer_id)."""
+    l_suppkey -> s_suppkey), or is that key's own name (ORM: orders.customer_id -> customer.customer_id); and where a
+    table has columns for every column of another's key of two or more (l_partkey, l_suppkey -> partsupp's key)."""
     def bare(col):
         return col.split("_", 1)[1] if "_" in col else col
     keys = {}
@@ -142,6 +143,15 @@ def infer_foreign_keys(tables: list[dict]) -> None:
             match = [(p, k) for p, k in keys.get(c["name"], []) + keys.get(bare(c["name"]), []) if p != t["name"]]
             if len({p for p, _ in match}) == 1:
                 t.setdefault("fk_constraints", []).append({"columns": [c["name"]], "parent_table": match[0][0],
+                                                           "inferred": True})
+    multi = [(t["name"], [c["name"] for c in t["columns"] if c.get("primary_key")]) for t in tables]
+    for t in tables:
+        by_bare = {bare(c["name"]): c["name"] for c in t["columns"]}
+        have = {tuple(fk["columns"]) for fk in t.get("fk_constraints") or []}
+        for parent, pk in multi:
+            cols = tuple(by_bare.get(bare(k)) for k in pk)
+            if parent != t["name"] and len(pk) >= 2 and all(cols) and cols not in have:
+                t.setdefault("fk_constraints", []).append({"columns": list(cols), "parent_table": parent,
                                                            "inferred": True})
 
 
