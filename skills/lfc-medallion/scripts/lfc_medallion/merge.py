@@ -55,23 +55,39 @@ def latest_version(spark, fq: str) -> int:
     return int(_rows(spark, f"SELECT MAX(version) AS v FROM (DESCRIBE HISTORY {fq})")[0].v)
 
 
-def since(spark, fq: str, version: int) -> tuple[bool, int]:
-    """From the table's history after `version` (metadata only, no data read): whether it was replaced, truncated or
-    overwritten (its change feed starts over), and how many rows its writes inserted, updated or deleted. An ingestion
-    update adds versions to every table, changed or not (an empty MERGE, housekeeping DELETEs: seen on Lakeflow
-    Connect's destination tables 2026-11-15), so a new version alone doesn't mean a change."""
-    refreshed, rows = False, 0
+DATA_OPS = ("MERGE", "WRITE", "STREAMING UPDATE", "DELETE", "UPDATE")   # their metrics say how many rows
+NO_DATA_OPS = ("OPTIMIZE", "VACUUM START", "VACUUM END", "SET TBLPROPERTIES", "UNSET TBLPROPERTIES", "ADD COLUMNS",
+               "CHANGE COLUMN", "RENAME COLUMN", "UPGRADE PROTOCOL", "DLT SETUP", "ADD CONSTRAINT", "DROP CONSTRAINT",
+               "CLUSTER BY", "SET TABLE COMMENT")
+ROW_METRICS = ("numTargetRowsInserted", "numTargetRowsMatchedUpdated", "numTargetRowsUpdated", "numTargetRowsDeleted",
+               "numTargetRowsMatchedDeleted", "numOutputRows", "numAddedRows", "numDeletedRows", "numUpdatedRows")
+
+
+def since(spark, fq: str, version: int) -> tuple[bool, bool]:
+    """From the table's history after `version` (metadata only, no data read): whether it was replaced, truncated,
+    overwritten or restored (its change feed starts over), and whether it may have changed. An ingestion update adds
+    versions to every table, changed or not (an empty MERGE, housekeeping DELETEs: seen on Lakeflow Connect's
+    destination tables 2026-11-15), so a new version alone isn't a change; but only known operations reporting zero
+    rows, or known to touch no data, count as no change: anything else (an unknown operation, missing metrics) does."""
+    refreshed, changed = False, False
     for r in _rows(spark, f"SELECT version, operation, operationParameters, operationMetrics "
                           f"FROM (DESCRIBE HISTORY {fq}) WHERE version > {int(version)}"):
         params = r.operationParameters or {}
         params = json.loads(params) if isinstance(params, str) else params
         mode = str(params.get("mode", "")).lower()
         if r.operation in evidence.RESETS or r.operation.startswith("CREATE OR REPLACE") or \
-                (r.operation == "WRITE" and mode == "overwrite"):
+                r.operation == "RESTORE" or (r.operation == "WRITE" and mode == "overwrite"):
             refreshed = True
+            continue
+        if r.operation in NO_DATA_OPS:
+            continue
         m = getattr(r, "operationMetrics", None) or {}
-        rows += sum(evidence._write_counts(r.operation, json.loads(m) if isinstance(m, str) else m))
-    return refreshed, rows
+        m = json.loads(m) if isinstance(m, str) else m
+        if r.operation not in DATA_OPS or not any(k in m for k in ROW_METRICS):
+            changed = True   # can't tell: read the change feed
+        elif sum(evidence._write_counts(r.operation, m)):
+            changed = True
+    return refreshed, changed
 
 
 def _state(spark, catalog, target) -> dict:
@@ -110,7 +126,9 @@ def merge_sql(tgt: str, src: str, source: str, source_column: str, key: list[str
     lit = spark_string(source)
     data = ", ".join(_q(c) for c in cols)
     if since is None:
-        rows = f"SELECT {lit} AS {_q(source_column)}, {data}, 'insert' AS `__lfc_change` FROM {src}"
+        # pinned to the version saved in the state, so a commit in between isn't applied twice
+        rows = (f"SELECT {lit} AS {_q(source_column)}, {data}, 'insert' AS `__lfc_change` "
+                f"FROM {src} VERSION AS OF {int(until)}")
     else:
         part = ", ".join(_q(k) for k in key)
         rows = (f"SELECT {lit} AS {_q(source_column)}, {data}, _change_type AS `__lfc_change` FROM ("
@@ -167,9 +185,28 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
                 _save_state(spark, catalog, target, out_name, s, now)
                 report[out_name][s] = {"done": "unchanged", "version": now}
                 continue
-            if whole and last is not None:   # a full refresh: this source's rows are copied again
-                spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} = {spark_string(s)}")
-            spark.sql(merge_sql(tgt, src, s, source_column, key, [c for c, _ in cols], None if whole else last, now))
+            data = [c for c, _ in cols]
+            done = "copied" if whole else "merged"
+            if not whole:
+                try:
+                    spark.sql(merge_sql(tgt, src, s, source_column, key, data, last, now))
+                # the change data vacuumed or expired, or the feed off: the error class varies, so copy on any
+                except Exception as e:  # noqa: BLE001
+                    whole, done = True, f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})"
+            if whole:
+                if last is not None:   # a full refresh, or an unreadable change feed: this source's rows again
+                    spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} = {spark_string(s)}")
+                spark.sql(merge_sql(tgt, src, s, source_column, key, data, None, now))
             _save_state(spark, catalog, target, out_name, s, now)
-            report[out_name][s] = {"done": "copied" if whole else "merged", "version": now}
+            report[out_name][s] = {"done": done, "version": now}
+        # sources gone (schema dropped, table removed, left out by `only`): their rows and state go too
+        current = [x for x in names if table in held[x]]
+        gone = sorted({src for (t, src) in state if t == out_name} - set(current))
+        if gone and out_name in existing:
+            listed = ", ".join(spark_string(g) for g in gone)
+            spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} IN ({listed})")
+            spark.sql(f"DELETE FROM {_fq(catalog, target, STATE)} WHERE target_table = {spark_string(out_name)} "
+                      f"AND source IN ({listed})")
+            for g in gone:
+                report[out_name][g] = {"done": "removed"}
     return report

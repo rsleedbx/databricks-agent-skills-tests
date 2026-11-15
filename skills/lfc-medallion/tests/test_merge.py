@@ -89,7 +89,7 @@ class FirstAndLater(unittest.TestCase):
         self.assertIn("'delta.enableChangeDataFeed' = 'true'", spark.done[0])
         m = spark.merges()
         self.assertEqual(len(m), 2)
-        self.assertIn("FROM `main`.`shop_bronze_east`.`nation`", m[0])
+        self.assertIn("FROM `main`.`shop_bronze_east`.`nation` VERSION AS OF 5", m[0])   # the version saved
         self.assertNotIn("table_changes", m[0])
         self.assertEqual(spark.state, {("all_nation", "east"): 5, ("all_nation", "west"): 7})
 
@@ -111,12 +111,49 @@ class FirstAndLater(unittest.TestCase):
 
     def test_new_versions_without_rows_written_are_unchanged(self):   # an ingestion update touches every table
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
-                      history={"east": [(6, "MERGE", {}, {"numTargetRowsInserted": "0"}), (7, "DELETE", {}, {}),
-                                        (8, "MERGE", {}, {"numOutputRows": "0"})]}, targets={"all_nation"})
+                      history={"east": [(6, "MERGE", {}, {"numTargetRowsInserted": "0"}),
+                                        (7, "DELETE", {}, {"numDeletedRows": "0"}),
+                                        (8, "MERGE", {}, {"numOutputRows": "0"}), (9, "OPTIMIZE", {}, {})]},
+                      targets={"all_nation"})
         report = run(spark)
         self.assertEqual(report["all_nation"]["east"], {"done": "unchanged", "version": 9})
         self.assertEqual(spark.merges(), [])
         self.assertEqual(spark.state[("all_nation", "east")], 9)   # read up to 9: not looked at again
+
+    def test_unknown_operation_or_missing_metrics_reads_the_feed(self):
+        for h in ([(8, "SOMETHING NEW", {}, {})], [(8, "MERGE", {}, {})]):
+            spark = Spark(versions={"east": 9, "west": 7},
+                          state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, history={"east": h},
+                          targets={"all_nation"})
+            self.assertEqual(run(spark)["all_nation"]["east"]["done"], "merged", h)
+
+    def test_restore_copies_again(self):
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "RESTORE", {}, {})]}, targets={"all_nation"})
+        self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied")
+
+    def test_unreadable_change_feed_copies(self):
+        class Vacuumed(Spark):
+            def sql(self, q):
+                if "table_changes(" in q:
+                    raise RuntimeError("[DELTA_CHANGE_DATA_FILE_NOT_FOUND] the change data was vacuumed\nmore")
+                return super().sql(q)
+        spark = Vacuumed(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                         history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]},
+                         targets={"all_nation"})
+        done = run(spark)["all_nation"]["east"]["done"]
+        self.assertTrue(done.startswith("copied (change feed unreadable: [DELTA_CHANGE_DATA_FILE_NOT_FOUND]"), done)
+        self.assertIn("DELETE FROM `main`.`shop_silver`.`all_nation` WHERE `division` = 'east'", spark.done)
+        self.assertEqual(spark.state[("all_nation", "east")], 9)
+
+    def test_removed_source_goes(self):   # north was read before; its schema is gone now
+        spark = Spark(versions={"east": 5, "west": 7}, targets={"all_nation"},
+                      state={("all_nation", "east"): 5, ("all_nation", "west"): 7, ("all_nation", "north"): 3})
+        report = run(spark)
+        self.assertEqual(report["all_nation"]["north"], {"done": "removed"})
+        self.assertIn("DELETE FROM `main`.`shop_silver`.`all_nation` WHERE `division` IN ('north')", spark.done)
+        self.assertTrue(any(q.startswith(f"DELETE FROM `main`.`shop_silver`.`{STATE}`") and "('north')" in q
+                            for q in spark.done))
 
     def test_full_refresh_copies_again(self):
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
