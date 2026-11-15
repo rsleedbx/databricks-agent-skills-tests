@@ -21,7 +21,7 @@ current without putting each one in the pipeline's graph (ROUTE; `routes` overri
 """
 import json
 
-from . import discover, roles
+from . import roles
 from .stack import spark_string
 
 ROUTE = {"fact": "pipeline", "log": "pipeline", "queue": "pipeline",
@@ -58,7 +58,10 @@ def connection_schema(spark, connection: str, database: str, schema: str) -> dic
     s = pg_string(schema)
     cols = _remote(spark, connection, database,
                    "SELECT table_name, column_name, data_type FROM information_schema.columns "
-                   f"WHERE table_schema = {s} ORDER BY table_name, ordinal_position")
+                   f"WHERE table_schema = {s} AND table_name IN (SELECT c.relname FROM pg_class c "
+                   "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                   f"WHERE n.nspname = {s} AND c.relkind IN ('r', 'p') AND NOT c.relispartition) "
+                   "ORDER BY table_name, ordinal_position")
     # pg_catalog, not information_schema: table_constraints lists only tables the user owns or holds more than SELECT
     # on, and the connection's login usually has SELECT only
     keys = _remote(spark, connection, database,
@@ -148,13 +151,21 @@ def infer_foreign_keys(tables: list[dict]) -> None:
         if len(pk) == 1:
             full.setdefault(pk[0], []).append(t["name"])
             short.setdefault(bare(pk[0]), []).append(t["name"])
+    def prefix(col):
+        return col.split("_", 1)[0] if "_" in col else None
     for t in tables:
         declared = {c for fk in t.get("fk_constraints") or [] for c in fk["columns"]}
+        pk = [c["name"] for c in t["columns"] if c.get("primary_key")]
+        # the table's own column prefix (TPC: l_ for lineitem), when most of its columns carry one
+        heads = [prefix(c["name"]) for c in t["columns"] if prefix(c["name"])]
+        top = max(set(heads), key=heads.count) if heads else None
+        own = top if top and heads.count(top) * 2 > len(t["columns"]) else None
         for c in t["columns"]:
-            if c["name"] in declared:
+            if c["name"] in declared or pk == [c["name"]]:   # its own one-column key isn't a reference to another
                 continue
+            by_short = [p for p in short.get(bare(c["name"]), []) if p != t["name"]]
             match = [p for p in full.get(c["name"], []) if p != t["name"]] or \
-                [p for p in short.get(bare(c["name"]), []) if p != t["name"]]
+                (by_short if own and prefix(c["name"]) == own else [])
             if len(set(match)) == 1:
                 t.setdefault("fk_constraints", []).append({"columns": [c["name"]], "parent_table": match[0],
                                                            "inferred": True})
@@ -184,7 +195,10 @@ def recorded_keys(spark, fq: str, full_name: str, workspace=None) -> list[str]:
 def bronze_schema(spark, catalog: str, schema: str, workspace=None) -> dict:
     """Columns, keys, row counts and activity of one bronze schema; foreign keys inferred from names."""
     tables, activity = [], {}
-    for name in sorted(discover.tables(spark, catalog, "", [schema])[schema]):
+    listed = (f"SELECT table_name, table_type FROM `{catalog}`.information_schema.tables "
+              f"WHERE table_schema = {spark_string(schema)}")
+    kinds = {r.table_name: r.table_type for r in _rows(spark, listed)}
+    for name in sorted(n for n, k in kinds.items() if k not in ("VIEW", "MATERIALIZED_VIEW")):
         fq = f"`{catalog}`.`{schema}`.`{name}`"
         pk = recorded_keys(spark, fq, f"{catalog}.{schema}.{name}", workspace)
         cols = []

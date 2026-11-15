@@ -48,8 +48,9 @@ class BronzeSpark:
         self.queries.append(q)
         quoted = re.findall(r"`([^`]+)`", q)
         name = quoted[-1] if len(quoted) == 3 else None   # `catalog`.`schema`.`table`
-        if q.startswith("SHOW TABLES"):
-            rows = [R(tableName=n) for n in self.t]
+        if "information_schema.tables" in q:   # every table, plus a view the plan must leave out
+            rows = [R(table_name=n, table_type="STREAMING_TABLE") for n in self.t] + \
+                   [R(table_name="recent_orders", table_type="VIEW")]
         elif q.startswith("SHOW TBLPROPERTIES"):
             rows = [R(key="delta.enableChangeDataFeed", value="true"),
                     R(key=evidence.KEYS_PROPERTY, value=json.dumps(self.t[name][0]))]
@@ -163,10 +164,19 @@ class InferByName(unittest.TestCase):
         self.assertEqual(fks, {(("customer_id",), "customer"), (("product_id",), "product")})
 
 
+class NotKeysOfOthers(unittest.TestCase):
+    def test_own_key_and_unprefixed_columns(self):
+        tables = [{"name": "a", "columns": [{"name": "id", "primary_key": True}, {"name": "external_id"}]},
+                  {"name": "b", "columns": [{"name": "id", "primary_key": True}]}]
+        evidence.infer_foreign_keys(tables)
+        self.assertEqual([t.get("fk_constraints") for t in tables], [None, None])   # no a.id -> b, no external_id -> b
+
+
 class Plan(unittest.TestCase):
     def test_roles_and_routes(self):
         p = table_plan(BronzeSpark(), "main", "sales_bronze_east")
         t = p["tables"]
+        self.assertNotIn("recent_orders", t)   # a view: no history, not planned
         self.assertEqual((t["lineitem"]["role"], t["lineitem"]["route"]), ("fact", "pipeline"))
         self.assertEqual(t["orders"]["role"], "fact")
         self.assertEqual((t["partsupp"]["role"], t["partsupp"]["route"]), ("bridge", "merge"))
