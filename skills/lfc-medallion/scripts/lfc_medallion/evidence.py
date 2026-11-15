@@ -94,8 +94,11 @@ def connection_schema(spark, connection: str, database: str, schema: str) -> dic
     for r in stats:
         if r.relname in tables:
             tables[r.relname]["row_count"] = int(r.n_live_tup or 0)
-            activity[r.relname] = {"inserts": int(r.n_tup_ins or 0), "updates": int(r.n_tup_upd or 0),
-                                   "deletes": int(r.n_tup_del or 0)}
+            ins, upd, dele, live = (int(x or 0) for x in (r.n_tup_ins, r.n_tup_upd, r.n_tup_del, r.n_live_tup))
+            # the counters include the initial load: inserts alone, no more than the rows there now, can't tell a
+            # load from appends, so they're no evidence; updates and deletes are
+            if upd or dele or ins > live:
+                activity[r.relname] = {"inserts": ins, "updates": upd, "deletes": dele}
     return {"tables": list(tables.values()), "activity": activity, "evidence": f"connection {connection}"}
 
 
@@ -104,22 +107,32 @@ def connection_schema(spark, connection: str, database: str, schema: str) -> dic
 KEYS_PROPERTY = "spark.internal.streaming_table.apply_changes.keys"
 
 
+RESETS = ("CREATE TABLE", "CREATE OR REPLACE TABLE", "REPLACE TABLE", "TRUNCATE")
+
+
 def history_activity(spark, table: str) -> dict:
-    """Inserts, updates and deletes in the table's MERGEs after the first one that inserted rows (the snapshot)."""
-    total, seen_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, False
+    """Inserts, updates and deletes in the table's MERGEs after the snapshot. The snapshot: the MERGEs of inserts only
+    before the first one that updates or deletes, from the start or the last time the table was replaced or truncated
+    (a full refresh starts a new one). A lower bound: inserts that arrive before the first update count as snapshot."""
+    total, in_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, True
     history = f"SELECT version, operation, operationMetrics FROM (DESCRIBE HISTORY {table}) ORDER BY version"
     for r in _rows(spark, history):
+        if r.operation in RESETS or r.operation.startswith("CREATE OR REPLACE"):
+            total, in_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, True
+            continue
         if r.operation != "MERGE":
             continue
         m = r.operationMetrics or {}
         m = json.loads(m) if isinstance(m, str) else m
         ins = int(m.get("numTargetRowsInserted") or 0)
-        if not seen_snapshot:
-            seen_snapshot = ins > 0
+        upd = int(m.get("numTargetRowsMatchedUpdated") or m.get("numTargetRowsUpdated") or 0)
+        dele = int(m.get("numTargetRowsMatchedDeleted") or m.get("numTargetRowsDeleted") or 0)
+        if in_snapshot and not upd and not dele:
             continue
+        in_snapshot = False
         total["inserts"] += ins
-        total["updates"] += int(m.get("numTargetRowsMatchedUpdated") or m.get("numTargetRowsUpdated") or 0)
-        total["deletes"] += int(m.get("numTargetRowsMatchedDeleted") or m.get("numTargetRowsDeleted") or 0)
+        total["updates"] += upd
+        total["deletes"] += dele
     return total
 
 
@@ -129,20 +142,21 @@ def infer_foreign_keys(tables: list[dict]) -> None:
     table has columns for every column of another's key of two or more (l_partkey, l_suppkey -> partsupp's key)."""
     def bare(col):
         return col.split("_", 1)[1] if "_" in col else col
-    keys = {}
+    full, short = {}, {}   # a one-column key by its own name, and by its name after the table's prefix
     for t in tables:
         pk = [c["name"] for c in t["columns"] if c.get("primary_key")]
         if len(pk) == 1:
-            keys.setdefault(bare(pk[0]), []).append((t["name"], pk[0]))
-            keys.setdefault(pk[0], []).append((t["name"], pk[0]))
+            full.setdefault(pk[0], []).append(t["name"])
+            short.setdefault(bare(pk[0]), []).append(t["name"])
     for t in tables:
         declared = {c for fk in t.get("fk_constraints") or [] for c in fk["columns"]}
         for c in t["columns"]:
             if c["name"] in declared:
                 continue
-            match = [(p, k) for p, k in keys.get(c["name"], []) + keys.get(bare(c["name"]), []) if p != t["name"]]
-            if len({p for p, _ in match}) == 1:
-                t.setdefault("fk_constraints", []).append({"columns": [c["name"]], "parent_table": match[0][0],
+            match = [p for p in full.get(c["name"], []) if p != t["name"]] or \
+                [p for p in short.get(bare(c["name"]), []) if p != t["name"]]
+            if len(set(match)) == 1:
+                t.setdefault("fk_constraints", []).append({"columns": [c["name"]], "parent_table": match[0],
                                                            "inferred": True})
     multi = [(t["name"], [c["name"] for c in t["columns"] if c.get("primary_key")]) for t in tables]
     for t in tables:
@@ -215,6 +229,10 @@ def table_plan(spark, catalog: str, schema: str, connection: str | None = None, 
                 if fk.get("inferred")}
     p = roles.plan({"tables": s["tables"]}, 1, s["activity"], schema)
     for n, t in p["tables"].items():
+        if n not in s["activity"]:
+            t["why"] += "; no activity evidence (the source's counters show only its load)"
+        elif not connection:
+            t["why"] += "; activity counted after the snapshot (a lower bound)"
         fks = [f"{','.join(c)}" for (tn, c) in inferred if tn == n]
         if fks:
             t["why"] += "; foreign keys inferred from names: " + ", ".join(sorted(fks))

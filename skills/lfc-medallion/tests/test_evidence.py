@@ -82,7 +82,8 @@ class Bronze(unittest.TestCase):
         self.assertEqual(self.by["orders"]["columns"][2]["type"], "decimal")
 
     def test_activity_skips_the_snapshot(self):
-        self.assertEqual(self.s["activity"]["lineitem"], {"inserts": 4, "updates": 2, "deletes": 1})
+        # the 4 inserts before the first update count as snapshot: a lower bound
+        self.assertEqual(self.s["activity"]["lineitem"], {"inserts": 0, "updates": 2, "deletes": 1})
         self.assertEqual(self.s["activity"]["nation"], {"inserts": 0, "updates": 25, "deletes": 0})
         self.assertEqual(self.s["activity"]["region"], {"inserts": 0, "updates": 0, "deletes": 0})
 
@@ -126,6 +127,40 @@ class KeysFromTheApi(unittest.TestCase):
         pk = [c["name"] for c in lineitem["columns"] if c.get("primary_key")]
         self.assertEqual(pk, ["l_orderkey", "l_linenumber"])
         self.assertIn("main.sales_bronze_east.lineitem", w.asked)
+
+
+class History(unittest.TestCase):
+    """Where the snapshot ends: several insert-only batches, and a full refresh that starts a new one."""
+
+    def activity(self, history):
+        t = {"t": (["k"], [("k", "int")], 10, history)}
+        return evidence.bronze_schema(BronzeSpark(t), "main", "s")["activity"]["t"]
+
+    def test_snapshot_in_several_batches(self):
+        h = [("MERGE", {"numTargetRowsInserted": "50"}), ("MERGE", {"numTargetRowsInserted": "50"}),
+             ("MERGE", {"numTargetRowsMatchedUpdated": "3"}), ("MERGE", {"numTargetRowsInserted": "2"})]
+        self.assertEqual(self.activity(h), {"inserts": 2, "updates": 3, "deletes": 0})
+
+    def test_full_refresh_starts_over(self):
+        h = [("MERGE", {"numTargetRowsInserted": "50"}), ("MERGE", {"numTargetRowsMatchedUpdated": "3"}),
+             ("CREATE OR REPLACE TABLE", {}), ("MERGE", {"numTargetRowsInserted": "50"}),
+             ("MERGE", {"numTargetRowsDeleted": "1"})]
+        self.assertEqual(self.activity(h), {"inserts": 0, "updates": 0, "deletes": 1})
+
+    def test_inserts_only_is_no_change_evidence(self):
+        h = [("MERGE", {"numTargetRowsInserted": "50"}), ("MERGE", {"numTargetRowsInserted": "5"})]
+        self.assertEqual(self.activity(h), {"inserts": 0, "updates": 0, "deletes": 0})
+
+
+class InferByName(unittest.TestCase):
+    def test_full_key_name_before_the_bare_one(self):   # ORM keys: customer_id, product_id both strip to "id"
+        tables = [{"name": "customer", "columns": [{"name": "customer_id", "primary_key": True}]},
+                  {"name": "product", "columns": [{"name": "product_id", "primary_key": True}]},
+                  {"name": "orders", "columns": [{"name": "order_id", "primary_key": True}, {"name": "customer_id"},
+                                                 {"name": "product_id"}]}]
+        evidence.infer_foreign_keys(tables)
+        fks = {(tuple(f["columns"]), f["parent_table"]) for f in tables[2]["fk_constraints"]}
+        self.assertEqual(fks, {(("customer_id",), "customer"), (("product_id",), "product")})
 
 
 class Plan(unittest.TestCase):
@@ -182,7 +217,7 @@ class Connection(unittest.TestCase):
                           column_name="s_suppkey", parent_table=None),
                         R(table_name="supplier", constraint_type="FOREIGN KEY", constraint_name="supplier_fk1",
                           column_name="s_nationkey", parent_table="nation")]
-            elif "pg_stat_user_tables" in q:
+            elif "pg_stat_user_tables" in q:   # nation: only its load, which is no evidence
                 rows = [R(relname="nation", n_live_tup=25, n_tup_ins=25, n_tup_upd=0, n_tup_del=0),
                         R(relname="supplier", n_live_tup=500, n_tup_ins=500, n_tup_upd=3, n_tup_del=0)]
             else:
@@ -197,6 +232,7 @@ class Connection(unittest.TestCase):
         self.assertTrue(by["nation"]["columns"][0]["primary_key"])
         self.assertEqual(by["supplier"]["columns"][2]["type"], "numeric")
         self.assertEqual(s["activity"]["supplier"]["updates"], 3)
+        self.assertNotIn("nation", s["activity"])
         start = "SELECT * FROM remote_query('pg_conn', database => 'sales'"
         self.assertTrue(all(q.startswith(start) for q in spark.queries))
         self.assertIn("table_schema = \\'east\\'", spark.queries[0])   # PostgreSQL's 'east', inside Spark's string
