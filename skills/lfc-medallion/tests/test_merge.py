@@ -283,6 +283,36 @@ class Switch(unittest.TestCase):
         self.assertEqual(release(Spark(), "main", "shop_silver", ["nation"]), [])
 
 
+class OnRequest(unittest.TestCase):
+    """routes_to_apply: a table switches only when an operator tags it; otherwise the plan only proposes."""
+
+    class Catalog:
+        def __init__(self, kinds, tags):
+            self.kinds, self.tags = kinds, tags
+
+        def sql(self, q):
+            if "information_schema.table_tags" in q:
+                rows = [R(table_name=t, tag_value=v) for t, v in self.tags.items()]
+            else:
+                rows = [R(table_name=t, table_type=k) for t, k in self.kinds.items()]
+            return R(collect=lambda: rows)
+
+    def test_tag_wins_untagged_stay_new_follow_the_plan(self):
+        from lfc_medallion import routes_to_apply
+        spark = self.Catalog({"all_nation": "MANAGED", "all_region": "MANAGED", "all_lines": "MATERIALIZED_VIEW"},
+                             {"all_nation": "Pipeline"})
+        planned = {"nation": "merge", "region": "pipeline", "lines": "merge", "part": "merge"}
+        apply, proposed = routes_to_apply(spark, "main", "shop_silver", planned)
+        self.assertEqual(apply, {"nation": "pipeline", "region": "merge", "lines": "pipeline", "part": "merge"})
+        self.assertEqual(proposed, {"region": {"current": "merge", "planned": "pipeline"},
+                                    "lines": {"current": "pipeline", "planned": "merge"}})
+
+    def test_unknown_tag_value_is_ignored(self):
+        from lfc_medallion import routes_to_apply
+        spark = self.Catalog({"all_nation": "MANAGED"}, {"all_nation": "maybe"})
+        self.assertEqual(routes_to_apply(spark, "main", "s", {"nation": "pipeline"})[0], {"nation": "merge"})
+
+
 class Removed(unittest.TestCase):
     def deletes(self, spark):
         return [q for q in spark.done if q.startswith("DELETE FROM `main`.`shop_silver`.`all_nation`")]

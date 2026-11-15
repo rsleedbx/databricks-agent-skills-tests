@@ -254,3 +254,35 @@ def release(spark, catalog: str, target: str, tables: list[str], name: str = "al
         spark.sql(f"DROP TABLE IF EXISTS {_fq(catalog, target, out_name)}")
         spark.sql(f"DELETE FROM {st} WHERE target_table = {spark_string(out_name)}")
     return dropped
+
+
+ROUTE_TAG = "lfc_medallion_route"
+
+
+def routes_to_apply(spark, catalog: str, target: str, planned: dict, name: str = "all_{table}",
+                    tag: str = ROUTE_TAG) -> tuple[dict, dict]:
+    """The route each table gets this run, and the changes the plan proposes without making them. A switch costs a
+    whole copy (or a full recompute) of the table and its readers, so it happens only on request: the tag `tag`
+    ('merge' or 'pipeline') on <target>.<name>, set by an operator. The request is used up by the switch, since the
+    object it is on (the pipeline's view or merge_all's table) is dropped and replaced. Without a tag a table keeps its
+    route (a table here: merge; a view: pipeline); one that doesn't exist yet takes the plan's.
+    planned: {table: 'merge' | 'pipeline'}. Returns ({table: route}, {table: {"current": ..., "planned": ...}})."""
+    rows = _rows(spark, f"SELECT table_name, table_type FROM {_q(catalog)}.information_schema.tables "
+                        f"WHERE table_schema = {spark_string(target)}")
+    kinds = {r.table_name: r.table_type for r in rows}
+    asked = {r.table_name: str(r.tag_value).strip().lower() for r in _rows(
+        spark, f"SELECT table_name, tag_value FROM {_q(catalog)}.information_schema.table_tags "
+               f"WHERE schema_name = {spark_string(target)} AND tag_name = {spark_string(tag)}")}
+    apply, proposed = {}, {}
+    for table, plan in planned.items():
+        out = name.format(table=table)
+        kind = kinds.get(out)
+        current = None if kind is None else ("pipeline" if kind in ("MATERIALIZED_VIEW", "VIEW") else "merge")
+        request = asked.get(out)
+        if request in ("merge", "pipeline"):
+            apply[table] = request
+        else:
+            apply[table] = current or plan
+            if current and current != plan:
+                proposed[table] = {"current": current, "planned": plan}
+    return apply, proposed
