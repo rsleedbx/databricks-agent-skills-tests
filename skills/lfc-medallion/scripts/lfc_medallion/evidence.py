@@ -4,10 +4,12 @@ table_plan() builds one schema in lfc-source-statschema's canonical form (column
 row counts, inserts / updates / deletes) and runs roles.plan over it. The evidence comes from, in order:
 
 1. the source itself, through the Unity Catalog connection Lakeflow Connect already reads it with (`connection`):
-   declared primary and foreign keys and the database's own counters (PostgreSQL: information_schema and
-   pg_stat_user_tables, through remote_query). Nothing is installed on the source.
+   declared primary and foreign keys and the database's own counters (PostgreSQL, through remote_query: columns from
+   information_schema, keys from pg_catalog, which a SELECT-only login sees, counters from pg_stat_user_tables).
+   Nothing is installed on the source.
 2. bronze, when there's no connection: the primary key Lakeflow Connect records on each destination table (the table
-   property spark.internal.streaming_table.apply_changes.keys: internal, not documented), column types, row counts,
+   property spark.internal.streaming_table.apply_changes.keys: internal, not documented; SHOW TBLPROPERTIES may not show
+   it, the Unity Catalog API does), column types, row counts,
    the inserts / updates / deletes of each MERGE in the table's history after the first (the snapshot), and foreign
    keys inferred from names (a column whose name, after its table's prefix, is another table's one-column key:
    l_suppkey -> supplier.s_suppkey), each marked as inferred in the table's `why`.
@@ -57,15 +59,17 @@ def connection_schema(spark, connection: str, database: str, schema: str) -> dic
     cols = _remote(spark, connection, database,
                    "SELECT table_name, column_name, data_type FROM information_schema.columns "
                    f"WHERE table_schema = {s} ORDER BY table_name, ordinal_position")
+    # pg_catalog, not information_schema: table_constraints lists only tables the user owns or holds more than SELECT
+    # on, and the connection's login usually has SELECT only
     keys = _remote(spark, connection, database,
-                   "SELECT tc.table_name, tc.constraint_type, tc.constraint_name, kcu.column_name, "
-                   "ccu.table_name AS parent_table FROM information_schema.table_constraints tc "
-                   "JOIN information_schema.key_column_usage kcu ON kcu.constraint_schema = tc.constraint_schema "
-                   "AND kcu.constraint_name = tc.constraint_name "
-                   "LEFT JOIN information_schema.constraint_column_usage ccu ON tc.constraint_type = 'FOREIGN KEY' "
-                   "AND ccu.constraint_schema = tc.constraint_schema AND ccu.constraint_name = tc.constraint_name "
-                   f"WHERE tc.table_schema = {s} AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY') "
-                   "ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position")
+                   "SELECT t.relname AS table_name, CASE c.contype WHEN 'p' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END "
+                   "AS constraint_type, c.conname AS constraint_name, a.attname AS column_name, "
+                   "pt.relname AS parent_table FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                   "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                   "CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) "
+                   "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum "
+                   "LEFT JOIN pg_class pt ON pt.oid = c.confrelid "
+                   f"WHERE n.nspname = {s} AND c.contype IN ('p', 'f') ORDER BY t.relname, c.conname, k.ord")
     stats = _remote(spark, connection, database, "SELECT relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del "
                     f"FROM pg_stat_user_tables WHERE schemaname = {s}")
     tables = {}
@@ -141,13 +145,24 @@ def infer_foreign_keys(tables: list[dict]) -> None:
                                                            "inferred": True})
 
 
-def bronze_schema(spark, catalog: str, schema: str) -> dict:
+def recorded_keys(spark, fq: str, full_name: str, workspace=None) -> list[str]:
+    """The primary key Lakeflow Connect records on a destination table: SHOW TBLPROPERTIES when it shows the property,
+    else the Unity Catalog API (`workspace`: a databricks.sdk WorkspaceClient, made here when not given), which does."""
+    props = {r.key: r.value for r in _rows(spark, f"SHOW TBLPROPERTIES {fq}")}
+    if KEYS_PROPERTY not in props:
+        if workspace is None:
+            from databricks.sdk import WorkspaceClient
+            workspace = WorkspaceClient()
+        props = workspace.tables.get(full_name).properties or {}
+    return json.loads(props.get(KEYS_PROPERTY) or "[]")
+
+
+def bronze_schema(spark, catalog: str, schema: str, workspace=None) -> dict:
     """Columns, keys, row counts and activity of one bronze schema; foreign keys inferred from names."""
     tables, activity = [], {}
     for name in sorted(discover.tables(spark, catalog, "", [schema])[schema]):
         fq = f"`{catalog}`.`{schema}`.`{name}`"
-        props = {r.key: r.value for r in _rows(spark, f"SHOW TBLPROPERTIES {fq}")}
-        pk = json.loads(props.get(KEYS_PROPERTY) or "[]")
+        pk = recorded_keys(spark, fq, f"{catalog}.{schema}.{name}", workspace)
         cols = []
         for r in _rows(spark, f"DESCRIBE TABLE {fq}"):   # the columns, up to the first blank or "# ..." section
             if not r.col_name or r.col_name.startswith("#"):
@@ -180,11 +195,12 @@ def apply_hints(p: dict, hints: dict | None) -> dict:
 
 
 def table_plan(spark, catalog: str, schema: str, connection: str | None = None, database: str | None = None,
-               source_schema: str | None = None, hints: dict | None = None, routes: dict | None = None) -> dict:
+               source_schema: str | None = None, hints: dict | None = None, routes: dict | None = None,
+               workspace=None) -> dict:
     """Each table's role, silver and route, with its evidence: from the source through `connection` (database and
     source_schema name it there) when given, else from bronze `catalog.schema`; then the hints."""
     s = connection_schema(spark, connection, database, source_schema or schema) if connection else \
-        bronze_schema(spark, catalog, schema)
+        bronze_schema(spark, catalog, schema, workspace)
     inferred = {(t["name"], tuple(fk["columns"])) for t in s["tables"] for fk in t.get("fk_constraints") or []
                 if fk.get("inferred")}
     p = roles.plan({"tables": s["tables"]}, 1, s["activity"], schema)

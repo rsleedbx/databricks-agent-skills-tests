@@ -91,6 +91,38 @@ class Bronze(unittest.TestCase):
         self.assertNotIn(("lineitem", ("l_linenumber",), "orders"), fks)
 
 
+class HiddenProperty(BronzeSpark):
+    """SHOW TBLPROPERTIES without the keys property (as on a workspace); the Unity Catalog API has it."""
+
+    def sql(self, q):
+        r = super().sql(q)
+        if q.startswith("SHOW TBLPROPERTIES"):
+            rows = [x for x in r.collect() if x.key != evidence.KEYS_PROPERTY]
+            return R(collect=lambda: rows)
+        return r
+
+
+class FakeWorkspace:
+    def __init__(self, tables=TPCH):
+        self.asked = []
+        self.tables = self
+        self.t = tables
+
+    def get(self, full_name):
+        self.asked.append(full_name)
+        return R(properties={evidence.KEYS_PROPERTY: json.dumps(self.t[full_name.split(".")[-1]][0])})
+
+
+class KeysFromTheApi(unittest.TestCase):
+    def test_api_when_show_tblproperties_hides_it(self):
+        w = FakeWorkspace()
+        s = evidence.bronze_schema(HiddenProperty(), "main", "sales_bronze_east", workspace=w)
+        lineitem = next(t for t in s["tables"] if t["name"] == "lineitem")
+        pk = [c["name"] for c in lineitem["columns"] if c.get("primary_key")]
+        self.assertEqual(pk, ["l_orderkey", "l_linenumber"])
+        self.assertIn("main.sales_bronze_east.lineitem", w.asked)
+
+
 class Plan(unittest.TestCase):
     def test_roles_and_routes(self):
         p = table_plan(BronzeSpark(), "main", "sales_bronze_east")
@@ -137,7 +169,7 @@ class Connection(unittest.TestCase):
                         R(table_name="supplier", column_name="s_suppkey", data_type="integer"),
                         R(table_name="supplier", column_name="s_nationkey", data_type="integer"),
                         R(table_name="supplier", column_name="s_acctbal", data_type="numeric")]
-            elif "table_constraints" in q:
+            elif "pg_constraint" in q:
                 rows = [R(table_name="nation", constraint_type="PRIMARY KEY", constraint_name="nation_pkey",
                           column_name="n_nationkey", parent_table=None),
                         R(table_name="supplier", constraint_type="PRIMARY KEY", constraint_name="supplier_pkey",
