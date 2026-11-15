@@ -50,7 +50,8 @@ class BronzeSpark:
         name = quoted[-1] if len(quoted) == 3 else None   # `catalog`.`schema`.`table`
         if "information_schema.tables" in q:   # every table, plus a view the plan must leave out
             rows = [R(table_name=n, table_type="STREAMING_TABLE") for n in self.t] + \
-                   [R(table_name="recent_orders", table_type="VIEW")]
+                   [R(table_name="recent_orders", table_type="VIEW"),
+                    R(table_name="__materialization_mat_1a2b_lineitem_1", table_type="MANAGED")]
         elif q.startswith("SHOW TBLPROPERTIES"):
             rows = [R(key="delta.enableChangeDataFeed", value="true"),
                     R(key=evidence.KEYS_PROPERTY, value=json.dumps(self.t[name][0]))]
@@ -177,6 +178,7 @@ class Plan(unittest.TestCase):
         p = table_plan(BronzeSpark(), "main", "sales_bronze_east")
         t = p["tables"]
         self.assertNotIn("recent_orders", t)   # a view: no history, not planned
+        self.assertEqual(sorted(t), sorted(TPCH))   # nor the pipeline's backing tables
         self.assertEqual((t["lineitem"]["role"], t["lineitem"]["route"]), ("fact", "pipeline"))
         self.assertEqual(t["orders"]["role"], "fact")
         self.assertEqual((t["partsupp"]["role"], t["partsupp"]["route"]), ("bridge", "merge"))
