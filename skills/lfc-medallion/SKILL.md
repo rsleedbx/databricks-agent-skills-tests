@@ -39,15 +39,26 @@ That defines `all_<table>` for every table any source has (`name="n1_{table}"` c
 some sources have is stacked from those. Silver and gold are SQL files in the same pipeline that read `all_<table>`.
 The sources and tables are found when each update starts, so a new source or table needs only its ingestion.
 
-The package is `scripts/lfc_medallion` (no dependencies beyond the pipeline's Spark); `scripts/pyproject.toml` makes it
-installable from this repo's subdirectory. Offline tests: `python3 -m unittest skills/lfc-medallion/tests/test_stack.py`.
+The package is `scripts/lfc_medallion` (no dependencies beyond the pipeline's Spark). A serverless pipeline installs it
+from this repo through its environment (bundle `resources.pipelines.<name>`):
+
+```yaml
+environment:
+  dependencies:
+    - "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-medallion/scripts"
+```
+
+The archive URL, not `lfc-medallion @ git+https://...`: the pipeline passes the line to `%pip install` unquoted, so the
+spaces split it and pip looks for `lfc-medallion` on PyPI (`ENVIRONMENT_PIP_INSTALL_ERROR`). A branch or tag name in
+place of `main` pins a version. Offline tests: `python3 -m unittest skills/lfc-medallion/tests/test_stack.py`.
 
 ## Tested
 
 The same layering with three sources of eight tables each (TPC-H, PostgreSQL through Lakeflow Connect standard CDC):
 one changed line and one renamed reference row (a nation) each refreshed row-based in every layer, and the tables the
 change didn't touch did nothing (`NO_OP`); before the split, one silver view of 18 joins recomputed in full.
-Not run yet: the package installed from this repo in a pipeline; more than three sources.
+Installed from this repo's archive URL in that pipeline, `stack_all` defined the same views as the hand-written file
+had: every view `NO_OP` on the next update, nothing recomputed. Not run yet: more than three sources.
 
 ## Trade-offs
 
