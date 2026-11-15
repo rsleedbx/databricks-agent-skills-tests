@@ -45,8 +45,9 @@ def write_plan(spark, catalog: str, target: str, rows: list, apply: dict, propos
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
-    A table bound for `merge` with no primary key in some source stays on the pipeline (merge_all needs the key); a
-    table whose merge fails goes back to the pipeline (its partial table released); both are noted in `proposed`.
+    A table bound for `merge` with no primary key in some source stays on the pipeline (merge_all needs the key). A
+    merge that fails keeps a table merged before (retried next run) and sends a first take-over back to the pipeline
+    (its partial table released); all are noted in `proposed`.
     The plan is written before any release or merge (so a run that dies mid-switch has `previous` to finish it) and
     again at the end, from what was done (so the pipeline never skips a table that didn't arrive)."""
     sources = discover.sources(spark, catalog, prefix)
@@ -67,7 +68,8 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         if keyless:
             apply[table] = "pipeline"
             proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}"}
-    write_plan(spark, catalog, target, rows, apply, proposed)   # first: a run that dies mid-switch finishes it next time
+    # first, the routes being applied: a run that dies mid-switch leaves previous= to finish it next time
+    write_plan(spark, catalog, target, rows, apply, proposed)
     released = merge.release(spark, catalog, target, sorted(t for t, r in apply.items() if r == "pipeline"), name=name)
     done = {}
     for table in sorted(t for t, r in apply.items() if r == "merge"):
@@ -75,11 +77,15 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             report = merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column, name=name,
                                      workspace=workspace, take_over=True)
             done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
-        except Exception as e:  # noqa: BLE001  one table's failure sends it back to the pipeline, not the whole run
-            apply[table] = "pipeline"
+        except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
+            error = str(e).splitlines()[0][:200]
+            if previous.get(table) == "merge":   # merged before: keep the table and its route, retry next run
+                proposed[table] = {**proposed.get(table, {}), "failed": error, "kept": "merge, retried next run"}
+                continue
+            apply[table] = "pipeline"   # a first take-over that failed: back to the pipeline
             # force: a partial table, created before merge_all saved any state, goes too
             released += merge.release(spark, catalog, target, [table], name=name, force=True)
-            proposed[table] = {**proposed.get(table, {}), "failed": str(e).splitlines()[0][:200]}
+            proposed[table] = {**proposed.get(table, {}), "failed": error}
     write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
     return {"merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": released,

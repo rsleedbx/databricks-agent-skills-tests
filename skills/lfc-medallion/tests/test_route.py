@@ -141,6 +141,19 @@ class Safety(unittest.TestCase):
         self.assertEqual(routes, {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
 
 
+class Retry(unittest.TestCase):
+    run_route = MergeRoute.run_route
+
+    def test_failure_on_a_table_merged_before_keeps_it(self):   # a transient error isn't a reason to switch back
+        spark = Spark(plan={"lines": "pipeline", "nation": "merge", "part": "merge"})
+        out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
+                                    fail=("part",))
+        self.assertEqual(out["merge"], ["nation", "part"])
+        self.assertEqual(calls["forced"], [])   # nothing force-released
+        self.assertEqual(out["proposed"]["part"]["kept"], "merge, retried next run")
+        self.assertEqual({r[1]: r[6] for r in spark.written[1]}["part"], "merge")
+
+
 class PlanWrites(unittest.TestCase):
     run_route = MergeRoute.run_route
 
