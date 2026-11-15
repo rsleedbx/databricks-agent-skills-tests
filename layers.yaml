@@ -57,6 +57,7 @@ layers:
       - lfc-source-sizing
       - lfc-schema-change-test
       - lfc-downstream-history
+      - lfc-medallion
       - lfc-connection-sync
       - lfc-workspace-setup
       - lfc-meta-ads
