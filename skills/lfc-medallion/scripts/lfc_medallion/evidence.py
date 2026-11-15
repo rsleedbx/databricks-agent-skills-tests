@@ -123,9 +123,12 @@ def _engine_sql(s: str) -> dict:
                     "AND col.column_id = fkc.parent_column_id "
                     f"JOIN sys.tables pt ON pt.object_id = fk.referenced_object_id WHERE sc.name = {s}",
             # rows summed per table on their own; the counters over the heap or clustered index (index 0 or 1),
-            # one row per partition, so a partitioned table's partitions aren't multiplied by each other
+            # one row per partition, so a partitioned table's partitions aren't multiplied by each other. Deletes:
+            # leaf_delete_count plus leaf_ghost_count (a clustered index marks a deleted row a ghost first: seen as 0
+            # deletes on keyed tables with steady deletes, SQL Server 2022, 2026-11-15)
             "activity": "SELECT t.name AS table_name, r.live, SUM(o.leaf_insert_count) AS ins, "
-                        "SUM(o.leaf_update_count) AS upd, SUM(o.leaf_delete_count) AS del FROM sys.tables t "
+                        "SUM(o.leaf_update_count) AS upd, SUM(o.leaf_delete_count + o.leaf_ghost_count) AS del "
+                        "FROM sys.tables t "
                         "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
                         "JOIN (SELECT object_id, SUM(rows) AS live FROM sys.partitions WHERE index_id IN (0, 1) "
                         "GROUP BY object_id) r ON r.object_id = t.object_id "
