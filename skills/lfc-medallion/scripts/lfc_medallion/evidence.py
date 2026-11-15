@@ -26,7 +26,7 @@ relabelled once at setup: 7,500 updates on 7,500 rows, seen through the source's
 """
 import json
 
-from . import roles
+from . import discover, roles
 from .stack import spark_string
 
 ROUTE = {"fact": "pipeline", "log": "pipeline", "queue": "pipeline",
@@ -344,9 +344,10 @@ def bronze_schema(spark, catalog: str, schema: str, workspace=None, count_rows: 
     listed = (f"SELECT table_name, table_type FROM `{catalog}`.information_schema.tables "
               f"WHERE table_schema = {spark_string(schema)}")
     kinds = {r.table_name: r.table_type for r in _rows(spark, listed)}
-    # tables only: not views (no history), not a pipeline's own backing tables (__materialization_mat_<id>_<t>_1),
-    # which information_schema lists and SHOW TABLES hides
-    planned = [n for n, k in kinds.items() if k not in ("VIEW", "MATERIALIZED_VIEW") and not n.startswith("__")]
+    # tables only: not views (no history), not a pipeline's own tables (its event log, its backing tables
+    # __materialization_mat_<id>_<t>_1), which information_schema lists and SHOW TABLES hides
+    planned = [n for n, k in kinds.items()
+               if k not in ("VIEW", "MATERIALIZED_VIEW") and not discover.is_pipeline_table(n)]
     for name in sorted(planned):
         fq = f"`{catalog}`.`{schema}`.`{name}`"
         pk = recorded_keys(spark, fq, f"{catalog}.{schema}.{name}", workspace)

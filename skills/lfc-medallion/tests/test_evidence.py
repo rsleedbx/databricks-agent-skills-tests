@@ -51,7 +51,8 @@ class BronzeSpark:
         if "information_schema.tables" in q:   # every table, plus a view the plan must leave out
             rows = [R(table_name=n, table_type="STREAMING_TABLE") for n in self.t] + \
                    [R(table_name="recent_orders", table_type="VIEW"),
-                    R(table_name="__materialization_mat_1a2b_lineitem_1", table_type="MANAGED")]
+                    R(table_name="__materialization_mat_1a2b_lineitem_1", table_type="MANAGED"),
+                    R(table_name="event_log_ac7b7c4c_5e82_4203_90fe_ca87989b9f72", table_type="MANAGED")]
         elif q.startswith("SHOW TBLPROPERTIES"):
             rows = [R(key="delta.enableChangeDataFeed", value="true"),
                     R(key=evidence.KEYS_PROPERTY, value=json.dumps(self.t[name][0]))]

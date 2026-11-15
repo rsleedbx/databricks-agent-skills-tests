@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from lfc_medallion import source_sql, sources, stack_all, tables
 
 SCHEMAS = ["shop_bronze_east", "shop_bronze_west", "shop_bronze_north", "shop_silver", "other"]
-TABLES = {"shop_bronze_east": ["orders", "lines", "nation"], "shop_bronze_west": ["orders", "lines", "nation"],
+TABLES = {"shop_bronze_east": ["orders", "lines", "nation", "event_log_ac7b7c4c_5e82_4203_90fe_ca87989b9f72"],
+          "shop_bronze_west": ["orders", "lines", "nation"],
           "shop_bronze_north": ["orders", "lines"]}
 
 
@@ -75,6 +76,10 @@ class Discover(unittest.TestCase):
     def test_none_found_is_an_error(self):
         with self.assertRaisesRegex(ValueError, "no sources"):
             sources(FakeSpark(), "main", "missing_")
+
+    def test_pipeline_tables_left_out(self):   # an ingestion pipeline's event log in a source's schema
+        self.assertNotIn("event_log_ac7b7c4c_5e82_4203_90fe_ca87989b9f72", tables(FakeSpark(), "main", "shop_bronze_",
+                                                                               ["east"])["east"])
 
     def test_tables(self):
         held = tables(FakeSpark(), "main", "shop_bronze_", ["east", "north"])
