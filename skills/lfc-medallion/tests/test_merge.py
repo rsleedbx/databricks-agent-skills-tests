@@ -307,6 +307,14 @@ class OnRequest(unittest.TestCase):
         self.assertEqual(proposed, {"region": {"current": "merge", "planned": "pipeline"},
                                     "lines": {"current": "pipeline", "planned": "merge"}})
 
+    def test_missing_object_keeps_the_previous_route(self):   # the run failed between release and the new view
+        from lfc_medallion import routes_to_apply
+        spark = self.Catalog({}, {})
+        apply, proposed = routes_to_apply(spark, "main", "s", {"nation": "merge", "part": "merge"},
+                                          previous={"nation": "pipeline"})
+        self.assertEqual(apply, {"nation": "pipeline", "part": "merge"})
+        self.assertEqual(proposed, {"nation": {"current": "pipeline", "planned": "merge"}})
+
     def test_unknown_tag_value_is_ignored(self):
         from lfc_medallion import routes_to_apply
         spark = self.Catalog({"all_nation": "MANAGED"}, {"all_nation": "maybe"})
