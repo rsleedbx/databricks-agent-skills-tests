@@ -278,6 +278,16 @@ class Switch(unittest.TestCase):
         self.assertNotIn("all_x", " ".join(spark.done))
         self.assertTrue(any(q.startswith(f"DELETE FROM `main`.`shop_silver`.`{STATE}`") for q in spark.done))
 
+    def test_merged_targets(self):   # what merge_route reads to tell a table merged before from a first take-over
+        from lfc_medallion.merge import merged_targets
+        self.assertEqual(merged_targets(Spark(), "main", "shop_silver"), set())   # no state table
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7, ("all_part", "east"): 2})
+        queries = []
+        sql = spark.sql
+        spark.sql = lambda q: (queries.append(q), sql(q))[1]
+        self.assertEqual(merged_targets(spark, "main", "shop_silver"), {"all_nation", "all_part"})
+        self.assertTrue(any(q.startswith("SHOW TABLES IN") and STATE in q for q in queries))
+
     def test_release_without_state(self):
         from lfc_medallion import release
         self.assertEqual(release(Spark(), "main", "shop_silver", ["nation"]), [])
