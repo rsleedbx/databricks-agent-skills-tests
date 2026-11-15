@@ -209,7 +209,18 @@ def connection_schema(spark, connection: str, database: str, schema: str, engine
 KEYS_PROPERTY = "spark.internal.streaming_table.apply_changes.keys"
 
 
-RESETS = ("CREATE TABLE", "CREATE OR REPLACE TABLE", "REPLACE TABLE", "TRUNCATE")
+RESETS = ("CREATE TABLE", "CREATE OR REPLACE TABLE", "REPLACE TABLE", "TRUNCATE")   # and anything starting so
+
+
+def is_reset(operation: str, params) -> bool:
+    """Whether a history entry replaces the table's rows (its change feed starts over): CREATE TABLE ..., CREATE OR
+    REPLACE ..., REPLACE TABLE ... (with or without AS SELECT), TRUNCATE, RESTORE, a WRITE in overwrite mode, a
+    STREAMING UPDATE in complete mode."""
+    params = json.loads(params) if isinstance(params, str) else (params or {})
+    mode = str(params.get("mode", "")).lower()
+    output = str(params.get("outputMode", "")).lower()
+    return operation.startswith(RESETS) or operation.startswith("CREATE OR REPLACE") or operation == "RESTORE" or \
+        (operation == "WRITE" and mode == "overwrite") or (operation == "STREAMING UPDATE" and output == "complete")
 
 
 def _write_counts(op: str, m: dict) -> tuple[int, int, int]:
@@ -239,10 +250,7 @@ def history_activity(spark, table: str) -> dict:
     history = (f"SELECT version, operation, operationParameters, operationMetrics FROM (DESCRIBE HISTORY {table}) "
                "ORDER BY version")
     for r in _rows(spark, history):
-        params = r.operationParameters or {}
-        params = json.loads(params) if isinstance(params, str) else params
-        if r.operation in RESETS or r.operation.startswith("CREATE OR REPLACE") or \
-                (r.operation == "WRITE" and str(params.get("mode", "")).lower() == "overwrite"):
+        if is_reset(r.operation, r.operationParameters):
             total, in_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, True
             continue
         m = r.operationMetrics or {}

@@ -92,6 +92,28 @@ the role: at least `busy_changes` changes (default 1,000) and at least `busy_per
 table to the pipeline whatever its role, since a table with no relations falls to the dimension default yet can
 change all the time; a one-time bulk update that touches every row once doesn't count as busy.
 
+## The `merge` route: `merge_all`
+
+A job, not the pipeline, keeps the n:1 table of each quiet table current, so the pipeline's graph holds only the
+tables that change all the time. Run it as a job task before the pipeline that reads the targets:
+
+```python
+from lfc_medallion import merge_all, stack_all, table_plan
+plan = table_plan(spark, "main", "sales_bronze_east")
+quiet = [n for n, t in plan["tables"].items() if t["route"] == "merge"]
+merge_all(spark, "main", "sales_bronze_", target="sales_silver", tables=quiet, source_column="division")
+# and in the pipeline: stack_all(dp, spark, "main", "sales_bronze_", source_column="division", skip=quiet)
+```
+
+For each table and source, `merge_all` reads the source's change feed since the version it last read, keeps each
+key's last change, and MERGEs it into `<target>.all_<table>` keyed by the source column and the primary key (inserts,
+updates, deletes). The first read, or a full refresh in bronze (replace, truncate, overwrite: the change feed starts
+over), copies the source whole. Versions read are kept in `<target>._lfc_medallion_merge_state`. A source whose new
+versions wrote no rows (every ingestion update adds versions to every table) is skipped from the history alone, so a
+quiet table costs a metadata read, not a MERGE. New bronze columns are added first; an SCD type 2 destination's key
+gets `__START_AT`. The targets have the change data feed and row tracking on, so the silver views reading them still
+refresh incrementally.
+
 ## Tested
 
 The same layering with three sources of eight tables each (TPC-H, PostgreSQL through Lakeflow Connect standard CDC):
@@ -111,10 +133,16 @@ Found on the way, all fixed: Spark escapes quotes with a backslash (`''` is two 
 doesn't see PostgreSQL's constraints in `information_schema`; `SHOW TBLPROPERTIES` doesn't return the keys property
 (the Unity Catalog API does); a two-column foreign key (lineitem to partsupp) needs inferring, or partsupp looks like a
 fact; `information_schema` lists a pipeline's backing tables next to its streaming tables.
-Not run yet: more than three sources; a MERGE job for the `merge` route; bronze of an append-only or SCD type 2
-destination (offline tests only).
+`merge_all` on the same three sources, the six tables `table_plan` routes to `merge` (customer, nation, part,
+partsupp, region, supplier), into a scratch schema: every target equal to the pipeline's own `all_<table>` view in both
+directions (`EXCEPT ALL`: 0 and 0) after the first copy, after a nation renamed and one inserted, and after that one
+deleted and the name restored; each change MERGEd only the one table and source it touched (17 of 18 unchanged).
+Not run yet: more than three sources; bronze of an append-only or SCD type 2 destination (offline tests only).
 
 ## Trade-offs
+
+- Moving a table to the `merge` route: remove it from the pipeline (`skip`) before `merge_all` writes a table of the
+  same name; a pipeline's materialized view and a job's table can't share one.
 
 - Every table is stacked, including ones silver doesn't use: storage and an update step each (`NO_OP` when unchanged).
 - A schema that matches the prefix but isn't a source is read as one; `only` lists the sources instead.
