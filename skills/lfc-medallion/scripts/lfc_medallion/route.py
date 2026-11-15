@@ -4,7 +4,7 @@ merge_route() is what runs before the pipeline each refresh: it plans every sour
 where the data can't tell), agrees one route per table (`merge` only when every source's plan says so), applies the
 routes a table keeps or an operator's tag asks for (routes_to_apply, with last run's routes so an interrupted switch
 finishes), hands tables back to the pipeline (release), merges the rest one table at a time (merge_all, taking over a
-view the pipeline left), and records the plan in <target>._lfc_medallion_plan last, from what was done.
+view the pipeline left), recording the plan in <target>._lfc_medallion_plan before and after.
 merged_tables() is what the pipeline reads, in its source file, to leave those tables out (stack_all(skip=...)).
 
 A job runs it with the package's entry point (python_wheel_task, package lfc-medallion, entry point
@@ -34,12 +34,21 @@ def merged_tables(spark, catalog: str, target: str) -> list[str]:
                                             "WHERE route = 'merge'").collect()]
 
 
+def write_plan(spark, catalog: str, target: str, rows: list, apply: dict, proposed: dict) -> None:
+    """<target>._lfc_medallion_plan: each source's plan of each table, the route applied, and any proposal."""
+    spark.createDataFrame([(*r, apply[r[1]], json.dumps(proposed[r[1]]) if r[1] in proposed else "") for r in rows],
+                          "source string, table_name string, role string, planned string, decided_by string, "
+                          "why string, route string, proposed string") \
+        .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"`{catalog}`.`{target}`.{PLAN}")
+
+
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source stays on the pipeline (merge_all needs the key); a
     table whose merge fails goes back to the pipeline (its partial table released); both are noted in `proposed`.
-    The plan is written last, from what was done, so the pipeline never skips a table that didn't arrive."""
+    The plan is written before any release or merge (so a run that dies mid-switch has `previous` to finish it) and
+    again at the end, from what was done (so the pipeline never skips a table that didn't arrive)."""
     sources = discover.sources(spark, catalog, prefix)
     held = discover.tables(spark, catalog, prefix, sources)
     rows, planned = [], {}
@@ -58,6 +67,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         if keyless:
             apply[table] = "pipeline"
             proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}"}
+    write_plan(spark, catalog, target, rows, apply, proposed)   # first: a run that dies mid-switch finishes it next time
     released = merge.release(spark, catalog, target, sorted(t for t, r in apply.items() if r == "pipeline"), name=name)
     done = {}
     for table in sorted(t for t, r in apply.items() if r == "merge"):
@@ -67,12 +77,10 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
         except Exception as e:  # noqa: BLE001  one table's failure sends it back to the pipeline, not the whole run
             apply[table] = "pipeline"
-            released += merge.release(spark, catalog, target, [table], name=name)
+            # force: a partial table, created before merge_all saved any state, goes too
+            released += merge.release(spark, catalog, target, [table], name=name, force=True)
             proposed[table] = {**proposed.get(table, {}), "failed": str(e).splitlines()[0][:200]}
-    spark.createDataFrame([(*r, apply[r[1]], json.dumps(proposed[r[1]]) if r[1] in proposed else "") for r in rows],
-                          "source string, table_name string, role string, planned string, decided_by string, "
-                          "why string, route string, proposed string") \
-        .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"`{catalog}`.`{target}`.{PLAN}")
+    write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
     return {"merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": released,
             "proposed": proposed, "done": done}

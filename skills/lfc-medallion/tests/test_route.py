@@ -22,6 +22,7 @@ class Spark:
     def __init__(self, plan=None):
         self.plan = plan   # {table: route} or None (no plan table yet)
         self.written = None
+        self.writes = []   # every plan written, in order
 
     def sql(self, q):
         if q.startswith("SHOW TABLES"):
@@ -43,6 +44,7 @@ class Spark:
 
             def saveAsTable(self, name):
                 spark.written = (name, rows, schema)
+                spark.writes.append({r[1]: r[6] for r in rows})
         return R(write=Writer())
 
 
@@ -66,8 +68,9 @@ class MergeRoute(unittest.TestCase):
             calls["planned"], calls["previous"] = planned, previous
             return (apply or planned), {}
 
-        def release(spark, catalog, target, tables, name):
+        def release(spark, catalog, target, tables, name, force=False):
             calls["released"] += tables
+            calls.setdefault("forced", []).extend(tables if force else [])
             return [f"all_{t}" for t in tables if t in ("nation", *fail)]
 
         def merge_all(spark, catalog, prefix, target, tables, **k):
@@ -128,13 +131,24 @@ class Safety(unittest.TestCase):
 
     def test_failed_merge_goes_back_and_the_plan_says_so(self):
         spark = Spark()
-        out, _ = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
+        out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
                                     fail=("part",))
         self.assertEqual(out["merge"], ["nation"])
         self.assertIn("all_part", out["released"])
+        self.assertEqual(calls["forced"], ["part"])   # a partial table, not in the state yet, goes too
         self.assertEqual(out["proposed"]["part"]["failed"], "MERGE failed")
         routes = {r[1]: r[6] for r in spark.written[1]}
         self.assertEqual(routes, {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
+
+
+class PlanWrites(unittest.TestCase):
+    run_route = MergeRoute.run_route
+
+    def test_written_before_and_after(self):   # before: the routes being applied; after: what was done
+        spark = Spark()
+        self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"}, fail=("part",))
+        self.assertEqual(spark.writes, [{"lines": "pipeline", "nation": "merge", "part": "merge"},
+                                        {"lines": "pipeline", "nation": "merge", "part": "pipeline"}])
 
 
 class Pipeline(unittest.TestCase):
