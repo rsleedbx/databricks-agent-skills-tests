@@ -19,8 +19,10 @@ R = types.SimpleNamespace
 class Spark:
     """The plan table: present or not, its routes; createDataFrame and the write are recorded."""
 
-    def __init__(self, plan=None):
+    def __init__(self, plan=None, kinds=None):
         self.plan = plan   # {table: route} or None (no plan table yet)
+        self.kinds = dict(kinds or {})   # the target's objects: {name: table_type}; a merge may add to it
+        self.dropped = []
         self.written = None
         self.writes = []   # every plan written, in order
 
@@ -31,6 +33,11 @@ class Spark:
             rows = [R(table_name=t) for t, r in (self.plan or {}).items() if r == "merge"]
         elif q.startswith("SELECT DISTINCT table_name, route"):
             rows = [R(table_name=t, route=r) for t, r in (self.plan or {}).items()]
+        elif "information_schema.tables" in q:
+            rows = [R(table_name=n, table_type=k) for n, k in self.kinds.items()]
+        elif q.startswith("DROP TABLE IF EXISTS"):
+            self.dropped.append(q.rsplit("`.`", 1)[1].rstrip("`"))
+            rows = []
         else:
             raise AssertionError(q)
         return R(collect=lambda: rows)
@@ -61,28 +68,33 @@ def table_plan(spark, catalog, schema, hints=None, workspace=None):
 
 
 class MergeRoute(unittest.TestCase):
-    def run_route(self, spark, apply=None, keys=lambda table, source: True, fail=(), established=(), **kw):
+    def run_route(self, spark, apply=None, keys=lambda table, source: True, fail=(), established=(), creates=(),
+                  **kw):
         calls = {"merged": [], "released": []}
 
         def routes_to_apply(spark, catalog, target, planned, name, previous):
             calls["planned"], calls["previous"] = planned, previous
             return (apply or planned), {}
 
-        def release(spark, catalog, target, tables, name, force=False):
+        def release(spark, catalog, target, tables, name):
             calls["released"] += tables
-            calls.setdefault("forced", []).extend(tables if force else [])
             return [f"all_{t}" for t in tables if t in ("nation", *fail)]
 
         def merge_all(spark, catalog, prefix, target, tables, **k):
             calls["merged"] += tables
             calls["merge_kw"] = k
+            if tables[0] in creates:   # merge_all created its target before failing
+                spark.kinds[f"all_{tables[0]}"] = "MANAGED"
             if tables[0] in fail:
                 raise RuntimeError("MERGE failed\nmore")
             return {f"all_{t}": {"east": {"done": "unchanged"}} for t in tables}
 
         def recorded_keys(spark, fq, full_name, workspace):
             table, source = full_name.rsplit(".", 1)[1], full_name.split(".")[1].rsplit("_", 1)[1]
-            return ["k"] if keys(table, source) else []
+            k = keys(table, source)
+            if isinstance(k, Exception):
+                raise k
+            return ["k"] if k else []
         with mock.patch.object(route.discover, "sources", lambda *a: ["east", "west"]), \
                 mock.patch.object(route.discover, "tables", lambda spark, c, p, names: {
                     s: set(PLANS[s]) for s in names}), \
@@ -135,8 +147,7 @@ class Safety(unittest.TestCase):
         out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
                                     fail=("part",))
         self.assertEqual(out["merge"], ["nation"])
-        self.assertIn("all_part", out["released"])
-        self.assertEqual(calls["forced"], ["part"])   # a partial table, not in the state yet, goes too
+        self.assertIn("part", calls["released"])
         self.assertEqual(out["proposed"]["part"]["failed"], "MERGE failed")
         routes = {r[1]: r[6] for r in spark.written[1]}
         self.assertEqual(routes, {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
@@ -147,10 +158,10 @@ class Retry(unittest.TestCase):
 
     def test_failure_on_a_table_merged_before_keeps_it(self):   # a transient error isn't a reason to switch back
         spark = Spark(plan={"lines": "pipeline", "nation": "merge", "part": "merge"})
-        out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
+        out, _ = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
                                     fail=("part",), established=("nation", "part"))
         self.assertEqual(out["merge"], ["nation", "part"])
-        self.assertEqual(calls["forced"], [])   # nothing force-released
+        self.assertEqual(spark.dropped, [])   # nothing dropped
         self.assertEqual(out["proposed"]["part"]["kept"], "merge, retried next run")
         self.assertEqual({r[1]: r[6] for r in spark.written[1]}["part"], "merge")
 
@@ -162,7 +173,7 @@ class Established(unittest.TestCase):
         spark = Spark(plan={"lines": "pipeline", "nation": "merge", "part": "merge"})
         out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
                                     fail=("part",), established=("nation",))
-        self.assertEqual(calls["forced"], ["part"])   # treated as a first take-over: back to the pipeline
+        self.assertIn("part", calls["released"])   # treated as a first take-over: back to the pipeline
         self.assertNotIn("part", out["merge"])
 
     def test_keyless_established_table_kept(self):   # a key missing for a while doesn't hand back a merged table
@@ -181,8 +192,45 @@ class PlanWrites(unittest.TestCase):
     def test_written_before_and_after(self):   # before: the routes being applied; after: what was done
         spark = Spark()
         self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"}, fail=("part",))
-        self.assertEqual(spark.writes, [{"lines": "pipeline", "nation": "merge", "part": "merge"},
+        # nation and part are first take-overs: pipeline until their merge succeeds
+        self.assertEqual(spark.writes, [{"lines": "pipeline", "nation": "pipeline", "part": "pipeline"},
                                         {"lines": "pipeline", "nation": "merge", "part": "pipeline"}])
+
+    def test_established_tables_are_merge_in_the_first_write(self):
+        spark = Spark()
+        self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "pipeline"},
+                       established=("nation",))
+        self.assertEqual(spark.writes[0]["nation"], "merge")
+
+
+class Drops(unittest.TestCase):
+    run_route = MergeRoute.run_route
+
+    def test_failed_take_over_drops_the_table_it_created(self):
+        spark = Spark(kinds={"all_part": "MATERIALIZED_VIEW"})   # the pipeline's view, taken over, then the copy fails
+        self.run_route(spark, apply={"lines": "pipeline", "nation": "pipeline", "part": "merge"}, fail=("part",),
+                       creates=("part",))
+        self.assertEqual(spark.dropped, ["all_part"])
+
+    def test_never_a_table_that_was_there(self):   # a table under the name before this run: not this run's to drop
+        spark = Spark(kinds={"all_part": "MANAGED"})
+        self.run_route(spark, apply={"lines": "pipeline", "nation": "pipeline", "part": "merge"}, fail=("part",))
+        self.assertEqual(spark.dropped, [])
+
+    def test_never_a_streaming_table(self):
+        spark = Spark(kinds={"all_part": "STREAMING_TABLE"})
+        self.run_route(spark, apply={"lines": "pipeline", "nation": "pipeline", "part": "merge"}, fail=("part",))
+        self.assertEqual(spark.dropped, [])
+
+
+class KeyLookups(unittest.TestCase):
+    run_route = MergeRoute.run_route
+
+    def test_failed_lookup_counts_as_keyless(self):
+        out, calls = self.run_route(Spark(), apply={"lines": "pipeline", "nation": "merge", "part": "pipeline"},
+                                    keys=lambda t, s: RuntimeError("UC API timeout") if t == "nation" else True)
+        self.assertNotIn("nation", calls["merged"])
+        self.assertIn("UC API timeout", out["proposed"]["nation"]["refused"])
 
 
 class Pipeline(unittest.TestCase):

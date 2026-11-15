@@ -249,25 +249,17 @@ def merged_targets(spark, catalog: str, target: str) -> set[str]:
     return {r.target_table for r in _rows(spark, f"SELECT DISTINCT target_table FROM {_fq(catalog, target, STATE)}")}
 
 
-def release(spark, catalog: str, target: str, tables: list[str], name: str = "all_{table}",
-            force: bool = False) -> list[str]:
+def release(spark, catalog: str, target: str, tables: list[str], name: str = "all_{table}") -> list[str]:
     """Hand tables back to the pipeline (the route back from `merge`): drop merge_all's tables and their state, so the
-    pipeline's views can take the names. Only tables merge_all wrote (in its state) are dropped; force=True also drops
-    a target that is a table but not in the state (a merge that failed before saving any), never a view. Returns the
-    names dropped."""
+    pipeline's views can take the names. Only tables merge_all wrote (in its state) are dropped. Returns those."""
     st = _fq(catalog, target, STATE)
-    has_state = bool(_rows(spark, f"SHOW TABLES IN {_q(catalog)}.{_q(target)} LIKE {spark_string(STATE)}"))
-    written = {r.target_table for r in _rows(spark, f"SELECT DISTINCT target_table FROM {st}")} if has_state else set()
-    if force:
-        kinds = {r.table_name: r.table_type for r in _rows(
-            spark, f"SELECT table_name, table_type FROM {_q(catalog)}.information_schema.tables "
-                   f"WHERE table_schema = {spark_string(target)}")}
-        written |= {n for n, k in kinds.items() if k not in ("MATERIALIZED_VIEW", "VIEW")}
+    if not _rows(spark, f"SHOW TABLES IN {_q(catalog)}.{_q(target)} LIKE {spark_string(STATE)}"):
+        return []
+    written = {r.target_table for r in _rows(spark, f"SELECT DISTINCT target_table FROM {st}")}
     dropped = [name.format(table=t) for t in tables if name.format(table=t) in written]
     for out_name in dropped:
         spark.sql(f"DROP TABLE IF EXISTS {_fq(catalog, target, out_name)}")
-        if has_state:
-            spark.sql(f"DELETE FROM {st} WHERE target_table = {spark_string(out_name)}")
+        spark.sql(f"DELETE FROM {st} WHERE target_table = {spark_string(out_name)}")
     return dropped
 
 

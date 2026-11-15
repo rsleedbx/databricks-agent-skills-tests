@@ -192,6 +192,8 @@ Not run yet: more than three sources; bronze of an append-only or SCD type 2 des
 
 ## Trade-offs
 
+- A first take-over is recorded as `pipeline` until its merge succeeds, so the pipeline never skips a table that
+  hasn't arrived; if the run dies mid-take-over, the tag (gone with the dropped view) has to be set again.
 - A switch is a full copy or recompute of the table and its readers; that's why it waits for a tag. Between the job
   task and the pipeline, a released table's name is empty: read `all_<table>` only through the pipeline's views.
 

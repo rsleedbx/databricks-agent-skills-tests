@@ -42,14 +42,34 @@ def write_plan(spark, catalog: str, target: str, rows: list, apply: dict, propos
         .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"`{catalog}`.`{target}`.{PLAN}")
 
 
+class _Workspace:
+    """One databricks.sdk WorkspaceClient for the whole run, made on first use (the lookups that need it are few)."""
+
+    def __init__(self):
+        self._w = None
+
+    def __getattr__(self, attr):
+        if self._w is None:
+            from databricks.sdk import WorkspaceClient
+            self._w = WorkspaceClient()
+        return getattr(self._w, attr)
+
+
+def _kinds(spark, catalog: str, target: str) -> dict:
+    return {r.table_name: r.table_type for r in spark.sql(
+        f"SELECT table_name, table_type FROM `{catalog}`.information_schema.tables "
+        f"WHERE table_schema = {spark_string(target)}").collect()}
+
+
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
-    A table bound for `merge` with no primary key in some source stays on the pipeline (merge_all needs the key). A
-    merge that fails keeps a table merged before (retried next run) and sends a first take-over back to the pipeline
-    (its partial table released); all are noted in `proposed`.
-    The plan is written before any release or merge (so a run that dies mid-switch has `previous` to finish it) and
-    again at the end, from what was done (so the pipeline never skips a table that didn't arrive)."""
+    A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
+    one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
+    before (retried next run) and sends a first take-over back to the pipeline (dropping only the table this run
+    created); all are noted in `proposed`. The plan is written before any release or merge, with first take-overs
+    still on the pipeline (a table isn't skipped before it arrives), and again at the end, from what was done."""
+    workspace = workspace or _Workspace()
     sources = discover.sources(spark, catalog, prefix)
     held = discover.tables(spark, catalog, prefix, sources)
     rows, planned = [], {}
@@ -66,8 +86,14 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     established = {t for t in planned if name.format(table=t) in merge.merged_targets(spark, catalog, target)}
     skip = set()
     for table in [t for t, r in apply.items() if r == "merge"]:   # merge_all needs every source's key
-        keyless = [s for s in sources if table in held[s] and not evidence.recorded_keys(
-            spark, f"`{catalog}`.`{prefix}{s}`.`{table}`", f"{catalog}.{prefix}{s}.{table}", workspace)]
+        keyless = []
+        for s in [x for x in sources if table in held[x]]:
+            try:
+                if not evidence.recorded_keys(spark, f"`{catalog}`.`{prefix}{s}`.`{table}`",
+                                              f"{catalog}.{prefix}{s}.{table}", workspace):
+                    keyless.append(s)
+            except Exception as e:  # noqa: BLE001  a key that can't be read counts as missing, this run only
+                keyless.append(f"{s} ({str(e).splitlines()[0][:80]})")
         if keyless and table in established:   # keep the table and route; no merge this run
             skip.add(table)
             proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}",
@@ -75,9 +101,12 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         elif keyless:
             apply[table] = "pipeline"
             proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}"}
-    # first, the routes being applied: a run that dies mid-switch leaves previous= to finish it next time
-    write_plan(spark, catalog, target, rows, apply, proposed)
+    # first: first take-overs stay `pipeline` until their merge succeeds, so the pipeline doesn't skip a table before
+    # it arrives; switches back to the pipeline are recorded, so a run that dies after release finishes them
+    first = {t for t, r in apply.items() if r == "merge" and t not in established}
+    write_plan(spark, catalog, target, rows, {t: "pipeline" if t in first else r for t, r in apply.items()}, proposed)
     released = merge.release(spark, catalog, target, sorted(t for t, r in apply.items() if r == "pipeline"), name=name)
+    before = _kinds(spark, catalog, target)
     done = {}
     for table in sorted(t for t, r in apply.items() if r == "merge" and t not in skip):
         try:
@@ -90,12 +119,17 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
                 proposed[table] = {**proposed.get(table, {}), "failed": error, "kept": "merge, retried next run"}
                 continue
             apply[table] = "pipeline"   # a first take-over that failed: back to the pipeline
-            # force: a partial table, created before merge_all saved any state, goes too
-            released += merge.release(spark, catalog, target, [table], name=name, force=True)
+            out = name.format(table=table)
+            # drop only a table this run created: not a table before it, and a plain managed table now (never a
+            # pipeline's view or streaming table, never one that was there already)
+            if before.get(out) not in ("MANAGED", "EXTERNAL") and _kinds(spark, catalog, target).get(out) == "MANAGED":
+                spark.sql(f"DROP TABLE IF EXISTS `{catalog}`.`{target}`.`{out}`")
+                released.append(out)
+            released += merge.release(spark, catalog, target, [table], name=name)   # its state, if any was saved
             proposed[table] = {**proposed.get(table, {}), "failed": error}
     write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
     return {"merge": sorted(t for t, r in apply.items() if r == "merge"),
-            "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": released,
+            "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
 
 

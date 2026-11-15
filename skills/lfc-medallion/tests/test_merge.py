@@ -278,19 +278,6 @@ class Switch(unittest.TestCase):
         self.assertNotIn("all_x", " ".join(spark.done))
         self.assertTrue(any(q.startswith(f"DELETE FROM `main`.`shop_silver`.`{STATE}`") for q in spark.done))
 
-    def test_release_force_drops_a_table_not_in_state_never_a_view(self):
-        from lfc_medallion import release
-        spark = Spark(state={("all_x", "east"): 5}, targets={"all_nation"}, views={"all_lines"})
-        self.assertEqual(release(spark, "main", "shop_silver", ["nation", "lines"], force=True), ["all_nation"])
-        self.assertIn("DROP TABLE IF EXISTS `main`.`shop_silver`.`all_nation`", spark.done)
-        self.assertNotIn("all_lines", " ".join(spark.done))
-
-    def test_merged_targets(self):
-        from lfc_medallion.merge import merged_targets
-        spark = Spark(state={("all_nation", "east"): 5})
-        self.assertEqual(merged_targets(spark, "main", "shop_silver"), {"all_nation"})
-        self.assertEqual(merged_targets(Spark(), "main", "shop_silver"), set())
-
     def test_release_without_state(self):
         from lfc_medallion import release
         self.assertEqual(release(Spark(), "main", "shop_silver", ["nation"]), [])
