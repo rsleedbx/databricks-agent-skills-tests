@@ -68,13 +68,28 @@ p["tables"]["lineitem"]   # role, silver (scd1, scd2, append), route (pipeline, 
 
 | Evidence, in order | What it gives |
 |---|---|
-| The source through the Unity Catalog connection (`remote_query`; PostgreSQL) | declared primary and foreign keys, row counts, inserts / updates / deletes since its statistics were reset |
-| Bronze | the key Lakeflow Connect records (table property `spark.internal.streaming_table.apply_changes.keys`, internal and undocumented), row counts, each MERGE's inserts / updates / deletes after the snapshot (table history), foreign keys inferred from names (`l_suppkey` -> `s_suppkey`) |
+| The source through its Unity Catalog connection (`remote_query`), the engine read from the connection's type (`engine` overrides) | declared primary and foreign keys, row counts, inserts / updates / deletes from the engine's counters (optional: without the privilege, row counts only) |
+| Bronze: when there's no connection, or its engine has no catalog queries here (the plan's `evidence` says so) | the key Lakeflow Connect records (table property `spark.internal.streaming_table.apply_changes.keys`, internal and undocumented), row counts (`count_rows=False` skips them), each write's inserts / updates / deletes after the snapshot (table history), foreign keys inferred from names |
 | `hints` | `{table: role}` or `{table: {role, silver}}`; they win (`decided_by: hint`, the guess kept in `guessed`) |
+
+| Engine (connection type) | Keys | Counters |
+|---|---|---|
+| `POSTGRESQL` | `pg_catalog` (a SELECT-only login doesn't see constraints in `information_schema`) | `pg_stat_user_tables` |
+| `MYSQL` | `information_schema.key_column_usage` | `performance_schema` (needs SELECT on it) |
+| `SQLSERVER` | `sys.indexes`, `sys.foreign_keys` | `sys.dm_db_index_operational_stats` (needs `VIEW SERVER STATE`) |
+| any other | bronze | bronze |
+
+What else it handles: a write of any kind in the history (MERGE for SCD type 1 and 2 destinations, WRITE and
+STREAMING UPDATE for append-only ones, DELETE, UPDATE; a replace, truncate or overwrite starts a new snapshot);
+system columns left out (`__START_AT`, `__END_AT`, `_rescued_data`); views and a pipeline's own backing tables
+(`__materialization_mat_*`) not planned; foreign keys by the conventions schemas follow without declaring them (the key's
+own name, a table's column prefix as in TPC, `<name>_id` to `<name>(s)` keyed `id` as in most ORMs, and composite keys).
 
 The rules are cdc-table-plan's (its accuracy against the TPC specifications and Mautic is in that skill's SKILL.md);
 they live in `lfc_medallion.roles`, and its `classify.py` runs them from files. Routes: facts, logs and queues go to the
-pipeline; dimensions, lookups and bridges to a MERGE job (`routes` overrides per role).
+pipeline; dimensions, lookups and bridges to a MERGE job (`routes` overrides per role). Measured activity overrides
+the role: at least `busy_changes` changes (default 1,000) sends a table to the pipeline whatever its role, since a
+table with no relations falls to the dimension default yet can change all the time.
 
 ## Tested
 
@@ -82,17 +97,30 @@ The same layering with three sources of eight tables each (TPC-H, PostgreSQL thr
 one changed line and one renamed reference row (a nation) each refreshed row-based in every layer, and the tables the
 change didn't touch did nothing (`NO_OP`); before the split, one silver view of 18 joins recomputed in full.
 Installed from this repo's archive URL in that pipeline, `stack_all` defined the same views as the hand-written file
-had: every view `NO_OP` on the next update, nothing recomputed. `table_plan` on that TPC-H bronze (PostgreSQL source, one line of business), against TPC-H's truth file
-(cdc-table-plan): through the connection and from bronze alike, 6 of 8 roles and 8 of 8 routes. `region` and `nation`
-come out dimensions, not lookups: the lookup rule needs a fixed size, which only a scaled model shows (a collected
-schema can't), so a hint settles them; both are routed to `merge` either way. Found on the way, both fixed: a
-SELECT-only login doesn't see constraints in `information_schema` (keys come from `pg_catalog`); `SHOW TBLPROPERTIES`
-doesn't return the keys property (the Unity Catalog API does); a two-column foreign key (lineitem to partsupp) needs
-inferring from bronze, or partsupp looks like a fact.
-Not run yet: more than three sources; a MERGE job for the `merge` route.
+had: every view `NO_OP` on the next update, nothing recomputed.
+
+`table_plan`, from a serverless job installing the package from a branch archive:
+
+| Source | Evidence | Result |
+|---|---|---|
+| TPC-H, one line of business (PostgreSQL) | connection, and bronze | against TPC-H's truth file: 6 of 8 roles, 8 of 8 routes both ways. `region` and `nation` come out dimensions, not lookups: the lookup rule needs a fixed size, which only a scaled model shows, so a hint settles them; both go to `merge` either way |
+| Two tables changed every minute (a keyed one, a keyless one), MySQL 8.4, SQL Server 2022, PostgreSQL 16 | connection, engine read from each | keys and counters read on all three; the keyless table a queue (inserts and deletes), the keyed one busy (about 87,000 changes on 1,000 rows): pipeline |
+
+Found on the way, all fixed: Spark escapes quotes with a backslash (`''` is two strings joined); a SELECT-only login
+doesn't see PostgreSQL's constraints in `information_schema`; `SHOW TBLPROPERTIES` doesn't return the keys property
+(the Unity Catalog API does); a two-column foreign key (lineitem to partsupp) needs inferring, or partsupp looks like a
+fact; `information_schema` lists a pipeline's backing tables next to its streaming tables.
+Not run yet: more than three sources; a MERGE job for the `merge` route; bronze of an append-only or SCD type 2
+destination (offline tests only).
 
 ## Trade-offs
 
 - Every table is stacked, including ones silver doesn't use: storage and an update step each (`NO_OP` when unchanged).
 - A schema that matches the prefix but isn't a source is read as one; `only` lists the sources instead.
 - A source whose schema exists before its tables land is stacked without them, until the next update after ingestion.
+- Sources stacked by column name must agree on each column's type (Spark widens compatible ones, like int to bigint;
+  others fail the view): the sources' own design.
+- The activity is a lower bound from bronze (inserts before the first update count as snapshot) and since the last
+  statistics reset from the source; `busy_changes` is a count, not a rate, so a long window counts more.
+- Foreign keys inferred from names can be wrong for a schema that follows none of the conventions; the connection's
+  declared keys are the better evidence.

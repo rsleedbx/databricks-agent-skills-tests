@@ -333,5 +333,28 @@ class Situations(unittest.TestCase):
         self.assertTrue(all("row_count" not in t for t in s["tables"]))
 
 
+class Busy(unittest.TestCase):
+    """The measured activity overrides the role's route: a much-changed table goes to the pipeline."""
+
+    def plan(self, history, rows=1000, **kw):
+        t = {"solo": (["pk"], [("pk", "int"), ("dt", "timestamp")], rows, history)}
+        return table_plan(BronzeSpark(t), "main", "s", **kw)["tables"]["solo"]
+
+    def test_busy_dimension_to_the_pipeline(self):
+        t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "900", "numTargetRowsDeleted": "200"})])
+        self.assertEqual((t["role"], t["route"]), ("dimension", "pipeline"))
+        self.assertIn("busy (1100 changes", t["why"])
+
+    def test_quiet_dimension_stays(self):
+        t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "32"})])
+        self.assertEqual(t["route"], "merge")
+
+    def test_threshold_and_hint(self):
+        h = [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "50"})]
+        self.assertEqual(self.plan(h, busy_changes=40)["route"], "pipeline")
+        busy = [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "5000"})]
+        self.assertEqual(self.plan(busy, hints={"solo": "lookup"})["route"], "merge")   # a hint's route stands
+
+
 if __name__ == "__main__":
     unittest.main()
