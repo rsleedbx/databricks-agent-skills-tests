@@ -47,16 +47,21 @@ class FakeSpark:
 
 
 class FakeDp:
-    """Records each materialized view's name and comment, and the query its function runs."""
+    """Records each materialized view's name, comment and function. The functions run only when read (`view`), after
+    stack_all returns, as a pipeline runs them: a loop closure bound late would then show the last table's sources."""
 
     def __init__(self):
-        self.views = {}
+        self.fns = {}
 
     def materialized_view(self, name, comment):
         def register(fn):
-            self.views[name] = (comment, fn())
+            self.fns[name] = (comment, fn)
             return fn
         return register
+
+    def view(self, name):
+        comment, fn = self.fns[name]
+        return comment, fn()
 
 
 class Discover(unittest.TestCase):
@@ -89,7 +94,7 @@ class Stack(unittest.TestCase):
         defined = stack_all(dp, FakeSpark(), "main", "shop_bronze_", source_column="division")
         self.assertEqual(defined, {"all_lines": ["east", "north", "west"], "all_nation": ["east", "west"],
                                    "all_orders": ["east", "north", "west"]})
-        comment, frame = dp.views["all_nation"]
+        comment, frame = dp.view("all_nation")
         want = [source_sql("main", "shop_bronze_", "nation", s, "division") for s in ("east", "west")]
         self.assertEqual(frame.parts, want)
         self.assertIn("(n:1)", comment)
@@ -97,8 +102,9 @@ class Stack(unittest.TestCase):
     def test_each_view_keeps_its_own_query(self):   # the loop's closures don't all end up with the last table's query
         dp = FakeDp()
         stack_all(dp, FakeSpark(), "main", "shop_bronze_")
-        parts = dp.views["all_orders"][1].parts
-        self.assertTrue(parts and all("`orders`" in q for q in parts), parts)
+        for view, table in (("all_lines", "lines"), ("all_nation", "nation"), ("all_orders", "orders")):
+            parts = dp.view(view)[1].parts
+            self.assertTrue(parts and all(f"`{table}`" in q for q in parts), (view, parts))
 
     def test_name_pattern_and_only(self):
         dp = FakeDp()
