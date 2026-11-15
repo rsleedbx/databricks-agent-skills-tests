@@ -52,28 +52,38 @@ PLANS = {   # what table_plan says per source
 }
 
 
-def table_plan(spark, catalog, schema, hints=None):
+def table_plan(spark, catalog, schema, hints=None, workspace=None):
     source = schema.rsplit("_", 1)[1]
     return {"tables": {t: {"route": r, "role": "fact" if r == "pipeline" else "dimension", "decided_by": "relations",
                            "why": f"{t} in {source}"} for t, r in PLANS[source].items()}}
 
 
 class MergeRoute(unittest.TestCase):
-    def run_route(self, spark, apply=None, **kw):
-        calls = {}
+    def run_route(self, spark, apply=None, keys=lambda table, source: True, fail=(), **kw):
+        calls = {"merged": [], "released": []}
 
         def routes_to_apply(spark, catalog, target, planned, name, previous):
             calls["planned"], calls["previous"] = planned, previous
             return (apply or planned), {}
 
         def release(spark, catalog, target, tables, name):
-            calls["released"] = tables
-            return [f"all_{t}" for t in tables if t == "nation"]
+            calls["released"] += tables
+            return [f"all_{t}" for t in tables if t in ("nation", *fail)]
 
         def merge_all(spark, catalog, prefix, target, tables, **k):
-            calls["merged"], calls["merge_kw"] = tables, k
+            calls["merged"] += tables
+            calls["merge_kw"] = k
+            if tables[0] in fail:
+                raise RuntimeError("MERGE failed\nmore")
             return {f"all_{t}": {"east": {"done": "unchanged"}} for t in tables}
+
+        def recorded_keys(spark, fq, full_name, workspace):
+            table, source = full_name.rsplit(".", 1)[1], full_name.split(".")[1].rsplit("_", 1)[1]
+            return ["k"] if keys(table, source) else []
         with mock.patch.object(route.discover, "sources", lambda *a: ["east", "west"]), \
+                mock.patch.object(route.discover, "tables", lambda spark, c, p, names: {
+                    s: set(PLANS[s]) for s in names}), \
+                mock.patch.object(route.evidence, "recorded_keys", recorded_keys), \
                 mock.patch.object(route.evidence, "table_plan", table_plan), \
                 mock.patch.object(route.merge, "routes_to_apply", routes_to_apply), \
                 mock.patch.object(route.merge, "release", release), \
@@ -85,7 +95,7 @@ class MergeRoute(unittest.TestCase):
         out, calls = self.run_route(Spark())
         self.assertEqual(calls["planned"], {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
         self.assertEqual(calls["previous"], {})   # no plan table yet
-        self.assertEqual(calls["merged"], ["nation"])
+        self.assertEqual(calls["merged"], ["nation"])   # one merge_all per table
         self.assertEqual(calls["released"], ["lines", "part"])
         self.assertTrue(calls["merge_kw"]["take_over"])
         self.assertEqual(out["merge"], ["nation"])
@@ -104,6 +114,29 @@ class MergeRoute(unittest.TestCase):
         self.assertEqual(len(rows), 6)   # 3 tables x 2 sources
 
 
+class Safety(unittest.TestCase):
+    run_route = MergeRoute.run_route
+
+    def test_keyless_table_stays_on_the_pipeline(self):   # tagged to merge, but west records no key for nation
+        spark = Spark()
+        out, calls = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "pipeline"},
+                                    keys=lambda table, source: not (table == "nation" and source == "west"))
+        self.assertEqual(calls["merged"], [])
+        self.assertIn("nation", calls["released"])
+        self.assertEqual(out["proposed"]["nation"]["refused"], "no primary key in west")
+        self.assertTrue(all(r[6] == "pipeline" for r in spark.written[1] if r[1] == "nation"))
+
+    def test_failed_merge_goes_back_and_the_plan_says_so(self):
+        spark = Spark()
+        out, _ = self.run_route(spark, apply={"lines": "pipeline", "nation": "merge", "part": "merge"},
+                                    fail=("part",))
+        self.assertEqual(out["merge"], ["nation"])
+        self.assertIn("all_part", out["released"])
+        self.assertEqual(out["proposed"]["part"]["failed"], "MERGE failed")
+        routes = {r[1]: r[6] for r in spark.written[1]}
+        self.assertEqual(routes, {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
+
+
 class Pipeline(unittest.TestCase):
     def test_merged_tables(self):
         self.assertEqual(merged_tables(Spark(), "main", "shop_silver"), [])   # before the first plan
@@ -119,9 +152,13 @@ class EntryPoint(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": fake}), \
                 mock.patch.object(route, "merge_route", lambda *a: seen.setdefault("args", a) and {}):
             route.main(["--catalog", "main", "--prefix", "shop_bronze_", "--target", "shop_silver",
-                        "--source-column", "division", "--hints", '{"nation": "lookup"}', "--only", "east"])
+                        "--source-column", "division", "--hints", '{"nation": "lookup"}'])
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
-                                        {"nation": "lookup"}, "east"))
+                                        {"nation": "lookup"}))
+
+    def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            route.main(["--catalog", "c", "--prefix", "p_", "--target", "t", "--only", "east"])
 
 
 if __name__ == "__main__":
