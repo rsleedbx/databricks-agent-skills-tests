@@ -41,46 +41,125 @@ def _rows(spark, query):
     return spark.sql(query).collect()
 
 
-def pg_string(s: str) -> str:
-    """A PostgreSQL string literal ('' is a quote), for the query remote_query runs on the source."""
-    return "'" + str(s).replace("'", "''") + "'"
+# --- 1. the source, through a Unity Catalog connection --------------------------------------------------------------
+# Each engine: its own catalog queries, each returning the same columns. No ORDER BY inside them: remote_query runs a
+# query as a subquery, and SQL Server refuses ORDER BY there; rows are sorted here by their `ord`. Activity is optional:
+# a login without the privilege for the counters gets row counts only (`rows`).
+
+def sql_string(s: str) -> str:
+    """A string literal for PostgreSQL, SQL Server and MySQL ('' is a quote; MySQL also reads a backslash as an
+    escape, so backslashes are doubled)."""
+    return "'" + str(s).replace("\\", "\\\\").replace("'", "''") + "'"
 
 
-# --- 1. the source, through a Unity Catalog connection (PostgreSQL) ------------------------------------------------
+
+
+def _engine_sql(s: str) -> dict:
+    return {
+        # PostgreSQL: keys from pg_catalog, which a SELECT-only login sees (information_schema.table_constraints
+        # lists only tables the user owns or holds more than SELECT on: seen through Lakeflow Connect's login,
+        # 2026-11-15); ordinary and partitioned tables, not partitions, views or foreign tables
+        "POSTGRESQL": {
+            "columns": "SELECT table_name, column_name, data_type, ordinal_position AS ord "
+                       f"FROM information_schema.columns WHERE table_schema = {s} AND table_name IN (SELECT c.relname "
+                       "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                       f"WHERE n.nspname = {s} AND c.relkind IN ('r', 'p') AND NOT c.relispartition)",
+            "keys": "SELECT t.relname AS table_name, CASE c.contype WHEN 'p' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' "
+                    "END AS constraint_type, c.conname AS constraint_name, a.attname AS column_name, "
+                    "pt.relname AS parent_table, k.ord FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                    "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                    "CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) "
+                    "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum "
+                    f"LEFT JOIN pg_class pt ON pt.oid = c.confrelid WHERE n.nspname = {s} AND c.contype IN ('p', 'f')",
+            "activity": "SELECT relname AS table_name, n_live_tup AS live, n_tup_ins AS ins, n_tup_upd AS upd, "
+                        f"n_tup_del AS del FROM pg_stat_user_tables WHERE schemaname = {s}",
+        },
+        # MySQL (and MariaDB): the database is the schema. Counters from performance_schema (needs SELECT on it, the
+        # same source as lfc-source-statschema's collect-activity-mysql.sql); table_rows is an estimate
+        "MYSQL": {
+            "columns": "SELECT c.table_name AS table_name, c.column_name AS column_name, c.data_type AS data_type, "
+                       "c.ordinal_position AS ord FROM information_schema.columns c JOIN information_schema.tables t "
+                       "ON t.table_schema = c.table_schema AND t.table_name = c.table_name "
+                       f"AND t.table_type = 'BASE TABLE' WHERE c.table_schema = {s}",
+            "keys": "SELECT table_name AS table_name, CASE WHEN constraint_name = 'PRIMARY' THEN 'PRIMARY KEY' "
+                    "ELSE 'FOREIGN KEY' END AS constraint_type, constraint_name AS constraint_name, "
+                    "column_name AS column_name, referenced_table_name AS parent_table, ordinal_position AS ord "
+                    f"FROM information_schema.key_column_usage WHERE table_schema = {s} "
+                    "AND (constraint_name = 'PRIMARY' OR referenced_table_name IS NOT NULL)",
+            "activity": "SELECT t.table_name AS table_name, t.table_rows AS live, w.count_insert AS ins, "
+                        "w.count_update AS upd, w.count_delete AS del FROM information_schema.tables t "
+                        "LEFT JOIN performance_schema.table_io_waits_summary_by_table w "
+                        "ON w.object_type = 'TABLE' AND w.object_schema = t.table_schema "
+                        "AND w.object_name = t.table_name "
+                        f"WHERE t.table_schema = {s} AND t.table_type = 'BASE TABLE'",
+            "rows": "SELECT table_name AS table_name, table_rows AS live FROM information_schema.tables "
+                    f"WHERE table_schema = {s} AND table_type = 'BASE TABLE'",
+        },
+        # SQL Server: keys from the catalog views (a login with SELECT on a table sees its metadata); counters from
+        # sys.dm_db_index_operational_stats need VIEW SERVER STATE, so without it only row counts (sys.partitions)
+        "SQLSERVER": {
+            "columns": "SELECT c.TABLE_NAME AS table_name, c.COLUMN_NAME AS column_name, c.DATA_TYPE AS data_type, "
+                       "c.ORDINAL_POSITION AS ord FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES t "
+                       "ON t.TABLE_SCHEMA = c.TABLE_SCHEMA AND t.TABLE_NAME = c.TABLE_NAME "
+                       f"AND t.TABLE_TYPE = 'BASE TABLE' WHERE c.TABLE_SCHEMA = {s}",
+            "keys": "SELECT t.name AS table_name, 'PRIMARY KEY' AS constraint_type, i.name AS constraint_name, "
+                    "col.name AS column_name, CAST(NULL AS NVARCHAR(128)) AS parent_table, ic.key_ordinal AS ord "
+                    "FROM sys.indexes i JOIN sys.tables t ON t.object_id = i.object_id "
+                    "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
+                    "JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id "
+                    "JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id "
+                    f"WHERE i.is_primary_key = 1 AND sc.name = {s} "
+                    "UNION ALL SELECT t.name, 'FOREIGN KEY', fk.name, col.name, pt.name, fkc.constraint_column_id "
+                    "FROM sys.foreign_keys fk "
+                    "JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id "
+                    "JOIN sys.tables t ON t.object_id = fk.parent_object_id "
+                    "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
+                    "JOIN sys.columns col ON col.object_id = fkc.parent_object_id "
+                    "AND col.column_id = fkc.parent_column_id "
+                    f"JOIN sys.tables pt ON pt.object_id = fk.referenced_object_id WHERE sc.name = {s}",
+            "activity": "SELECT t.name AS table_name, MAX(p.rows) AS live, SUM(o.leaf_insert_count) AS ins, "
+                        "SUM(o.leaf_update_count) AS upd, SUM(o.leaf_delete_count) AS del FROM sys.tables t "
+                        "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
+                        "JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
+                        "LEFT JOIN sys.dm_db_index_operational_stats(DB_ID(), NULL, NULL, NULL) o "
+                        "ON o.object_id = t.object_id AND o.index_id = p.index_id "
+                        f"WHERE sc.name = {s} GROUP BY t.name",
+            "rows": "SELECT t.name AS table_name, SUM(p.rows) AS live FROM sys.tables t "
+                    "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
+                    "JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0, 1) "
+                    f"WHERE sc.name = {s} GROUP BY t.name",
+        },
+    }
+
+
+ENGINES = tuple(_engine_sql("''"))
+
 
 def _remote(spark, connection, database, query):
     return _rows(spark, f"SELECT * FROM remote_query({spark_string(connection)}, database => {spark_string(database)}, "
                         f"query => {spark_string(query)})")
 
 
-def connection_schema(spark, connection: str, database: str, schema: str) -> dict:
-    """Columns, keys, foreign keys, row counts and activity of a PostgreSQL schema, read through the connection."""
-    s = pg_string(schema)
-    cols = _remote(spark, connection, database,
-                   "SELECT table_name, column_name, data_type FROM information_schema.columns "
-                   f"WHERE table_schema = {s} AND table_name IN (SELECT c.relname FROM pg_class c "
-                   "JOIN pg_namespace n ON n.oid = c.relnamespace "
-                   f"WHERE n.nspname = {s} AND c.relkind IN ('r', 'p') AND NOT c.relispartition) "
-                   "ORDER BY table_name, ordinal_position")
-    # pg_catalog, not information_schema: table_constraints lists only tables the user owns or holds more than SELECT
-    # on, and the connection's login usually has SELECT only
-    keys = _remote(spark, connection, database,
-                   "SELECT t.relname AS table_name, CASE c.contype WHEN 'p' THEN 'PRIMARY KEY' ELSE 'FOREIGN KEY' END "
-                   "AS constraint_type, c.conname AS constraint_name, a.attname AS column_name, "
-                   "pt.relname AS parent_table FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
-                   "JOIN pg_namespace n ON n.oid = t.relnamespace "
-                   "CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) "
-                   "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum "
-                   "LEFT JOIN pg_class pt ON pt.oid = c.confrelid "
-                   f"WHERE n.nspname = {s} AND c.contype IN ('p', 'f') ORDER BY t.relname, c.conname, k.ord")
-    stats = _remote(spark, connection, database, "SELECT relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del "
-                    f"FROM pg_stat_user_tables WHERE schemaname = {s}")
+def connection_engine(connection: str, workspace=None) -> str:
+    """The connection's type (POSTGRESQL, SQLSERVER, MYSQL, ...), from the Unity Catalog API."""
+    if workspace is None:
+        from databricks.sdk import WorkspaceClient
+        workspace = WorkspaceClient()
+    t = workspace.connections.get(connection).connection_type
+    return str(getattr(t, "value", t)).upper()
+
+
+def connection_schema(spark, connection: str, database: str, schema: str, engine: str = "POSTGRESQL") -> dict:
+    """Columns, keys, foreign keys, row counts and activity of one schema, read through the connection with its
+    engine's catalog queries (ENGINES)."""
+    q = _engine_sql(sql_string(schema))[engine]
     tables = {}
-    for r in cols:
+    for r in sorted(_remote(spark, connection, database, q["columns"]), key=lambda r: (r.table_name, int(r.ord))):
         tables.setdefault(r.table_name, {"name": r.table_name, "columns": []})["columns"].append(
             {"name": r.column_name, "type": canonical_type(r.data_type)})
     fks = {}
-    for r in keys:
+    keys = _remote(spark, connection, database, q["keys"])
+    for r in sorted(keys, key=lambda r: (r.table_name, r.constraint_name, int(r.ord))):
         t = tables.get(r.table_name)
         if not t:
             continue
@@ -93,16 +172,25 @@ def connection_schema(spark, connection: str, database: str, schema: str) -> dic
                 "columns"].append(r.column_name)
     for (t, _), fk in fks.items():
         tables[t].setdefault("fk_constraints", []).append(fk)
-    activity = {}
+    activity, note = {}, ""
+    try:
+        stats = _remote(spark, connection, database, q["activity"])
+    except Exception as e:   # no privilege for the counters: row counts only, where the engine has a query for them
+        if "rows" not in q:
+            raise
+        stats, note = _remote(spark, connection, database, q["rows"]), f" (no counters: {str(e).splitlines()[0][:80]})"
     for r in stats:
-        if r.relname in tables:
-            tables[r.relname]["row_count"] = int(r.n_live_tup or 0)
-            ins, upd, dele, live = (int(x or 0) for x in (r.n_tup_ins, r.n_tup_upd, r.n_tup_del, r.n_live_tup))
-            # the counters include the initial load: inserts alone, no more than the rows there now, can't tell a
-            # load from appends, so they're no evidence; updates and deletes are
-            if upd or dele or ins > live:
-                activity[r.relname] = {"inserts": ins, "updates": upd, "deletes": dele}
-    return {"tables": list(tables.values()), "activity": activity, "evidence": f"connection {connection}"}
+        if r.table_name not in tables:
+            continue
+        live = int(getattr(r, "live", 0) or 0)
+        tables[r.table_name]["row_count"] = live
+        ins, upd, dele = (int(getattr(r, k, 0) or 0) for k in ("ins", "upd", "del"))
+        # the counters include the initial load: inserts alone, no more than the rows there now, can't tell a load
+        # from appends, so they're no evidence; updates and deletes are
+        if upd or dele or ins > live:
+            activity[r.table_name] = {"inserts": ins, "updates": upd, "deletes": dele}
+    return {"tables": list(tables.values()), "activity": activity,
+            "evidence": f"connection {connection} ({engine}){note}"}
 
 
 # --- 2. bronze, as Lakeflow Connect wrote it ------------------------------------------------------------------------
@@ -113,23 +201,41 @@ KEYS_PROPERTY = "spark.internal.streaming_table.apply_changes.keys"
 RESETS = ("CREATE TABLE", "CREATE OR REPLACE TABLE", "REPLACE TABLE", "TRUNCATE")
 
 
+def _write_counts(op: str, m: dict) -> tuple[int, int, int]:
+    """Inserts, updates, deletes of one history entry, by its metrics. MERGE: what an SCD type 1 or 2 destination
+    takes (Lakeflow Connect's database connectors, seen on TPC-H through PostgreSQL 2026-11-15); WRITE and STREAMING
+    UPDATE: appends (an append-only destination); DELETE and UPDATE: their own counts."""
+    def n(*keys):
+        return next((int(m[k]) for k in keys if m.get(k) not in (None, "")), 0)
+    if op == "MERGE":
+        return (n("numTargetRowsInserted"), n("numTargetRowsMatchedUpdated", "numTargetRowsUpdated"),
+                n("numTargetRowsMatchedDeleted", "numTargetRowsDeleted"))
+    if op in ("WRITE", "STREAMING UPDATE"):
+        return n("numOutputRows", "numAddedRows"), 0, 0
+    if op == "DELETE":
+        return 0, 0, n("numDeletedRows")
+    if op == "UPDATE":
+        return 0, n("numUpdatedRows"), 0
+    return 0, 0, 0
+
+
 def history_activity(spark, table: str) -> dict:
-    """Inserts, updates and deletes in the table's MERGEs after the snapshot. The snapshot: the MERGEs of inserts only
-    before the first one that updates or deletes, from the start or the last time the table was replaced or truncated
-    (a full refresh starts a new one). A lower bound: inserts that arrive before the first update count as snapshot."""
+    """Inserts, updates and deletes in the table's writes after the snapshot. The snapshot: the writes of inserts only
+    before the first that updates or deletes, from the start or the last time the table was replaced, truncated or
+    overwritten (a full refresh starts a new one). A lower bound: inserts before the first update count as snapshot,
+    and an append-only table never leaves it (its activity is no evidence; its structure decides)."""
     total, in_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, True
-    history = f"SELECT version, operation, operationMetrics FROM (DESCRIBE HISTORY {table}) ORDER BY version"
+    history = (f"SELECT version, operation, operationParameters, operationMetrics FROM (DESCRIBE HISTORY {table}) "
+               "ORDER BY version")
     for r in _rows(spark, history):
-        if r.operation in RESETS or r.operation.startswith("CREATE OR REPLACE"):
+        params = r.operationParameters or {}
+        params = json.loads(params) if isinstance(params, str) else params
+        if r.operation in RESETS or r.operation.startswith("CREATE OR REPLACE") or \
+                (r.operation == "WRITE" and str(params.get("mode", "")).lower() == "overwrite"):
             total, in_snapshot = {"inserts": 0, "updates": 0, "deletes": 0}, True
             continue
-        if r.operation != "MERGE":
-            continue
         m = r.operationMetrics or {}
-        m = json.loads(m) if isinstance(m, str) else m
-        ins = int(m.get("numTargetRowsInserted") or 0)
-        upd = int(m.get("numTargetRowsMatchedUpdated") or m.get("numTargetRowsUpdated") or 0)
-        dele = int(m.get("numTargetRowsMatchedDeleted") or m.get("numTargetRowsDeleted") or 0)
+        ins, upd, dele = _write_counts(r.operation, json.loads(m) if isinstance(m, str) else m)
         if in_snapshot and not upd and not dele:
             continue
         in_snapshot = False
@@ -139,18 +245,31 @@ def history_activity(spark, table: str) -> dict:
     return total
 
 
+def _named_like(base: str) -> set[str]:
+    """Table names a column <base>_id points at: customer -> customer, customers; category -> categories."""
+    names = {base, base + "s", base + "es"}
+    if base.endswith("y"):
+        names.add(base[:-1] + "ies")
+    return names
+
+
 def infer_foreign_keys(tables: list[dict]) -> None:
-    """Add a foreign key where a column's name, after its table's prefix, is another table's one-column key (TPC:
-    l_suppkey -> s_suppkey), or is that key's own name (ORM: orders.customer_id -> customer.customer_id); and where a
-    table has columns for every column of another's key of two or more (l_partkey, l_suppkey -> partsupp's key)."""
+    """Add a foreign key from names, the conventions that schemas follow without declaring the key:
+    - a column with another table's one-column key's own name (orders.customer_id -> customer.customer_id);
+    - after its table's own prefix, another table's key after that table's prefix (TPC-H: l_suppkey -> s_suppkey);
+    - <name>_id to a table <name>, <name>s or <name>es keyed `id` (Rails and most ORMs: orders.customer_id ->
+      customers.id);
+    - columns for every column of another table's key of two or more (TPC-H: l_partkey, l_suppkey -> partsupp)."""
     def bare(col):
         return col.split("_", 1)[1] if "_" in col else col
-    full, short = {}, {}   # a one-column key by its own name, and by its name after the table's prefix
+    full, short, by_id = {}, {}, {}   # one-column keys: by own name, by name after the prefix; tables keyed `id`
     for t in tables:
         pk = [c["name"] for c in t["columns"] if c.get("primary_key")]
         if len(pk) == 1:
             full.setdefault(pk[0], []).append(t["name"])
             short.setdefault(bare(pk[0]), []).append(t["name"])
+            if pk[0].lower() == "id":
+                by_id[t["name"].lower()] = t["name"]
     def prefix(col):
         return col.split("_", 1)[0] if "_" in col else None
     for t in tables:
@@ -164,8 +283,11 @@ def infer_foreign_keys(tables: list[dict]) -> None:
             if c["name"] in declared or pk == [c["name"]]:   # its own one-column key isn't a reference to another
                 continue
             by_short = [p for p in short.get(bare(c["name"]), []) if p != t["name"]]
+            low = c["name"].lower()
+            by_orm = [by_id[n] for n in sorted(_named_like(low[:-3])) if n in by_id and by_id[n] != t["name"]] \
+                if low.endswith("_id") else []
             match = [p for p in full.get(c["name"], []) if p != t["name"]] or \
-                (by_short if own and prefix(c["name"]) == own else [])
+                (by_short if own and prefix(c["name"]) == own else []) or by_orm
             if len(set(match)) == 1:
                 t.setdefault("fk_constraints", []).append({"columns": [c["name"]], "parent_table": match[0],
                                                            "inferred": True})
@@ -192,8 +314,13 @@ def recorded_keys(spark, fq: str, full_name: str, workspace=None) -> list[str]:
     return json.loads(props.get(KEYS_PROPERTY) or "[]")
 
 
-def bronze_schema(spark, catalog: str, schema: str, workspace=None) -> dict:
-    """Columns, keys, row counts and activity of one bronze schema; foreign keys inferred from names."""
+SYSTEM_COLUMNS = ("_rescued_data",)   # plus anything starting with __ (SCD type 2's __START_AT and __END_AT)
+
+
+def bronze_schema(spark, catalog: str, schema: str, workspace=None, count_rows: bool = True) -> dict:
+    """Columns, keys, row counts and activity of one bronze schema; foreign keys inferred from names. count_rows=False
+    skips the COUNT(*) per table (thousands of tables, or billions of rows): the relations still decide, and the size
+    rules (a fact at least as large as its parents) then can't help."""
     tables, activity = [], {}
     listed = (f"SELECT table_name, table_type FROM `{catalog}`.information_schema.tables "
               f"WHERE table_schema = {spark_string(schema)}")
@@ -208,10 +335,14 @@ def bronze_schema(spark, catalog: str, schema: str, workspace=None) -> dict:
         for r in _rows(spark, f"DESCRIBE TABLE {fq}"):   # the columns, up to the first blank or "# ..." section
             if not r.col_name or r.col_name.startswith("#"):
                 break
+            if r.col_name.startswith("__") or r.col_name in SYSTEM_COLUMNS:
+                continue
             col = {"name": r.col_name, "type": canonical_type(r.data_type)}
             cols.append({**col, "primary_key": True} if r.col_name in pk else col)
-        n = _rows(spark, f"SELECT COUNT(*) AS n FROM {fq}")[0].n
-        tables.append({"name": name, "columns": cols, "row_count": int(n)})
+        t = {"name": name, "columns": cols}
+        if count_rows:
+            t["row_count"] = int(_rows(spark, f"SELECT COUNT(*) AS n FROM {fq}")[0].n)
+        tables.append(t)
         activity[name] = history_activity(spark, fq)
     infer_foreign_keys(tables)
     return {"tables": tables, "activity": activity, "evidence": f"bronze {catalog}.{schema}"}
@@ -237,11 +368,18 @@ def apply_hints(p: dict, hints: dict | None) -> dict:
 
 def table_plan(spark, catalog: str, schema: str, connection: str | None = None, database: str | None = None,
                source_schema: str | None = None, hints: dict | None = None, routes: dict | None = None,
-               workspace=None) -> dict:
+               workspace=None, engine: str | None = None, count_rows: bool = True) -> dict:
     """Each table's role, silver and route, with its evidence: from the source through `connection` (database and
-    source_schema name it there) when given, else from bronze `catalog.schema`; then the hints."""
-    s = connection_schema(spark, connection, database, source_schema or schema) if connection else \
-        bronze_schema(spark, catalog, schema, workspace)
+    source_schema name it there; MySQL: the database is the schema) when its engine has catalog queries (ENGINES;
+    `engine` overrides the connection's type), else from bronze `catalog.schema`; then the hints."""
+    fallback = ""
+    if connection:
+        engine = (engine or connection_engine(connection, workspace)).upper()
+        if engine not in ENGINES:
+            fallback, connection = f" (connection type {engine}: no catalog queries for it, bronze used)", None
+    s = connection_schema(spark, connection, database or source_schema or schema, source_schema or schema, engine) \
+        if connection else bronze_schema(spark, catalog, schema, workspace, count_rows)
+    s["evidence"] += fallback
     inferred = {(t["name"], tuple(fk["columns"])) for t in s["tables"] for fk in t.get("fk_constraints") or []
                 if fk.get("inferred")}
     p = roles.plan({"tables": s["tables"]}, 1, s["activity"], schema)

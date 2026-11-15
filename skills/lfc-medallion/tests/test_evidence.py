@@ -62,8 +62,9 @@ class BronzeSpark:
         elif q.startswith("SELECT COUNT(*)"):
             rows = [R(n=self.t[name][2])]
         elif "DESCRIBE HISTORY" in q:
-            rows = [R(version=i, operation=op, operationMetrics=json.dumps(m))
-                    for i, (op, m) in enumerate(self.t[name][3])]
+            rows = [R(version=i, operation=h[0], operationMetrics=json.dumps(h[1]),
+                      operationParameters=json.dumps(h[2] if len(h) > 2 else {}))
+                    for i, h in enumerate(self.t[name][3])]
         else:
             raise AssertionError(q)
         return R(collect=lambda: rows)
@@ -216,29 +217,29 @@ class Connection(unittest.TestCase):
 
         def sql(self, q):
             self.queries.append(q)
-            if "information_schema.columns" in q:
-                rows = [R(table_name="nation", column_name="n_nationkey", data_type="integer"),
-                        R(table_name="nation", column_name="n_name", data_type="character"),
-                        R(table_name="supplier", column_name="s_suppkey", data_type="integer"),
-                        R(table_name="supplier", column_name="s_nationkey", data_type="integer"),
-                        R(table_name="supplier", column_name="s_acctbal", data_type="numeric")]
+            if "information_schema.columns" in q:   # out of order: sorted by ord
+                rows = [R(table_name="supplier", column_name="s_acctbal", data_type="numeric", ord=3),
+                        R(table_name="nation", column_name="n_nationkey", data_type="integer", ord=1),
+                        R(table_name="nation", column_name="n_name", data_type="character", ord=2),
+                        R(table_name="supplier", column_name="s_suppkey", data_type="integer", ord=1),
+                        R(table_name="supplier", column_name="s_nationkey", data_type="integer", ord=2)]
             elif "pg_constraint" in q:
                 rows = [R(table_name="nation", constraint_type="PRIMARY KEY", constraint_name="nation_pkey",
-                          column_name="n_nationkey", parent_table=None),
+                          column_name="n_nationkey", parent_table=None, ord=1),
                         R(table_name="supplier", constraint_type="PRIMARY KEY", constraint_name="supplier_pkey",
-                          column_name="s_suppkey", parent_table=None),
+                          column_name="s_suppkey", parent_table=None, ord=1),
                         R(table_name="supplier", constraint_type="FOREIGN KEY", constraint_name="supplier_fk1",
-                          column_name="s_nationkey", parent_table="nation")]
+                          column_name="s_nationkey", parent_table="nation", ord=1)]
             elif "pg_stat_user_tables" in q:   # nation: only its load, which is no evidence
-                rows = [R(relname="nation", n_live_tup=25, n_tup_ins=25, n_tup_upd=0, n_tup_del=0),
-                        R(relname="supplier", n_live_tup=500, n_tup_ins=500, n_tup_upd=3, n_tup_del=0)]
+                rows = [R(table_name="nation", live=25, ins=25, upd=0, **{"del": 0}),
+                        R(table_name="supplier", live=500, ins=500, upd=3, **{"del": 0})]
             else:
                 raise AssertionError(q)
             return R(collect=lambda: rows)
 
     def test_declared_keys_and_activity(self):
         spark = self.Spark()
-        s = evidence.connection_schema(spark, "pg_conn", "sales", "east")
+        s = evidence.connection_schema(spark, "pg_conn", "sales", "east", "POSTGRESQL")
         by = {t["name"]: t for t in s["tables"]}
         self.assertEqual(by["supplier"]["fk_constraints"], [{"columns": ["s_nationkey"], "parent_table": "nation"}])
         self.assertTrue(by["nation"]["columns"][0]["primary_key"])
@@ -251,10 +252,85 @@ class Connection(unittest.TestCase):
 
     def test_plan_through_the_connection(self):
         p = table_plan(self.Spark(), "main", "sales_bronze_east", connection="pg_conn", database="sales",
-                       source_schema="east")
-        self.assertEqual(p["evidence"], "connection pg_conn")
+                       source_schema="east", engine="POSTGRESQL")
+        self.assertEqual(p["evidence"], "connection pg_conn (POSTGRESQL)")
         self.assertEqual(p["tables"]["nation"]["route"], "merge")
         self.assertNotIn("inferred", p["tables"]["supplier"]["why"])
+
+
+class Engines(unittest.TestCase):
+    """Each engine's catalog queries: the same columns, no ORDER BY (remote_query runs them as subqueries, and SQL
+    Server refuses ORDER BY there), the schema quoted; activity optional where the engine can fall back to rows."""
+
+    def test_every_engine_has_its_queries(self):
+        for engine, q in evidence._engine_sql("'east'").items():
+            self.assertTrue({"columns", "keys", "activity"} <= set(q), engine)
+            for kind, sql in q.items():
+                self.assertNotIn("ORDER BY", sql.upper(), (engine, kind))
+                self.assertIn("'east'", sql, (engine, kind))
+                self.assertIn(" AS ORD" if kind in ("columns",) else "", sql.upper())
+
+    def test_quote_and_backslash(self):
+        self.assertEqual(evidence.sql_string("o'b\\x"), "'o''b\\\\x'")
+
+    def test_no_counters_privilege_gives_row_counts(self):
+        class Spark(Connection.Spark):
+            def sql(self, q):
+                if "table_io_waits" in q:
+                    raise RuntimeError("SELECT command denied to user for table 'table_io_waits_summary_by_table'")
+                if "information_schema.tables" in q and "table_rows" in q:
+                    return R(collect=lambda: [R(table_name="nation", live=25), R(table_name="supplier", live=500)])
+                return super().sql("pg_constraint" if "key_column_usage" in q else q)
+        s = evidence.connection_schema(Spark(), "my_conn", "east", "east", "MYSQL")
+        self.assertEqual(s["activity"], {})
+        self.assertEqual({t["name"]: t.get("row_count") for t in s["tables"]}, {"nation": 25, "supplier": 500})
+        self.assertIn("no counters", s["evidence"])
+
+    def test_engine_from_the_connection_and_fallback(self):
+        class W:
+            def __init__(self, kind):
+                self.connections = self
+                self.kind = kind
+
+            def get(self, name):
+                return R(connection_type=R(value=self.kind))
+        self.assertEqual(evidence.connection_engine("c", W("SQLSERVER")), "SQLSERVER")
+        p = table_plan(BronzeSpark(), "main", "sales_bronze_east", connection="snow", workspace=W("SNOWFLAKE"))
+        self.assertIn("connection type SNOWFLAKE: no catalog queries for it, bronze used", p["evidence"])
+        self.assertEqual(p["tables"]["lineitem"]["role"], "fact")
+
+
+class Situations(unittest.TestCase):
+    def test_appends_and_overwrite(self):   # an append-only destination: WRITE / STREAMING UPDATE; an overwrite resets
+        h = [("WRITE", {"numOutputRows": "100"}, {"mode": "Append"}), ("UPDATE", {"numUpdatedRows": "2"}),
+             ("STREAMING UPDATE", {"numOutputRows": "7"}), ("WRITE", {"numOutputRows": "50"}, {"mode": "Overwrite"}),
+             ("DELETE", {"numDeletedRows": "1"})]
+        t = {"t": (["k"], [("k", "int")], 10, h)}
+        self.assertEqual(evidence.bronze_schema(BronzeSpark(t), "main", "s")["activity"]["t"],
+                         {"inserts": 0, "updates": 0, "deletes": 1})
+        self.assertEqual(evidence.bronze_schema(BronzeSpark({"t": (["k"], [("k", "int")], 10, h[:3])}), "main", "s")
+                         ["activity"]["t"], {"inserts": 7, "updates": 2, "deletes": 0})
+
+    def test_system_columns_left_out(self):   # SCD type 2 and file sources add these
+        cols = [("k", "int"), ("v", "string"), ("__START_AT", "timestamp"), ("__END_AT", "timestamp"),
+                ("_rescued_data", "string")]
+        s = evidence.bronze_schema(BronzeSpark({"t": (["k"], cols, 3, [SNAP])}), "main", "s")
+        self.assertEqual([c["name"] for c in s["tables"][0]["columns"]], ["k", "v"])
+
+    def test_orm_table_id(self):   # Rails and most ORMs: orders.customer_id -> customers.id
+        tables = [{"name": "customers", "columns": [{"name": "id", "primary_key": True}, {"name": "name"}]},
+                  {"name": "categories", "columns": [{"name": "id", "primary_key": True}]},
+                  {"name": "orders", "columns": [{"name": "id", "primary_key": True}, {"name": "customer_id"},
+                                                 {"name": "category_id"}, {"name": "external_id"}]}]
+        evidence.infer_foreign_keys(tables)
+        fks = {(tuple(f["columns"]), f["parent_table"]) for f in tables[2]["fk_constraints"]}
+        self.assertEqual(fks, {(("customer_id",), "customers"), (("category_id",), "categories")})
+
+    def test_no_row_counts(self):
+        spark = BronzeSpark()
+        s = evidence.bronze_schema(spark, "main", "sales_bronze_east", count_rows=False)
+        self.assertFalse(any("COUNT(*)" in q for q in spark.queries))
+        self.assertTrue(all("row_count" not in t for t in s["tables"]))
 
 
 if __name__ == "__main__":
