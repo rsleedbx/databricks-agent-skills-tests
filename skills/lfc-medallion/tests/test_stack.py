@@ -1,5 +1,6 @@
 """Offline checks of lfc_medallion's discover and stack with a fake spark and a fake pipelines module: sources from the
-schema names or a list, each source's tables, the UNION ALL each view runs, a table only some sources have, quoting.
+schema names or a list, each source's tables, each view's sources stacked by column name (missing columns allowed), a
+table only some sources have, quoting.
 
     python3 -m unittest skills/lfc-medallion/tests/test_stack.py
 """
@@ -9,15 +10,26 @@ import types
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
-from lfc_medallion import sources, stack_all, tables, union_sql
+from lfc_medallion import source_sql, sources, stack_all, tables
 
 SCHEMAS = ["shop_bronze_east", "shop_bronze_west", "shop_bronze_north", "shop_silver", "other"]
 TABLES = {"shop_bronze_east": ["orders", "lines", "nation"], "shop_bronze_west": ["orders", "lines", "nation"],
           "shop_bronze_north": ["orders", "lines"]}
 
 
+class Frame:
+    """A DataFrame stand-in: the queries it's made of, and how they were combined."""
+
+    def __init__(self, parts):
+        self.parts = parts
+
+    def unionByName(self, other, allowMissingColumns=False):
+        assert allowMissingColumns, "stacked by name with missing columns allowed"
+        return Frame(self.parts + other.parts)
+
+
 class FakeSpark:
-    """Answers SHOW SCHEMAS ... LIKE '<prefix>*' and SHOW TABLES IN `c`.`s`; any other query is returned as given."""
+    """Answers SHOW SCHEMAS ... LIKE '<prefix>*' and SHOW TABLES IN `c`.`s`; any other query is a Frame of it."""
 
     def __init__(self):
         self.queries = []
@@ -31,7 +43,7 @@ class FakeSpark:
         if q.startswith("SHOW TABLES"):
             schema = q.split("`.`")[1].rstrip("`")
             return types.SimpleNamespace(collect=lambda: [types.SimpleNamespace(tableName=t) for t in TABLES[schema]])
-        return q
+        return Frame([q])
 
 
 class FakeDp:
@@ -65,28 +77,28 @@ class Discover(unittest.TestCase):
 
 
 class Stack(unittest.TestCase):
-    def test_union_sql(self):
-        self.assertEqual(union_sql("main", "shop_bronze_", "orders", ["east", "west"], "division"),
-                         "SELECT 'east' AS `division`, * FROM `main`.`shop_bronze_east`.`orders` UNION ALL "
-                         "SELECT 'west' AS `division`, * FROM `main`.`shop_bronze_west`.`orders`")
+    def test_source_sql(self):
+        self.assertEqual(source_sql("main", "shop_bronze_", "orders", "east", "division"),
+                         "SELECT 'east' AS `division`, * FROM `main`.`shop_bronze_east`.`orders`")
 
     def test_quote_in_a_source_name(self):
-        self.assertIn("SELECT 'o''brien' AS", union_sql("c", "p_", "t", ["o'brien"]))
+        self.assertIn("SELECT 'o''brien' AS", source_sql("c", "p_", "t", "o'brien"))
 
     def test_every_table_one_view(self):
         dp = FakeDp()
         defined = stack_all(dp, FakeSpark(), "main", "shop_bronze_", source_column="division")
         self.assertEqual(defined, {"all_lines": ["east", "north", "west"], "all_nation": ["east", "west"],
                                    "all_orders": ["east", "north", "west"]})
-        comment, query = dp.views["all_nation"]
-        self.assertEqual(query, union_sql("main", "shop_bronze_", "nation", ["east", "west"], "division"))
+        comment, frame = dp.views["all_nation"]
+        want = [source_sql("main", "shop_bronze_", "nation", s, "division") for s in ("east", "west")]
+        self.assertEqual(frame.parts, want)
         self.assertIn("(n:1)", comment)
 
     def test_each_view_keeps_its_own_query(self):   # the loop's closures don't all end up with the last table's query
         dp = FakeDp()
         stack_all(dp, FakeSpark(), "main", "shop_bronze_")
-        self.assertIn("`orders`", dp.views["all_orders"][1])
-        self.assertNotIn("`lines`", dp.views["all_orders"][1])
+        parts = dp.views["all_orders"][1].parts
+        self.assertTrue(parts and all("`orders`" in q for q in parts), parts)
 
     def test_name_pattern_and_only(self):
         dp = FakeDp()
