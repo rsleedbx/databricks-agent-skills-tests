@@ -19,6 +19,8 @@ __START_AT joins the key. Run it as a job task before the pipeline that reads th
     quiet = [n for n, t in plan["tables"].items() if t["route"] == "merge"]
     merge_all(spark, "main", "sales_bronze_", target="sales_silver", tables=quiet, source_column="division")
 """
+import json
+
 from . import discover, evidence
 from .stack import spark_string
 
@@ -53,16 +55,23 @@ def latest_version(spark, fq: str) -> int:
     return int(_rows(spark, f"SELECT MAX(version) AS v FROM (DESCRIBE HISTORY {fq})")[0].v)
 
 
-def refreshed_since(spark, fq: str, version: int) -> bool:
-    """Whether the table was replaced, truncated or overwritten after `version`: its change feed starts over."""
-    for r in _rows(spark, f"SELECT version, operation, operationParameters FROM (DESCRIBE HISTORY {fq}) "
-                          f"WHERE version > {int(version)}"):
+def since(spark, fq: str, version: int) -> tuple[bool, int]:
+    """From the table's history after `version` (metadata only, no data read): whether it was replaced, truncated or
+    overwritten (its change feed starts over), and how many rows its writes inserted, updated or deleted. An ingestion
+    update adds versions to every table, changed or not (an empty MERGE, housekeeping DELETEs: seen on Lakeflow
+    Connect's destination tables 2026-11-15), so a new version alone doesn't mean a change."""
+    refreshed, rows = False, 0
+    for r in _rows(spark, f"SELECT version, operation, operationParameters, operationMetrics "
+                          f"FROM (DESCRIBE HISTORY {fq}) WHERE version > {int(version)}"):
         params = r.operationParameters or {}
-        mode = str(params.get("mode", "") if isinstance(params, dict) else "").lower()
+        params = json.loads(params) if isinstance(params, str) else params
+        mode = str(params.get("mode", "")).lower()
         if r.operation in evidence.RESETS or r.operation.startswith("CREATE OR REPLACE") or \
                 (r.operation == "WRITE" and mode == "overwrite"):
-            return True
-    return False
+            refreshed = True
+        m = getattr(r, "operationMetrics", None) or {}
+        rows += sum(evidence._write_counts(r.operation, json.loads(m) if isinstance(m, str) else m))
+    return refreshed, rows
 
 
 def _state(spark, catalog, target) -> dict:
@@ -152,7 +161,12 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
             if last is not None and now == last:
                 report[out_name][s] = {"done": "unchanged", "version": now}
                 continue
-            whole = last is None or refreshed_since(spark, src, last)
+            refreshed, changed = (False, 0) if last is None else since(spark, src, last)
+            whole = last is None or refreshed
+            if not whole and not changed:   # new versions, no rows written: nothing to MERGE
+                _save_state(spark, catalog, target, out_name, s, now)
+                report[out_name][s] = {"done": "unchanged", "version": now}
+                continue
             if whole and last is not None:   # a full refresh: this source's rows are copied again
                 spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} = {spark_string(s)}")
             spark.sql(merge_sql(tgt, src, s, source_column, key, [c for c, _ in cols], None if whole else last, now))

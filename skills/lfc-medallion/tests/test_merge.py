@@ -26,7 +26,7 @@ class Spark:
     def __init__(self, versions=None, state=None, history=None, cols=None, keys=("n_nationkey",), targets=()):
         self.versions = versions or {"east": 5, "west": 7}
         self.state = dict(state or {})
-        self.history = history or {}   # source -> [(version, operation, params)]
+        self.history = history or {}   # source -> [(version, operation, params, metrics)]
         self.cols = cols or {"east": COLS, "west": COLS}
         self.keys = list(keys)
         self.targets = set(targets)
@@ -53,8 +53,9 @@ class Spark:
             rows = [R(v=self.versions[quoted[1][len("shop_bronze_"):]])]
         elif q.startswith("SELECT version, operation, operationParameters"):
             since = int(q.rsplit("version > ", 1)[1])
-            rows = [R(version=v, operation=op, operationParameters=p)
-                    for v, op, p in self.history.get(quoted[1][len("shop_bronze_"):], []) if v > since]
+            history = self.history.get(quoted[1][len("shop_bronze_"):], [])
+            rows = [R(version=h[0], operation=h[1], operationParameters=h[2],
+                      operationMetrics=h[3] if len(h) > 3 else {}) for h in history if h[0] > since]
         elif q.startswith("SELECT target_table, source, version"):
             rows = [R(target_table=t, source=s, version=v) for (t, s), v in self.state.items()]
         elif q.startswith("CREATE TABLE IF NOT EXISTS"):
@@ -94,6 +95,7 @@ class FirstAndLater(unittest.TestCase):
 
     def test_later_read_merges_the_change_feed(self):
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]},
                       targets={"all_nation"})
         report = run(spark)
         self.assertEqual(report["all_nation"]["east"], {"done": "merged", "version": 9})
@@ -106,6 +108,15 @@ class FirstAndLater(unittest.TestCase):
         self.assertIn("WHEN MATCHED THEN UPDATE SET t.`n_name` = c.`n_name`", m)
         self.assertNotIn("CREATE TABLE `main`", " ".join(spark.done))   # the target exists
         self.assertEqual(spark.state[("all_nation", "east")], 9)
+
+    def test_new_versions_without_rows_written_are_unchanged(self):   # an ingestion update touches every table
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(6, "MERGE", {}, {"numTargetRowsInserted": "0"}), (7, "DELETE", {}, {}),
+                                        (8, "MERGE", {}, {"numOutputRows": "0"})]}, targets={"all_nation"})
+        report = run(spark)
+        self.assertEqual(report["all_nation"]["east"], {"done": "unchanged", "version": 9})
+        self.assertEqual(spark.merges(), [])
+        self.assertEqual(spark.state[("all_nation", "east")], 9)   # read up to 9: not looked at again
 
     def test_full_refresh_copies_again(self):
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
@@ -126,7 +137,8 @@ class Shapes(unittest.TestCase):
     def test_new_bronze_column_is_added(self):
         cols = {"east": COLS + [("n_comment", "string")], "west": COLS}
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
-                      cols=cols, targets={"all_nation"})
+                      cols=cols, history={"east": [(8, "MERGE", {}, {"numTargetRowsInserted": "1"})]},
+                      targets={"all_nation"})
         run(spark)
         self.assertIn("ALTER TABLE `main`.`shop_silver`.`all_nation` ADD COLUMNS (`n_comment` string)", spark.done)
 
