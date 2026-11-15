@@ -24,13 +24,14 @@ class Spark:
     """Sources east and west under prefix shop_bronze_, each with `nation`; target schema shop_silver."""
 
     def __init__(self, versions=None, state=None, history=None, cols=None, keys=("n_nationkey",), targets=(),
-                 ids=None, tables=None):
+                 ids=None, tables=None, gaps=None):
         self.versions = versions or {"east": 5, "west": 7}
         # state: (target, source) -> version, or (version, table id); ids: source -> its table's id now
         self.ids = ids or {}
         self.state = {k: v if isinstance(v, tuple) else (v, self.ids.get(k[1], f"id-{k[1]}"))
                       for k, v in (state or {}).items()}
         self.tables = tables or {}   # source -> its tables (default: nation)
+        self.gaps = gaps or {}   # source -> versions log retention dropped
         self.history = history or {}   # source -> [(version, operation, params, metrics)]
         self.cols = cols or {"east": COLS, "west": COLS}
         self.keys = list(keys)
@@ -65,7 +66,10 @@ class Spark:
             rows = [R(v=self.versions[quoted[1][len("shop_bronze_"):]])]
         elif q.startswith("SELECT version, operation, operationParameters"):
             since = int(q.rsplit("version > ", 1)[1])
-            history = self.history.get(quoted[1][len("shop_bronze_"):], [])
+            source = quoted[1][len("shop_bronze_"):]
+            given = {h[0]: h for h in self.history.get(source, [])}   # other versions: no data touched
+            history = [given.get(v, (v, "OPTIMIZE", {}, {})) for v in range(1, self.versions[source] + 1)
+                       if v not in self.gaps.get(source, ())]
             rows = [R(version=h[0], operation=h[1], operationParameters=h[2],
                       operationMetrics=h[3] if len(h) > 3 else {}) for h in history if h[0] > since]
         elif q.startswith("SELECT target_table, source, version"):
@@ -209,6 +213,37 @@ class Recreated(unittest.TestCase):
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": h}, targets={"all_nation"})
         self.assertEqual(run(spark)["all_nation"]["east"]["done"], "unchanged")
+
+
+class Boundaries(unittest.TestCase):
+    def later(self, **kw):
+        return Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                     targets={"all_nation"}, **kw)
+
+    def test_history_gap_copies(self):   # log retention dropped versions 6 and 7
+        spark = self.later(gaps={"east": (6, 7)})
+        self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied")
+
+    def test_replace_by_other_names(self):
+        for op, params in (("REPLACE TABLE AS SELECT", {}), ("CREATE TABLE AS SELECT", {}),
+                           ("STREAMING UPDATE", {"outputMode": "Complete"})):
+            spark = self.later(history={"east": [(8, op, params, {"numOutputRows": "3"})]})
+            self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied", op)
+
+    def test_table_id_alone(self):   # recreated, its history already past (9) or at (5) the version saved
+        for now in (9, 5):
+            state = {("all_nation", "east"): (5, "old"), ("all_nation", "west"): 7}
+            spark = Spark(versions={"east": now, "west": 7}, state=state, targets={"all_nation"})
+            self.assertEqual(run(spark)["all_nation"]["east"]["done"], "copied", now)
+            (m,) = [q for q in spark.merges() if "shop_bronze_east" in q]
+            self.assertNotIn("table_changes", m)
+            self.assertIn("WHEN NOT MATCHED BY SOURCE", m)
+            self.assertEqual(spark.state[("all_nation", "east")], (now, "id-east"))
+
+    def test_target_dropped_by_hand_copies_every_source(self):
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7})   # state, but no target
+        report = run(spark)
+        self.assertEqual({s: x["done"] for s, x in report["all_nation"].items()}, {"east": "copied", "west": "copied"})
 
 
 class Removed(unittest.TestCase):

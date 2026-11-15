@@ -75,13 +75,13 @@ def since(spark, fq: str, version: int) -> tuple[bool, bool]:
     destination tables 2026-11-15), so a new version alone isn't a change; but only known operations reporting zero
     rows, or known to touch no data, count as no change: anything else (an unknown operation, missing metrics) does."""
     refreshed, changed = False, False
-    for r in _rows(spark, f"SELECT version, operation, operationParameters, operationMetrics "
-                          f"FROM (DESCRIBE HISTORY {fq}) WHERE version > {int(version)}"):
-        params = r.operationParameters or {}
-        params = json.loads(params) if isinstance(params, str) else params
-        mode = str(params.get("mode", "")).lower()
-        if r.operation in evidence.RESETS or r.operation.startswith("CREATE OR REPLACE") or \
-                r.operation == "RESTORE" or (r.operation == "WRITE" and mode == "overwrite"):
+    rows = _rows(spark, f"SELECT version, operation, operationParameters, operationMetrics "
+                        f"FROM (DESCRIBE HISTORY {fq}) WHERE version > {int(version)}")
+    # log retention may have dropped versions since: then the history can't say what changed, so copy whole
+    if not rows or min(int(r.version) for r in rows) != int(version) + 1:
+        return True, True
+    for r in rows:
+        if evidence.is_reset(r.operation, r.operationParameters):
             refreshed = True
             continue
         if r.operation in NO_DATA_OPS:
@@ -170,7 +170,7 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
     held = discover.tables(spark, catalog, prefix, names)
     state = _state(spark, catalog, target)
     existing = {r.tableName for r in _rows(spark, f"SHOW TABLES IN {_q(catalog)}.{_q(target)}")}
-    report = {}
+    report, fresh_targets = {}, {}
     for table in tables:
         out_name = name.format(table=table)
         tgt = _fq(catalog, target, out_name)
@@ -185,11 +185,13 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
                                  f"give keys={{{table!r}: [...]}}")
             if "__START_AT" in {c for c, _ in cols} and "__START_AT" not in key:
                 key.append("__START_AT")   # SCD type 2: a row per version of the key
-            have = {c for c, _ in columns(spark, tgt)} if out_name in existing else set()
-            _ensure_target(spark, tgt, out_name in existing, source_column, cols, have)
+            created = out_name not in existing   # made now (or dropped by hand since): every source copied
+            have = set() if created else {c for c, _ in columns(spark, tgt)}
+            _ensure_target(spark, tgt, not created, source_column, cols, have)
             existing.add(out_name)
+            fresh = fresh_targets.setdefault(out_name, created)
             now, tid = latest_version(spark, src), table_id(spark, src)
-            last, last_id = state.get((out_name, s), (None, None))
+            last, last_id = (None, None) if fresh else state.get((out_name, s), (None, None))
             # a recreated table: a new id, or (no id saved yet) a version below the one saved; its history starts over
             if last is not None and (last_id and last_id != tid or now < last):
                 last = -1
