@@ -1,0 +1,13 @@
+[project]
+name = "lfc-medallion"
+version = "0.1.0"
+description = "Reusable layers downstream of Lakeflow Connect: discover sources and tables, stack them n:1"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lfc_medallion"]
