@@ -341,9 +341,13 @@ class Busy(unittest.TestCase):
         return table_plan(BronzeSpark(t), "main", "s", **kw)["tables"]["solo"]
 
     def test_busy_dimension_to_the_pipeline(self):
-        t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "900", "numTargetRowsDeleted": "200"})])
+        t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "1900", "numTargetRowsDeleted": "200"})])
         self.assertEqual((t["role"], t["route"]), ("dimension", "pipeline"))
-        self.assertIn("busy (1100 changes", t["why"])
+        self.assertIn("busy (2100 changes recorded, 2.1 per row)", t["why"])
+
+    def test_one_bulk_update_isnt_busy(self):   # every row changed once (a relabel at setup)
+        t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "7500"})], rows=7500)
+        self.assertEqual(t["route"], "merge")
 
     def test_quiet_dimension_stays(self):
         t = self.plan([SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "32"})])
@@ -351,7 +355,8 @@ class Busy(unittest.TestCase):
 
     def test_threshold_and_hint(self):
         h = [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "50"})]
-        self.assertEqual(self.plan(h, busy_changes=40)["route"], "pipeline")
+        self.assertEqual(self.plan(h, rows=10, busy_changes=40)["route"], "pipeline")
+        self.assertEqual(self.plan(h, rows=10, busy_changes=40, busy_per_row=10)["route"], "merge")
         busy = [SNAP, ("MERGE", {"numTargetRowsMatchedUpdated": "5000"})]
         self.assertEqual(self.plan(busy, hints={"solo": "lookup"})["route"], "merge")   # a hint's route stands
 

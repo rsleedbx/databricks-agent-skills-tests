@@ -88,8 +88,9 @@ own name, a table's column prefix as in TPC, `<name>_id` to `<name>(s)` keyed `i
 The rules are cdc-table-plan's (its accuracy against the TPC specifications and Mautic is in that skill's SKILL.md);
 they live in `lfc_medallion.roles`, and its `classify.py` runs them from files. Routes: facts, logs and queues go to the
 pipeline; dimensions, lookups and bridges to a MERGE job (`routes` overrides per role). Measured activity overrides
-the role: at least `busy_changes` changes (default 1,000) sends a table to the pipeline whatever its role, since a
-table with no relations falls to the dimension default yet can change all the time.
+the role: at least `busy_changes` changes (default 1,000) and at least `busy_per_row` per row (default 2) send a
+table to the pipeline whatever its role, since a table with no relations falls to the dimension default yet can
+change all the time; a one-time bulk update that touches every row once doesn't count as busy.
 
 ## Tested
 
@@ -121,6 +122,6 @@ destination (offline tests only).
 - Sources stacked by column name must agree on each column's type (Spark widens compatible ones, like int to bigint;
   others fail the view): the sources' own design.
 - The activity is a lower bound from bronze (inserts before the first update count as snapshot) and since the last
-  statistics reset from the source; `busy_changes` is a count, not a rate, so a long window counts more.
+  statistics reset from the source; `busy_changes` and `busy_per_row` are counts over that window, not rates in time, so a long window counts more.
 - Foreign keys inferred from names can be wrong for a schema that follows none of the conventions; the connection's
   declared keys are the better evidence.

@@ -18,9 +18,11 @@ row counts, inserts / updates / deletes) and runs roles.plan over it. The eviden
 Each table also gets a route: where a pipeline builds it. Facts, logs and queues change all the time, so they stay in
 the incremental pipeline; dimensions, lookups and bridges change rarely, so with many tables a MERGE job can keep them
 current without putting each one in the pipeline's graph (ROUTE; `routes` overrides it per role). The measured
-activity overrides the role: a table with at least `busy_changes` changes recorded goes to the pipeline whatever its
-role (a table with no relations falls to the rules' dimension default, yet can change all the time: the demo VM's
-intpk, about 87,000 changes on 1,000 rows, seen through MySQL, SQL Server and PostgreSQL connections 2026-11-15).
+activity overrides the role: a table with at least `busy_changes` changes recorded, and at least `busy_per_row` per row,
+goes to the pipeline whatever its role. A table with no relations falls to the rules' dimension default, yet can change
+all the time (the demo VM's intpk: about 87,000 changes on 1,000 rows, seen through MySQL, SQL Server and PostgreSQL
+connections 2026-11-15); a one-time bulk update that touches every row once isn't steady change (TPC-H's customer
+relabelled once at setup: 7,500 updates on 7,500 rows, seen through the source's counters 2026-11-15).
 """
 import json
 
@@ -372,7 +374,7 @@ def apply_hints(p: dict, hints: dict | None) -> dict:
 def table_plan(spark, catalog: str, schema: str, connection: str | None = None, database: str | None = None,
                source_schema: str | None = None, hints: dict | None = None, routes: dict | None = None,
                workspace=None, engine: str | None = None, count_rows: bool = True,
-               busy_changes: int = 1000) -> dict:
+               busy_changes: int = 1000, busy_per_row: float = 2) -> dict:
     """Each table's role, silver and route, with its evidence: from the source through `connection` (database and
     source_schema name it there; MySQL: the database is the schema) when its engine has catalog queries (ENGINES;
     `engine` overrides the connection's type), else from bronze `catalog.schema`; then the hints."""
@@ -406,8 +408,9 @@ def table_plan(spark, catalog: str, schema: str, connection: str | None = None, 
             # the rest being its load; bronze: every insert after the snapshot)
             ins = max(0, a["inserts"] - rows[n]) if connection else a["inserts"]
             changes = ins + a["updates"] + a["deletes"]
-            if changes >= busy_changes:
+            per_row = changes / max(rows[n], 1)
+            if changes >= busy_changes and per_row >= busy_per_row:
                 t["route"] = "pipeline"
-                t["why"] += f"; busy ({changes} changes recorded, at least {busy_changes}): pipeline"
+                t["why"] += f"; busy ({changes} changes recorded, {per_row:.1f} per row): pipeline"
     p["evidence"] = s["evidence"]
     return p
