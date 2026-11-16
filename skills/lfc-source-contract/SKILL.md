@@ -83,6 +83,7 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 - **lfc-source-eventhubs** `eventhubs.sh up --source-json <file>`: writes the contract for an Event Hubs namespace's Kafka endpoint.
 - **lfc-source-cloud-vm** `scripts/slot-source.sh`: writes the contract for a slot database from `slot.sh up`'s JSON. Its `sql_cmd` runs `slot-sql.sh` for that database and key; that skill's `test-slot-source.sh` checks it end to end through a fake ssh.
 - [scripts/lakebase-sql.sh](scripts/lakebase-sql.sh) `[database]`: the `sql_cmd` for a Lakebase project (below).
+- [scripts/lakebase-source.py](scripts/lakebase-source.py): a Lakebase project as the source in one step: password logins, the login, the UC connection, the contract (below).
 
 ## Lakebase as the source
 
@@ -94,7 +95,7 @@ A Lakebase project stands in for a customer's PostgreSQL when the point is to te
  "sql_cmd": "env LB_PROJECT=<project> LB_PROFILE=<profile> /abs/path/lakebase-sql.sh"}
 ```
 
-`lakebase-sql.sh` runs as the project owner through `databricks psql` (no password, an OAuth token per call, renewed from the account login when the workspace's has expired); `postgres` as the database means `databricks_postgres`. Before a run, as in **databricks-lakeflow-connect**'s Lakebase reference: turn on the project's password logins (`enable_pg_native_login`), create the connection's role with `LOGIN REPLICATION` and a generated password, and the UC `POSTGRESQL` connection from it. Tested on 2026-11-14 (PostgreSQL 17.12): as the owner, `CREATE DATABASE` and `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` work, which **lfc-schema-change-test**'s `lib.sh` uses.
+`lakebase-sql.sh` runs as the project owner through `databricks psql` (no password, an OAuth token per call, renewed from the account login when the workspace's has expired); `postgres` as the database means `databricks_postgres`. Before a run, [`scripts/lakebase-source.py`](scripts/lakebase-source.py) `--project P --role R --connection C --profile X --contract source.json` does the setup in one step: it turns on the project's password logins (`enable_pg_native_login`), creates or rotates the connection's login (`LOGIN REPLICATION`, a random password), creates or updates the UC `POSTGRESQL` connection from it, and writes this contract. The password goes only into the login and the connection. `--create-project` makes a missing project. It also runs as a serverless job, without `--profile` or `--contract`. Tested 2026-11-15 on an existing project and a new one: the connection read through the login, and still read after a rerun rotated the password. Tested on 2026-11-14 (PostgreSQL 17.12): as the owner, `CREATE DATABASE` and `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` work, which **lfc-schema-change-test**'s `lib.sh` uses.
 
 ## Use
 
