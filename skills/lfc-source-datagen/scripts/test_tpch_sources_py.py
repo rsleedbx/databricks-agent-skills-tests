@@ -103,10 +103,10 @@ class Sources(unittest.TestCase):
 class SqlFiles(unittest.TestCase):
     def test_verify_split(self):
         text = ts._read("tpch-verify.sql")
-        self.assertEqual(len(ts._statements(text)), len(re.findall(r"^SELECT '", text, re.M)))
+        self.assertEqual(len(ts._statements(text)), len(re.findall(r"^SELECT '", text, re.MULTILINE)))
 
     def test_lead_times_vars(self):
-        out = ts._psql_vars(ts._read("tpch-lead-times.sql"), dict(zip(ts.LEAD, "1 2 3 4 5 6 7 8 9".split())))
+        out = ts._psql_vars(ts._read("tpch-lead-times.sql"), dict(zip(ts.LEAD, ["1", "2", "3", "4", "5", "6", "7", "8", "9"])))
         body = "\n".join(x for x in out.splitlines() if not x.startswith("--"))
         self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+")
         self.assertIn(")::int AS ship_d", body)
@@ -151,7 +151,7 @@ class Publication(unittest.TestCase):
     def test_slot(self):
         for exists, created in ((False, True), (True, False)):
             db = FakeDb(slot=exists)
-            with mock.patch.object(ts.Pg, "connect", lambda self, database=None: db.connect(database)):
+            with mock.patch.object(ts.Pg, "connect", lambda self, database=None, db=db: db.connect(database)):
                 r = ts.slot(ts.Pg(host="h", password="p"), "db", "s1")
             self.assertEqual(r["slot"], "s1")
             self.assertEqual(any("pg_create_logical_replication_slot" in q for q in db.sql()), created)

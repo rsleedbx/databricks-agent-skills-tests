@@ -248,7 +248,7 @@ def tpch_sources(pg: Pg, database: str, sources, login: str | None = None, label
     else:
         try:
             cur.execute(sql.SQL("ALTER PUBLICATION {} SET ").format(sql.Identifier(pub)) + what)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 (any driver error here: say what to do)
             raise RuntimeError(f"publication {pub} has other tables, and changing it failed ({e.__class__.__name__}: "
                                f"{str(e).strip()}): drop it as its owner (DROP PUBLICATION {pub}, after stopping the gateway "
                                "that reads it) and rerun, or name another publication") from None
