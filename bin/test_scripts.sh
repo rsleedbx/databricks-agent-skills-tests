@@ -69,7 +69,7 @@ check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-sche
 check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
-  sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
+  sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
 WC=$SK/lfc-workload-contract/scripts
 check "workload contract: every statschema schema is model format 1 (validate-model.py)" python3 "$WC/validate-model.py" "$SK"/lfc-source-statschema/schemas/*.yaml
 check "workload contract: workload-env.sh and validate-model.py on their fixtures" sh -c "'$WC/test-workload-env.sh' > /dev/null"
