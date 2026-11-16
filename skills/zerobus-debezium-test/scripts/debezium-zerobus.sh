@@ -1382,6 +1382,11 @@ if [ "$PHASE" -ge 2 ]; then
   dbx workspace mkdirs "$WSDIR" || exit 2
   link "pipeline source folder $WSDIR" "$HOST/#workspace$WSDIR"
   for f in $FILES; do dbx workspace import "$WSDIR/$f" --file "$W/$f" --format RAW >/dev/null || { echo "$f upload failed"; exit 2; }; done
+  # canonical_sql.py imports lfc_medallion.types (lfc-medallion: the same type names and widening as the n:1 layer)
+  dbx workspace mkdirs "$WSDIR/lfc_medallion" || exit 2
+  for f in "$HERE"/../../lfc-medallion/scripts/lfc_medallion/*.py; do
+    dbx workspace import "$WSDIR/lfc_medallion/$(basename "$f")" --file "$f" --format RAW --overwrite >/dev/null || { echo "lfc_medallion/$(basename "$f") upload failed"; exit 2; }
+  done
   # trace <step>: for full traceability, the volume holds, next to the snapshot, the canonical schema the views were built
   # from (statschema's schema.yaml, lfc-source-statschema; checked with its validate.py), each source's, and the
   # pipeline files: _schema/schema-at-T.yaml, _schema/schema.yaml (the current union), _schema/tables/<table>.yaml (a

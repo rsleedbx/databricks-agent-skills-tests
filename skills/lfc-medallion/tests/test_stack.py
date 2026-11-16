@@ -21,8 +21,9 @@ TABLES = {"shop_bronze_east": ["orders", "lines", "nation", "event_log_ac7b7c4c_
 class Frame:
     """A DataFrame stand-in: the queries it's made of, and how they were combined."""
 
-    def __init__(self, parts):
+    def __init__(self, parts, dtypes=()):
         self.parts = parts
+        self.dtypes = list(dtypes)   # no columns: aligned() has nothing to cast (test_coltypes runs it on Spark)
 
     def unionByName(self, other, allowMissingColumns=False):
         assert allowMissingColumns, "stacked by name with missing columns allowed"

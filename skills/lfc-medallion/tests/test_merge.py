@@ -88,6 +88,10 @@ class Spark:
             self.done.append(q)
             if q.startswith("CREATE TABLE"):
                 self.targets.add(quoted[2])
+            altered = re.match(r"ALTER TABLE `[^`]+`\.`[^`]+`\.`([^`]+)` ALTER COLUMN `([^`]+)` TYPE (.+)$", q)
+            if altered:   # as the table would: the next DESCRIBE shows the new type
+                t, c, ty = altered.groups()
+                self.target_cols[t] = [(n, ty.lower() if n == c else x) for n, x in self.target_cols[t]]
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
                 saved = (r"SELECT '([^']+)' AS target_table, '([^']+)' AS source, (\d+) AS version, "
                          r"'([^']+)' AS table_id")
@@ -364,6 +368,39 @@ class Shapes(unittest.TestCase):
                       targets={"all_nation"})
         run(spark)
         self.assertIn("ALTER TABLE `main`.`shop_silver`.`all_nation` ADD COLUMNS (`n_comment` string)", spark.done)
+
+    def widened(self, target, source):
+        """The statements _ensure_target runs for a target column of type `target` and a source's `source`."""
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      cols={s: [("n_nationkey", "int"), ("n_name", source)] for s in ("east", "west")},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsInserted": "1"})]}, targets={"all_nation"})
+        spark.target_cols["all_nation"] = [("division", "string"), ("n_nationkey", "int"), ("n_name", target)]
+        run(spark)
+        return [q for q in spark.done if q.startswith("ALTER TABLE")]
+
+    def test_wider_source_widens_the_target_in_place(self):
+        tgt = "ALTER TABLE `main`.`shop_silver`.`all_nation`"
+        self.assertEqual(self.widened("int", "bigint"), [f"{tgt} SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')",
+                                                         f"{tgt} ALTER COLUMN `n_name` TYPE BIGINT"])
+        self.assertEqual(self.widened("smallint", "int")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE INT")
+        self.assertEqual(self.widened("decimal(10,2)", "decimal(12,4)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(12,4)")
+        self.assertEqual(self.widened("decimal(10,2)", "decimal(12,1)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(13,2)")  # 11 integer digits, scale 2
+
+    def test_date_into_timestamp_ntz_turns_its_feature_on(self):
+        tgt = "ALTER TABLE `main`.`shop_silver`.`all_nation`"
+        props = "('delta.enableTypeWidening' = 'true', 'delta.feature.timestampNtz' = 'supported')"
+        self.assertEqual(self.widened("date", "timestamp_ntz"),
+                         [f"{tgt} SET TBLPROPERTIES {props}", f"{tgt} ALTER COLUMN `n_name` TYPE TIMESTAMP_NTZ"])
+
+    def test_narrower_or_same_source_changes_nothing(self):
+        self.assertEqual(self.widened("bigint", "int"), [])
+        self.assertEqual(self.widened("decimal(12,4)", "decimal(10,2)"), [])
+        self.assertEqual(self.widened("string", "varchar(20)"), [])
+
+    def test_widening_delta_cant_do_in_place_is_an_error(self):
+        for target, source in (("int", "string"), ("date", "int"), ("timestamp", "timestamp_ntz")):
+            with self.assertRaisesRegex(ValueError, "all_nation.*`n_name`.*isn't a change Delta makes in place"):
+                self.widened(target, source)
 
     def test_scd2_key_gets_start_at(self):
         cols = {s: COLS + [("__START_AT", "timestamp"), ("__END_AT", "timestamp")] for s in ("east", "west")}

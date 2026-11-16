@@ -148,6 +148,17 @@ class FolderOnPath(unittest.TestCase):
         with open(os.path.join(SCRIPTS, "debezium-zerobus.sh")) as f:
             self.assertIn('.configuration["cdc.code"]', f.read())
 
+    def test_lfc_medallion_uploaded_next_to_scripts(self):
+        """canonical_sql.py imports lfc_medallion.coltypes: debezium-zerobus.sh uploads the package into the scripts'
+        workspace folder, from the folder this checkout has it in."""
+        with open(os.path.join(SCRIPTS, "debezium-zerobus.sh")) as f:
+            sh = f.read()
+        self.assertIn('dbx workspace mkdirs "$WSDIR/lfc_medallion"', sh)
+        self.assertIn('for f in "$HERE"/../../lfc-medallion/scripts/lfc_medallion/*.py; do', sh)
+        self.assertIn('dbx workspace import "$WSDIR/lfc_medallion/$(basename "$f")" --file "$f"', sh)
+        pkg = os.path.join(SCRIPTS, "..", "..", "lfc-medallion", "scripts", "lfc_medallion")
+        self.assertTrue({"__init__.py", "coltypes.py"} <= set(os.listdir(pkg)))
+
 
 class BinhexEverywhere(unittest.TestCase):
     """Every typed() and snapshot_value() call in the pipeline and the merge job passes BINHEX (a call without it
