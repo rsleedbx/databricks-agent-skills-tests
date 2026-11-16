@@ -68,6 +68,8 @@ check "postgres-tpch-cdc.sh verify(): rule counts, a failed or empty verify quer
 check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
 check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
+check "statschema.tools: ddl() and ddl_to_schema() give the wrappers' text (path, YAML text, dict); state restored; canon.py" \
+  sh -c "cd '$SK/lfc-source-statschema/scripts' && uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q test_tools.py 2>&1"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
   sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
 WC=$SK/lfc-workload-contract/scripts
