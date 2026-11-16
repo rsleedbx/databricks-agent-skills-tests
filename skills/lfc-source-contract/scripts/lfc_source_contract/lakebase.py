@@ -37,9 +37,11 @@ import psycopg
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.common.types.fieldmask import FieldMask
 from databricks.sdk.errors import NotFound
-from databricks.sdk.service.catalog import ConnectionType
+from databricks.sdk.service.catalog import ConnectionType, EnvironmentSettings
 from databricks.sdk.service.postgres import EndpointType, Project, ProjectSpec
 from psycopg import sql
+
+from . import jdbc
 
 
 class SetupError(Exception):
@@ -50,9 +52,20 @@ class SetupError(Exception):
 
 
 def setup(project: str, role: str, connection: str, branch: str | None = None, profile: str | None = None,
-          create_project: bool = False, pg_version: int = 17, log=print) -> dict:
+          create_project: bool = False, pg_version: int = 17, log=print, database: str | None = None,
+          writer: str | None = None, jdbc_connection: str | None = None) -> dict:
     """Steps 1 to 4 (the module's docstring) from a notebook cell, a job or the laptop; returns {host, connection,
-    connection_created, login_created}. The password goes only into the login and the connection. Raises SetupError."""
+    connection_created, login_created} (and jdbc_connection, jdbc_created, writer_created with the JDBC options).
+    The password goes only into the login and the connection. Raises SetupError.
+
+    With jdbc_connection, writer and database: also the database (created when missing), the writer login (LOGIN
+    REPLICATION, CONNECT and CREATE on the database: it makes the schemas, tables, publication and slot it owns) and
+    the TYPE JDBC connection holding it (lfc_source_contract.jdbc: the Maven driver, sessionInitStatement allowed), so a
+    notebook writes to the source through JdbcSql with no password in its code."""
+    if jdbc_connection and not (writer and database):
+        raise SetupError("jdbc_connection needs writer and database")
+    if writer and writer == role:
+        raise SetupError("writer: its own login, not the connection's reader (USE CONNECTION runs any SQL it may)")
     w = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
     name = f"projects/{project}"
     try:
@@ -77,21 +90,28 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
         raise SetupError(f"no read-write endpoint on {br}")
     endpoint, host = endpoints[0].name, endpoints[0].status.hosts.host
 
-    # look the connection up before the password changes, so a permission error stops here with nothing changed
-    try:
-        w.connections.get(connection)
-        have_connection = True
-    except NotFound:
-        have_connection = False
+    # look the connections up before a password changes, so a permission error stops here with nothing changed
+    def have(name):
+        try:
+            w.connections.get(name)
+            return True
+        except NotFound:
+            return False
+    have_connection = have(connection)
+    have_jdbc = have(jdbc_connection) if jdbc_connection else False
 
     password = secrets.token_urlsafe(32)
+    wpassword = secrets.token_urlsafe(32) if jdbc_connection else None
     token = w.postgres.generate_database_credential(endpoint=endpoint).token
     with psycopg.connect(host=host, port=5432, dbname="databricks_postgres", user=w.current_user.me().user_name,
                          password=token, sslmode="require", autocommit=True) as pg:
-        exists = pg.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-        verb = sql.SQL("ALTER") if exists else sql.SQL("CREATE")
-        pg.execute(sql.SQL("{} ROLE {} WITH LOGIN REPLICATION PASSWORD {}").format(
-            verb, sql.Identifier(role), sql.Literal(password)))
+        def login(name, pw):
+            had = pg.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone()
+            verb = sql.SQL("ALTER") if had else sql.SQL("CREATE")
+            pg.execute(sql.SQL("{} ROLE {} WITH LOGIN REPLICATION PASSWORD {}").format(
+                verb, sql.Identifier(name), sql.Literal(pw)))
+            return had
+        exists = login(role, password)
     options = {"host": host, "port": "5432", "user": role, "password": password}
     try:
         if have_connection:
@@ -105,10 +125,47 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
                          "fixed, which sets a new password on both", code=1) from None
     finally:
         del password, options, token
+    wexists = None
+    if jdbc_connection:   # the writer's password changes only now, after the reader's connection holds its new one
+        with psycopg.connect(host=host, port=5432, dbname="databricks_postgres", user=w.current_user.me().user_name,
+                             password=w.postgres.generate_database_credential(endpoint=endpoint).token,
+                             sslmode="require", autocommit=True) as pg:
+            def login(name, pw):
+                had = pg.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone()
+                verb = sql.SQL("ALTER") if had else sql.SQL("CREATE")
+                pg.execute(sql.SQL("{} ROLE {} WITH LOGIN REPLICATION PASSWORD {}").format(
+                    verb, sql.Identifier(name), sql.Literal(pw)))
+                return had
+            if not pg.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database,)).fetchone():
+                pg.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+                log(f"lakebase-source: database {database} created")
+            wexists = login(writer, wpassword)
+            pg.execute(sql.SQL("GRANT CONNECT, CREATE ON DATABASE {} TO {}").format(sql.Identifier(database),
+                                                                                   sql.Identifier(writer)))
+            pg.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(database), sql.Identifier(role)))
+        b = jdbc.connection_body(jdbc_connection, "postgres", jdbc.url("postgres", host, 5432, database), writer, wpassword,
+                                 comment=f"Writes to the Lakeflow Connect source: Lakebase project {project}, database {database}")
+        env = EnvironmentSettings(java_dependencies=b["environment_settings"]["java_dependencies"])
+        try:
+            if have_jdbc:
+                w.connections.update(jdbc_connection, options=b["options"], environment_settings=env)
+            else:
+                w.connections.create(jdbc_connection, connection_type=ConnectionType.JDBC, options=b["options"],
+                                     environment_settings=env, comment=b["comment"])
+        except Exception as e:  # noqa: BLE001 (the writer has the new password and its connection doesn't)
+            raise SetupError(f"login {writer} has a new password but connection {jdbc_connection} wasn't "
+                             f"{'updated' if have_jdbc else 'created'} ({type(e).__name__}: {e}); rerun when that's "
+                             "fixed, which sets a new password on both", code=1) from None
+        finally:
+            del wpassword, b
+        log(f"lakebase-source: JDBC connection {jdbc_connection} {'updated' if have_jdbc else 'created'}; login "
+            f"{writer} ({'new password' if wexists else 'created'}, LOGIN REPLICATION, CREATE on {database})")
     log(f"lakebase-source: connection {connection} {'updated' if have_connection else 'created'}; login {role} "
         f"({'new password' if exists else 'created'}, LOGIN REPLICATION) on {project}, host {host}")
-    return {"host": host, "connection": connection, "connection_created": not have_connection,
-            "login_created": not exists}
+    r = {"host": host, "connection": connection, "connection_created": not have_connection, "login_created": not exists}
+    if jdbc_connection:
+        r |= {"jdbc_connection": jdbc_connection, "jdbc_created": not have_jdbc, "writer_created": not wexists}
+    return r
 
 
 def main() -> int:
@@ -122,11 +179,14 @@ def main() -> int:
     a.add_argument("--create-project", action="store_true", help="create the project when it doesn't exist")
     a.add_argument("--pg-version", type=int, default=17, help="PostgreSQL version of a new project")
     a.add_argument("--contract", help="write the source contract here")
+    a.add_argument("--writer", help="a writer login for the JDBC connection (with --jdbc-connection)")
+    a.add_argument("--jdbc-connection", help="also a TYPE JDBC connection for writes, holding --writer, on --database")
     x = a.parse_args()
     if x.contract and not x.profile:
         a.error("--contract needs --profile (its sql_cmd runs lakebase-sql.sh with that profile)")
     try:
-        r = setup(x.project, x.role, x.connection, x.branch, x.profile, x.create_project, x.pg_version)
+        r = setup(x.project, x.role, x.connection, x.branch, x.profile, x.create_project, x.pg_version,
+                  database=x.database if x.jdbc_connection else None, writer=x.writer, jdbc_connection=x.jdbc_connection)
     except SetupError as e:
         print(f"lakebase-source: {e}", file=sys.stderr)
         return e.code

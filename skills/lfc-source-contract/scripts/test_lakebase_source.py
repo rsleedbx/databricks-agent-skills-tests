@@ -161,6 +161,71 @@ class LakebaseSource(unittest.TestCase):
                              "login_created": True})
         self.assertNotIn("SECRET-PW", " ".join(logs) + str(r))
 
+    def test_setup_with_a_jdbc_connection(self):
+        w, pg = workspace(), database(role_exists=False)
+        w.postgres.list_endpoints.return_value[1].status.hosts.host = "ep-1.example.com"
+        pws = iter(["READER-PW", "WRITER-PW"])
+        logs = []
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w), mock.patch.object(ls.psycopg, "connect", return_value=pg), \
+             mock.patch.object(ls.secrets, "token_urlsafe", side_effect=lambda n: next(pws)):
+            r = ls.setup("p", "lfc_cdc", "c1", log=logs.append, database="orders", writer="lfc_writer", jdbc_connection="c1_jdbc")
+        q = self.statements(pg)
+        self.assertTrue(any(s.startswith('CREATE ROLE "lfc_writer" WITH LOGIN REPLICATION PASSWORD') for s in q))
+        self.assertIn('CREATE DATABASE "orders"', q)
+        self.assertIn('GRANT CONNECT, CREATE ON DATABASE "orders" TO "lfc_writer"', q)
+        self.assertIn('GRANT CONNECT ON DATABASE "orders" TO "lfc_cdc"', q)
+        jc = next(c for c in w.connections.create.call_args_list if c.args[0] == "c1_jdbc")
+        self.assertEqual(jc.kwargs["connection_type"], ls.ConnectionType.JDBC)
+        self.assertEqual(jc.kwargs["environment_settings"].java_dependencies, ["org.postgresql:postgresql:42.7.4"])
+        o = jc.kwargs["options"]
+        self.assertEqual((o["user"], o["password"], o["url"]), ("lfc_writer", "WRITER-PW", "jdbc:postgresql://ep-1.example.com:5432/orders?sslmode=require"))
+        reader = next(c for c in w.connections.create.call_args_list if c.args[0] == "c1")
+        self.assertEqual(reader.kwargs["options"]["password"], "READER-PW")
+        self.assertEqual((r["jdbc_connection"], r["jdbc_created"], r["writer_created"]), ("c1_jdbc", True, True))
+        text = " ".join(logs) + str(r)
+        self.assertNotIn("WRITER-PW", text); self.assertNotIn("READER-PW", text)
+
+    def jdbc_setup(self, w, pg):
+        pws = iter(["READER-PW", "WRITER-PW"])
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w), mock.patch.object(ls.psycopg, "connect", return_value=pg), \
+             mock.patch.object(ls.secrets, "token_urlsafe", side_effect=lambda n: next(pws)):
+            return ls.setup("p", "lfc_cdc", "c1", log=lambda m: None, database="orders", writer="lfc_writer",
+                            jdbc_connection="c1_jdbc")
+
+    def test_setup_jdbc_update_path(self):
+        w, pg = workspace(connection=True), database(role_exists=True)
+        r = self.jdbc_setup(w, pg)
+        q = self.statements(pg)
+        self.assertTrue(any(s.startswith('ALTER ROLE "lfc_writer" WITH LOGIN REPLICATION PASSWORD') for s in q))
+        self.assertNotIn('CREATE DATABASE "orders"', q)                     # the database is there
+        w.connections.create.assert_not_called()
+        up = next(c for c in w.connections.update.call_args_list if c.args[0] == "c1_jdbc")
+        self.assertEqual(up.kwargs["options"]["password"], "WRITER-PW")
+        self.assertEqual(up.kwargs["environment_settings"].java_dependencies, ["org.postgresql:postgresql:42.7.4"])
+        self.assertEqual((r["jdbc_created"], r["writer_created"]), (False, False))
+
+    def test_setup_jdbc_connection_failure_says_rerun(self):
+        w, pg = workspace(), database(role_exists=False)
+        w.connections.create.side_effect = lambda name, **k: (_ for _ in ()).throw(RuntimeError("boom")) if name == "c1_jdbc" else None
+        with self.assertRaises(ls.SetupError) as e:
+            self.jdbc_setup(w, pg)
+        self.assertEqual(e.exception.code, 1)
+        self.assertIn("lfc_writer has a new password but connection c1_jdbc wasn't created", str(e.exception))
+        self.assertNotIn("WRITER-PW", str(e.exception))
+
+    def test_reader_failure_leaves_the_writer_alone(self):
+        w, pg = workspace(), database(role_exists=False)
+        w.connections.create.side_effect = RuntimeError("reader boom")
+        with self.assertRaises(ls.SetupError) as e:
+            self.jdbc_setup(w, pg)
+        self.assertIn("connection c1 wasn't created", str(e.exception))
+        self.assertFalse([s for s in self.statements(pg) if '"lfc_writer"' in s])   # the writer's password never changed
+
+    def test_setup_jdbc_needs_writer_and_its_own_login(self):
+        for kw in ({"jdbc_connection": "j"}, {"jdbc_connection": "j", "writer": "r", "database": "d"}):
+            with self.assertRaises(ls.SetupError):
+                ls.setup("p", "r", "c", log=lambda m: None, **kw)
+
     def test_setup_errors(self):
         w = workspace(project=False)
         with mock.patch.object(ls, "WorkspaceClient", return_value=w), self.assertRaises(ls.SetupError) as e:
