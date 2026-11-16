@@ -50,6 +50,8 @@ Where it differs from the spec:
 
 - [`scripts/tpc/tpc-schema.sh`](../scripts/tpc/tpc-schema.sh): The six workloads as MySQL DDL with the tags; `bash tpc-schema.sh tpch 10` for scale factor 10, `bash tpc-schema.sh tpcds 1` for TPC-DS.
 
+- [`scripts/lfc_source_datagen/tpc_schema.py`](../scripts/lfc_source_datagen/tpc_schema.py): TPC-B and TPC-H from the spec, the code `tpc-schema.sh` runs for those two. From a notebook: `%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-datagen/scripts"`, then `from lfc_source_datagen.tpc_schema import tpc_schema` and `tpc_schema("tpch", 0.1)`; statschema's `ddl_to_schema()` and `ddl()` (package `lfc-statschema`) turn it into any engine's DDL.
+
 
 - [`scripts/tpc/tpcb-verify.sql`](../scripts/tpc/tpcb-verify.sql): TPC-B checks.
 

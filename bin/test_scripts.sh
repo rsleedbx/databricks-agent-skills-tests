@@ -85,6 +85,7 @@ wl_offline() {   # workload.sh writes a tpcb workload that workload-env.sh accep
   return 0
 }
 check "copies.sh pg on a fake psql: table names, the DDL order, an existing copy, a failed DDL" sh -c "'$DG/test-copies.sh' > /dev/null"
+check "tpc_schema.py: TPC-B and TPC-H text as the shell version wrote it (sha-256), tpc-schema.sh runs it, the scale floor" python3 -m unittest -q "$DG/test_tpc_schema.py"
 check "tpch-sources.sh on a fake sql_cmd: bad arguments, the publication by schema and by table, the slot" sh -c "bash '$DG/test-tpch-sources.sh' > /dev/null"
 check "workload.sh: a tpcb workload at SF 0.01 and a postgres spec tpch one (with verify) that workload-env.sh accepts; oracle refused" wl_offline
 check "slot-source.sh: a slot's contract, and its SRC_SQL through slot-sql.sh and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
