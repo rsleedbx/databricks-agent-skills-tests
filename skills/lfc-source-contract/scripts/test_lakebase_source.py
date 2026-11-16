@@ -1,7 +1,7 @@
 """Offline tests of lakebase-source.py with a mocked workspace and database: a new login and connection, an existing
 login and connection (ALTER, update), password logins turned on only when off, no read-write endpoint, the connection
-looked up before the password changes, a failed connection update, a missing or new project, and that the password is
-never printed or written to the contract.
+looked up before the password changes, a failed connection update, a missing or new project, setup() called as a notebook would
+(its result and errors), and that the password is never printed or written to the contract.
 
   uv run --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest test_lakebase_source.py
 """
@@ -148,6 +148,30 @@ class LakebaseSource(unittest.TestCase):
                                        "--contract", os.path.join(d, "s.json"))
             self.assertEqual(rc, 2); self.assertIn("needs a checkout", out)
             self.assertFalse(os.path.exists(os.path.join(d, "s.json")))
+
+    def test_setup_from_a_notebook(self):
+        w, pg = workspace(), database(role_exists=False)
+        logs = []
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w) as wc, \
+             mock.patch.object(ls.psycopg, "connect", return_value=pg), \
+             mock.patch.object(ls.secrets, "token_urlsafe", return_value="SECRET-PW"):
+            r = ls.setup("p", "lfc_cdc", "c1", log=logs.append)
+        wc.assert_called_once_with()                                   # no profile: the workspace's own login
+        self.assertEqual(r, {"host": "ep-1.example.com", "connection": "c1", "connection_created": True,
+                             "login_created": True})
+        self.assertNotIn("SECRET-PW", " ".join(logs) + str(r))
+
+    def test_setup_errors(self):
+        w = workspace(project=False)
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w), self.assertRaises(ls.SetupError) as e:
+            ls.setup("p", "r", "c", log=lambda m: None)
+        self.assertEqual(e.exception.code, 2)
+        w, pg = workspace(connection=True), database(role_exists=True)
+        w.connections.update.side_effect = RuntimeError("network")
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w), mock.patch.object(ls.psycopg, "connect", return_value=pg), \
+             mock.patch.object(ls.secrets, "token_urlsafe", return_value="SECRET-PW"), self.assertRaises(ls.SetupError) as e:
+            ls.setup("p", "r", "c", log=lambda m: None)
+        self.assertEqual(e.exception.code, 1); self.assertNotIn("SECRET-PW", str(e.exception))
 
 
 if __name__ == "__main__":
