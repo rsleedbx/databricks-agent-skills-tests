@@ -2,6 +2,8 @@
 
 A notebook or job, serverless included, can append rows to a source table through a Unity Catalog connection with the Spark data source and `mode("append")`, with no database client and no password in the code. Use it for a handful of rows (a CDC or query-based test's inserts); for volume, fill inside the database (SKILL.md).
 
+From Python, [`lfc_source_contract.jdbc`](../../lfc-source-contract/scripts/lfc_source_contract/jdbc.py) has the pattern as code: `connection_body()` (the request below, Maven driver and allow-list), `JdbcSql(spark, connection)` with `execute()` for a write (`sessionInitStatement`, one partition) and `query()` for a read, and `guarded()` for a statement that a rerun leaves alone.
+
 ## Only a TYPE JDBC connection takes writes
 
 A Lakehouse Federation connection (type `POSTGRESQL`, `MYSQL`, `SQLSERVER`, ...) refuses Spark reads and writes alike, whatever the format (`jdbc`, `postgresql`, `sqlserver`, `mysql`) and save mode:
@@ -12,13 +14,13 @@ A Lakehouse Federation connection (type `POSTGRESQL`, `MYSQL`, `SQLSERVER`, ...)
 
 Writes need a connection of type `JDBC` ([JDBC connection](https://docs.databricks.com/aws/en/connect/jdbc-connection); query federation doesn't write). It names the driver JAR in a Unity Catalog volume, the JDBC URL, the login, and the options a query may set:
 
-1. **The driver JAR** in a volume the users can read (`GRANT READ VOLUME ... TO <group>`): `org.postgresql:postgresql`, `com.mysql:mysql-connector-j`, `com.microsoft.sqlserver:mssql-jdbc` from Maven (check the `.sha1` next to each JAR), copied with `databricks fs cp <jar> dbfs:/Volumes/<catalog>/<schema>/<volume>/`.
+1. **The driver from Maven**, as a coordinate in `java_dependencies` (`org.postgresql:postgresql:42.7.4`, `com.mysql:mysql-connector-j:9.1.0`, `com.microsoft.sqlserver:mssql-jdbc:12.8.1.jre11`; every engine's in `lfc_source_contract.jdbc.MAVEN`): no volume, so no catalog the connection depends on. Only where the workspace can't reach Maven, a JAR in a volume the users can read (`GRANT READ VOLUME ... TO <group>`), checked against the `.sha1` next to it and copied with `databricks fs cp <jar> dbfs:/Volumes/<catalog>/<schema>/<volume>/`.
 2. **A login that may insert into the target table only.** The Lakeflow Connect user only reads; grant it `SELECT, INSERT` on the one table (Postgres: also `USAGE` on the key's sequence), or use a separate writer login.
 3. **The connection**, from a request body in a private file (**lfc-source-setup** "Passwords"), then delete the file:
 
    ```json
    {"name": "<connection>", "connection_type": "JDBC",
-    "environment_settings": {"java_dependencies": ["/Volumes/<catalog>/<schema>/<volume>/<driver>.jar"]},
+    "environment_settings": {"java_dependencies": ["org.postgresql:postgresql:42.7.4"]},
     "options": {"url": "<url>", "user": "<user>", "password": "<password>", "externalOptionsAllowList": "dbtable,query"}}
    ```
 
