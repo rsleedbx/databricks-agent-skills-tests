@@ -1,8 +1,8 @@
 """Offline tests of lfc_source_datagen.tpch_sources (no database): sources parsed and refused, SQL files split and their
 psql variables filled (casts kept), the publication kept, created or altered on a fake connection (by schema on 15+,
-by table before), a failed ALTER explained, the slot, and the command line refusing bad arguments before connecting.
+by table before), a failed ALTER explained, a new source's steps (DDL, verify rewritten, rename, labels, lead times, grants;\nbroken rules stop before the rename), the fill wrapper's exit codes and cleanup, the slot, and the command line refusing\nbad arguments before connecting.
 
-  uv run --no-project --with 'psycopg[binary]' python -m unittest test_tpch_sources_py.py
+  uv run --no-project --with 'psycopg[binary]' --with pyyaml --with sqlglot python -m unittest test_tpch_sources_py.py
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-source-statschema", "scripts"))   # statschema.tools
 from lfc_source_datagen import tpch_sources as ts
 
 
@@ -42,12 +43,19 @@ class FakeCursor:
 
 class FakeDb:
     """Every schema exists (no fill); answers for the publication and slot queries."""
-    def __init__(self, version=170000, pub=None, slot=False, alter_fails=False):
+    def __init__(self, version=170000, pub=None, slot=False, alter_fails=False, schemas_exist=True, bad=0):
         self.version, self.pub, self.slot, self.alter_fails, self.log = version, pub, slot, alter_fails, []
+        self.schemas_exist, self.bad = schemas_exist, bad
 
     def answer(self, q, args):
-        if "FROM pg_database" in q or "FROM information_schema.schemata" in q:
+        if "FROM pg_database" in q:
             return [(1,)]
+        if "FROM information_schema.schemata" in q or "table_schema = %s" in q:
+            return [(1 if self.schemas_exist else 0,)]
+        if q.startswith("SELECT 'bad"):
+            return [("bad: x", self.bad, 0)]
+        if q.startswith("SELECT '"):
+            return [("info", 5, 25)]
         if "server_version_num" in q:
             return [(str(self.version),)]
         if "pg_publication_namespace" in q:
@@ -159,6 +167,66 @@ class Publication(unittest.TestCase):
         with mock.patch.object(ts.Pg, "connect", lambda self, database=None: db.connect(database)):
             ts.slot(ts.Pg(host="h", password="p"), "db", "s1", drop=True)
         self.assertTrue(any("pg_drop_replication_slot" in q for q in db.sql()))
+
+
+class NewSource(unittest.TestCase):
+    def build(self, db, *a, **k):
+        with mock.patch.object(ts, "_fill") as fill:
+            run(db, *a, **k)
+        return fill
+
+    def test_build_steps(self):
+        db = FakeDb(schemas_exist=False)
+        fill = self.build(db, "db", ["a:0.03:1,2,3,4,5,6,7,8,9"], login="lfc_cdc", labels="anonymous")
+        q = db.sql()
+        self.assertEqual(fill.call_args.args[1:3], ("db", "tpch_0001"))
+        self.assertTrue(any(s.startswith('CREATE TABLE "lineitem"') for s in q))         # the spec DDL, run in the copy
+        verify = [s for s in q if s.startswith("SELECT 'bad")]
+        self.assertTrue(verify); self.assertFalse([s for s in q if "DATEDIFF(" in s])   # rewritten for Postgres
+        self.assertIn('ALTER SCHEMA "tpch_0001" RENAME TO "a"', q)
+        self.assertTrue(any("CASE WHEN 'anonymous' = 'spec'" in s for s in q))
+        lead = [s for s in q if s.startswith("WITH d AS")]
+        self.assertTrue(lead and "od + 1, l_shipdate" in lead[0] and "WHEN 'AIR' THEN 6" in lead[0])
+        for g in ('GRANT CONNECT ON DATABASE "db" TO "lfc_cdc"', 'GRANT USAGE ON SCHEMA "a" TO "lfc_cdc"',
+                  'GRANT SELECT ON ALL TABLES IN SCHEMA "a" TO "lfc_cdc"'):
+            self.assertIn(g, q)
+        self.assertLess(q.index('ALTER SCHEMA "tpch_0001" RENAME TO "a"'), q.index(lead[0]))
+
+    def test_no_lead_times_no_login(self):
+        db = FakeDb(schemas_exist=False)
+        self.build(db, "db", ["a:0.03"])
+        self.assertFalse([s for s in db.sql() if s.startswith(("WITH d AS", "GRANT"))])
+
+    def test_broken_rules_stop_before_the_rename(self):
+        db = FakeDb(schemas_exist=False, bad=3)
+        with self.assertRaisesRegex(RuntimeError, "TPC-H rules broken"):
+            self.build(db, "db", ["a:0.03"])
+        self.assertFalse([s for s in db.sql() if s.startswith("ALTER SCHEMA")])
+
+
+class Fill(unittest.TestCase):
+    def stub(self, d, body):
+        with open(os.path.join(d, "fill.py"), "w") as f:
+            f.write(body)
+
+    def test_exit_codes_and_cleanup(self):
+        import tempfile
+        pg = ts.Pg(host="h", password="secret-pw")
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(ts, "PLANNER", d):
+            self.stub(d, "import sys\nopen(sys.argv[sys.argv.index('--password-file') + 1]).read()\n"
+                         "print('PWFILE', sys.argv[sys.argv.index('--password-file') + 1]); print('filled'); sys.exit(0)\n")
+            argv, path = list(sys.argv), list(sys.path)
+            out = ts._fill(pg, "db", "tpch_0001", 2)
+            self.assertIn("filled", out)
+            pw = out.split("PWFILE ")[1].split()[0]
+            self.assertFalse(os.path.exists(pw)); self.assertEqual((sys.argv, sys.path), (argv, path))
+            self.stub(d, "import sys\nprint('level 1: boom'); sys.exit(3)\n")
+            with self.assertRaisesRegex(RuntimeError, "fill of db.tpch_0001 failed:\n.*boom"):
+                ts._fill(pg, "db", "tpch_0001", 2)
+            self.stub(d, "import sys\nsys.exit('level 2: no rows added')\n")   # fill.py's sys.exit(<message>)
+            with self.assertRaisesRegex(RuntimeError, "no rows added"):
+                ts._fill(pg, "db", "tpch_0001", 2)
+            self.assertEqual((sys.argv, sys.path), (argv, path))
 
 
 class CommandLine(unittest.TestCase):

@@ -8,7 +8,7 @@
 #   cockroachdb, db2, informix; MariaDB and YugabyteDB take mysql and postgres). Rows come from INSERT ... SELECT over the
 #   engine's own generator: generate_series (Postgres, CockroachDB, YugabyteDB: SRC=series), a seed table filled by doubling
 #   (MySQL, MariaDB), GENERATE_SERIES (SQL Server 2022), CONNECT BY LEVEL (Oracle). Db2, Informix and CockroachDB fill
-#   through fill.py (its planner is Python; PY: a python with ibm-db, informix-driver, psycopg2; references/python-drivers.md),
+#   through fill.py (its planner is Python; PY: a python with ibm-db, informix-driver, psycopg (3); references/python-drivers.md),
 #   whose INSERT ... SELECT also makes every row in the database: a recursive common table expression (Db2), CONNECT BY
 #   LEVEL (Informix), generate_series (CockroachDB).
 #   The build runs on local disk ($DATA/build-<master>), tuned for loading (no fsync, no binary log, SIMPLE recovery);

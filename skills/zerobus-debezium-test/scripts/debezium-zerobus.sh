@@ -345,7 +345,7 @@ fi
 NT=$(yq '.tables | length' "$MODEL_YAML")
 # the source's engine and driver for lfc-source-datagen's Python scripts (fill.py, export.py)
 DGE=$(case $SOURCE in (mssql) echo sqlserver;; (mysql) echo mysql;; (oracle) echo oracle;; (db2) echo db2;; (informix) echo informix;; (*) echo pg;; esac)
-DGPIP=$(case $SOURCE in (mssql) echo mssql-python;; (mysql) echo pymysql;; (oracle) echo oracledb;; (db2) echo ibm-db;; (informix) echo informix-driver;; (*) echo psycopg2-binary;; esac)
+DGPIP=$(case $SOURCE in (mssql) echo mssql-python;; (mysql) echo pymysql;; (oracle) echo oracledb;; (db2) echo ibm-db;; (informix) echo informix-driver;; (*) echo psycopg psycopg-binary;; esac)
 DGX=$([ "$SOURCE" = mssql ] && echo --trust-server-certificate)
 # mssql-python's ODBC driver also needs the OS libraries libltdl.so.7 and Kerberos (libkrb5, libgssapi_krb5) on Linux (lfc-source-datagen's python-drivers.md):
 # an image with it, built once on the host from python:3.12-slim and kept
