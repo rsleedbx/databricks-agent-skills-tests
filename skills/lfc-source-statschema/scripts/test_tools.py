@@ -1,6 +1,6 @@
 """Offline tests of statschema.tools: ddl() and ddl_to_schema() give the same text as the command-line wrappers
 (scripts/ddl.py, scripts/ddl-to-schema.py) for TPC-B and TPC-H from tpc-schema.sh, with the schema given as a path, YAML
-text or a dict; the arguments, input and sys.path are restored after a call; the wrappers and canon.py still import.
+text or a dict; the arguments, input, sys.path and sqlglot's MySQL reader are restored after a call; the wrappers and canon.py still import.
 
   uv run --no-project --with pyyaml --with sqlglot python -m unittest test_tools.py
 """
@@ -47,6 +47,15 @@ class Tools(unittest.TestCase):
         argv, stdin, path = list(sys.argv), sys.stdin, list(sys.path)
         ddl(ddl_to_schema("CREATE TABLE a (id INT PRIMARY KEY) COMMENT='lfc:rows=10';", "mysql"), "postgres")
         self.assertEqual((sys.argv, sys.stdin, sys.path), (argv, stdin, path))
+
+    def test_sqlglot_mysql_restored(self):
+        from sqlglot.dialects.mysql import MySQL
+        term, factor = MySQL.Parser.TERM, MySQL.Parser.FACTOR
+        y = ddl_to_schema("CREATE TABLE a (id INT PRIMARY KEY, v INT COMMENT 'lfc:v={1 + x.n * 7 % 25}') COMMENT='lfc:rows=10';", "mysql")
+        ddl(y, "informix")
+        self.assertIs(MySQL.Parser.TERM, term); self.assertIs(MySQL.Parser.FACTOR, factor)
+        self.assertEqual(ddl_to_schema("CREATE TABLE b (id INT PRIMARY KEY, CHECK (id % 3 + 1 > 0));", "mysql"),
+                         cli("ddl-to-schema.py", "--dialect", "mysql", stdin="CREATE TABLE b (id INT PRIMARY KEY, CHECK (id % 3 + 1 > 0));"))
 
     def test_canon_wrapper(self):
         import canon
