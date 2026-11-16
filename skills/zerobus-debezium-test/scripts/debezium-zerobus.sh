@@ -1376,9 +1376,9 @@ if [ "$PHASE" -ge 2 ]; then
     printf 'CREATE OR REFRESH MATERIALIZED VIEW %s%s\n  COMMENT %s\nAS %s;\n' "$GOLD" "${GC:+ CLUSTER BY ($GC)}" \
       "'$(sed -n 's/^-- comment: *//p' "$GOLD_MV" | sed "s/'/''/g")'" "$(grep -v '^--' "$GOLD_MV" | sed 's/;[[:space:]]*$//')" > "$W/gold.sql"
   fi
-  WSDIR=/Users/$ME/${SOURCE}_dbz_$E; LIBS=silver-from-schema.py; cp "$HERE/silver-from-schema.py" "$HERE/fanout.py" "$HERE/merge-silver.py" "$W/"
+  WSDIR=/Users/$ME/${SOURCE}_dbz_$E; LIBS=silver-from-schema.py; cp "$HERE/silver-from-schema.py" "$HERE/canonical_sql.py" "$HERE/fanout.py" "$HERE/merge-silver.py" "$W/"
   [ -n "$GOLD" ] && LIBS="$LIBS gold.sql"
-  FILES="$LIBS fanout.py merge-silver.py"   # fanout.py: for BRONZE=fanout, and for a table moved out of the shared log
+  FILES="$LIBS canonical_sql.py fanout.py merge-silver.py"   # canonical_sql.py: imported by silver and merge; fanout.py: for BRONZE=fanout, and for a table moved out of the shared log
   dbx workspace mkdirs "$WSDIR" || exit 2
   link "pipeline source folder $WSDIR" "$HOST/#workspace$WSDIR"
   for f in $FILES; do dbx workspace import "$WSDIR/$f" --file "$W/$f" --format RAW >/dev/null || { echo "$f upload failed"; exit 2; }; done
@@ -1416,6 +1416,7 @@ if [ "$PHASE" -ge 2 ]; then
     .configuration = {"cdc.volume": strenv(VOL), "cdc.bronze": strenv(SINK), "cdc.bronze_table": strenv(BT),
       "cdc.bronze_shards": strenv(SHARDS), "cdc.nodedup_table": strenv(NODEDUP), "cdc.history_suffix": strenv(HS), "cdc.on_drift": strenv(ON_DRIFT)}' > "$W/pipe.json"
   # MySQL: events ordered by binlog position, binary values as hex text (Debezium's and the snapshot's)
+  yq -i -p json -o json '.configuration["cdc.code"] = "/Workspace" + strenv(WSDIR)' "$W/pipe.json"   # canonical_sql.py's folder
   [ "$SOURCE" = mysql ] && yq -i -p json -o json '.configuration["cdc.seq"] = "binlog" | .configuration["cdc.binary"] = "hex"' "$W/pipe.json"
   [ "$SOURCE" = pg ] && yq -i -p json -o json '.configuration["cdc.seq"] = "lsn"' "$W/pipe.json"
   [ "$SOURCE" = mssql ] && yq -i -p json -o json '.configuration["cdc.seq"] = "change_lsn"' "$W/pipe.json"
@@ -1438,13 +1439,13 @@ if [ "$PHASE" -ge 2 ]; then
   PIPELINE_IDS=(); MERGE_JOBS=(); MERGE_PARAMS=(); MERGE_EXTRA=(); SPLIT_SCHEMAS=()
   for k in $([ -z "$PLACEMENT" ] && seq 0 $((PIPES - 1))); do
     if [ "$SILVER" = merge ]; then   # merge-silver.py as a serverless job, shard k of K
-      export JN="$PIPE_NAME-merge$([ "$PIPES" -gt 1 ] && echo "-p$k")" MPY=$WSDIR/merge-silver.py MSH=$([ "$PIPES" -gt 1 ] && echo "$k/$PIPES") MCP="$VOL/_merge/p$k" MS=$S
+      export JN="$PIPE_NAME-merge$([ "$PIPES" -gt 1 ] && echo "-p$k")" MPY=$WSDIR/merge-silver.py MSH=$([ "$PIPES" -gt 1 ] && echo "$k/$PIPES") MCP="$VOL/_merge/p$k" MS=$S MBIN=$([ "$SOURCE" = mysql ] && echo hex)
       if [ "$SPLIT" = 1 ]; then MS=${S}_s$k; dbx schemas create "$MS" "$CATALOG" >/dev/null || { echo "schema $MS create failed"; exit 2; }
         SPLIT_SCHEMAS+=("$MS"); link "silver schema $CATALOG.$MS (shard $k/$PIPES)" "$HOST/explore/data/$CATALOG/$MS"; fi
       yq -n -o json '.name = strenv(JN) | .environments = [{"environment_key": "default", "spec": {"environment_version": "4", "dependencies": ["pyyaml"]}}] |
         .tasks = [{"task_key": "silver", "environment_key": "default", "spark_python_task": {"python_file": strenv(MPY),
           "parameters": ["--volume", strenv(VOL), "--source", "`" + strenv(CATALOG) + "`." + strenv(S) + ".cdc_log", "--target", "`" + strenv(CATALOG) + "`." + strenv(MS),
-            "--checkpoint", strenv(MCP), "--bronze", strenv(SINK), "--history-suffix", strenv(HS), "--on-drift", strenv(ON_DRIFT), "--once"] + (strenv(MSH) | select(. != "") | ["--shard", .]) // []}}]' > "$W/merge-$k.json"
+            "--checkpoint", strenv(MCP), "--bronze", strenv(SINK), "--history-suffix", strenv(HS), "--on-drift", strenv(ON_DRIFT), "--once"] + ((strenv(MBIN) | select(. != "") | ["--binary", .]) // []) + (strenv(MSH) | select(. != "") | ["--shard", .]) // []}}]' > "$W/merge-$k.json"
       j=$(dbx jobs create --json @"$W/merge-$k.json" -o json | yq '.job_id') && [ -n "$j" ] || { echo "merge job create failed"; exit 2; }
       MERGE_JOBS+=("$j"); MERGE_PARAMS+=("$(yq -o json -I0 '.tasks[0].spark_python_task.parameters' "$W/merge-$k.json")"); link "silver job $JN (merge-silver.py${MSH:+, shard $MSH})" "$HOST/jobs/$j"; continue
     fi
@@ -1463,12 +1464,12 @@ if [ "$PHASE" -ge 2 ]; then
         p=$(dbx pipelines create --json @"$W/pipe-$g.json" -o json | yq '.pipeline_id') && [ -n "$p" ] || { echo "pipeline create failed"; exit 2; }
         PIPELINE_IDS+=("$p"); link "pipeline $PN (silver, group $g: $(awk -F'\t' -v g="$g" '$2 == g' "$W/placement.tsv" | wc -l | tr -d ' ') tables)" "$HOST/pipelines/$p"
       else for k in $(seq 0 $((n - 1))); do
-        export JN="$PIPE_NAME-merge-$g$([ "$n" -gt 1 ] && echo "-p$k")" MPY=$WSDIR/merge-silver.py MSH=$([ "$n" -gt 1 ] && echo "$k/$n") MCP="$VOL/_merge/$g-p$k" MG=$g MS=$S
+        export JN="$PIPE_NAME-merge-$g$([ "$n" -gt 1 ] && echo "-p$k")" MPY=$WSDIR/merge-silver.py MSH=$([ "$n" -gt 1 ] && echo "$k/$n") MCP="$VOL/_merge/$g-p$k" MG=$g MS=$S MBIN=$([ "$SOURCE" = mysql ] && echo hex)
         yq -n -o json '.name = strenv(JN) | .environments = [{"environment_key": "default", "spec": {"environment_version": "4", "dependencies": ["pyyaml"]}}] |
           .tasks = [{"task_key": "silver", "environment_key": "default", "spark_python_task": {"python_file": strenv(MPY),
             "parameters": ["--volume", strenv(VOL), "--source", "`" + strenv(CATALOG) + "`." + strenv(S) + ".cdc_log", "--target", "`" + strenv(CATALOG) + "`." + strenv(MS),
               "--checkpoint", strenv(MCP), "--bronze", strenv(SINK), "--history-suffix", strenv(HS), "--on-drift", strenv(ON_DRIFT), "--once",
-              "--placement-group", strenv(MG), "--drift-table", "schema_drift_" + strenv(MG)] + (strenv(MSH) | select(. != "") | ["--shard", .]) // []}}]' > "$W/merge-$g-$k.json"
+              "--placement-group", strenv(MG), "--drift-table", "schema_drift_" + strenv(MG)] + ((strenv(MBIN) | select(. != "") | ["--binary", .]) // []) + (strenv(MSH) | select(. != "") | ["--shard", .]) // []}}]' > "$W/merge-$g-$k.json"
         j=$(dbx jobs create --json @"$W/merge-$g-$k.json" -o json | yq '.job_id') && [ -n "$j" ] || { echo "merge job create failed"; exit 2; }
         MERGE_JOBS+=("$j"); MERGE_PARAMS+=("$(yq -o json -I0 '.tasks[0].spark_python_task.parameters' "$W/merge-$g-$k.json")"); link "silver job $JN (merge-silver.py, group $g${MSH:+, shard $MSH})" "$HOST/jobs/$j"
       done; fi

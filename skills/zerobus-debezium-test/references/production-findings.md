@@ -13,7 +13,7 @@ Behaviors these tests found in the sources, Debezium, and the bronze and silver 
 
 **Debezium**
 - **A connector whose start fails leaves Debezium Server running and capturing nothing** (Oracle's version check timing out, `ORA-17002`, with two databases starting at once). No error reaches Zerobus. Check each server's log for `Starting streaming` and restart it on `Engine has failed`.
-- **Temporal values arrive as numbers whose unit depends on the column's precision:** days for a date; milliseconds (3 digits or fewer), microseconds (4 to 6, and PostgreSQL's default) or nanoseconds (7 to 9: SQL Server's `DATETIME2` and `TIME` default) for timestamps and times; Oracle's `DATE` holds a time and comes as epoch milliseconds. Silver must decode each by the column's type and precision (`decode()` in `scripts/silver-from-schema.py`).
+- **Temporal values arrive as numbers whose unit depends on the column's precision:** days for a date; milliseconds (3 digits or fewer), microseconds (4 to 6, and PostgreSQL's default) or nanoseconds (7 to 9: SQL Server's `DATETIME2` and `TIME` default) for timestamps and times; Oracle's `DATE` holds a time and comes as epoch milliseconds. Silver must decode each by the column's type and precision (`decode()` in `scripts/canonical_sql.py`, shared by the pipeline and the merge job).
 - **Oracle and Db2 send unquoted names in upper case** (`ORACLE1.TPCH1.ORDERS`); silver's schema has to match.
 - **What orders a key's changes differs per source**: the LSN, change LSN, SCN, or binlog position (`cdc.seq`, the sources table below). CockroachDB's connector drops the commit time ([Commit time](debezium.md#commit-time-not-in-the-event-cockroachdb-connector-370final)).
 

@@ -7,7 +7,7 @@
 #   merge-silver.py --volume /Volumes/<c>/<s>/<v> --source <c>.<s>.cdc_log --target <c>.<s> --checkpoint <dir>
 #                   [--bronze zerobus|kafka] [--shard i/n] [--history-suffix _history] [--threads 16]
 #                   [--create eager|lazy] [--on-drift record|fail] [--refresh t1,t2] [--bronze-table t=cdc_log_t]
-#                   [--once]
+#                   [--binary hex] [--once]
 #
 # Tables: <t> (current rows, SCD type 1) and <t><history-suffix> (every version, SCD type 2, __START_AT/__END_AT: the
 # version's sequence and the next one's) for a table with a key; <t> append-only for one without. Each row has _source
@@ -32,9 +32,8 @@
 import argparse
 import functools
 import os
-import re
 import time
-import zlib
+import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import yaml
@@ -57,77 +56,24 @@ ap.add_argument("--bronze-table", action="append", default=[])
 ap.add_argument("--placement-group", default="")   # composite: this group's tables, from <volume>/_placement.tsv
 ap.add_argument("--drift-table", default="schema_drift")
 ap.add_argument("--once", action="store_true")
+ap.add_argument("--binary", default="", choices=["", "hex"])   # hex: binary as hex text (Debezium's binary.handling.mode)
 a = ap.parse_args()
 spark = SparkSession.builder.getOrCreate()
 VOL, TGT, HIST = a.volume, a.target, a.history_suffix
+BINHEX = a.binary == "hex"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # canonical_sql.py sits next to this file
+from canonical_sql import load, path, shard_of, snapshot_value, spark_type, typed  # noqa: E402
 log = lambda *m: print(time.strftime("%H:%M:%S"), *m, flush=True)
-
-ALIAS = {"int": "integer", "smallint": "integer", "tinyint": "integer", "bigint": "long", "numeric": "decimal",
-         "varchar": "string", "text": "string", "real": "float", "double precision": "double", "bool": "boolean"}
-TEMPORAL = ("date", "timestamp", "timestamptz", "time", "timetz")
-
-
-def ctype(c):
-    return ALIAS.get(c["type"], c["type"])
-
-
-def spark_type(c):
-    t = ctype(c)
-    if t == "decimal":
-        return f"DECIMAL({c.get('precision') or 38},{c.get('scale') or 0})"
-    return {"integer": "INT", "long": "BIGINT", "float": "FLOAT", "double": "DOUBLE", "boolean": "BOOLEAN",
-            "date": "DATE", "timestamp": "TIMESTAMP_NTZ", "timestamptz": "TIMESTAMP", "binary": "BINARY"}.get(t, "STRING")
-
-
-def path(base, n):
-    return f"{base}:{n}" if re.fullmatch(r"[a-z_][a-z0-9_]*", n) else f"{base}{'' if ':' in base else ':'}['{n}']"
-
-
-def decode(c, s, cast="CAST"):
-    t, ty = ctype(c), spark_type(c)
-    num = f"{s} RLIKE '^-?[0-9]+$'"
-    p = c.get("precision")
-    n = f"CAST({s} AS BIGINT)"
-    us = n if p is None or int(p) > 3 else f"{n} * 1000"   # no precision: 6 digits, microseconds
-    if t == "date":
-        return f"CASE WHEN {num} THEN date_add(DATE'1970-01-01', CAST({s} AS INT)) ELSE {cast}({s} AS DATE) END"
-    if t == "timestamp":
-        return (f"CASE WHEN {num} THEN timestampadd(MICROSECOND, {us}, TIMESTAMP_NTZ'1970-01-01 00:00:00') "
-                f"ELSE {cast}({s} AS TIMESTAMP_NTZ) END")
-    if t == "timestamptz":
-        return (f"CASE WHEN {num} THEN timestamp_micros({us}) "
-                f"ELSE {cast}(regexp_replace({s}, '([+-][0-9]{{2}})$', '$1:00') AS TIMESTAMP) END")
-    if t in ("time", "timetz"):
-        tus = f"{n} * 1000" if p is not None and int(p) <= 3 else n
-        return (f"date_format(CASE WHEN {num} THEN timestampadd(MICROSECOND, {tus}, TIMESTAMP_NTZ'1970-01-01 00:00:00') "
-                f"ELSE {cast}(concat('1970-01-01 ', {s}) AS TIMESTAMP_NTZ) END, 'HH:mm:ss.SSSSSS')")
-    return f"{cast}({s} AS {ty})"
-
-
-def typed(c, v, cast):
-    return decode(c, f"{v}::STRING", cast) if ctype(c) in TEMPORAL else f"{cast}({v} AS {spark_type(c)})"
-
-
-def load():
-    with open(f"{VOL}/_schema/schema.yaml") as f:
-        out = {t["name"]: t["columns"] for t in yaml.safe_load(f)["tables"]}
-    d = f"{VOL}/_schema/tables"
-    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
-        if name.endswith(".yaml"):
-            with open(f"{d}/{name}") as f:
-                out.update({t["name"]: t["columns"] for t in yaml.safe_load(f)["tables"]})
-    return out
-
 
 with open(f"{VOL}/_sources.yaml") as f:
     _S = yaml.safe_load(f)
 SOURCES = _S["sources"]
 SOURCE_KEY = bool(_S.get("source_key", len(SOURCES) > 1))
 T_NS = {s["prefix"]: int(s["t_ns"]) for s in SOURCES}
-SCHEMA = load()
+SCHEMA = load(VOL)
 if a.shard:
     _i, _n = (int(x) for x in a.shard.split("/"))
-    SCHEMA = {t: c for t, c in SCHEMA.items() if zlib.crc32(t.encode()) % _n == _i}
+    SCHEMA = {t: c for t, c in SCHEMA.items() if shard_of(t, _n) == _i}
 if a.placement_group:   # composite: the group's tables; own bronze (cdc_log_<table>, from the fan-out) for those that have it
     with open(f"{VOL}/_placement.tsv") as f:
         _p = [r.rstrip("\n").split("\t") for r in f if r.strip()]
@@ -194,14 +140,7 @@ def snapshot(table):
             r = r.option("header", "true")
         df = r.load(f"{VOL}/{table}/{s['prefix']}/*.{fmt}")
         have = set(df.columns)
-        sel = []
-        for c in SCHEMA[table]:
-            if c["name"] not in have:
-                sel.append(F.expr(f"CAST({c.get('default') or 'NULL'} AS {spark_type(c)})").alias(c["name"]))
-            elif ctype(c) in TEMPORAL:
-                sel.append(F.expr(decode(c, f"CAST({q(c['name'])} AS STRING)")).alias(c["name"]))
-            else:
-                sel.append(F.expr(f"CAST({q(c['name'])} AS {spark_type(c)})").alias(c["name"]))
+        sel = [F.expr(snapshot_value(c, have, BINHEX)).alias(c["name"]) for c in SCHEMA[table]]
         parts.append(df.select(*sel, F.lit(s["prefix"]).alias("_source"), F.lit(T_NS[s["prefix"]]).alias("_seq"),
                                F.lit("read").alias("_op"), F.lit(None).cast("string").alias("_idem")))
     out = None
@@ -217,12 +156,12 @@ def changes(batch, table):
     for c in SCHEMA[table]:
         n = c["name"]
         if n in k:
-            sel.append(F.expr(typed(c, path("key", n), "CAST")).alias(n))
+            sel.append(F.expr(typed(c, path("key", n), "CAST", BINHEX)).alias(n))
         elif c.get("default"):
             sel.append(F.expr(f"CASE WHEN value:after IS NOT NULL AND NOT is_variant_null(value:after) AND {path('value:after', n)} "
-                              f"IS NULL THEN CAST({c['default']} AS {spark_type(c)}) ELSE {typed(c, path('value:after', n), cast)} END").alias(n))
+                              f"IS NULL THEN CAST({c['default']} AS {spark_type(c)}) ELSE {typed(c, path('value:after', n), cast, BINHEX)} END").alias(n))
         else:
-            sel.append(F.expr(typed(c, path("value:after", n), cast)).alias(n))
+            sel.append(F.expr(typed(c, path("value:after", n), cast, BINHEX)).alias(n))
     return (batch.where(F.col("_table") == table)
             .select(*sel, F.expr(f"substring(destination, 1, length(destination) - {len(table) + 1})").alias("_source"),
                     "_seq", F.col("operation").alias("_op"),
@@ -239,7 +178,7 @@ def drift(batch, table):
         if c.get("primary_key"):
             continue
         v = path("value:after", c["name"])
-        items.append(f"IF({v} IS NOT NULL AND NOT is_variant_null({v}) AND {typed(c, v, 'TRY_CAST')} IS NULL, "
+        items.append(f"IF({v} IS NOT NULL AND NOT is_variant_null({v}) AND {typed(c, v, 'TRY_CAST', BINHEX)} IS NULL, "
                      f"named_struct('kind', 'type', 'col', '{c['name']}'), NULL)")
         if not c.get("default"):
             items.append(f"IF({v} IS NULL, named_struct('kind', 'missing', 'col', '{c['name']}'), NULL)")

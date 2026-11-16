@@ -36,7 +36,7 @@ def write(batch, batch_id):
     if a.tables:
         b = b.where(F.col("_table").isin(a.tables.split(",")))
     if "{shard}" in a.target:
-        # Spark's crc32 is zlib's (CRC-32, unsigned), so this is silver-from-schema.py's shard_of
+        # Spark's crc32 is zlib's (CRC-32, unsigned), so this is canonical_sql.shard_of
         b = b.withColumn("_part", (F.crc32(F.col("_table").cast("binary")) % a.shards).cast("string"))
         name = lambda p: a.target.format(shard=p)   # noqa: E731
     else:

@@ -21,11 +21,14 @@ regular expression over the whole name). A table no group takes is an error.
 Output columns: table, group, bronze (own | shared), silver (pipeline | merge), server (a global index over every
 group's servers, in group order), silver shard, silver shards (the group's jobs; 1 for a pipeline).
 """
+import os
 import re
 import sys
-import zlib
 
 import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # canonical_sql.py sits next to this file
+from canonical_sql import shard_of
 
 
 def main():
@@ -45,8 +48,8 @@ def main():
                 silver = g.get("silver") or {}
                 mode = silver.get("mode", "merge")
                 jobs = int(silver.get("jobs", 1)) if mode == "merge" else 1
-                h = zlib.crc32(t.encode())
-                out.append([t, g["name"], g.get("bronze", "shared"), mode, str(starts[gi] + h % servers), str(h % jobs), str(jobs)])
+                out.append([t, g["name"], g.get("bronze", "shared"), mode, str(starts[gi] + shard_of(t, servers)),
+                            str(shard_of(t, jobs)), str(jobs)])
                 break
         else:
             missing.append(t)
