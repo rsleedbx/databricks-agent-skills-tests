@@ -2,7 +2,7 @@
 psql variables filled (casts kept), the publication kept, created or altered on a fake connection (by schema on 15+,
 by table before), a failed ALTER explained, a new source's steps (DDL, verify rewritten, rename, labels, lead times, grants;\nbroken rules stop before the rename), the fill wrapper's exit codes and cleanup, the slot, and the command line refusing\nbad arguments before connecting.
 
-  uv run --no-project --with 'psycopg[binary]' --with pyyaml --with sqlglot python -m unittest test_tpch_sources_py.py
+  uv run --no-project --with 'psycopg[binary]' --with pyyaml --with sqlglot python -m unittest test_tpch_sources.py
 """
 from __future__ import annotations
 
