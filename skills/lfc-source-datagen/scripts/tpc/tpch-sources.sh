@@ -99,16 +99,25 @@ for s in "$@"; do
     "$DB" "$CONN_USER" "$name" "$CONN_USER" "$name" "$CONN_USER" | $SQL "$DB" > /dev/null
 done
 
-# 4. one publication for every source (ALTER when it exists: its list becomes these). Postgres 15 on: by schema, so a
-#    table added later is in it; before 15 (no TABLES IN SCHEMA): the tables there now, by name
-LIST=$(echo $NAMES | tr ' ' ',')
-if [ "$(one "SHOW server_version_num;" "$DB")" -ge 150000 ]; then WHAT="TABLES IN SCHEMA $LIST"
-else WHAT="TABLE $(one "SELECT string_agg(format('%I.%I', table_schema, table_name), ', ' ORDER BY 1) FROM information_schema.tables
-  WHERE table_type = 'BASE TABLE' AND table_schema IN ('$(echo $NAMES | sed "s/ /','/g")');" "$DB")"; fi
-if [ "$(one "SELECT COUNT(*) FROM pg_publication WHERE pubname = '$PUB';" "$DB")" = 1 ]; then
-  one "ALTER PUBLICATION $PUB SET $WHAT;" "$DB" > /dev/null
+# 4. one publication for every source. Postgres 15 on: by schema, so a table added later is in it; before 15 (no TABLES
+#    IN SCHEMA): the tables there now, by name. One that already has exactly these is kept: changing a publication's
+#    schemas (ALTER ... SET TABLES IN SCHEMA) needs a superuser, which a managed service's owner (Lakebase) isn't
+LIST=$(echo $NAMES | tr ' ' ','); IN="'$(echo $NAMES | sed "s/ /','/g")'"
+if [ "$(one "SHOW server_version_num;" "$DB")" -ge 150000 ]; then
+  WHAT="TABLES IN SCHEMA $LIST"; WANT=$(echo $NAMES | tr ' ' '\n' | LC_ALL=C sort | paste -sd, -)
+  HAVE="SELECT string_agg(n.nspname, ',' ORDER BY n.nspname COLLATE \"C\") FROM pg_publication p JOIN pg_publication_namespace pn
+    ON pn.pnpubid = p.oid JOIN pg_namespace n ON n.oid = pn.pnnspid WHERE p.pubname = '$PUB';"
 else
+  WANT=$(one "SELECT string_agg(format('%I.%I', table_schema, table_name), ', ' ORDER BY format('%I.%I', table_schema, table_name) COLLATE \"C\") FROM information_schema.tables
+    WHERE table_type = 'BASE TABLE' AND table_schema IN ($IN);" "$DB"); WHAT="TABLE $WANT"
+  HAVE="SELECT string_agg(format('%I.%I', schemaname, tablename), ', ' ORDER BY format('%I.%I', schemaname, tablename) COLLATE \"C\") FROM pg_publication_tables WHERE pubname = '$PUB';"
+fi
+if [ "$(one "SELECT COUNT(*) FROM pg_publication WHERE pubname = '$PUB';" "$DB")" = 0 ]; then
   one "CREATE PUBLICATION $PUB FOR $WHAT;" "$DB" > /dev/null
+elif [ "$(one "$HAVE" "$DB")" = "$WANT" ]; then
+  echo "tpch-sources: publication $PUB already has these sources: kept" >&2
+elif ! one "ALTER PUBLICATION $PUB SET $WHAT;" "$DB" > /dev/null; then
+  die "publication $PUB has other tables, and changing it failed (schemas need a superuser on Postgres 15 on): drop it as its owner (DROP PUBLICATION $PUB, after stopping the gateway that reads it) and rerun, or name another with --publication"
 fi
 
 # 5. what each source looks like
