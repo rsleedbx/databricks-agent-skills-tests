@@ -22,8 +22,11 @@ def connect(engine, a, tries=10):
 def _connect(engine, a):
     pw = password(a)
     if engine == "postgres":
-        import psycopg2                            # psycopg2-binary
-        c = psycopg2.connect(host=a.host, port=a.port or 5432, user=a.user, password=pw, dbname=a.database or "postgres")
+        try:                                       # psycopg 3 first (psycopg[binary]): psycopg2-binary's wheel aborted on
+            import psycopg as pg                   # import on serverless once (SIGABRT, 2026-11-15); the same calls work
+        except ImportError:                        # on both, and the planner's SQL has no parameters, so % stays as is
+            import psycopg2 as pg                  # psycopg2-binary
+        c = pg.connect(host=a.host, port=a.port or 5432, user=a.user, password=pw, dbname=a.database or "postgres")
         c.autocommit = True
     elif engine == "mysql":
         import pymysql

@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "The datagen skill's Python side: TPC spec DDL and TPC-H business sources, for a notebook, job or pipeline"
 requires-python = ">=3.10"
 dependencies = [
-  "psycopg2-binary>=2.9",
+  "psycopg[binary]>=3.2",
   "databricks-sdk>=0.81",
   "lfc-statschema @ https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema/scripts",
 ]

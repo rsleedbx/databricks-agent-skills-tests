@@ -2,7 +2,7 @@
 psql variables filled (casts kept), the publication kept, created or altered on a fake connection (by schema on 15+,
 by table before), a failed ALTER explained, the slot, and the command line refusing bad arguments before connecting.
 
-  uv run --no-project --with psycopg2-binary python -m unittest test_tpch_sources_py.py
+  uv run --no-project --with 'psycopg[binary]' python -m unittest test_tpch_sources_py.py
 """
 from __future__ import annotations
 
@@ -20,17 +20,8 @@ from lfc_source_datagen import tpch_sources as ts
 
 
 def render(q):
-    """psycopg2.sql objects as text without a connection (identifiers double-quoted)."""
-    from psycopg2 import sql
-    if isinstance(q, str):
-        return q
-    if isinstance(q, sql.Composed):
-        return "".join(render(x) for x in q.seq)
-    if isinstance(q, sql.Identifier):
-        return ".".join('"' + s.replace('"', '""') + '"' for s in q.strings)
-    if isinstance(q, sql.SQL):
-        return q.string
-    raise TypeError(type(q))
+    """psycopg.sql objects as text without a connection."""
+    return q if isinstance(q, str) else q.as_string(None)
 
 
 class FakeCursor:

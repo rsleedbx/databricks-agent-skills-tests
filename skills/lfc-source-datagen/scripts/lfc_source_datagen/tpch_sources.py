@@ -54,11 +54,9 @@ class Pg:
     admin_database: str = "postgres"     # the database to connect to before <database> exists
 
     def connect(self, database: str | None = None):
-        import psycopg2
-        c = psycopg2.connect(host=self.host, port=self.port, user=self.user, password=self.password,
-                             dbname=database or self.admin_database)
-        c.autocommit = True
-        return c
+        import psycopg
+        return psycopg.connect(host=self.host, port=self.port, user=self.user, password=self.password,
+                               dbname=database or self.admin_database, autocommit=True)
 
 
 def lakebase(project: str, branch: str | None = None, profile: str | None = None) -> Pg:
@@ -169,7 +167,7 @@ def _one(cur, q, args=None):
 def tpch_sources(pg: Pg, database: str, sources, login: str | None = None, labels: str = "spec",
                  publication: str | None = None, sessions: int = 4, log=print) -> list[dict]:
     """Build the sources (see the module's docstring); returns [{source, lines, late_pct, median_days}]."""
-    from psycopg2 import sql
+    from psycopg import sql
     _check(database, "database")
     srcs = _sources(sources)
     if labels not in ("spec", "anonymous"):
