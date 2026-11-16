@@ -19,7 +19,7 @@ class Cur:
 
     def execute(self, q, params=None):
         self.log.append(q)
-        if "FROM information_schema.tables" in q:
+        if "FROM pg_class c" in q:
             self.rows = [(s, t) for s in params[0].strip("{}").split(",") for t in ("lineitem", "orders")]
         elif "FROM pg_publication_tables WHERE pubname = %s" in q:
             self.rows = [tuple(x.split(".")) for x in (self.pub or [])]
@@ -55,6 +55,14 @@ class Cdc(unittest.TestCase):
             cdc.publication(Cur(pub=["a.lineitem"], add_fails=True), "p", ["a"], log=lambda m: None)
         with self.assertRaises(ValueError):
             cdc.publication(Cur(), "p", [])
+
+    def test_needs_autocommit(self):
+        c = Cur()
+        c.connection = type("C", (), {"autocommit": False})()
+        for f in (lambda: cdc.publication(c, "p", ["a"], log=lambda m: None), lambda: cdc.slot(c, "s")):
+            with self.assertRaisesRegex(ValueError, "autocommit"):
+                f()
+        self.assertEqual(c.log, [])
 
     def test_slot(self):
         c = Cur()

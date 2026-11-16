@@ -1,5 +1,6 @@
-"""lfc_source_contract.cdc: a PostgreSQL source's change capture for Lakeflow Connect, on any DB-API cursor (psycopg on
-the laptop, lfc_source_contract.jdbc.dbapi in a notebook or job), each step safe to run again:
+"""lfc_source_contract.cdc: a PostgreSQL source's change capture for Lakeflow Connect, on any DB-API cursor in autocommit
+(psycopg on the laptop with autocommit=True, lfc_source_contract.jdbc.dbapi in a notebook or job), each step safe to
+run again:
 
     from lfc_source_contract import cdc
     cdc.publication(cur, "orders_pub", ["express", "grocery"])   # every table in those schemas
@@ -21,6 +22,13 @@ def _q(table: str) -> str:
     return ".".join(ident(x) for x in table.split(".", 1))
 
 
+def _autocommit(cur) -> None:
+    """Each step commits by itself (and a slot can't be made in a transaction that has written): a cursor of a
+    connection that isn't in autocommit would leave writes uncommitted."""
+    if getattr(getattr(cur, "connection", None), "autocommit", True) is False:
+        raise ValueError("cdc: the cursor's connection must be in autocommit (psycopg: connect(..., autocommit=True))")
+
+
 def _rows(cur, sql: str, params=None) -> list[tuple]:
     cur.execute(sql, params)
     return [tuple(r) for r in cur.fetchall()]
@@ -30,9 +38,12 @@ def publication(cur, name: str, schemas: list[str], log=print) -> str:
     """Every table in the schemas in publication `name`; returns what it did: created, added N, or kept."""
     if not schemas:
         raise ValueError("publication: no schemas")
-    tables = [f"{a}.{b}" for a, b in _rows(cur, "SELECT table_schema, table_name FROM information_schema.tables "
-                                               "WHERE table_type = 'BASE TABLE' AND table_schema = ANY(%s::text[]) "
-                                               "ORDER BY 1, 2", ("{" + ",".join(schemas) + "}",))]
+    _autocommit(cur)
+    # pg_class, not information_schema.tables: that shows only the tables the reading login may use, and in a notebook
+    # the reads may go through another login (dbapi's read_connection)
+    tables = [f"{a}.{b}" for a, b in _rows(cur, "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON "
+                                               "n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition "
+                                               "AND n.nspname = ANY(%s::text[]) ORDER BY 1, 2", ("{" + ",".join(schemas) + "}",))]
     if not tables:
         raise ValueError(f"publication: no tables in {', '.join(schemas)}")
     have = {f"{a}.{b}" for a, b in _rows(cur, "SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = %s",
@@ -62,6 +73,7 @@ def publication(cur, name: str, schemas: list[str], log=print) -> str:
 def slot(cur, name: str, drop: bool = False) -> dict | None:
     """Create the pgoutput replication slot `name` (kept when it exists), or with drop=True drop it when not active.
     Returns {slot, active, held} (the WAL it holds), or None when there is none."""
+    _autocommit(cur)
     if drop:
         cur.execute("DO $s$ BEGIN PERFORM pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = "
                     f"{literal(name)} AND NOT active; END $s$")
