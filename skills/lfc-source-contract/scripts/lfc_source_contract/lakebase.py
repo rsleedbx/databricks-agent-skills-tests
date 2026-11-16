@@ -51,6 +51,44 @@ class SetupError(Exception):
         self.code = code
 
 
+def endpoint(w, project: str, branch: str | None = None, proj=None) -> tuple[str, str]:
+    """The project's read-write endpoint on the branch (default: the project's default branch): (its name, host)."""
+    name = f"projects/{project}"
+    proj = proj or w.postgres.get_project(name)
+    br = f"{name}/branches/{branch}" if branch else proj.status.default_branch
+    if not br.startswith("projects/"):
+        br = f"{name}/branches/{br}"
+    ep = next((e for e in w.postgres.list_endpoints(br)
+               if e.status and e.status.endpoint_type == EndpointType.ENDPOINT_TYPE_READ_WRITE), None)
+    if ep is None:
+        raise SetupError(f"no read-write endpoint on {br}")
+    return ep.name, ep.status.hosts.host
+
+
+def owner_login(project: str, branch: str | None = None, profile: str | None = None) -> dict:
+    """You, the project owner, at its read-write endpoint: {host, user, password}, the password an OAuth database
+    credential (about an hour). For administrator SQL from the laptop; a notebook writes through a JDBC connection."""
+    w = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
+    ep, host = endpoint(w, project, branch)
+    return {"host": host, "user": w.current_user.me().user_name,
+            "password": w.postgres.generate_database_credential(endpoint=ep).token}
+
+
+def _owner(w, ep: str, host: str):
+    """A psycopg connection to databricks_postgres as you, the owner (autocommit: CREATE DATABASE needs it)."""
+    return psycopg.connect(host=host, port=5432, dbname="databricks_postgres", user=w.current_user.me().user_name,
+                           password=w.postgres.generate_database_credential(endpoint=ep).token, sslmode="require",
+                           autocommit=True)
+
+
+def _login(pg, name: str, pw: str) -> bool:
+    """Create the login (LOGIN REPLICATION) with this password, or give it the password; True when it existed."""
+    had = pg.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone()
+    verb = sql.SQL("ALTER") if had else sql.SQL("CREATE")
+    pg.execute(sql.SQL("{} ROLE {} WITH LOGIN REPLICATION PASSWORD {}").format(verb, sql.Identifier(name), sql.Literal(pw)))
+    return bool(had)
+
+
 def setup(project: str, role: str, connection: str, branch: str | None = None, profile: str | None = None,
           create_project: bool = False, pg_version: int = 17, log=print, database: str | None = None,
           writer: str | None = None, jdbc_connection: str | None = None) -> dict:
@@ -81,14 +119,7 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
                                   FieldMask(["spec.enable_pg_native_login"])).wait()
         log(f"lakebase-source: password logins turned on for {project}")
 
-    br = f"{name}/branches/{branch}" if branch else proj.status.default_branch
-    if not br.startswith("projects/"):
-        br = f"{name}/branches/{br}"
-    endpoints = [e for e in w.postgres.list_endpoints(br)
-                 if e.status and e.status.endpoint_type == EndpointType.ENDPOINT_TYPE_READ_WRITE]
-    if not endpoints:
-        raise SetupError(f"no read-write endpoint on {br}")
-    endpoint, host = endpoints[0].name, endpoints[0].status.hosts.host
+    ep, host = endpoint(w, project, branch, proj)
 
     # look the connections up before a password changes, so a permission error stops here with nothing changed
     def have(name):
@@ -102,16 +133,8 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
 
     password = secrets.token_urlsafe(32)
     wpassword = secrets.token_urlsafe(32) if jdbc_connection else None
-    token = w.postgres.generate_database_credential(endpoint=endpoint).token
-    with psycopg.connect(host=host, port=5432, dbname="databricks_postgres", user=w.current_user.me().user_name,
-                         password=token, sslmode="require", autocommit=True) as pg:
-        def login(name, pw):
-            had = pg.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone()
-            verb = sql.SQL("ALTER") if had else sql.SQL("CREATE")
-            pg.execute(sql.SQL("{} ROLE {} WITH LOGIN REPLICATION PASSWORD {}").format(
-                verb, sql.Identifier(name), sql.Literal(pw)))
-            return had
-        exists = login(role, password)
+    with _owner(w, ep, host) as pg:
+        exists = _login(pg, role, password)
     options = {"host": host, "port": "5432", "user": role, "password": password}
     try:
         if have_connection:
@@ -124,22 +147,14 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
                          f"{'updated' if have_connection else 'created'} ({type(e).__name__}: {e}); rerun when that's "
                          "fixed, which sets a new password on both", code=1) from None
     finally:
-        del password, options, token
+        del password, options
     wexists = None
     if jdbc_connection:   # the writer's password changes only now, after the reader's connection holds its new one
-        with psycopg.connect(host=host, port=5432, dbname="databricks_postgres", user=w.current_user.me().user_name,
-                             password=w.postgres.generate_database_credential(endpoint=endpoint).token,
-                             sslmode="require", autocommit=True) as pg:
-            def login(name, pw):
-                had = pg.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone()
-                verb = sql.SQL("ALTER") if had else sql.SQL("CREATE")
-                pg.execute(sql.SQL("{} ROLE {} WITH LOGIN REPLICATION PASSWORD {}").format(
-                    verb, sql.Identifier(name), sql.Literal(pw)))
-                return had
+        with _owner(w, ep, host) as pg:
             if not pg.execute("SELECT 1 FROM pg_database WHERE datname = %s", (database,)).fetchone():
                 pg.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
                 log(f"lakebase-source: database {database} created")
-            wexists = login(writer, wpassword)
+            wexists = _login(pg, writer, wpassword)
             pg.execute(sql.SQL("GRANT CONNECT, CREATE ON DATABASE {} TO {}").format(sql.Identifier(database),
                                                                                    sql.Identifier(writer)))
             pg.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(sql.Identifier(database), sql.Identifier(role)))

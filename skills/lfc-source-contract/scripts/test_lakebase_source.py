@@ -226,6 +226,19 @@ class LakebaseSource(unittest.TestCase):
             with self.assertRaises(ls.SetupError):
                 ls.setup("p", "r", "c", log=lambda m: None, **kw)
 
+    def test_endpoint_and_owner_login(self):
+        w = workspace()
+        self.assertEqual(ls.endpoint(w, "p"), ("projects/p/branches/production/endpoints/primary", "ep-1.example.com"))
+        w.postgres.list_endpoints.assert_called_with("projects/p/branches/production")
+        ls.endpoint(w, "p", branch="dev")
+        w.postgres.list_endpoints.assert_called_with("projects/p/branches/dev")
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w):
+            self.assertEqual(ls.owner_login("p"), {"host": "ep-1.example.com", "user": "owner@example.com",
+                                                   "password": "oauth-token"})
+        w.postgres.list_endpoints.return_value = w.postgres.list_endpoints.return_value[:1]
+        with self.assertRaises(ls.SetupError):
+            ls.endpoint(w, "p")
+
     def test_setup_errors(self):
         w = workspace(project=False)
         with mock.patch.object(ls, "WorkspaceClient", return_value=w), self.assertRaises(ls.SetupError) as e:

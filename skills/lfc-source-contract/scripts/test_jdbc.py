@@ -35,7 +35,11 @@ class FakeReader:
 
 class FakeSpark:
     def __init__(self, rows=()):
-        self.log, self.rows = [], list(rows)
+        self.log, self.rows, self.sqls = [], list(rows), []
+
+    def sql(self, q, args=None):
+        self.sqls.append((q, args))
+        return FakeReader([], self.rows)
 
     @property
     def read(self):
@@ -77,6 +81,35 @@ class Jdbc(unittest.TestCase):
                                      "numPartitions": "1", "sessionInitStatement": "UPDATE t SET v = 1"})
         self.assertEqual(db.query("SELECT n, v FROM t"), [(3, "a")])
         self.assertEqual(sp.log[1], {"format": "jdbc", "databricks.connection": "conn", "query": "SELECT n, v FROM t"})
+        db.query("SELECT 1", init="SET search_path = s")
+        self.assertEqual(sp.log[2]["sessionInitStatement"], "SET search_path = s")
+
+    def test_dbapi_reads_through_remote_query_writes_through_jdbc(self):
+        sp = FakeSpark(rows=[('[{"f1": 5, "f2": "it\'s"}]',)])
+        con = jdbc.dbapi(sp, "w_jdbc", read_connection="r_pg", database="orders")
+        cur = con.cursor()
+        cur.execute("SELECT count(*), %s FROM s.t WHERE x LIKE 'a%%'", ("it's",))
+        self.assertEqual(cur.fetchall(), [(5, "it's")])
+        q, args = sp.sqls[0]
+        self.assertEqual(q, "SELECT * FROM remote_query(:connection, database => :database, query => :query)")
+        self.assertEqual((args["connection"], args["database"]), ("r_pg", "orders"))
+        self.assertIn("FROM (SELECT count(*), 'it''s' FROM s.t WHERE x LIKE 'a%') q", args["query"])
+        self.assertEqual(sp.log, [])                                   # no read through the JDBC connection
+        cur.execute("SET search_path = s")
+        cur.execute("UPDATE t SET v = 1")
+        self.assertEqual(sp.log[0]["sessionInitStatement"], "SET search_path = s;\nUPDATE t SET v = 1")
+        cur.execute("WITH d AS (SELECT 1) UPDATE t SET v = 2")       # a CTE then a write: a write
+        self.assertEqual(sp.log[1]["sessionInitStatement"], "SET search_path = s;\nWITH d AS (SELECT 1) UPDATE t SET v = 2")
+        with self.assertRaises(ValueError):
+            jdbc.dbapi(sp, "w", read_connection="r")
+
+    def test_dbapi_without_a_read_connection(self):
+        sp = FakeSpark(rows=[('[{"f1": 1}]',)])
+        cur = jdbc.dbapi(sp, "w_jdbc").cursor()
+        cur.execute("SELECT 1")
+        self.assertEqual(cur.fetchone(), (1,))
+        self.assertTrue(sp.log[0]["query"].startswith("SELECT coalesce(json_agg"))
+        self.assertEqual(jdbc.ident('a"b'), '"a""b"')
 
 
 if __name__ == "__main__":
