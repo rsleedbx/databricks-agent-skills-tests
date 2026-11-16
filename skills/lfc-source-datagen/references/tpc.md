@@ -55,6 +55,8 @@ Where it differs from the spec:
 
 - [`scripts/tpc/tpch-verify.sql`](../scripts/tpc/tpch-verify.sql): TPC-H checks.
 
+- [`scripts/tpc/tpch-sources.sh`](../scripts/tpc/tpch-sources.sh), [`tpch-labels.sql`](../scripts/tpc/tpch-labels.sql), [`tpch-lead-times.sql`](../scripts/tpc/tpch-lead-times.sql): TPC-H as several business sources (Postgres): [tpch-sources.md](tpch-sources.md).
+
 ## Run
 
 `tpc-schema.sh` writes a workload's tables as MySQL DDL, with the tags in the column and table comments: all six workloads, one entry point (`tpc-schema.sh <tpcb|tpcc|tpch|tpcds|tpce|tpcdi> [SF]`). TPC-C, TPC-DS, TPC-E and TPC-DI are shaped from statschema's schemas (`shape.py --sf`, then `ddl.py --dialect mysql`). **lfc-source-statschema**'s `ddl-to-schema.py` turns that into its canonical `schema.yaml` (keeping the tags and the checks), and its `ddl.py` writes the DDL for any engine, transpiling the formulas with [sqlglot](https://github.com/tobymao/sqlglot) (`DIV` stays integer division). Then `fill.sh` (in the skill's "Fill level by level") fills it with the engine's planners, one level at a time, and the verify file checks the spec's rules on the data.

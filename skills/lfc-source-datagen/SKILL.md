@@ -25,6 +25,10 @@ How the planner works (every row from one integer, resuming, keys only at the en
 
 [`scripts/workload.sh`](scripts/workload.sh) `--model <model> --sf <scale> --dialect <tsql|postgres> --out <dir> [--spec]` shapes one of statschema's models (its `schemas/` folder) at a scale, and writes `<dir>/workload.json` (the workload contract, lfc-workload-contract) with the model's DDL, its tables, and this folder's `copies.sh` (fill) and `bundle.sh` (bundle) as the commands. A test takes that file as `WORKLOAD_JSON`. `tsql` (SQL Server) and `postgres` have a fill command so far. `--spec` takes TPC-H or TPC-B as `tpc/tpc-schema.sh` writes them from the spec in place of statschema's model, and for TPC-H on `postgres` adds `verify` (the spec's checks). It needs uv.
 
+### TPC-H as several business sources
+
+[`scripts/tpc/tpch-sources.sh`](scripts/tpc/tpch-sources.sh): TPC-H as n named Postgres schemas at their own scales, for an n:1 test, with spec text values and learnable lead times: [references/tpch-sources.md](references/tpch-sources.md).
+
 ## Make a dataset
 
 A typical request: *"Create 100 tables, rows uniformly distributed up to 1 million, with a variety of data types."*
