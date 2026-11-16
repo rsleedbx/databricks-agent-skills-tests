@@ -30,7 +30,8 @@ def d(p, s):
 
 class Rule(unittest.TestCase):
     def test_widest(self):
-        for types, want in ((["int", "bigint"], "BIGINT"), (["smallint", "int"], "INT"),
+        for types, want in ((["int", "bigint"], "BIGINT"), (["smallint", "int"], "INT"), (["tinyint", "smallint"], "SMALLINT"),
+                            (["tinyint", "tinyint"], "TINYINT"), (["smallint", "decimal(4,1)"], "DECIMAL(11,1)"),
                             (["decimal(10,2)", "decimal(12,4)"], "DECIMAL(12,4)"),
                             (["decimal(10,2)", "decimal(12,1)"], "DECIMAL(13,2)"),
                             (["int", "decimal(5,2)"], "DECIMAL(12,2)"),            # an INT as decimal(10,0)
@@ -55,9 +56,11 @@ class Rule(unittest.TestCase):
         self.assertEqual(ct.from_spark("decimal(12, 4)"), d(12, 4))
         self.assertEqual(ct.from_spark("varchar(20)"), {"type": "string"})
         self.assertEqual(ct.from_spark("array<int>"), {"type": "array<int>"})
+        self.assertEqual(ct.from_spark("smallint"), {"type": "integer", "bits": 16})
+        self.assertNotEqual(ct.from_spark("smallint"), ct.from_spark("int"))   # so a SMALLINT target widens to INT
 
     def test_widest_of_a_target_widens_in_place(self):   # what merge_all asks Delta for is a change it makes
-        for old, src in (("int", "bigint"), ("int", "decimal(5,2)"), ("bigint", "decimal(10,2)"), ("bigint", "decimal(38,0)"),
+        for old, src in (("int", "bigint"), ("int", "decimal(5,2)"), ("smallint", "int"), ("tinyint", "decimal(6,2)"), ("bigint", "decimal(10,2)"), ("bigint", "decimal(38,0)"),
                          ("decimal(10,2)", "decimal(12,4)"), ("date", "timestamp_ntz"), ("float", "double")):
             self.assertTrue(ct.widens_in_place(old, ct.widest([old, src])), (old, src))
 
@@ -65,6 +68,9 @@ class Rule(unittest.TestCase):
         for old, new, ok in (("int", "bigint", True), ("int", "decimal(12,2)", True), ("decimal(10,2)", "decimal(12,4)", True),
                              ("int", "decimal(9,0)", False), ("int", "decimal(10,0)", True),     # as Delta: live 2026-11-16
                              ("bigint", "decimal(19,0)", False), ("bigint", "decimal(20,0)", True),
+                             ("smallint", "int", True), ("tinyint", "smallint", True), ("int", "smallint", False),
+                             ("smallint", "decimal(10,0)", True), ("smallint", "decimal(9,0)", False),
+                             ("tinyint", "decimal(12,2)", True), ("tinyint", "decimal(11,2)", False),
                              ("decimal(10,2)", "decimal(12,1)", False), ("decimal(10,4)", "decimal(10,6)", False),
                              ("date", "timestamp_ntz", True), ("date", "timestamp", False), ("int", "string", False),
                              ("float", "double", True), ("bigint", "int", False)):

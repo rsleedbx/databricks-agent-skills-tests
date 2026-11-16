@@ -382,6 +382,7 @@ class Shapes(unittest.TestCase):
         tgt = "ALTER TABLE `main`.`shop_silver`.`all_nation`"
         self.assertEqual(self.widened("int", "bigint"), [f"{tgt} SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')",
                                                          f"{tgt} ALTER COLUMN `n_name` TYPE BIGINT"])
+        self.assertEqual(self.widened("smallint", "int")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE INT")
         self.assertEqual(self.widened("decimal(10,2)", "decimal(12,4)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(12,4)")
         self.assertEqual(self.widened("decimal(10,2)", "decimal(12,1)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(13,2)")  # 11 integer digits, scale 2
 

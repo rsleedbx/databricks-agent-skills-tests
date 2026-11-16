@@ -16,10 +16,10 @@ import re
 ALIAS = {"int": "integer", "smallint": "integer", "tinyint": "integer", "bigint": "long", "numeric": "decimal",
          "varchar": "string", "text": "string", "real": "float", "double precision": "double", "bool": "boolean"}
 RANK = {"integer": 0, "long": 1, "decimal": 2}
-SPARK = {"tinyint": "integer", "byte": "integer", "smallint": "integer", "short": "integer", "int": "integer",
-         "integer": "integer", "bigint": "long", "long": "long", "float": "float", "real": "float", "double": "double",
+SPARK = {"int": "integer", "integer": "integer", "bigint": "long", "long": "long", "float": "float", "real": "float", "double": "double",
          "boolean": "boolean", "date": "date", "timestamp": "timestamptz", "timestamp_ltz": "timestamptz",
          "timestamp_ntz": "timestamp", "string": "string", "varchar": "string", "char": "string", "binary": "binary"}
+BITS = {"tinyint": 8, "byte": 8, "smallint": 16, "short": 16}   # a narrower integer: canonical integer with its width
 # Delta's type widening, in place (ALTER COLUMN TYPE): integers to larger integers or decimal, float to double, a
 # decimal to more digits without less scale, a date to a timestamp without time zone
 IN_PLACE = {("integer", "long"), ("integer", "decimal"), ("long", "decimal"), ("float", "double"),
@@ -36,6 +36,8 @@ def spark_type(c):
     t = ctype(c)
     if t == "decimal":
         return f"DECIMAL({c.get('precision') or 38},{c.get('scale') or 0})"
+    if t == "integer" and c.get("bits") in (8, 16):
+        return "TINYINT" if c["bits"] == 8 else "SMALLINT"
     if c.get("unsigned") and t in ("integer", "long"):   # MySQL's INT UNSIGNED goes past INT, BIGINT UNSIGNED past BIGINT
         return "BIGINT" if t == "integer" else "DECIMAL(20,0)"
     return {"integer": "INT", "long": "BIGINT", "float": "FLOAT", "double": "DOUBLE", "boolean": "BOOLEAN",
@@ -45,6 +47,9 @@ def spark_type(c):
 def widen(a, b, typed=False):
     """Two column definitions of one column -> the type that holds both."""
     ta, tb = a["type"], b["type"]
+    if ta == tb == "integer" and (a.get("bits") or b.get("bits")):   # a TINYINT or SMALLINT (Spark types): the wider
+        bits = max(a.get("bits", 32), b.get("bits", 32))
+        return {k: v for k, v in a.items() if k != "bits"} | ({"bits": bits} if bits < 32 else {})
     if ta == tb and ta != "decimal":
         out = {k: v for k, v in a.items() if k != "length"}
         if a.get("length") and b.get("length"):   # a length only when both have one (none is unbounded)
@@ -53,8 +58,8 @@ def widen(a, b, typed=False):
     if ta in RANK and tb in RANK:
         if "decimal" not in (ta, tb):
             return dict(a, type="long")
-        # integers as decimal(10,0) / (19,0); typed, a long as (20,0): Delta widens a BIGINT in place only to a decimal
-        # with 20 integer digits or more (NOT_SUPPORTED_CHANGE_COLUMN for 19: a serverless warehouse, 2026-11-16)
+        # integers as decimal(10,0) / (19,0); typed, a long as (20,0): Delta widens an integer in place only to a decimal
+        # with 10 integer digits or more (TINYINT and SMALLINT too), a BIGINT 20 (a serverless warehouse, 2026-11-16)
         def ds(c):
             if c["type"] == "decimal":
                 p, s = int(c.get("precision") or 38), int(c.get("scale") or 0)
@@ -81,6 +86,8 @@ def from_spark(t: str) -> dict:
         return {"type": "decimal", "precision": int(m.group(1)), "scale": int(m.group(2))}
     if t == "decimal":
         return {"type": "decimal", "precision": 10, "scale": 0}
+    if t in BITS:
+        return {"type": "integer", "bits": BITS[t]}
     return {"type": SPARK.get(t.split("(")[0], t)}
 
 
@@ -98,6 +105,8 @@ def widens_in_place(old: str, new: str) -> bool:
     a, b = from_spark(old), from_spark(new)
     if a["type"] == b["type"] == "decimal":
         return b["scale"] >= a["scale"] and b["precision"] - b["scale"] >= a["precision"] - a["scale"]
-    if a["type"] in ("integer", "long") and b["type"] == "decimal":   # integer digits: an INT 10, a BIGINT 20
+    if a["type"] in ("integer", "long") and b["type"] == "decimal":   # integer digits: TINYINT to INT 10, BIGINT 20
         return b["precision"] - b["scale"] >= (10 if a["type"] == "integer" else 20)
+    if a["type"] == b["type"] == "integer":   # a narrower integer into a wider one
+        return a.get("bits", 32) < b.get("bits", 32)
     return (a["type"], b["type"]) in IN_PLACE
