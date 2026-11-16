@@ -17,6 +17,7 @@
 #   and the login (user) the grants go to. A schema that already exists is kept as it is. Needs uv (workload.sh).
 #   Prints one row per source: name, lines, % late, median days from order to receipt.
 #   WORKLOAD_SH: another workload.sh (the offline test's stub).
+#   The same in Python, for a notebook or a job: lfc_source_datagen.tpch_sources (references/tpch-sources.md).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); DG=$(cd "$HERE/.." && pwd); SK=$(cd "$DG/../.." && pwd)
 die() { echo "tpch-sources: $*" >&2; exit 2; }

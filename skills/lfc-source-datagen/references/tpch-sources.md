@@ -23,6 +23,26 @@ SOURCE_JSON=src.json bash scripts/tpc/tpch-sources.sh slot orders_db orders_slot
 
 The contract (**lfc-source-contract**) gives the administrator's `sql_cmd` (it creates the database and the publication; for Lakebase, `lakebase-sql.sh`) and the login (`user`) the grants go to. The scale factor is at least 0.03 (TPC-H needs 230 suppliers). A schema that already exists is kept as it is.
 
+## From a notebook, a job, or the laptop (Python)
+
+The same steps are the package `lfc-source-datagen` (`lfc_source_datagen.tpch_sources`), through a direct connection: no psql and no CLI, so it runs in a workspace notebook, as a serverless job, and on the laptop.
+
+```python
+%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-datagen/scripts"
+
+from lfc_source_datagen.tpch_sources import lakebase, Pg, tpch_sources, slot
+pg = lakebase("my-project")      # in a workspace: its own login; on a laptop: lakebase("my-project", profile="...")
+# pg = Pg(host="...", user="...", password="...")   # any PostgreSQL, as an administrator
+rows = tpch_sources(pg, "orders_db", {"express": (0.05, "1,0,1,1,5,0,0,1,2"), "grocery": 0.1}, login="lfc_cdc",
+                    labels="anonymous")
+display(rows)                    # source, lines, late_pct, median_days
+slot(pg, "orders_db", "orders_slot")      # after the gateway and ingestion pipeline exist; drop=True to drop it
+```
+
+As a job: a `python_wheel_task` with `package_name` `lfc-source-datagen`, `entry_point` `lfc-tpch-sources`, the archive URL in the environment's dependencies, and the parameters `--lakebase <project> [--login R] [--labels anonymous] <database> <name>:<sf>[:<lead times>] ...` (`--slot <slot> [--drop] <database>` for the slot). On the laptop: `uv run --with <the scripts folder> lfc-tpch-sources --lakebase <project> --profile <profile> ...`, or `--host`, `--user` and `--password-file` for any PostgreSQL.
+
+It fills with the skill's Python planner (`python/fill.py`, run unchanged) where `tpch-sources.sh` uses the SQL planner through psql. Every column the spec gives a formula (keys, prices, quantities, dates, and so the lead times and the labels) is the same, so the spec checks and the lateness are the same. The filler text columns and the two the spec DDL gives no formula (`o_orderstatus`, `o_totalprice`) differ: the Python planner's scramble constants are its own (`references/python-drivers.md`). Measured 2026-11-15 on PostgreSQL 14 at 0.03, three sources: 25.8 s, against 28.4 s for `tpch-sources.sh`, and the same summary.
+
 ## Text values
 
 The generic fill writes numbers into TPC-H's text columns. A person, Genie or a model reads words, so `tpch-labels.sql` writes the spec's:

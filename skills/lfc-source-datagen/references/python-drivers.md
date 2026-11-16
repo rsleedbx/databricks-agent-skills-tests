@@ -11,7 +11,7 @@ The SQL planners (`scripts/postgres`, `mysql`, `sqlserver`, `oracle`) run with e
 
 ```bash
 P=scripts/python
-uv run --with psycopg2-binary $P/fill.py pg tpch --host db.example.com --user postgres --password-file pg.pw            # Postgres: schema tpch in database postgres
+uv run --with 'psycopg[binary]' $P/fill.py pg tpch --host db.example.com --user postgres --password-file pg.pw            # Postgres: schema tpch in database postgres
 uv run --with pymysql         $P/fill.py my tpch --host ... --user root --password-file my.pw --sessions 2              # MySQL: database tpch
 uv run --with mssql-python    $P/fill.py ms dbo --database tpch --host ... --user sa --password-file ms.pw              # SQL Server: schema dbo in database tpch
 uv run --with oracledb        $P/fill.py ora tpch --database FREEPDB1 --host ... --user system --password-file ora.pw   # Oracle: user TPCH, service FREEPDB1
@@ -104,7 +104,7 @@ Every engine has a driver that installs with `pip` alone, with no JVM, and with 
 
 | Engine | Package | What's inside | Connect |
 |---|---|---|---|
-| PostgreSQL, and Postgres-protocol engines (CockroachDB, YugabyteDB) | `psycopg2-binary` 2.9.12 | libpq, built into the wheel | `psycopg2.connect(host=, port=, user=, password=, dbname=)` |
+| PostgreSQL, and Postgres-protocol engines (CockroachDB, YugabyteDB) | `psycopg[binary]` 3.2 or later (psycopg 3; not psycopg2, whose SSL and certificate handling breaks on serverless) | libpq, built into the wheel | `psycopg.connect(host=, port=, user=, password=, dbname=, autocommit=True)` |
 | MySQL, MariaDB | `pymysql` 1.2.0 | Pure Python | `pymysql.connect(host=, port=, user=, password=, database=, charset="utf8mb4")` |
 | SQL Server, Azure SQL | `mssql-python` 1.11.0 (macOS), 1.16.0 (Linux) | Microsoft's ODBC driver and driver manager, inside the wheel (from 1.16, in the `mssql-python-odbc` wheel it pulls in). **On Linux it also needs the OS library `libltdl.so.7`** (`apt-get install libltdl7`) | `mssql_python.connect("Server=host,port;Database=;UID=;PWD={...};Encrypt=yes", autocommit=True)` |
 | Oracle | `oracledb` 4.0.2 | Thin mode is pure Python (no Instant Client; Oracle 12.1 and later) | `oracledb.connect(user=, password=, dsn="host:port/service")` |

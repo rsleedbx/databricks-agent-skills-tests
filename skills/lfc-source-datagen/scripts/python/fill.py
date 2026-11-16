@@ -11,7 +11,7 @@
 # The schema is a Postgres schema (in --database), a MySQL database, a SQL Server schema (in --database), an Oracle or
 # Db2 schema (user), or an Informix database. The connection: --host, --port, --user, --database (Oracle: the service,
 # e.g. FREEPDB1), --password-file (or LFC_PASSWORD_FILE); Informix also --server (the DBSERVERNAME). Run it with the
-# engine's driver installed, e.g.  uv run --with psycopg2-binary fill.py pg tpch --host db --user postgres --password-file pg.pw
+# engine's driver installed, e.g.  uv run --with 'psycopg[binary]' fill.py pg tpch --host db --user postgres --password-file pg.pw
 import argparse, os, sys, threading, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import planner, drivers
