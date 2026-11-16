@@ -16,6 +16,7 @@
 #   The contract (lfc-source-contract) gives the administrator's sql_cmd (it creates the database and the publication)
 #   and the login (user) the grants go to. A schema that already exists is kept as it is. Needs uv (workload.sh).
 #   Prints one row per source: name, lines, % late, median days from order to receipt.
+#   WORKLOAD_SH: another workload.sh (the offline test's stub).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); DG=$(cd "$HERE/.." && pwd); SK=$(cd "$DG/../.." && pwd)
 die() { echo "tpch-sources: $*" >&2; exit 2; }
@@ -77,7 +78,7 @@ for s in "$@"; do
     echo "tpch-sources: $DB.$name exists: kept" >&2; continue
   fi
   # 1. spec TPC-H at the source's scale, filled as copy N, checked against the spec
-  WL=$(bash "$DG/workload.sh" --model tpch --sf "$sf" --dialect postgres --spec --out "$OUT/$name")
+  WL=$(bash "${WORKLOAD_SH:-$DG/workload.sh}" --model tpch --sf "$sf" --dialect postgres --spec --out "$OUT/$name")
   eval "$(bash "$SK/lfc-workload-contract/scripts/workload-env.sh" "$WL")"
   CP=$(printf '%s_%04d' "$WL_MODEL" "$N")
   PSQL="$SQL $DB -F |" $WL_FILL "$WL_DDL" "$WL_MODEL" "$N" "$N" 1 > "$OUT/$name.fill.log"
