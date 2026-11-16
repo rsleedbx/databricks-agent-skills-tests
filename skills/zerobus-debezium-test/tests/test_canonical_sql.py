@@ -148,5 +148,23 @@ class FolderOnPath(unittest.TestCase):
         with open(os.path.join(SCRIPTS, "debezium-zerobus.sh")) as f:
             self.assertIn('.configuration["cdc.code"]', f.read())
 
+
+class BinhexEverywhere(unittest.TestCase):
+    """Every typed() and snapshot_value() call in the pipeline and the merge job passes BINHEX (a call without it
+    would read MySQL's hex binary as CAST(hex AS BINARY)), and each script sets BINHEX from its option."""
+
+    def test_every_call_passes_binhex(self):
+        for script, origin in (("merge-silver.py", 'a.binary == "hex"'),
+                               ("silver-from-schema.py", 'spark.conf.get("cdc.binary", "") == "hex"')):
+            with open(os.path.join(SCRIPTS, script)) as f:
+                text = f.read()
+            self.assertIn(f"BINHEX = {origin}", text)
+            calls = [n for n in ast.walk(ast.parse(text)) if isinstance(n, ast.Call)
+                     and getattr(n.func, "id", "") in ("typed", "snapshot_value")]
+            self.assertGreaterEqual(len(calls), 3 if script == "merge-silver.py" else 4, script)
+            for c in calls:
+                last = c.args[-1] if c.args else None
+                self.assertEqual(getattr(last, "id", None), "BINHEX", f"{script}:{c.lineno} {ast.unparse(c)}")
+
 if __name__ == "__main__":
     unittest.main()
