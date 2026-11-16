@@ -43,17 +43,16 @@ for alter, also "table", "column", "value", and for round 5 "retype" and "drop".
 import argparse
 import datetime
 import json
+import os
 import re
+import sys
 
 import yaml
 
-ALIAS = {"int": "integer", "smallint": "integer", "tinyint": "integer", "bigint": "long", "numeric": "decimal",
-         "varchar": "string", "text": "string", "real": "float", "double precision": "double", "bool": "boolean"}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # canonical_sql.py sits next to this file (python3 -I)
+from canonical_sql import ctype  # noqa: E402
+
 INTS = ("integer", "long")
-
-
-def ctype(c):
-    return ALIAS.get(c["type"], c["type"])
 
 
 DIALECT = "pg"   # set from --dialect: MySQL quotes identifiers with backticks
