@@ -7,8 +7,8 @@ For each table and each source that has it, merge_all reads the source's change 
 the primary key: inserts, updates (post-images) and deletes. A source read for the first time, or whose table was
 replaced, truncated or overwritten since (a full refresh: its change feed starts over), is copied whole instead. The
 versions read are kept in <target>._lfc_medallion_merge_state. Bronze columns the target lacks are added first, so a
-source's new column arrives. The targets have the change data feed and row tracking on, so the silver views that read
-them still refresh incrementally.
+source's new column arrives, and a column a source holds wider is widened (_ensure_target). The targets have the
+change data feed and row tracking on, so the silver views that read them still refresh incrementally.
 
 Lakeflow Connect's destination tables have the change data feed on (delta.enableChangeDataFeed=true: seen on its
 PostgreSQL connector's SCD type 1 tables, 2026-11-15). An SCD type 2 destination keeps a row per version of a key, so
@@ -21,7 +21,7 @@ __START_AT joins the key. Run it as a job task before the pipeline that reads th
 """
 import json
 
-from . import discover, evidence
+from . import coltypes, discover, evidence
 from .stack import spark_string
 
 STATE = "_lfc_medallion_merge_state"
@@ -117,8 +117,11 @@ def _save_state(spark, catalog, target, target_table, source, version, tid):
               "VALUES (n.target_table, n.source, n.version, n.table_id, current_timestamp())")
 
 
-def _ensure_target(spark, tgt: str, exists: bool, source_column: str, cols, have: set) -> None:
-    """Create the target (source column first, then the bronze columns), or add the bronze columns it lacks."""
+def _ensure_target(spark, tgt: str, exists: bool, source_column: str, cols, have: dict) -> None:
+    """Create the target (source column first, then the bronze columns), or add the bronze columns it lacks and widen
+    the ones a source holds wider (coltypes.widest: an INT target and a BIGINT source -> BIGINT), in place with Delta's
+    type widening. A MERGE into the narrower column would fail (an overflow) or round (a decimal's scale) silently;
+    a widening Delta can't do in place (a number and a date: STRING) is an error naming the column."""
     if not exists:
         body = ", ".join([f"{_q(source_column)} STRING"] + [f"{_q(c)} {t}" for c, t in cols])
         spark.sql(f"CREATE TABLE {tgt} ({body}) TBLPROPERTIES ({TARGET_PROPERTIES})")
@@ -126,6 +129,25 @@ def _ensure_target(spark, tgt: str, exists: bool, source_column: str, cols, have
     new = [(c, t) for c, t in cols if c not in have]
     if new:
         spark.sql(f"ALTER TABLE {tgt} ADD COLUMNS ({', '.join(f'{_q(c)} {t}' for c, t in new)})")
+    wider = []
+    for c, t in cols:
+        if c not in have or coltypes.from_spark(have[c]) == coltypes.from_spark(t):
+            continue
+        w = coltypes.widest([have[c], t])
+        if coltypes.from_spark(w) == coltypes.from_spark(have[c]):   # the target holds the source's already
+            continue
+        if not coltypes.widens_in_place(have[c], w):
+            raise ValueError(f"{tgt}.{_q(c)}: {have[c]} in the target, {t} in a source; the type that holds both, {w}, "
+                             "isn't a change Delta makes in place: cast the column in the source, or drop the target "
+                             "for a full copy")
+        wider.append((c, w))
+    if wider:
+        # a TIMESTAMP_NTZ column also needs its table feature on (DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT: seen on a
+        # serverless warehouse 2026-11-16, as INT -> BIGINT, DECIMAL(10,2) -> DECIMAL(12,4) and DATE -> TIMESTAMP_NTZ)
+        ntz = ", 'delta.feature.timestampNtz' = 'supported'" if any(w == "TIMESTAMP_NTZ" for _, w in wider) else ""
+        spark.sql(f"ALTER TABLE {tgt} SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true'{ntz})")
+        for c, w in wider:
+            spark.sql(f"ALTER TABLE {tgt} ALTER COLUMN {_q(c)} TYPE {w}")
 
 
 def merge_sql(tgt: str, src: str, source: str, source_column: str, key: list[str], cols: list[str],
@@ -199,7 +221,7 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
                 existing.discard(out_name)
                 kinds.pop(out_name)
             created = out_name not in existing   # made now (or dropped by hand since): every source copied
-            have = set() if created else {c for c, _ in columns(spark, tgt)}
+            have = {} if created else dict(columns(spark, tgt))
             _ensure_target(spark, tgt, not created, source_column, cols, have)
             existing.add(out_name)
             fresh = fresh_targets.setdefault(out_name, created)

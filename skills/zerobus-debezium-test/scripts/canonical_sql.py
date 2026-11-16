@@ -2,37 +2,27 @@
 
 silver-from-schema.py (the pipeline), merge-silver.py (the merge job), model-sql.py (the laptop) and placement.py
 import it from their own folder (`sys.path` gets the folder first: a job, a pipeline and `python3 -I` don't add it
-the same way). Plain Python and yaml, no Spark: the functions build SQL text.
+the same way). The type names are lfc_medallion.coltypes'. Plain Python and yaml, no Spark: the functions build
+SQL text.
 """
 from __future__ import annotations
 
 import os
 import re
+import sys
 import zlib
 
 import yaml
 
-# the type names the TPC schema files use besides statschema's canonical ones (ddl.py takes the same)
-ALIAS = {"int": "integer", "smallint": "integer", "tinyint": "integer", "bigint": "long", "numeric": "decimal",
-         "varchar": "string", "text": "string", "real": "float", "double precision": "double", "bool": "boolean"}
+# ctype and spark_type: lfc_medallion's (lfc-medallion/scripts in a checkout; on a workspace lfc_medallion/ is uploaded
+# next to this file), so the n:1 layer and this skill name types the same way
+_PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-medallion", "scripts")
+if os.path.isdir(_PKG):
+    sys.path.insert(0, _PKG)
+# re-exported: the scripts import ctype and spark_type from here
+from lfc_medallion.coltypes import ctype, spark_type
+
 TEMPORAL = ("date", "timestamp", "timestamptz", "time", "timetz")
-
-
-def ctype(c):
-    """A column's canonical type, its alias resolved."""
-    return ALIAS.get(c["type"], c["type"])
-
-
-def spark_type(c):
-    """statschema's canonical type -> a Databricks SQL type (char, string, time and the rest: STRING)."""
-    t = ctype(c)
-    if t == "decimal":
-        return f"DECIMAL({c.get('precision') or 38},{c.get('scale') or 0})"
-    if c.get("unsigned") and t in ("integer", "long"):   # MySQL's INT UNSIGNED goes past INT, BIGINT UNSIGNED past BIGINT
-        return "BIGINT" if t == "integer" else "DECIMAL(20,0)"
-    return {"integer": "INT", "long": "BIGINT", "float": "FLOAT", "double": "DOUBLE", "boolean": "BOOLEAN",
-            "date": "DATE", "timestamp": "TIMESTAMP_NTZ", "timestamptz": "TIMESTAMP", "binary": "BINARY"}.get(t, "STRING")
-
 
 def path(base, n):
     """A VARIANT field: the plain form for simple names, brackets for the rest (TPC-DI's mixed-case names)."""

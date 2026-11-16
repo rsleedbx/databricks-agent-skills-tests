@@ -21,32 +21,9 @@ import sys
 
 import yaml
 
-RANK = {"integer": 0, "long": 1, "decimal": 2}
-
-
-def widen(a, b):
-    """Two column definitions of one column -> the type that holds both."""
-    ta, tb = a["type"], b["type"]
-    if ta == tb and ta != "decimal":
-        out = {k: v for k, v in a.items() if k != "length"}
-        if a.get("length") and b.get("length"):   # a length only when both have one (none is unbounded)
-            out["length"] = max(a["length"], b["length"])
-        return out
-    if ta in RANK and tb in RANK:
-        if "decimal" not in (ta, tb):
-            return dict(a, type="long")
-        # integers as decimal(10,0) / (19,0)
-        def ds(c):
-            if c["type"] == "decimal":
-                p, s = int(c.get("precision") or 38), int(c.get("scale") or 0)
-                return p - s, s
-            return (10, 0) if c["type"] == "integer" else (19, 0)
-        (ia, sa), (ib, sb) = ds(a), ds(b)
-        i, s = max(ia, ib), max(sa, sb)
-        return dict(a, type="decimal", precision=min(i + s, 38), scale=s)
-    if {ta, tb} <= {"string", "char"}:
-        return dict({k: v for k, v in a.items() if k != "length"}, type="string")
-    return dict({k: v for k, v in a.items() if k not in ("length", "precision", "scale")}, type="string")
+# widen: lfc_medallion.coltypes' (the n:1 layer widens typed values with the same rule); raw values here: typed=False
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-medallion", "scripts"))
+from lfc_medallion.coltypes import widen
 
 
 def union(schemas):

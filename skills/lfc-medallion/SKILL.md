@@ -20,6 +20,11 @@ information says `NUM_JOINS_THRESHOLD_EXCEEDED`). Stacked first, a silver view j
 many sources there are. Keys usually start at 1 in every source, so every silver key and join includes the source
 column.
 
+Sources needn't agree on a column's type: n:1 and the merge route take the type that holds every source's
+(`coltypes.widest`: INT and BIGINT give BIGINT, two decimals the most integer digits and the most scale, types that
+don't widen into each other STRING), so no value overflows, rounds or fails the union. The merge route widens its
+table in place (Delta type widening) or stops with the column named when Delta can't.
+
 Materialized views, not streaming tables: Lakeflow Connect's SCD type 1 destination tables take updates and deletes,
 which a streaming read can't follow; a materialized view refreshes incrementally from the tables' change feed.
 
