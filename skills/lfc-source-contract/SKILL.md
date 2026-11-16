@@ -84,6 +84,7 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 - **lfc-source-cloud-vm** `scripts/slot-source.sh`: writes the contract for a slot database from `slot.sh up`'s JSON. Its `sql_cmd` runs `slot-sql.sh` for that database and key; that skill's `test-slot-source.sh` checks it end to end through a fake ssh.
 - [scripts/lakebase-sql.sh](scripts/lakebase-sql.sh) `[database]`: the `sql_cmd` for a Lakebase project (below).
 - [scripts/lfc_source_contract/jdbc.py](scripts/lfc_source_contract/jdbc.py): SQL on a source through a TYPE JDBC connection from a notebook or job, no password in the code: `JdbcSql(spark, connection).execute()` (writes, as `sessionInitStatement`) and `.query()`, `guarded()` for a statement safe to rerun, `connection_body()` with the Maven driver.
+- [scripts/lfc_source_contract/cdc.py](scripts/lfc_source_contract/cdc.py): a PostgreSQL source's change capture on any DB-API cursor, safe to rerun: `publication(cur, name, schemas)` (FOR TABLE, created, tables added, or kept) and `slot(cur, name, drop=False)`. In a notebook the cursor is `jdbc.dbapi(spark, <JDBC connection>, read_connection=<the POSTGRESQL one>, database=...)`: writes through the JDBC connection, reads through `remote_query`.
 - [scripts/lakebase-source.py](scripts/lakebase-source.py): a Lakebase project as the source in one step: password logins, the login, the UC connection, the contract (below); its code is the package [scripts/lfc_source_contract](scripts/lfc_source_contract), which a workspace job installs.
 
 ## Lakebase as the source

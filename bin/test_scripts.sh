@@ -70,7 +70,8 @@ check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
 check "statschema.tools: ddl() and ddl_to_schema() give the wrappers' text (path, YAML text, dict); state restored; canon.py" \
   sh -c "cd '$SK/lfc-source-statschema/scripts' && uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q test_tools.py 2>&1"
-check "lfc_source_contract.jdbc: Maven driver and allow-list, TLS URLs, guarded() DO block, JdbcSql reads and writes (fake spark)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_jdbc.py"
+check "lfc_source_contract.jdbc: Maven driver and allow-list, TLS URLs, guarded() DO block, JdbcSql, dbapi reads through remote_query and writes through JDBC (fake spark)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_jdbc.py"
+check "lfc_source_contract.cdc: publication FOR TABLE created, kept, tables added, a failed add explained; the slot (fake cursor)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_cdc.py"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
   sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
 WC=$SK/lfc-workload-contract/scripts
