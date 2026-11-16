@@ -1,13 +1,29 @@
 [project]
 name = "lfc-source-datagen"
-version = "0.1.0"
-description = "The datagen skill's Python side: TPC-B and TPC-H DDL from the spec, for a notebook, job or pipeline"
+version = "0.2.0"
+description = "The datagen skill's Python side: TPC spec DDL and TPC-H business sources, for a notebook, job or pipeline"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+  "psycopg2-binary>=2.9",
+  "databricks-sdk>=0.81",
+  "lfc-statschema @ https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema/scripts",
+]
+
+[project.scripts]
+lfc-tpch-sources = "lfc_source_datagen.tpch_sources:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# the SQL files (tpc/) and the Python planner (python/) ship inside the package, where an installed copy finds them
 [tool.setuptools]
-packages = ["lfc_source_datagen"]
+packages = ["lfc_source_datagen", "lfc_source_datagen._tpc", "lfc_source_datagen._planner", "lfc_source_datagen._planner.engines"]
+
+[tool.setuptools.package-dir]
+"lfc_source_datagen._tpc" = "tpc"
+"lfc_source_datagen._planner" = "python"
+"lfc_source_datagen._planner.engines" = "python/engines"
+
+[tool.setuptools.package-data]
+"lfc_source_datagen._tpc" = ["*.sql"]
