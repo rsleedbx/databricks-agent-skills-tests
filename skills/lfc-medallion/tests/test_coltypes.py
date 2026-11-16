@@ -34,6 +34,7 @@ class Rule(unittest.TestCase):
                             (["decimal(10,2)", "decimal(12,4)"], "DECIMAL(12,4)"),
                             (["decimal(10,2)", "decimal(12,1)"], "DECIMAL(13,2)"),
                             (["int", "decimal(5,2)"], "DECIMAL(12,2)"),            # an INT as decimal(10,0)
+                            (["bigint", "decimal(10,2)"], "DECIMAL(22,2)"),        # typed, a BIGINT as decimal(20,0)
                             (["decimal(38,0)", "decimal(38,10)"], "DECIMAL(38,10)"),   # past 38: the scale is kept
                             (["int", "string"], "STRING"), (["date", "int"], "STRING"), (["int", "boolean"], "STRING"),
                             (["timestamp", "timestamp_ntz"], "STRING"),            # no silent time-zone shift
@@ -46,6 +47,7 @@ class Rule(unittest.TestCase):
         self.assertEqual(ct.widen({"type": "date"}, {"type": "timestamp"})["type"], "string")
         self.assertEqual(ct.widen({"type": "date"}, {"type": "timestamp"}, typed=True)["type"], "timestamp")
         self.assertEqual(ct.widen({"type": "float"}, {"type": "double"})["type"], "string")
+        self.assertEqual(ct.widen({"type": "long"}, d(10, 2))["precision"], 21)   # raw: a long as decimal(19,0)
 
     def test_from_spark(self):
         self.assertEqual(ct.from_spark("timestamp"), {"type": "timestamptz"})
@@ -54,8 +56,15 @@ class Rule(unittest.TestCase):
         self.assertEqual(ct.from_spark("varchar(20)"), {"type": "string"})
         self.assertEqual(ct.from_spark("array<int>"), {"type": "array<int>"})
 
+    def test_widest_of_a_target_widens_in_place(self):   # what merge_all asks Delta for is a change it makes
+        for old, src in (("int", "bigint"), ("int", "decimal(5,2)"), ("bigint", "decimal(10,2)"), ("bigint", "decimal(38,0)"),
+                         ("decimal(10,2)", "decimal(12,4)"), ("date", "timestamp_ntz"), ("float", "double")):
+            self.assertTrue(ct.widens_in_place(old, ct.widest([old, src])), (old, src))
+
     def test_widens_in_place(self):
         for old, new, ok in (("int", "bigint", True), ("int", "decimal(12,2)", True), ("decimal(10,2)", "decimal(12,4)", True),
+                             ("int", "decimal(9,0)", False), ("int", "decimal(10,0)", True),     # as Delta: live 2026-11-16
+                             ("bigint", "decimal(19,0)", False), ("bigint", "decimal(20,0)", True),
                              ("decimal(10,2)", "decimal(12,1)", False), ("decimal(10,4)", "decimal(10,6)", False),
                              ("date", "timestamp_ntz", True), ("date", "timestamp", False), ("int", "string", False),
                              ("float", "double", True), ("bigint", "int", False)):

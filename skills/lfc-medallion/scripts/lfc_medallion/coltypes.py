@@ -53,12 +53,13 @@ def widen(a, b, typed=False):
     if ta in RANK and tb in RANK:
         if "decimal" not in (ta, tb):
             return dict(a, type="long")
-        # integers as decimal(10,0) / (19,0)
+        # integers as decimal(10,0) / (19,0); typed, a long as (20,0): Delta widens a BIGINT in place only to a decimal
+        # with 20 integer digits or more (NOT_SUPPORTED_CHANGE_COLUMN for 19: a serverless warehouse, 2026-11-16)
         def ds(c):
             if c["type"] == "decimal":
                 p, s = int(c.get("precision") or 38), int(c.get("scale") or 0)
                 return p - s, s
-            return (10, 0) if c["type"] == "integer" else (19, 0)
+            return (10, 0) if c["type"] == "integer" else (20 if typed else 19, 0)
         (ia, sa), (ib, sb) = ds(a), ds(b)
         i, s = max(ia, ib), max(sa, sb)
         return dict(a, type="decimal", precision=min(i + s, 38), scale=s)
@@ -97,4 +98,6 @@ def widens_in_place(old: str, new: str) -> bool:
     a, b = from_spark(old), from_spark(new)
     if a["type"] == b["type"] == "decimal":
         return b["scale"] >= a["scale"] and b["precision"] - b["scale"] >= a["precision"] - a["scale"]
+    if a["type"] in ("integer", "long") and b["type"] == "decimal":   # integer digits: an INT 10, a BIGINT 20
+        return b["precision"] - b["scale"] >= (10 if a["type"] == "integer" else 20)
     return (a["type"], b["type"]) in IN_PLACE
