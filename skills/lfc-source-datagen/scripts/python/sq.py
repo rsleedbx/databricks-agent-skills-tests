@@ -11,14 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import drivers
 from engines import ENGINES
 
-ap = argparse.ArgumentParser(description="run SQL from stdin through a driver, print TSV")
-ap.add_argument("engine"); ap.add_argument("--schema")
-ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int); ap.add_argument("--user"); ap.add_argument("--database")
-ap.add_argument("--password-file"); ap.add_argument("--server", help="Informix DBSERVERNAME (default informix)")
-ap.add_argument("--trust-server-certificate", action="store_true")
-a = ap.parse_args()
-name = {"pg": "postgres", "my": "mysql", "ms": "sqlserver", "mssql": "sqlserver", "ora": "oracle", "ifx": "informix"}.get(a.engine, a.engine)
-ENGINES[a.engine]   # an unknown engine stops here
 
 
 def text(v):
@@ -59,18 +51,34 @@ def statements(src):
         yield "\n".join(cur).rstrip().rstrip(";")
 
 
-con = drivers.connect(name, a)
-c = con.cursor()
-if a.schema:
-    c.execute(f"SET SCHEMA {a.schema}")
-for s in statements(sys.stdin.read()):
-    try:
-        c.execute(s)
-    except Exception as x:
-        print(f"error in: {s[:200]}\n{x}", file=sys.stderr)
-        sys.exit(1)
-    if c.description:
-        print("\t".join(d[0] for d in c.description))
-        for r in c.fetchall():
-            print("\t".join(text(v) for v in r))
-con.close()
+
+def main():
+    ap = argparse.ArgumentParser(description="run SQL from stdin through a driver, print TSV")
+    ap.add_argument("engine"); ap.add_argument("--schema")
+    ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int); ap.add_argument("--user"); ap.add_argument("--database")
+    ap.add_argument("--password-file"); ap.add_argument("--server", help="Informix DBSERVERNAME (default informix)")
+    ap.add_argument("--trust-server-certificate", action="store_true")
+    a = ap.parse_args()
+    name = {"pg": "postgres", "my": "mysql", "ms": "sqlserver", "mssql": "sqlserver", "ora": "oracle", "ifx": "informix"}.get(a.engine, a.engine)
+    ENGINES[a.engine]   # an unknown engine stops here
+
+    con = drivers.connect(name, a)
+    c = con.cursor()
+    if a.schema:
+        c.execute(f"SET SCHEMA {a.schema}")
+    for s in statements(sys.stdin.read()):
+        try:
+            c.execute(s)
+        except Exception as x:
+            print(f"error in: {s[:200]}\n{x}", file=sys.stderr)
+            sys.exit(1)
+        if c.description:
+            print("\t".join(d[0] for d in c.description))
+            for r in c.fetchall():
+                print("\t".join(text(v) for v in r))
+    con.close()
+
+
+
+if __name__ == "__main__":
+    main()

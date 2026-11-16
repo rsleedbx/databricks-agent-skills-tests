@@ -23,7 +23,7 @@ The password goes only into the login and the connection; it is never printed or
 through the connection is its USE CONNECTION grant. It runs from a laptop (--profile) or as a serverless job (the job's
 own login). The administrator steps run as you, the project owner, with an OAuth database credential. Rerunning rotates
 the password in both places. Tables, grants on them and the publication come after (lfc-source-datagen's
-tpch-sources.sh).
+lfc_source_datagen.sources).
 """
 from __future__ import annotations
 

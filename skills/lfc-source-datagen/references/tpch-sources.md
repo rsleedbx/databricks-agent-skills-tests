@@ -1,47 +1,43 @@
-# TPC-H as several business sources
+# Any TPC model as several business sources
 
-[`scripts/tpc/tpch-sources.sh`](../scripts/tpc/tpch-sources.sh) builds TPC-H as n business sources in one Postgres database: one schema per line of business (or acquired company), each at its own scale, with the same tables and repeating keys (each copy starts at 1). That is the source of an n:1 test: Lakeflow Connect ingests each schema, and **lfc-medallion** stacks them into one table per table with a `_source` column.
+[`lfc_source_datagen.sources`](../scripts/lfc_source_datagen/sources.py) builds any TPC model (TPC-B, C, H, DS, E, DI) as n business sources in one PostgreSQL database: one schema per line of business (or acquired company), each at its own scale, with the same tables and repeating keys (each copy starts at 1). That is the source of an n:1 test: Lakeflow Connect ingests each schema, and **lfc-medallion** stacks them into one table per table with a `_source` column. [`lfc_source_datagen.tpch_sources`](../scripts/lfc_source_datagen/tpch_sources.py) adds TPC-H's own steps: the spec's words and lead times a model can learn.
 
-Per source it:
+It reuses the skill's parts and the source contract's:
+- the DDL from `tpc_schema` (the spec's TPC-H and TPC-B) or statschema's `shape()` and `ddl()`;
+- the fill from `python/fill.py`'s `fill()`;
+- the checks from `tpc/<model>-verify.sql`;
+- the publication and slot from `lfc_source_contract.cdc`;
+- the writes in a notebook through `lfc_source_contract.jdbc`.
 
-1. builds spec TPC-H at the source's scale (`workload.sh --model tpch --spec`), fills it as copy N, and checks it against the spec (`tpch-verify.sql`);
-2. renames the copy to the source's name;
-3. writes the spec's words into the text columns (`tpch-labels.sql`);
-4. optionally sets lead times a model can learn (`tpch-lead-times.sql`);
-5. grants the contract's login `SELECT` on the schema.
+Per source, in copy `<model>_<n>`, each step safe to repeat:
+1. the model's DDL at the source's scale, all or nothing (a guarded `DO` block);
+2. `SELECT` for the reading login;
+3. the fill, whose INSERTs size themselves from the key already there;
+4. the spec's checks where the model has them, once (a schema comment marks them);
+5. the model's own steps (TPC-H: `tpch-labels.sql`, then `tpch-lead-times.sql` when the source has lead times);
+6. last, the source's name, so a schema with the name is a finished source and a rerun after a failure resumes in the copy.
 
-Then it creates one publication over every source. The slot is a separate step (`tpch-sources.sh slot`), run after the pipelines exist, so nothing holds WAL before a gateway reads it.
+Then one publication over every source.
 
-```bash
-SOURCE_JSON=src.json bash scripts/tpc/tpch-sources.sh --labels anonymous orders_db \
-  express:0.05:1,0,1,1,5,0,0,1,2  grocery:0.1:30,2,20,10,5,1,3,9,5  aerospace:0.03:365,60,260,90,5,3,14,45,30
-# after the gateway and ingestion pipeline exist:
-SOURCE_JSON=src.json bash scripts/tpc/tpch-sources.sh slot orders_db orders_slot
-# when the gateway is stopped for good:
-SOURCE_JSON=src.json bash scripts/tpc/tpch-sources.sh slot orders_db orders_slot --drop
-```
-
-The contract (**lfc-source-contract**) gives the administrator's `sql_cmd` (it creates the database and the publication; for Lakebase, `lakebase-sql.sh`) and the login (`user`) the grants go to. The scale factor is at least 0.03 (TPC-H needs 230 suppliers). A schema that already exists is kept as it is.
-
-## From a notebook, a job, or the laptop (Python)
-
-The same steps are the package `lfc-source-datagen` (`lfc_source_datagen.tpch_sources`), through a direct connection: no psql and no CLI, so it runs in a workspace notebook, as a serverless job, and on the laptop.
+From a notebook or job, with no password or driver in the code: writes go through the writer's TYPE JDBC connection, reads through the regular POSTGRESQL one (**lfc-source-contract**'s `lakebase.setup(..., writer=, jdbc_connection=)` makes both):
 
 ```python
 %pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-datagen/scripts"
 
-from lfc_source_datagen.tpch_sources import lakebase, Pg, tpch_sources, slot
-pg = lakebase("my-project")      # in a workspace: its own login; on a laptop: lakebase("my-project", profile="...")
-# pg = Pg(host="...", user="...", password="...")   # any PostgreSQL, as an administrator
-rows = tpch_sources(pg, "orders_db", {"express": (0.05, "1,0,1,1,5,0,0,1,2"), "grocery": 0.1}, login="lfc_cdc",
-                    labels="anonymous")
-display(rows)                    # source, lines, late_pct, median_days
-slot(pg, "orders_db", "orders_slot")      # after the gateway and ingestion pipeline exist; drop=True to drop it
+from lfc_source_contract import cdc
+from lfc_source_contract.jdbc import dbapi
+from lfc_source_datagen.sources import build
+from lfc_source_datagen.tpch_sources import tpch_sources
+connect = lambda: dbapi(spark, "orders_jdbc", read_connection="orders_pg", database="orders")
+display(tpch_sources(connect, {"express": (0.05, "1,0,1,1,5,0,0,1,2"), "grocery": (0.1, "30,2,20,10,5,1,3,9,5"),
+                               "aerospace": (0.03, "365,60,260,90,5,3,14,45,30")}, login="lfc_cdc", labels="anonymous"))
+display(build(connect, "tpcc", {"east": 0.01, "west": 0.02}, login="lfc_cdc"))     # any other model
+cdc.slot(connect().cursor(), "orders_slot")      # after the gateway and ingestion pipeline exist; drop=True when done
 ```
 
-As a job: a `python_wheel_task` with `package_name` `lfc-source-datagen`, `entry_point` `lfc-tpch-sources`, the archive URL in the environment's dependencies, and the parameters `--lakebase <project> [--login R] [--labels anonymous] <database> <name>:<sf>[:<lead times>] ...` (`--slot <slot> [--drop] <database>` for the slot). On the laptop: `uv run --with <the scripts folder> lfc-tpch-sources --lakebase <project> --profile <profile> ...`, or `--host`, `--user` and `--password-file` for any PostgreSQL.
+From the laptop: `connector("orders", lakebase="<project>", profile="<profile>")` (you, the project owner) or `connector("orders", host=..., password=...)` in place of `connect`. Or the commands: `lfc-tpch-sources --lakebase <project> --profile <profile> [--login R] [--labels anonymous] orders express:0.05:1,0,1,1,5,0,0,1,2 ...`, `lfc-sources --model tpcc ...`, and `--slot <slot> [--drop]` for the slot. As a job: a `python_wheel_task` with those entry points and the archive URL in the environment's dependencies.
 
-It fills with the skill's Python planner (`python/fill.py`, run unchanged) where `tpch-sources.sh` uses the SQL planner through psql. Every column the spec gives a formula (keys, prices, quantities, dates, and so the lead times and the labels) is the same, so the spec checks and the lateness are the same. The filler text columns and the two the spec DDL gives no formula (`o_orderstatus`, `o_totalprice`) differ: the Python planner's scramble constants are its own (`references/python-drivers.md`). Measured 2026-11-15 on PostgreSQL 14 at 0.03, three sources: 25.8 s, against 28.4 s for `tpch-sources.sh`, and the same summary.
+It fills with the skill's Python planner, which writes the same SQL as the SQL planners apart from its scramble constants. So every column a formula defines (keys, prices, quantities, dates, and so the lead times and labels) is the one `fill.sh` writes, and the filler text columns differ (`references/python-drivers.md`).
 
 ## Text values
 
