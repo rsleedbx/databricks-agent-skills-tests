@@ -81,6 +81,13 @@ def main() -> int:
         return 2
     endpoint, host = endpoints[0].name, endpoints[0].status.hosts.host
 
+    # look the connection up before the password changes, so a permission error stops here with nothing changed
+    try:
+        w.connections.get(x.connection)
+        have_connection = True
+    except NotFound:
+        have_connection = False
+
     password = secrets.token_urlsafe(32)
     token = w.postgres.generate_database_credential(endpoint=endpoint).token
     with psycopg.connect(host=host, port=5432, dbname="databricks_postgres", user=w.current_user.me().user_name,
@@ -91,14 +98,19 @@ def main() -> int:
             verb, sql.Identifier(x.role), sql.Literal(password)))
     options = {"host": host, "port": "5432", "user": x.role, "password": password}
     try:
-        w.connections.get(x.connection)
-        w.connections.update(x.connection, options=options)
-        done = "updated"
-    except NotFound:
-        w.connections.create(x.connection, connection_type=ConnectionType.POSTGRESQL, options=options,
-                             comment=f"Lakeflow Connect source: Lakebase project {x.project}")
-        done = "created"
-    del password, options, token
+        if have_connection:
+            w.connections.update(x.connection, options=options)
+        else:
+            w.connections.create(x.connection, connection_type=ConnectionType.POSTGRESQL, options=options,
+                                 comment=f"Lakeflow Connect source: Lakebase project {x.project}")
+    except Exception as e:  # noqa: BLE001 (any failure here leaves the two out of step) the login has the new password and the connection doesn't: say so, and how to fix it
+        print(f"lakebase-source: login {x.role} has a new password but connection {x.connection} wasn't "
+              f"{'updated' if have_connection else 'created'} ({type(e).__name__}: {e}); rerun when that's fixed, "
+              "which sets a new password on both", file=sys.stderr)
+        return 1
+    finally:
+        del password, options, token
+    done = "updated" if have_connection else "created"
     print(f"lakebase-source: connection {x.connection} {done}; login {x.role} "
           f"({'new password' if exists else 'created'}, LOGIN REPLICATION) on {x.project}, host {host}")
 

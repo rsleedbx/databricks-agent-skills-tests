@@ -1,6 +1,7 @@
 """Offline tests of lakebase-source.py with a mocked workspace and database: a new login and connection, an existing
-login and connection (ALTER, update), password logins turned on only when off, a missing project, and that the
-password is never printed or written to the contract.
+login and connection (ALTER, update), password logins turned on only when off, no read-write endpoint, the connection
+looked up before the password changes, a failed connection update, a missing or new project, and that the password is
+never printed or written to the contract.
 
   uv run --with databricks-sdk --with 'psycopg[binary]' python -m unittest test_lakebase_source.py
 """
@@ -94,6 +95,28 @@ class LakebaseSource(unittest.TestCase):
         w.connections.update.assert_called_once(); w.connections.create.assert_not_called()
         w.postgres.update_project.assert_called_once()
         self.assertIn("password logins turned on", out); self.assertNotIn("SECRET-PW", out)
+
+    def test_no_read_write_endpoint(self):
+        w, pg = workspace(), database(role_exists=False)
+        w.postgres.list_endpoints.return_value = w.postgres.list_endpoints.return_value[:1]      # the read-only one only
+        rc, out, connect = self.run_main(w, pg, "--project", "p", "--role", "r", "--connection", "c")
+        self.assertEqual(rc, 2); self.assertIn("no read-write endpoint", out)
+        connect.assert_not_called(); w.postgres.generate_database_credential.assert_not_called()
+        w.connections.create.assert_not_called(); w.connections.update.assert_not_called()
+
+    def test_connection_lookup_fails_before_the_password_changes(self):
+        w, pg = workspace(), database(role_exists=True)
+        w.connections.get.side_effect = PermissionError("no USE CONNECTION")
+        with self.assertRaises(PermissionError):
+            self.run_main(w, pg, "--project", "p", "--role", "r", "--connection", "c")
+        pg.execute.assert_not_called()
+
+    def test_failed_connection_update_says_rerun(self):
+        w, pg = workspace(connection=True), database(role_exists=True)
+        w.connections.update.side_effect = RuntimeError("network")
+        rc, out, _ = self.run_main(w, pg, "--project", "p", "--role", "r", "--connection", "c")
+        self.assertEqual(rc, 1); self.assertIn("has a new password but connection c wasn't updated", out)
+        self.assertIn("rerun", out); self.assertNotIn("SECRET-PW", out)
 
     def test_missing_project(self):
         w, pg = workspace(project=False), database(role_exists=False)
