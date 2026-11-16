@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = [
   "psycopg[binary]>=3.2",
   "databricks-sdk>=0.81",
-  "lfc-statschema @ https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema/scripts",
+  "lfc-statschema @ https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema",
 ]
 
 [project.scripts]

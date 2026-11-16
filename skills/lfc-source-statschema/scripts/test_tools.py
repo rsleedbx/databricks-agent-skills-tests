@@ -57,6 +57,20 @@ class Tools(unittest.TestCase):
         self.assertEqual(ddl_to_schema("CREATE TABLE b (id INT PRIMARY KEY, CHECK (id % 3 + 1 > 0));", "mysql"),
                          cli("ddl-to-schema.py", "--dialect", "mysql", stdin="CREATE TABLE b (id INT PRIMARY KEY, CHECK (id % 3 + 1 > 0));"))
 
+    def test_shape_same_as_the_wrapper(self):
+        from statschema.tools import model, shape
+        for m in ("tpcb", "tpcc"):
+            with tempfile.TemporaryDirectory() as d:
+                want = cli("shape.py", model(m), "--sf", "0.01", "--expected", os.path.join(d, "e.json"))
+                with open(os.path.join(d, "e.json")) as f:
+                    want_e = __import__("json").load(f)
+            got, got_e = shape(model(m), sf=0.01)
+            self.assertEqual((got, got_e), (want, want_e), m)
+            with open(model(m)) as f:
+                self.assertEqual(shape(yaml.safe_load(f), sf=0.01)[0], want)
+        with self.assertRaisesRegex(ValueError, "one of tpcb"):
+            model("nosuch")
+
     def test_canon_wrapper(self):
         import canon
         from statschema.tools.canon import canon as real
