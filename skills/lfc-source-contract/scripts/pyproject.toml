@@ -1,0 +1,16 @@
+[project]
+name = "lfc-source-contract"
+version = "0.1.0"
+description = "The source contract's Python side: a Lakebase project as Lakeflow Connect's PostgreSQL source"
+requires-python = ">=3.10"
+dependencies = ["databricks-sdk>=0.81", "psycopg[binary]>=3.2"]
+
+[project.scripts]
+lfc-lakebase-source = "lfc_source_contract.lakebase:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lfc_source_contract"]

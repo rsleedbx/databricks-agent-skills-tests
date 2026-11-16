@@ -3,12 +3,12 @@ login and connection (ALTER, update), password logins turned on only when off, n
 looked up before the password changes, a failed connection update, a missing or new project, and that the password is
 never printed or written to the contract.
 
-  uv run --with databricks-sdk --with 'psycopg[binary]' python -m unittest test_lakebase_source.py
+  uv run --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest test_lakebase_source.py
 """
 from __future__ import annotations
 
 import contextlib
-import importlib.util
+import importlib
 import io
 import json
 import os
@@ -21,9 +21,8 @@ from databricks.sdk.errors import NotFound
 from databricks.sdk.service.postgres import EndpointType
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-_spec = importlib.util.spec_from_file_location("lakebase_source", os.path.join(HERE, "lakebase-source.py"))
-ls = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(ls)
+sys.path.insert(0, HERE)
+from lfc_source_contract import lakebase as ls
 
 
 def workspace(*, project=True, native=True, connection=False):
@@ -133,6 +132,22 @@ class LakebaseSource(unittest.TestCase):
         spec = w.postgres.create_project.call_args.args[0].spec
         self.assertTrue(spec.enable_pg_native_login); self.assertEqual(spec.pg_version, 17)
         w.postgres.list_endpoints.assert_called_with("projects/p/branches/production")   # a bare branch id expanded
+
+    def test_entry_point_and_wrapper(self):
+        with open(os.path.join(HERE, "pyproject.toml")) as f:
+            line = next(x for x in f if x.startswith("lfc-lakebase-source"))
+        module, func = line.split("=", 1)[1].strip().strip('"').split(":")
+        self.assertIs(getattr(importlib.import_module(module), func), ls.main)
+        with open(os.path.join(HERE, "lakebase-source.py")) as f:
+            self.assertIn("from lfc_source_contract.lakebase import main", f.read())
+
+    def test_contract_needs_a_checkout(self):
+        w, pg = workspace(), database(role_exists=False)
+        with mock.patch.object(ls.os.path, "exists", return_value=False), tempfile.TemporaryDirectory() as d:
+            rc, out, _ = self.run_main(w, pg, "--project", "p", "--role", "r", "--connection", "c", "--profile", "x",
+                                       "--contract", os.path.join(d, "s.json"))
+            self.assertEqual(rc, 2); self.assertIn("needs a checkout", out)
+            self.assertFalse(os.path.exists(os.path.join(d, "s.json")))
 
 
 if __name__ == "__main__":
