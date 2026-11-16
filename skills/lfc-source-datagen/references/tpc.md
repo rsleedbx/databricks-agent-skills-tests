@@ -57,7 +57,7 @@ Where it differs from the spec:
 
 - [`scripts/tpc/tpch-verify.sql`](../scripts/tpc/tpch-verify.sql): TPC-H checks.
 
-- [`scripts/tpc/tpch-sources.sh`](../scripts/tpc/tpch-sources.sh), [`tpch-labels.sql`](../scripts/tpc/tpch-labels.sql), [`tpch-lead-times.sql`](../scripts/tpc/tpch-lead-times.sql): TPC-H as several business sources (Postgres): [tpch-sources.md](tpch-sources.md).
+- [`lfc_source_datagen.sources`](../scripts/lfc_source_datagen/sources.py) (any model), [`tpch-labels.sql`](../scripts/tpc/tpch-labels.sql), [`tpch-lead-times.sql`](../scripts/tpc/tpch-lead-times.sql) (TPC-H's own steps): TPC models as several business sources (Postgres): [tpch-sources.md](tpch-sources.md).
 
 ## Run
 
