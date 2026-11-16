@@ -61,7 +61,7 @@ a = ap.parse_args()
 spark = SparkSession.builder.getOrCreate()
 VOL, TGT, HIST = a.volume, a.target, a.history_suffix
 BINHEX = a.binary == "hex"
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # canonical_sql.py sits next to this file
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[0])))   # canonical_sql.py: next to this file (a job has no __file__)
 from canonical_sql import load, path, shard_of, snapshot_value, spark_type, typed  # noqa: E402
 log = lambda *m: print(time.strftime("%H:%M:%S"), *m, flush=True)
 

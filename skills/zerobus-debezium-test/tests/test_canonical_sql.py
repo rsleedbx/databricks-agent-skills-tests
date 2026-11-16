@@ -135,5 +135,18 @@ class ScriptsSameOutput(unittest.TestCase):
             self.assertIn("SELECT", out.upper())
 
 
+
+class FolderOnPath(unittest.TestCase):
+    """How each script finds canonical_sql.py, as checked on serverless (2026-11-16): a job's script has no __file__
+    (sys.argv[0] is its path), a pipeline's file has none either (cdc.code is its folder)."""
+
+    def test_job_and_pipeline_dont_need_file(self):
+        with open(os.path.join(SCRIPTS, "merge-silver.py")) as f:
+            self.assertIn("os.path.dirname(os.path.abspath(sys.argv[0]))", f.read())
+        with open(os.path.join(SCRIPTS, "silver-from-schema.py")) as f:
+            self.assertIn('or spark.conf.get("cdc.code")', f.read())
+        with open(os.path.join(SCRIPTS, "debezium-zerobus.sh")) as f:
+            self.assertIn('.configuration["cdc.code"]', f.read())
+
 if __name__ == "__main__":
     unittest.main()
