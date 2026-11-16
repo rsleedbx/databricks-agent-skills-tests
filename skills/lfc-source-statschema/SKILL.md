@@ -30,7 +30,7 @@ The format is [statschema](https://github.com/rsleedbx/statschema)'s: **`schema.
 
 ### From Python (a notebook, job or pipeline)
 
-`ddl-to-schema.py` and `ddl.py` are also the package `lfc-statschema`: `from statschema.tools import ddl, ddl_to_schema` returns the same text as the command line. Install it in a notebook with `%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema/scripts"`.
+`ddl-to-schema.py`, `ddl.py` and `shape.py` are also the package `lfc-statschema`: `from statschema.tools import ddl, ddl_to_schema, shape, model` returns the same text as the command line (`shape(model("tpcc"), sf=0.01)` gives the shaped schema and its expected statistics; the models ship in the package). Install it in a notebook with `%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema"`.
 
 ## When each table is busy
 

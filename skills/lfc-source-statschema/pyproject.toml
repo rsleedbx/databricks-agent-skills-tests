@@ -1,0 +1,21 @@
+[project]
+name = "lfc-statschema"
+version = "0.2.0"
+description = "statschema's canonical schema model, DDL tools (ddl, ddl_to_schema, shape) and the TPC models, for the Lakeflow Connect tests"
+requires-python = ">=3.10"
+dependencies = ["pyyaml", "sqlglot"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# the package is scripts/statschema; the models (schemas/*.yaml) ship inside it, where statschema.tools.model() finds them
+[tool.setuptools]
+packages = ["statschema", "statschema.core", "statschema.query", "statschema.tools", "statschema._schemas"]
+
+[tool.setuptools.package-dir]
+"statschema" = "scripts/statschema"
+"statschema._schemas" = "schemas"
+
+[tool.setuptools.package-data]
+"statschema._schemas" = ["*.yaml"]
