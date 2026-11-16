@@ -114,6 +114,28 @@ quiet table costs a metadata read, not a MERGE. New bronze columns are added fir
 gets `__START_AT`. The targets have the change data feed and row tracking on, so the silver views reading them still
 refresh incrementally.
 
+## The whole merge route as one job task: `merge_route`
+
+`merge_route()` does what a refresh needs before the pipeline: plan every source, agree one route per table (`merge`
+only when every source's plan says so), apply the routes kept or tagged (below), record the plan in
+`<target>._lfc_medallion_plan`, release, merge. The pipeline's source file reads its side with `merged_tables()`. A
+bundle job runs it from the package, with no copy of the code:
+
+```yaml
+- task_key: merge                      # before the pipeline task
+  environment_key: medallion           # dependencies: the archive URL above
+  python_wheel_task:
+    package_name: lfc-medallion
+    entry_point: lfc-medallion-merge
+    named_parameters: {catalog: main, prefix: sales_bronze_, target: sales_silver, source-column: division,
+                       hints: '{"nation": "lookup"}'}
+```
+
+```python
+stack_all(dp, spark, "main", "sales_bronze_", source_column="division",
+          skip=merged_tables(spark, "main", "sales_silver"))   # in the pipeline
+```
+
 ## Switching a table between the routes, on request
 
 A switch costs a whole copy of the table (or a full recompute of the pipeline's view) and a full recompute of the
@@ -164,10 +186,14 @@ column): all six dimensions from the pipeline to `merge` (the views taken over, 
 to the pipeline (released, the view recomputed), then tagged to `merge` again (taken over, copied); then a run with no
 tag (nothing switched, every view `NO_OP`). Each time silver and gold equal the baseline; a switch recomputed only the
 moved table and the two silver views reading it (the fact lines `NO_OP`, gold row-based).
+`merge_route` as a serverless `python_wheel_task` (entry point from the archive install): a run with no tag, then one
+table tagged to the pipeline and back, each with silver and gold equal to the baseline.
 Not run yet: more than three sources; bronze of an append-only or SCD type 2 destination (offline tests only).
 
 ## Trade-offs
 
+- A first take-over is recorded as `pipeline` until its merge succeeds, so the pipeline never skips a table that
+  hasn't arrived; if the run dies mid-take-over, the tag (gone with the dropped view) has to be set again.
 - A switch is a full copy or recompute of the table and its readers; that's why it waits for a tag. Between the job
   task and the pipeline, a released table's name is empty: read `all_<table>` only through the pipeline's views.
 

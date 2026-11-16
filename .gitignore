@@ -8,3 +8,6 @@ __pycache__/
 # a live browser session (lfc_ui.auth save): never commit
 ui-demos/auth.json
 ui-demos/auth-check.png
+# a local pip install of a package (skills/*/scripts/pyproject.toml)
+build/
+*.egg-info/

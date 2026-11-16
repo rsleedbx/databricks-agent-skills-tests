@@ -1,9 +1,12 @@
 [project]
 name = "lfc-medallion"
 version = "0.1.0"
-description = "Reusable layers downstream of Lakeflow Connect: discover sources and tables, stack them n:1"
+description = "Reusable layers downstream of Lakeflow Connect: n:1 stacking, fact or dimension plans, the merge route"
 requires-python = ">=3.10"
 dependencies = []
+
+[project.scripts]
+lfc-medallion-merge = "lfc_medallion.route:main"
 
 [build-system]
 requires = ["setuptools>=68"]
