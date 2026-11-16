@@ -21,7 +21,9 @@ class Cur:
         self.log.append(q)
         if "FROM pg_class c" in q:
             self.rows = [(s, t) for s in params[0].strip("{}").split(",") for t in ("lineitem", "orders")]
-        elif "FROM pg_publication_tables WHERE pubname = %s" in q:
+        elif "current_setting('server_version_num')" in q:
+            self.rows = [("170000",)]
+        elif "FROM pg_publication_rel pr" in q and params:
             self.rows = [tuple(x.split(".")) for x in (self.pub or [])]
         elif "FROM pg_publication WHERE pubname = %s" in q:
             self.rows = [(1,)] if self.pub is not None else []
@@ -51,6 +53,9 @@ class Cdc(unittest.TestCase):
         c = Cur(pub=["a.lineitem"])
         self.assertEqual(cdc.publication(c, "p", ["a"], log=lambda m: None), "added 1")
         self.assertTrue(any('ALTER PUBLICATION "p" ADD TABLE "a"."orders"' in q for q in c.log))
+        add = next(q for q in c.log if "ADD TABLE" in q)
+        self.assertIn("FROM pg_publication_rel pr", add)                    # a partitioned root is a member by name
+        self.assertIn("pr.prrelid = '\"a\".\"orders\"'::regclass", add)
         with self.assertRaisesRegex(RuntimeError, "belongs to another login"):
             cdc.publication(Cur(pub=["a.lineitem"], add_fails=True), "p", ["a"], log=lambda m: None)
         with self.assertRaises(ValueError):

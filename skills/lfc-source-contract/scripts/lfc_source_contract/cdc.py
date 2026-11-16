@@ -34,6 +34,22 @@ def _rows(cur, sql: str, params=None) -> list[tuple]:
     return [tuple(r) for r in cur.fetchall()]
 
 
+def _members(cur, name: str) -> set[str]:
+    """schema.table for every table publication `name` covers: named in it (pg_publication_rel, where a partitioned
+    table is its root; pg_publication_tables lists the root's leaves instead), listed by pg_publication_tables, or in
+    one of its schemas (PostgreSQL 15 and later)."""
+    q = ("SELECT n.nspname, c.relname FROM pg_publication_rel pr JOIN pg_publication p ON p.oid = pr.prpubid "
+         "JOIN pg_class c ON c.oid = pr.prrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE p.pubname = %s "
+         "UNION SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = %s")
+    args = [name, name]
+    if int(_rows(cur, "SELECT current_setting('server_version_num')")[0][0]) >= 150000:
+        q += (" UNION SELECT n.nspname, c.relname FROM pg_publication_namespace pn JOIN pg_publication p ON p.oid = "
+              "pn.pnpubid JOIN pg_namespace n ON n.oid = pn.pnnspid JOIN pg_class c ON c.relnamespace = n.oid "
+              "WHERE p.pubname = %s AND c.relkind IN ('r', 'p')")
+        args.append(name)
+    return {f"{a}.{b}" for a, b in _rows(cur, q, tuple(args))}
+
+
 def publication(cur, name: str, schemas: list[str], log=print) -> str:
     """Every table in the schemas in publication `name`; returns what it did: created, added N, or kept."""
     if not schemas:
@@ -46,8 +62,7 @@ def publication(cur, name: str, schemas: list[str], log=print) -> str:
                                                "AND n.nspname = ANY(%s::text[]) ORDER BY 1, 2", ("{" + ",".join(schemas) + "}",))]
     if not tables:
         raise ValueError(f"publication: no tables in {', '.join(schemas)}")
-    have = {f"{a}.{b}" for a, b in _rows(cur, "SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = %s",
-                                         (name,))}
+    have = _members(cur, name)
     if not _rows(cur, "SELECT 1 FROM pg_publication WHERE pubname = %s", (name,)):
         cur.execute(guarded(f"SELECT 1 FROM pg_publication WHERE pubname = {literal(name)}",
                             f"CREATE PUBLICATION {ident(name)} FOR TABLE {', '.join(_q(t) for t in tables)}"))
@@ -58,10 +73,10 @@ def publication(cur, name: str, schemas: list[str], log=print) -> str:
         log(f"cdc: publication {name} already has these tables: kept")
         return "kept"
     for t in missing:
-        s, tb = t.split(".", 1)
         try:
-            cur.execute(guarded(f"SELECT 1 FROM pg_publication_tables WHERE pubname = {literal(name)} AND schemaname = "
-                                f"{literal(s)} AND tablename = {literal(tb)}", f"ALTER PUBLICATION {ident(name)} ADD TABLE {_q(t)}"))
+            cur.execute(guarded(f"SELECT 1 FROM pg_publication_rel pr JOIN pg_publication p ON p.oid = pr.prpubid WHERE "
+                                f"p.pubname = {literal(name)} AND pr.prrelid = {literal(_q(t))}::regclass",
+                                f"ALTER PUBLICATION {ident(name)} ADD TABLE {_q(t)}"))
         except Exception as e:  # noqa: BLE001 (any driver error here: say what to do)
             raise RuntimeError(f"publication {name} lacks {t}, and adding it failed ({e.__class__.__name__}: "
                                f"{str(e).strip()[:300]}): it belongs to another login (by schema, it needs a "
