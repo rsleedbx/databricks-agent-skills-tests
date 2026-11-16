@@ -28,6 +28,10 @@ The format is [statschema](https://github.com/rsleedbx/statschema)'s: **`schema.
 | 7. Check the statistics | test side | the step 1 collector on the copy, then [`compare.sql`](scripts/compare.sql) (DuckDB) | what's off |
 | 8. Replay the queries | the test database | [`replay.py`](scripts/replay.py) `explain`, then `compare` | plan differences |
 
+### From Python (a notebook, job or pipeline)
+
+`ddl-to-schema.py` and `ddl.py` are also the package `lfc-statschema`: `from statschema.tools import ddl, ddl_to_schema` returns the same text as the command line. Install it in a notebook with `%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-statschema/scripts"`.
+
 ## When each table is busy
 
 Step 1a gives totals; it doesn't say *when*. The busy tables change with the time of day: an OLTP database has its order and payment tables hot by day, and a nightly batch (aggregation, loads, purges) hits a different set. A change-capture test or sizing that assumes one busy set misses the other, so read the hours from the database's own change journal, over the window it still holds:
