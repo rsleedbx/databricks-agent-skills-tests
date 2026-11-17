@@ -143,7 +143,12 @@ def pipeline_slot(cur, step: str, id: str | None = None, schemas: list[str] | No
         else:
             if not _rows(cur, "SELECT 1 FROM pg_publication WHERE pubname = %s", (pub,)):
                 raise ValueError(f"publication {pub} doesn't exist: leave publication empty to make lfc_pub_<id>")
-            missing = sorted(set(_tables(cur, list(schemas or []))) - _members(cur, pub))
+            if not schemas:
+                raise ValueError(f"publication {pub}: give the schemas to check it against")
+            tables = _tables(cur, list(schemas))
+            if not tables:
+                raise ValueError(f"publication {pub}: no tables in schemas {schemas!r} to check it against")
+            missing = sorted(set(tables) - _members(cur, pub))
             if missing:
                 raise ValueError(f"publication {pub} lacks {', '.join(missing)}: have its owner add them")
             log(f"publication {pub}: given, has the tables")
