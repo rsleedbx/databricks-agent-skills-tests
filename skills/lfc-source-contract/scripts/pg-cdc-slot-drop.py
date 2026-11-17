@@ -1,10 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Drop a replication slot made by pg-cdc-slot, through UC JDBC
-# MAGIC - Drops the slot named in the widget (the `slot_name` pg-cdc-slot printed) through the UC JDBC connection;
+# MAGIC # Drop a PostgreSQL replication slot
+# MAGIC - Drops the slot named in the widget (the `slot_name` pg-cdc-slot printed);
 # MAGIC   publication `lfcddemo_pub` stays. An active slot is refused: stop or delete its pipeline first.
 # MAGIC - On the demo VM, old slots are deleted automatically anyway (idle 2 hours, or older than a day).
-# ruff: noqa: F821
 
 # COMMAND ----------
 

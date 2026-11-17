@@ -1,10 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # A replication slot for a Lakeflow Connect PostgreSQL pipeline, through UC JDBC
-# MAGIC - Creates replication slot `lfc_<uuid>` on publication `lfcddemo_pub` (schema `lfcddemo`) through the UC JDBC
-# MAGIC   connection in the widget, and prints the pipeline's `slot_config`. Each run makes a new slot.
+# MAGIC # PostgreSQL replication slot for Lakeflow Connect
+# MAGIC - Creates replication slot `lfc_<uuid>` on publication `lfcddemo_pub` (schema `lfcddemo`) and prints
+# MAGIC   the pipeline's `slot_config`. Each run makes a new slot.
 # MAGIC - On the demo VM, slots idle for 2 hours or older than a day are deleted automatically.
-# ruff: noqa: F821
 
 # COMMAND ----------
 
