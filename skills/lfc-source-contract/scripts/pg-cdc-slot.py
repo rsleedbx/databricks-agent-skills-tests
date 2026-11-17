@@ -7,7 +7,8 @@
 # MAGIC `drop` with the same `id` drops the slot (when not active) and the publication. Safe to run again.
 # MAGIC `publication`: an existing one to use instead (it must already have the schemas' tables), for a login that has
 # MAGIC `REPLICATION` but doesn't own the tables (a FOR TABLE publication needs their owner); `drop` leaves it.
-# MAGIC Run it cell by cell, or as a job with the widgets as parameters.
+# MAGIC Import: Workspace > Import > URL, `https://raw.githubusercontent.com/rsleedbx/databricks-agent-skills-tests/main/skills/lfc-source-contract/scripts/pg-cdc-slot.py`.
+# MAGIC Run it cell by cell (serverless), or as a job with the widgets as parameters.
 # ruff: noqa: F821
 
 # COMMAND ----------
