@@ -78,5 +78,20 @@ class Cdc(unittest.TestCase):
         self.assertTrue(any("pg_drop_replication_slot" in q and "NOT active" in q for q in c.log))
 
 
+class Names(unittest.TestCase):
+    def test_a_new_pair_each_time_in_the_lfc_form(self):
+        (s1, p1), (s2, _) = cdc.names(), cdc.names()
+        self.assertNotEqual(s1, s2)
+        self.assertRegex(s1, r"^lfc_[0-9a-f]{8}(_[0-9a-f]{4}){3}_[0-9a-f]{12}$")
+        self.assertEqual(p1, "lfc_pub_" + s1[4:])
+        self.assertLessEqual(len(p1), 63)   # PostgreSQL's name limit
+
+    def test_a_given_id_and_bad_ones(self):
+        self.assertEqual(cdc.names("AB-12"), ("lfc_ab_12", "lfc_pub_ab_12"))
+        for bad in ("a b", "x;drop", "x" * 51):
+            with self.assertRaises(ValueError):
+                cdc.names(bad)
+
+
 if __name__ == "__main__":
     unittest.main()

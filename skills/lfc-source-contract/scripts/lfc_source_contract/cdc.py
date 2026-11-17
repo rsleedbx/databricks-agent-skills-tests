@@ -6,14 +6,20 @@ run again:
     cdc.publication(cur, "orders_pub", ["express", "grocery"])   # every table in those schemas
     cdc.slot(cur, "orders_slot")                                  # after the gateway and ingestion pipeline exist
     cdc.slot(cur, "orders_slot", drop=True)                       # when the gateway is stopped for good
+    slot_name, pub_name = cdc.names()                             # lfc_<uuid>, lfc_pub_<uuid>: a new pair
 
 publication(): FOR TABLE the schemas' tables, as their owner can (FOR TABLES IN SCHEMA needs a superuser on
 PostgreSQL 15 and later, Lakebase included): created when missing, the missing tables added to one that exists, and
 one that already has them all, by schema or by table, kept (changing another login's publication fails: the error
 says what to do). slot(): the pgoutput slot in a statement of its own (a slot can't be made in a transaction that has
 written), created when missing; drop=True drops it when not active. A slot holds WAL until a gateway reads it.
+names(): a slot and publication pair, lfc_<uuid> and lfc_pub_<uuid>, for a pipeline's slot_config. The gateway's
+own names are dbx_<database OID>_<pipeline ID> and dbx_pub_<...>, and a custom name in that form is refused.
 """
 from __future__ import annotations
+
+import re
+import uuid
 
 from .jdbc import guarded, ident, literal
 
@@ -98,3 +104,11 @@ def slot(cur, name: str, drop: bool = False) -> dict | None:
     r = _rows(cur, "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) "
                    "FROM pg_replication_slots WHERE slot_name = %s", (name,))
     return {"slot": r[0][0], "active": r[0][1], "held": r[0][2]} if r else None
+
+
+def names(id: str | None = None) -> tuple[str, str]:
+    """(slot, publication) for one pipeline: lfc_<id> and lfc_pub_<id>, id a new UUID (its - as _) when not given."""
+    id = (id or str(uuid.uuid4())).lower().replace("-", "_")
+    if not re.fullmatch(r"[a-z0-9_]{1,50}", id):
+        raise ValueError(f"names: {id!r}: letters, digits and _ only, at most 50")
+    return f"lfc_{id}", f"lfc_pub_{id}"
