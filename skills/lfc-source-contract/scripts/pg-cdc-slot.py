@@ -1,15 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # A PostgreSQL publication and replication slot for a Lakeflow Connect pipeline, through UC JDBC
-# MAGIC Everything goes through one TYPE JDBC connection, in its database (its login needs `REPLICATION`, and owns the
-# MAGIC tables unless `publication` is given). No password in the notebook. `step` `create` makes
-# MAGIC `lfc_<uuid>` and `lfc_pub_<uuid>` (a new uuid when `id` is empty) and prints the pipeline's `slot_config`;
-# MAGIC `drop` with the same `id` drops the slot and the publication; an active slot stops it. To run create again, give the printed `id`:
-# MAGIC with none, each run makes a new pair, and an unused slot holds WAL until dropped.
-# MAGIC `publication`: an existing one to use instead (checked, never changed: it must have the schemas' tables), for a login that has
-# MAGIC `REPLICATION` but doesn't own the tables (a FOR TABLE publication needs their owner); `drop` leaves it.
-# MAGIC Import: Workspace > Import > URL, `https://raw.githubusercontent.com/rsleedbx/databricks-agent-skills-tests/main/skills/lfc-source-contract/scripts/pg-cdc-slot.py`.
-# MAGIC Run it cell by cell (serverless), or as a job with the widgets as parameters.
+# MAGIC # A replication slot for a Lakeflow Connect PostgreSQL pipeline, through UC JDBC
+# MAGIC - Uses the UC JDBC connection `lfcddemo-jdbc-azurevm-pg` to create replication slot `lfc_<uuid>` on publication
+# MAGIC   `lfcddemo_pub` (schema `lfcddemo`); it prints the pipeline's `slot_config` and the `id` for `step` `drop`.
+# MAGIC - On the demo VM, slots idle for 2 hours or older than a day are deleted automatically.
 # ruff: noqa: F821
 
 # COMMAND ----------
@@ -22,7 +16,7 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-for name, default in (("jdbc_connection", ""), ("schemas", ""), ("publication", ""), ("id", ""), ("step", "create")):
+for name, default in (("jdbc_connection", "lfcddemo-jdbc-azurevm-pg"), ("schemas", "lfcddemo"), ("publication", "lfcddemo_pub"), ("id", ""), ("step", "create")):
     dbutils.widgets.text(name, default)
 w = {k: dbutils.widgets.get(k).strip() for k in ("jdbc_connection", "schemas", "publication", "id", "step")}
 
