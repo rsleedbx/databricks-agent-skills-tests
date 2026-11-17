@@ -4,8 +4,9 @@
 # MAGIC Everything goes through one TYPE JDBC connection, in its database (its login needs `REPLICATION`, and owns the
 # MAGIC tables unless `publication` is given). No password in the notebook. `step` `create` makes
 # MAGIC `lfc_<uuid>` and `lfc_pub_<uuid>` (a new uuid when `id` is empty) and prints the pipeline's `slot_config`;
-# MAGIC `drop` with the same `id` drops the slot and the publication; an active slot stops it. Safe to run again.
-# MAGIC `publication`: an existing one to use instead (it must already have the schemas' tables), for a login that has
+# MAGIC `drop` with the same `id` drops the slot and the publication; an active slot stops it. To run create again, give the printed `id`:
+# MAGIC with none, each run makes a new pair, and an unused slot holds WAL until dropped.
+# MAGIC `publication`: an existing one to use instead (checked, never changed: it must have the schemas' tables), for a login that has
 # MAGIC `REPLICATION` but doesn't own the tables (a FOR TABLE publication needs their owner); `drop` leaves it.
 # MAGIC Import: Workspace > Import > URL, `https://raw.githubusercontent.com/rsleedbx/databricks-agent-skills-tests/main/skills/lfc-source-contract/scripts/pg-cdc-slot.py`.
 # MAGIC Run it cell by cell (serverless), or as a job with the widgets as parameters.

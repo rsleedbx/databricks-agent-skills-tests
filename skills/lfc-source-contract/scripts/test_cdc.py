@@ -119,6 +119,12 @@ class PipelineSlot(unittest.TestCase):
         self.assertEqual(out["slot_config"]["postgres"]["slot_config"]["publication_name"], "given_pub")
         self.assertFalse([q for q in c.log if "CREATE PUBLICATION" in q])   # kept: it has the tables
 
+    def test_a_given_publication_is_only_checked(self):
+        for c, msg in ((Cur(), "doesn't exist"), (Cur(pub=["a.lineitem"]), "lacks a.orders")):
+            with self.assertRaisesRegex(ValueError, msg):
+                cdc.pipeline_slot(c, "create", id="abc", schemas=["a"], publication_name="given_pub", log=self.quiet)
+            self.assertFalse([q for q in c.log if "PUBLICATION \"given_pub\"" in q or "pg_create_logical" in q])
+
     def test_drop_own_and_given(self):
         c = self.SlotCur()
         cdc.pipeline_slot(c, "drop", id="abc", log=self.quiet)

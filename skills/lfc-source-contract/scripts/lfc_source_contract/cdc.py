@@ -58,16 +58,20 @@ def _members(cur, name: str) -> set[str]:
     return {f"{a}.{b}" for a, b in _rows(cur, q, tuple(args))}
 
 
+def _tables(cur, schemas: list[str]) -> list[str]:
+    """schema.table for the schemas' tables (partitions as their root). pg_class, not information_schema.tables: that
+    shows only the tables the reading login may use, and in a notebook the reads may go through another login."""
+    return [f"{a}.{b}" for a, b in _rows(cur, "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON "
+                                              "n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition "
+                                              "AND n.nspname = ANY(%s::text[]) ORDER BY 1, 2", ("{" + ",".join(schemas) + "}",))]
+
+
 def publication(cur, name: str, schemas: list[str], log=print) -> str:
     """Every table in the schemas in publication `name`; returns what it did: created, added N, or kept."""
     if not schemas:
         raise ValueError("publication: no schemas")
     _autocommit(cur)
-    # pg_class, not information_schema.tables: that shows only the tables the reading login may use, and in a notebook
-    # the reads may go through another login (dbapi's read_connection)
-    tables = [f"{a}.{b}" for a, b in _rows(cur, "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON "
-                                               "n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition "
-                                               "AND n.nspname = ANY(%s::text[]) ORDER BY 1, 2", ("{" + ",".join(schemas) + "}",))]
+    tables = _tables(cur, schemas)
     if not tables:
         raise ValueError(f"publication: no tables in {', '.join(schemas)}")
     have = _members(cur, name)
@@ -120,8 +124,11 @@ def pipeline_slot(cur, step: str, id: str | None = None, schemas: list[str] | No
                   publication_name: str | None = None, log=print) -> dict:
     """One pipeline's slot and publication. step "create": the publication (lfc_pub_<id>, or publication_name when
     given: an existing one with the schemas' tables) and the slot lfc_<id>; returns {id, slot, publication,
-    slot_config} where slot_config goes in the pipeline's source_configurations[].catalog. step "drop" (id needed):
-    the slot, then the publication made here (a given one is kept); an active slot stops it, nothing dropped."""
+    slot_config} where slot_config goes in the pipeline's source_configurations[].catalog. A given publication is
+    only checked, never created or changed: it must exist with every table of the schemas. Run create again with the
+    id it returned: with no id, each run makes a new pair (and a slot holds WAL until it is read or dropped).
+    step "drop" (id needed): the slot, then the publication made here (a given one is kept); an active slot stops
+    it, nothing dropped."""
     if step not in ("create", "drop"):
         raise ValueError(f"pipeline_slot: step {step}: create or drop")
     if step == "drop" and not id:
@@ -131,7 +138,15 @@ def pipeline_slot(cur, step: str, id: str | None = None, schemas: list[str] | No
     pub = pub if own else publication_name
     out = {"id": slot_name[len("lfc_"):], "slot": slot_name, "publication": pub}
     if step == "create":
-        log(f"publication {pub}: {publication(cur, pub, list(schemas or []), log=log)}")
+        if own:
+            log(f"publication {pub}: {publication(cur, pub, list(schemas or []), log=log)}")
+        else:
+            if not _rows(cur, "SELECT 1 FROM pg_publication WHERE pubname = %s", (pub,)):
+                raise ValueError(f"publication {pub} doesn't exist: leave publication empty to make lfc_pub_<id>")
+            missing = sorted(set(_tables(cur, list(schemas or []))) - _members(cur, pub))
+            if missing:
+                raise ValueError(f"publication {pub} lacks {', '.join(missing)}: have its owner add them")
+            log(f"publication {pub}: given, has the tables")
         log(f"slot: {slot(cur, slot_name)}")
         out["slot_config"] = {"postgres": {"slot_config": {"slot_name": slot_name, "publication_name": pub}}}
         return out
