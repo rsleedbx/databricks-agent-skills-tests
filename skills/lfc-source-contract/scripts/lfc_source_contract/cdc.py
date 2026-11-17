@@ -7,6 +7,7 @@ run again:
     cdc.slot(cur, "orders_slot")                                  # after the gateway and ingestion pipeline exist
     cdc.slot(cur, "orders_slot", drop=True)                       # when the gateway is stopped for good
     slot_name, pub_name = cdc.names()                             # lfc_<uuid>, lfc_pub_<uuid>: a new pair
+    cdc.pipeline_slot(cur, "create", schemas=["s"])               # both for one pipeline, and its slot_config
 
 publication(): FOR TABLE the schemas' tables, as their owner can (FOR TABLES IN SCHEMA needs a superuser on
 PostgreSQL 15 and later, Lakebase included): created when missing, the missing tables added to one that exists, and
@@ -15,6 +16,7 @@ says what to do). slot(): the pgoutput slot in a statement of its own (a slot ca
 written), created when missing; drop=True drops it when not active. A slot holds WAL until a gateway reads it.
 names(): a slot and publication pair, lfc_<uuid> and lfc_pub_<uuid>, for a pipeline's slot_config. The gateway's
 own names are dbx_<database OID>_<pipeline ID> and dbx_pub_<...>, and a custom name in that form is refused.
+pipeline_slot(): create or drop that pair for one pipeline (pg-cdc-slot.py's steps).
 """
 from __future__ import annotations
 
@@ -112,3 +114,35 @@ def names(id: str | None = None) -> tuple[str, str]:
     if not re.fullmatch(r"[a-z0-9_]{1,50}", id):
         raise ValueError(f"names: {id!r}: letters, digits and _ only, at most 50")
     return f"lfc_{id}", f"lfc_pub_{id}"
+
+
+def pipeline_slot(cur, step: str, id: str | None = None, schemas: list[str] | None = None,
+                  publication_name: str | None = None, log=print) -> dict:
+    """One pipeline's slot and publication. step "create": the publication (lfc_pub_<id>, or publication_name when
+    given: an existing one with the schemas' tables) and the slot lfc_<id>; returns {id, slot, publication,
+    slot_config} where slot_config goes in the pipeline's source_configurations[].catalog. step "drop" (id needed):
+    the slot, then the publication made here (a given one is kept); an active slot stops it, nothing dropped."""
+    if step not in ("create", "drop"):
+        raise ValueError(f"pipeline_slot: step {step}: create or drop")
+    if step == "drop" and not id:
+        raise ValueError("pipeline_slot: drop needs the id create returned")
+    slot_name, pub = names(id)
+    own = not publication_name
+    pub = pub if own else publication_name
+    out = {"id": slot_name[len("lfc_"):], "slot": slot_name, "publication": pub}
+    if step == "create":
+        log(f"publication {pub}: {publication(cur, pub, list(schemas or []), log=log)}")
+        log(f"slot: {slot(cur, slot_name)}")
+        out["slot_config"] = {"postgres": {"slot_config": {"slot_name": slot_name, "publication_name": pub}}}
+        return out
+    left = slot(cur, slot_name, drop=True)
+    if left is not None:
+        raise RuntimeError(f"slot {slot_name} is active: stop its gateway first (nothing dropped, publication kept)")
+    log(f"slot {slot_name} dropped")
+    if own:
+        cur.execute(guarded(f"SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = {literal(pub)})",
+                            f"DROP PUBLICATION {ident(pub)}"))
+        log(f"publication {pub} dropped")
+    else:
+        log(f"publication {pub} kept (given, not made here)")
+    return out

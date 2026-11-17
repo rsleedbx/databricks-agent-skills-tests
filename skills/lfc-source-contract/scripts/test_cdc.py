@@ -93,5 +93,52 @@ class Names(unittest.TestCase):
                 cdc.names(bad)
 
 
+class PipelineSlot(unittest.TestCase):
+    class SlotCur(Cur):
+        """A slot that drop removes unless it's active."""
+        def __init__(self, active=False, **kw):
+            super().__init__(slot=True, **kw)
+            self.active = active
+
+        def execute(self, q, params=None):
+            super().execute(q, params)
+            if "FROM pg_replication_slots WHERE slot_name = %s" in q:
+                dropped = any("pg_drop_replication_slot" in x for x in self.log)
+                self.rows = [] if dropped and not self.active else [(params[0], self.active, "1 kB")]
+
+    quiet = staticmethod(lambda m: None)
+
+    def test_create_prints_the_slot_config(self):
+        out = cdc.pipeline_slot(Cur(), "create", id="abc", schemas=["a"], log=self.quiet)
+        self.assertEqual(out["slot_config"], {"postgres": {"slot_config": {"slot_name": "lfc_abc", "publication_name": "lfc_pub_abc"}}})
+        self.assertEqual(cdc.names(out["id"])[0], out["slot"])              # the printed id gives back the slot
+
+    def test_create_with_a_given_publication(self):
+        c = Cur(pub=["a.lineitem", "a.orders"])
+        out = cdc.pipeline_slot(c, "create", id="abc", schemas=["a"], publication_name="given_pub", log=self.quiet)
+        self.assertEqual(out["slot_config"]["postgres"]["slot_config"]["publication_name"], "given_pub")
+        self.assertFalse([q for q in c.log if "CREATE PUBLICATION" in q])   # kept: it has the tables
+
+    def test_drop_own_and_given(self):
+        c = self.SlotCur()
+        cdc.pipeline_slot(c, "drop", id="abc", log=self.quiet)
+        self.assertTrue(any("pg_drop_replication_slot" in q and "'lfc_abc'" in q for q in c.log))
+        self.assertTrue(any('DROP PUBLICATION "lfc_pub_abc"' in q and q.startswith("DO ") for q in c.log))
+        c = self.SlotCur()
+        cdc.pipeline_slot(c, "drop", id="abc", publication_name="given_pub", log=self.quiet)
+        self.assertFalse([q for q in c.log if "DROP PUBLICATION" in q])
+
+    def test_active_slot_stops_the_drop(self):
+        c = self.SlotCur(active=True)
+        with self.assertRaisesRegex(RuntimeError, "active"):
+            cdc.pipeline_slot(c, "drop", id="abc", log=self.quiet)
+        self.assertFalse([q for q in c.log if "DROP PUBLICATION" in q])
+
+    def test_bad_steps(self):
+        for kw in ({"step": "x"}, {"step": "drop"}):
+            with self.assertRaises(ValueError):
+                cdc.pipeline_slot(Cur(), **kw)
+
+
 if __name__ == "__main__":
     unittest.main()
