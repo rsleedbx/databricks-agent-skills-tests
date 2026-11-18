@@ -93,10 +93,10 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 Every PostgreSQL pipeline needs its own replication slot (its `slot_config`), whatever the source: a VM, a cloud database or Lakebase.
 
 1. **Get the notebook:** download [scripts/pg-cdc-slot.py](scripts/pg-cdc-slot.py) from its GitHub page, then Workspace > Import > File.
-2. **Have:** a TYPE JDBC connection to the database whose login has `REPLICATION`, and an existing publication on the tables.
-3. **Run:** set the widget `uc_jdbc_connection`, then Run all (serverless). Each run makes a new slot `lfc_<uuid>`.
+2. **Have:** a TYPE JDBC connection to the database whose login has `REPLICATION`, and a publication on the tables (or a login that owns them: the notebook makes one).
+3. **Run:** set the widgets `uc_jdbc_connection`, `publication_name` (empty: make `lfc_pub_<uuid>`) and `schemas` (comma list), then Run all (serverless). Each run makes a new slot `lfc_<uuid>`.
 4. **Use:** paste the printed `slot_config` into the pipeline's `source_configurations[].catalog`, next to `source_catalog`.
-5. **Clean up:** after the pipeline is deleted, run [scripts/pg-cdc-slot-drop.py](scripts/pg-cdc-slot-drop.py) with that `slot_name` (an active slot is refused).
+5. **Clean up:** after the pipeline is deleted, run [scripts/pg-cdc-slot-drop.py](scripts/pg-cdc-slot-drop.py) with the same `uc_jdbc_connection` and `publication_name`, and that `slot_name` (an active slot is refused).
 
 ## Lakebase as the source
 
