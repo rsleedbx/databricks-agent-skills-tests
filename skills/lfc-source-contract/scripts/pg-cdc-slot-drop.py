@@ -22,11 +22,14 @@ dbutils.widgets.text("publication_name", "lfcddemo_pub")
 
 # COMMAND ----------
 
+import json
+
 from lfc_source_contract import cdc
 from lfc_source_contract.jdbc import dbapi
 
 slot_name = dbutils.widgets.get("slot_name").strip()
 if not slot_name.startswith("lfc_"):
     raise ValueError(f"slot_name {slot_name!r}: the lfc_<uuid> name pg-cdc-slot printed")
-cdc.pipeline_slot(dbapi(spark, dbutils.widgets.get("uc_jdbc_connection").strip()).cursor(), "drop",
+out = cdc.pipeline_slot(dbapi(spark, dbutils.widgets.get("uc_jdbc_connection").strip()).cursor(), "drop",
                   id=slot_name[len("lfc_"):], publication_name=dbutils.widgets.get("publication_name").strip() or None)
+dbutils.notebook.exit(json.dumps(out))   # a job run's result

@@ -33,3 +33,4 @@ out = cdc.pipeline_slot(dbapi(spark, dbutils.widgets.get("uc_jdbc_connection").s
                         publication_name=dbutils.widgets.get("publication_name").strip() or None)
 print("In the ingestion pipeline's source_configurations[].catalog, next to source_catalog:")
 print(json.dumps(out["slot_config"], indent=2))
+dbutils.notebook.exit(json.dumps(out))   # a job run's result: id, slot, publication, slot_config
