@@ -88,6 +88,16 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 - [scripts/pg-cdc-slot.py](scripts/pg-cdc-slot.py) and [scripts/pg-cdc-slot-drop.py](scripts/pg-cdc-slot-drop.py): notebooks that create, then drop, a pipeline's replication slot `lfc_<uuid>` (named by `cdc.names()`) on an existing publication through UC JDBC, with `cdc.pipeline_slot()`; the first prints the pipeline's `slot_config` ([PostgreSQL pipeline](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/postgresql-pipeline)). Not the gateway's own form, `dbx_<database OID>_<pipeline ID>`: a custom name in that form is refused (`POSTGRES_SLOT_NAME_CONFLICTS_WITH_CONNECTOR_FORMAT`).
 - [scripts/lakebase-source.py](scripts/lakebase-source.py): a Lakebase project as the source in one step: password logins, the login, the UC connection, the contract (below); its code is the package [scripts/lfc_source_contract](scripts/lfc_source_contract), which a workspace job installs.
 
+## A pipeline's PostgreSQL slot from a notebook
+
+Every PostgreSQL pipeline needs its own replication slot (its `slot_config`), whatever the source: a VM, a cloud database or Lakebase.
+
+1. **Get the notebook:** download [scripts/pg-cdc-slot.py](scripts/pg-cdc-slot.py) from its GitHub page, then Workspace > Import > File.
+2. **Have:** a TYPE JDBC connection to the database whose login has `REPLICATION`, and a publication on the tables (or a login that owns them: the notebook makes one).
+3. **Run:** set the widgets `uc_jdbc_connection`, `publication_name` (empty: make `lfc_pub_<uuid>`) and `schemas` (comma list), then Run all (serverless). Each run makes a new slot `lfc_<uuid>`.
+4. **Use:** paste the printed `slot_config` into the pipeline's `source_configurations[].catalog`, next to `source_catalog`.
+5. **Clean up:** after the pipeline is deleted, run [scripts/pg-cdc-slot-drop.py](scripts/pg-cdc-slot-drop.py) with the same `uc_jdbc_connection` and `publication_name`, and that `slot_name` (an active slot is refused).
+
 ## Lakebase as the source
 
 A Lakebase project stands in for a customer's PostgreSQL when the point is to test Lakeflow Connect's PostgreSQL connector: same workspace, no VM, no firewall. (To get Lakebase data into Unity Catalog for its own sake, Lakebase's Lakehouse Sync needs no connector.) The contract is the same as for any PostgreSQL, so a test written against it runs unchanged on a customer's own database: change the file, not the test.
