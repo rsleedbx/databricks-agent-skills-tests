@@ -114,7 +114,9 @@ fail=0
 skipped=0
 # A tag (with its follow-up turns) runs only when what it depends on changed since it last passed on this machine:
 # its prompts as filled, the workspace profile and the skills repo's skills/ (bin/test_skip, runner run.sh; local,
-# never committed). TEST_SKIP_AGAIN=1 runs every tag.
+# never committed). A pass: every turn exited 0 and ended in a result event that isn't an error; whether the answer
+# met the test's expectations is summarize.py's call, so check those before trusting a skip. A skipped tag leaves
+# <tag>.skipped (no <tag>.json) in the results. TEST_SKIP_AGAIN=1 runs every tag.
 GATE="$SCRIPT_DIR/bin/test_skip/scripts/test_skip.py"
 G=$(mktemp -d)
 gate_args() {   # <tag> <prompt as filled>: the arguments that fingerprint a tag
@@ -130,7 +132,7 @@ while IFS='|' read -r tag prompt; do
   # Fill ${VAR} placeholders from the environment; stop on an unset one
   if ! prompt=$(printf '%s' "$prompt" | perl -pe 's/\$\{(\w+)\}/defined $ENV{$1} ? $ENV{$1} : die "unset variable $1\n"/ge'); then
     echo "[$tag] SKIPPED: prompt uses an unset variable (see env.example.sh)"
-    fail=$((fail + 1))
+    fail=$((fail + 1)); : > "$G/fail-${tag%+}"
     continue
   fi
   resume_args=()
@@ -141,7 +143,7 @@ while IFS='|' read -r tag prompt; do
     session_id=$(grep -m1 -o '"session_id":"[^"]*"' "$outfile" 2>/dev/null | cut -d'"' -f4)
     if [ -z "$session_id" ]; then
       echo "[$tag+] SKIPPED: no session to resume in $outfile"
-      fail=$((fail + 1))
+      fail=$((fail + 1)); : > "$G/fail-$tag"
       continue
     fi
     resume_args=(--resume "$session_id")
@@ -149,12 +151,15 @@ while IFS='|' read -r tag prompt; do
   else
     gargs=(); while IFS= read -r a; do gargs+=("$a"); done < <(gate_args "$tag" "$prompt")
     if last=$(python3 "$GATE" skip run.sh "${gargs[@]}"); then
-      echo "[$tag] SKIPPED: $last"; : > "$G/skip-$tag"; skipped=$((skipped + 1)); continue
+      echo "[$tag] SKIPPED: $last"; : > "$G/skip-$tag"; skipped=$((skipped + 1))
+      rm -f "$RESULTS_DIR/$tag.json" "$RESULTS_DIR/$tag.err"   # an older run's output must not pass for this one's
+      echo "$last" > "$RESULTS_DIR/$tag.skipped"; continue
     fi
     printf '%s\n' "${gargs[@]}" > "$G/args-$tag"; echo "$tag" >> "$G/ran"
     outfile="$RESULTS_DIR/${tag}.json"
     : > "$outfile"
     : > "$RESULTS_DIR/${tag}.err"
+    rm -f "$RESULTS_DIR/${tag}.skipped"
     echo "[$tag] Running: $prompt"
   fi
   errfile="$RESULTS_DIR/${tag}.err"
@@ -174,6 +179,9 @@ while IFS='|' read -r tag prompt; do
   exit_code=$?
   lines=$(wc -l < "$outfile" 2>/dev/null || echo 0)
 
+  # a pass for the skip ledger: exit 0 and the session's last result event a success (not an error result)
+  tail -1 "$outfile" | grep -q '"type":"result"' && ! tail -1 "$outfile" | grep -q '"is_error":true' \
+    || : > "$G/fail-$tag"
   if [ $exit_code -ne 0 ]; then
     echo "[$tag] FAILED (exit $exit_code)"
     [ -s "$errfile" ] && echo "[$tag] stderr: $(head -5 "$errfile")"

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_gate as g  # noqa: E402
+import test_gate as g
 
 
 class GateTest(unittest.TestCase):
@@ -26,15 +26,25 @@ class GateTest(unittest.TestCase):
             finally:
                 g.R = old_r
 
-    def test_temp_group_reads_the_skills_of_the_lines_that_use_T(self):
+    def test_the_temp_group_skips_only_with_the_inputs_of_its_last_pass_unchanged(self):
+        import os
         with tempfile.TemporaryDirectory() as d:
-            s = Path(d) / "t.sh"
-            s.write_text('SS=$SK/skill-one/scripts; DG=$SK/skill-two/scripts\n'
-                         'check "a" sh -c "uv run $SS/x.py > $T/a.yaml"\n'
-                         'check "b" uv run "$DG/y.py"\n'
-                         'check "c" cat "$SK/skill-three/z" "$T/a.yaml"\n')
-            got = [Path(p).name for p in g.temp_group(s)]
-            self.assertEqual(got, ["skill-one", "skill-three"])   # b uses no $T: gated on its own
+            os.environ["TEST_SKIP_DIR"] = d
+            try:
+                script, acc, dep = Path(d) / "t.sh", Path(d) / "acc", Path(d) / "dep.py"
+                script.write_text("check ...\n")
+                dep.write_text("v1\n")
+                self.assertEqual(g.group_decide("grp", script, []), (False, "run -new"))   # never passed: runs
+                acc.write_text(f"{dep}\n")
+                g.group_record("grp", script, [], acc, ok=True)
+                self.assertTrue(g.group_decide("grp", script, [])[0])                     # unchanged: skips
+                dep.write_text("v2\n")
+                self.assertFalse(g.group_decide("grp", script, [])[0])                    # an input changed
+                g.group_record("grp", script, [], acc, ok=True)
+                script.write_text("check ... edited\n")
+                self.assertFalse(g.group_decide("grp", script, [])[0])                    # the script changed
+            finally:
+                os.environ.pop("TEST_SKIP_DIR", None)
 
 
 if __name__ == "__main__":

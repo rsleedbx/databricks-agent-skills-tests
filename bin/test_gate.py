@@ -4,8 +4,10 @@
   bin/test_gate.py decide <name> [--value V] [--cache F] -- <the check's command>...
         prints "skip <when>" (exit 0) when the check last passed with these inputs unchanged, else "run <fp>" (exit 1)
   bin/test_gate.py record <name> <fp> pass|fail
-  bin/test_gate.py temp-group <script>
-        the repo paths the script's checks that pass files through $T use (one group: they run or skip together)
+  bin/test_gate.py group-decide <name> <script> [--value V]        the checks that pass files through $T: one group
+  bin/test_gate.py group-add <list> [--cache F] -- <a $T check's command>   while the group runs: add its inputs
+  bin/test_gate.py group-record <name> <script> <list> pass|fail [--value V]
+        The group skips when the inputs its checks had at its last pass, and the script, are unchanged.
 
 A check's inputs are the repo paths in its command, widened so nothing it reads is missed:
   - a path under skills/<x> or .claude/skills/<x>: that skill, and every skill and bin file its code references,
@@ -25,7 +27,7 @@ from pathlib import Path
 R = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(R / "bin"))
 sys.path.insert(0, str(R / "bin/test_skip/scripts"))
-import test_skip  # noqa: E402
+import test_skip
 
 RUNNER = "test_scripts"
 SKILL = re.compile(r"^(\.claude/skills|skills)/([^/]+)")
@@ -72,25 +74,91 @@ def inputs(args: list[str], graph_of) -> list[Path]:
         if n not in seen:
             seen.add(n)
             todo |= graph.get(n, set()) - seen
-    return sorted({p for p in (node_path(n) for n in seen) if p} | set(loose))
+    found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose)
+    if any(reads_results(p) for p in found_paths):   # data a check reads (results/runs, results/ddl-matrix, ...)
+        found_paths.add(R / "results")
+    return sorted(found_paths)
 
 
-def temp_group(script: Path) -> list[str]:
-    """Skill folders named by the script's check lines that use $T, through its X=$SK/<skill>/... variables."""
-    text = script.read_text()
-    var = {m.group(1): m.group(2) for m in re.finditer(r"\b([A-Z]{2})=\$SK/([\w.-]+)", text)}
-    skills = set()
-    for line in text.splitlines():
-        if line.lstrip().startswith("check ") and "$T/" in line:
-            skills |= {var[v] for v in re.findall(r"\$([A-Z]{2})\b", line) if v in var}
-            skills |= set(re.findall(r"\$SK/([\w.-]+)", line))
-    return [str(R / "skills" / s) for s in sorted(skills)]
+def reads_results(path: Path) -> bool:
+    """Does a skill's code read the repo's results/ (its runs records, coverage page, ddl-matrix)?"""
+    files = [path] if path.is_file() else [f for f in path.rglob("*") if f.is_file() and f.suffix.lower() not in DOCS]
+    for f in files:
+        try:
+            if "results/" in f.read_text(errors="ignore"):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+GROUP_FILE = "test_scripts.temp-group.json"   # beside the ledger: the inputs the group's checks had at its last pass
+
+
+def group_file() -> Path:
+    return test_skip.ledger_path(RUNNER).parent / GROUP_FILE
+
+
+def group_decide(name: str, script: Path, values: list[str]) -> tuple[bool, str]:
+    """(skip, line) for the checks that pass files through $T: skip when the inputs they had at their last pass
+    (every check's own command, so continuation lines and heredocs count) and this script are unchanged."""
+    f = group_file()
+    if not f.exists():
+        return False, "run -new"
+    paths = json.loads(f.read_text())["paths"] + [str(script)]
+    fp = test_skip.fingerprint(paths, values)
+    skip, last = test_skip.should_skip(RUNNER, name, fp)
+    return skip, (f"skip {last['when']}" if skip else f"run {fp}")
+
+
+def group_add(cmd: list[str], cache: Path | None, acc: Path) -> None:
+    """Add one $T check's inputs (from its full command) to this run's list."""
+    with acc.open("a") as out:
+        for p in inputs(cmd, lambda: edges(cache)):
+            out.write(f"{p}\n")
+
+
+def group_record(name: str, script: Path, values: list[str], acc: Path, ok: bool) -> None:
+    paths = sorted({ln.strip() for ln in acc.read_text().splitlines() if ln.strip()}) if acc.exists() else []
+    if ok:
+        group_file().parent.mkdir(parents=True, exist_ok=True)
+        group_file().write_text(json.dumps({"paths": paths}, indent=1))
+    test_skip.record(RUNNER, name, test_skip.fingerprint(paths + [str(script)], values), ok)
+
+
+def opts(head: list[str]) -> tuple[list[str], list[str], Path | None]:
+    """(positionals, --value values, --cache path) from the arguments before --."""
+    pos, values, cache = [], [], None
+    while head:
+        x = head.pop(0)
+        if x == "--value":
+            values.append(head.pop(0))
+        elif x == "--cache":
+            cache = Path(head.pop(0))
+        else:
+            pos.append(x)
+    return pos, values, cache
+
+
+def group_main(argv: list[str]) -> int:
+    """group-decide <name> <script> [--value V]; group-add <acc> [--cache F] -- <command>;
+    group-record <name> <script> <acc> pass|fail [--value V]."""
+    cut = argv.index("--") if "--" in argv else len(argv)
+    pos, values, cache = opts(argv[1:cut])
+    if argv[0] == "group-decide":
+        skip, line = group_decide(pos[0], Path(pos[1]), values)
+        print(line)
+        return 0 if skip else 1
+    if argv[0] == "group-add":
+        group_add(argv[cut + 1:], cache, Path(pos[0]))
+        return 0
+    group_record(pos[0], Path(pos[1]), values, Path(pos[2]), pos[3] == "pass")
+    return 0
 
 
 def main(argv: list[str]) -> int:
-    if argv[:1] == ["temp-group"]:
-        print("\n".join(temp_group(Path(argv[1]))))
-        return 0
+    if argv[:1] in (["group-decide"], ["group-add"], ["group-record"]):
+        return group_main(argv)
     if argv[:1] == ["record"]:
         name, fp, result = argv[1:4]
         test_skip.record(RUNNER, name, fp, result == "pass")

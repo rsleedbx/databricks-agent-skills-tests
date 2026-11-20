@@ -24,16 +24,16 @@ run_check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; re
 # runs. TEST_SKIP_AGAIN=1 runs every check.
 skipped=0; GATE_ENV="${PSQL:-}|${MYSQL:-}|${LIVE_PSQL:-}|${LIVE_MYSQL:-}|${LIVE_ENGINE:-}|${LIVE_DIALECT:-}|${LIVE_PY:-}"
 # The checks that pass files through $T run or skip as one group (a skipped producer would leave its consumer without
-# input): its inputs are the skills those lines use; its pass is recorded when every one of them passed.
-TGROUP=$(python3 "$R/bin/test_gate.py" decide "files passed through \$T" --value "$GATE_ENV" \
-  --value "$(grep -E '^ *check .*\$T/' "$0")" --cache "$T/edges.json" \
-  -- $(python3 "$R/bin/test_gate.py" temp-group "$0")); tfails=0
+# input): it skips when the inputs its checks had at its last pass (from each one's full command) and this script are
+# unchanged; while it runs, each of its checks adds its inputs, and its pass is recorded when every one passed.
+TGROUP=$(python3 "$R/bin/test_gate.py" group-decide "files passed through \$T" "$0" --value "$GATE_ENV"); tfails=0
 check() {
   local name=$1; shift; local d
   case "$*" in *"$T"*)
     case "$TGROUP" in
       skip*) printf "  skip  %s (unchanged since %s)\n" "$name" "${TGROUP#skip }"; skipped=$((skipped + 1));;
-      *) run_check "$name" "$@" || tfails=$((tfails + 1));;
+      *) python3 "$R/bin/test_gate.py" group-add "$T/group-inputs" --cache "$T/edges.json" -- "$@"
+         run_check "$name" "$@" || tfails=$((tfails + 1));;
     esac; return;; esac
   d=$(python3 "$R/bin/test_gate.py" decide "$name" --value "$GATE_ENV" --value "$*" --cache "$T/edges.json" -- "$@")
   case "$d" in
@@ -233,7 +233,7 @@ db() {   # db <pg|my|py> <dialect> <client> <planner dir>: fill and check each w
 [ -n "${LIVE_MYSQL:-}" ] && db my mysql "$LIVE_MYSQL" "${DIR_MY:-$DG/mysql}"
 [ -n "${LIVE_ENGINE:-}" ] && PY=${PY:-python3} && db py "${LIVE_DIALECT:-$LIVE_ENGINE}" "$LIVE_ENGINE" ""
 rm -rf "${T:?}"
-case "$TGROUP" in run\ -|skip*) ;; run*) python3 "$R/bin/test_gate.py" record "files passed through \$T" "${TGROUP#run }" \
-  "$([ $tfails -eq 0 ] && echo pass || echo fail)";; esac
+case "$TGROUP" in skip*) ;; *) python3 "$R/bin/test_gate.py" group-record "files passed through \$T" "$0" \
+  "$T/group-inputs" "$([ $tfails -eq 0 ] && echo pass || echo fail)" --value "$GATE_ENV";; esac
 echo; [ $skipped -gt 0 ] && echo "$skipped skipped: unchanged since they passed (TEST_SKIP_AGAIN=1 runs them)"
 [ $fails -eq 0 ] && echo "all passed" || echo "$fails failed"; exit $((fails > 0))

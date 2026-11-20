@@ -34,7 +34,7 @@ SKILL = Path(__file__).resolve().parents[1]
 REPO = SKILL.parents[1]
 sys.path.insert(0, str(SKILL / "scripts"))
 sys.path.insert(0, str(REPO / "bin/test_skip/scripts"))
-import test_skip  # noqa: E402
+import test_skip
 
 RUNNER = "lfc-saas-pipeline"
 ARCHIVE = "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/{ref}.zip"
@@ -52,7 +52,7 @@ def connectors(only: str | None) -> list[str]:
 
 
 def cli(profile: str, *args: str, check: bool = True, cwd: Path | None = None) -> str:
-    r = subprocess.run(["databricks", *args, "--profile", profile], capture_output=True, text=True, cwd=cwd)
+    r = subprocess.run(["databricks", *args, "--profile", profile], capture_output=True, text=True, cwd=cwd, check=False)
     if check and r.returncode != 0:
         err = [ln for ln in (r.stderr or r.stdout).strip().splitlines() if ln.startswith("Error")] or \
             (r.stderr or r.stdout).strip().splitlines()[-1:]
@@ -78,8 +78,27 @@ def pipeline_key(slug: str) -> str:
     return re.search(r"\n  pipelines:\n    ([\w-]+):", text).group(1)
 
 
+def pushed_state(ref: str) -> tuple[str, str]:
+    """(the package folder's tree id at ref on GitHub, so a push that doesn't touch the package keeps passes; why the
+    local package differs from what the notebook installs: '' if it doesn't)."""
+    def git(*x: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", str(REPO), *x], capture_output=True, text=True, check=False)
+
+    remote = (git("ls-remote", "origin", f"refs/heads/{ref}").stdout.split() or [""])[0]
+    pkg = str((SKILL / "scripts/lfc_saas_pipeline").relative_to(REPO))
+    if git("status", "--porcelain", "--", pkg).stdout.strip():
+        return remote, "uncommitted changes"
+    if not remote:
+        return remote, f"{ref} isn't pushed"
+    if git("diff", "--quiet", remote, "HEAD", "--", pkg).returncode != 0:   # 1: differs; other: commit not here
+        return remote, f"local commits not on {ref} at GitHub"
+    tree = git("rev-parse", f"{remote}:{pkg}").stdout.strip()   # the package folder the notebook installs, not the commit
+    return tree or remote, ""
+
+
 def current_ref() -> str:
-    r = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True,
+                       check=False)
     return r.stdout.strip() or "main"
 
 
@@ -95,7 +114,7 @@ def counts(profile: str, catalog: str, schema: str, tables: list[str]) -> dict[s
     return out
 
 
-def run_bundle(profile: str, slug: str, schema: str, epoch: int) -> tuple[str, str]:
+def run_bundle(profile: str, slug: str, catalog: str, schema: str, epoch: int) -> tuple[str, str]:
     """Deploy and run the bundle from a copy named <bundle>_<epoch>: its own deployment, so no earlier deployment's
     resources are replaced. (destination schema as created, update result)."""
     with tempfile.TemporaryDirectory() as d:
@@ -103,16 +122,17 @@ def run_bundle(profile: str, slug: str, schema: str, epoch: int) -> tuple[str, s
         shutil.copytree(SKILL / "bundles" / slug, b, ignore=shutil.ignore_patterns(".databricks"))
         yml = b / "databricks.yml"
         yml.write_text(re.sub(r"(\nbundle:\n  name: )(\S+)", rf"\g<1>\g<2>_{epoch}", yml.read_text(), count=1))
-        cli(profile, "bundle", "deploy", "--var", f"schema={schema}", cwd=b)
-        r = subprocess.run(["databricks", "bundle", "run", pipeline_key(slug), "--var", f"schema={schema}",
-                            "--profile", profile], capture_output=True, text=True, cwd=b)
-        summary = json.loads(cli(profile, "bundle", "summary", "--var", f"schema={schema}", "-o", "json", cwd=b))
+        v = ["--var", f"schema={schema}", "--var", f"catalog={catalog}"]
+        cli(profile, "bundle", "deploy", *v, cwd=b)
+        r = subprocess.run(["databricks", "bundle", "run", pipeline_key(slug), *v, "--profile", profile],
+                           capture_output=True, text=True, cwd=b, check=False)
+        summary = json.loads(cli(profile, "bundle", "summary", *v, "-o", "json", cwd=b))
     created = next(iter(summary["resources"]["schemas"].values()))["name"]
     state = "COMPLETED" if r.returncode == 0 and "is COMPLETED" in (r.stdout + r.stderr) else "FAILED"
     return created, state
 
 
-def run_notebook(profile: str, slug: str, schema: str, ref: str) -> str:
+def run_notebook(profile: str, slug: str, catalog: str, schema: str, ref: str) -> str:
     """Import the notebook (its %pip line at ref), run it as a one-time job, wait for its pipeline's update."""
     me = json.loads(cli(profile, "current-user", "me", "-o", "json"))["userName"]
     path = f"/Users/{me}/lfc-saas-pipeline/{slug}-pipeline"
@@ -126,7 +146,8 @@ def run_notebook(profile: str, slug: str, schema: str, ref: str) -> str:
             "--overwrite")
     run = {"run_name": f"lfc-saas-pipeline test {slug} {schema}",
            "tasks": [{"task_key": "notebook", "notebook_task": {"notebook_path": path,
-                                                                "base_parameters": {"schema": schema}}}]}
+                                                                "base_parameters": {"schema": schema,
+                                                                                    "catalog": catalog}}}]}
     out = json.loads(cli(profile, "jobs", "submit", "--json", json.dumps(run), "-o", "json", check=False) or "{}")
     if (out.get("state") or {}).get("result_state") != "SUCCESS":
         return "FAILED (notebook job)"
@@ -147,7 +168,8 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
     conn = connection_of(slug)
     updated = json.loads(cli(a.profile, "connections", "get", conn, "-o", "json", check=False) or "{}").get("updated_at")
     fp = test_skip.fingerprint([SKILL / "notebooks" / f"{slug}-pipeline.py", SKILL / "bundles" / slug,
-                                SKILL / "scripts/lfc_saas_pipeline"], [host, f"{conn}@{updated}"])
+                                SKILL / "scripts/lfc_saas_pipeline", Path(__file__)],
+                               [host, f"{conn}@{updated}", f"package {a.ref_sha}", a.catalog, a.prefix])
     skip, last = test_skip.should_skip(RUNNER, slug, fp, a.again)
     if skip:
         print(f"  skip  {slug}: passed {last['when']}, unchanged since")
@@ -158,14 +180,17 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
         return False
     epoch, tables = int(time.time()), tables_of(slug)
     base = f"{a.prefix}_{slug.replace('-', '_')}"
-    dab_schema, dab_state = run_bundle(a.profile, slug, f"{base}_dab_{epoch}", epoch)
+    dab_schema, dab_state = run_bundle(a.profile, slug, a.catalog, f"{base}_dab_{epoch}", epoch)
     nb_schema = f"{base}_nb_{epoch}"
-    nb_state = run_notebook(a.profile, slug, nb_schema, a.ref)
+    nb_state = run_notebook(a.profile, slug, a.catalog, nb_schema, a.ref)
     dab_n, nb_n = counts(a.profile, a.catalog, dab_schema, tables), counts(a.profile, a.catalog, nb_schema, tables)
     ok = dab_state == "COMPLETED" and nb_state == "COMPLETED" and dab_n == nb_n and None not in dab_n.values()
     rows = ", ".join(f"{t} {dab_n[t]}/{nb_n[t]}" for t in tables)
     print(f"  {'ok  ' if ok else 'FAIL'}  {slug}: bundle {dab_state}, notebook {nb_state}; rows bundle/notebook: {rows}")
-    test_skip.record(RUNNER, slug, fp, ok)
+    if ok and a.unpushed:
+        print(f"        not recorded as a pass: the package has changes the notebook can't install ({a.unpushed})")
+    else:
+        test_skip.record(RUNNER, slug, fp, ok)
     return ok
 
 
@@ -179,10 +204,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prefix", default="lfc_saas_pipeline_test")
     a = ap.parse_args(argv)
     a.ref = a.ref or current_ref()
+    a.ref_sha, a.unpushed = pushed_state(a.ref)
     host = json.loads(cli(a.profile, "auth", "describe", "-o", "json", check=False) or "{}").get("details", {}).get(
         "host", a.profile)
     print(f"lfc-saas-pipeline tests on {host} (notebooks install the package from {a.ref}):")
-    results = [test_one(a, s, host) for s in connectors(a.only)]
+    results = []
+    for s in connectors(a.only):   # one at a time; an error is that connector's failure, the others still run
+        try:
+            results.append(test_one(a, s, host))
+        except Exception as err:  # noqa: BLE001
+            print(f"  FAIL  {s}: {str(err)[:300]}")
+            results.append(False)
     ran = [r for r in results if r is not None]
     print(f"{sum(ran)} passed, {len(ran) - sum(ran)} failed, {results.count(None)} skipped (unchanged; --again runs them)")
     return 0 if all(ran) else 1
