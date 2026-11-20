@@ -70,16 +70,22 @@ def inputs(args: list[str], graph_of) -> list[Path]:
         return []
     if any(str(p).startswith("bin/") for p in rel):
         return [R]
-    todo = {SKILL.match(str(p)).group(2) for p in rel if SKILL.match(str(p))}
-    loose = [R / p for p in rel if not SKILL.match(str(p))]
-    graph, seen = graph_of(), set()
+    # one closure over skills, bin files and bin folders: a skill's or top-level bin file's layer edges, and the bin/
+    # paths any of them names in its code (below subfolders too), until nothing new turns up
+    graph = graph_of()
+    todo = [node_path(m.group(2)) if (m := SKILL.match(str(p))) else R / p for p in rel]
+    done: set[Path] = set()
     while todo:
-        n = todo.pop()
-        if n not in seen:
-            seen.add(n)
-            todo |= graph.get(n, set()) - seen
-    found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose)
-    found_paths |= {b for p in list(found_paths) for b in bin_refs(p)}   # bin/<dir>/... the layer edges don't follow
+        p = todo.pop()
+        if p is None or p in done:
+            continue
+        done.add(p)
+        relp = str(p.relative_to(R))
+        m = SKILL.match(relp)
+        node = m.group(2) if m else (relp if p.parent == R / "bin" else None)
+        todo += [node_path(n) for n in graph.get(node, ())] if node else []
+        todo += [q for q in bin_refs(p) if q not in done]
+    found_paths = done
     if any(reads_results(p) for p in found_paths):   # its code reads results/ (runs, ddl-matrix): scanned before
         found_paths.add(R / "results")               # the root files are added (their text mentions results/ too)
     return sorted(found_paths | set(root_inputs()))
