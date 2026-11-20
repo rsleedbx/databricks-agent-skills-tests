@@ -178,6 +178,15 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
         print(f"  FAIL  {slug}: connection {conn} isn't in this workspace's metastore")
         test_skip.record(RUNNER, slug, fp, False)
         return False
+    try:
+        return run_one(a, slug, fp)
+    except Exception:   # recorded as a failure first, so an earlier pass can't skip a connector that just failed
+        test_skip.record(RUNNER, slug, fp, False)
+        raise
+
+
+def run_one(a: argparse.Namespace, slug: str, fp: str) -> bool:
+    """Deploy both ways, compare, record the result."""
     epoch, tables = int(time.time()), tables_of(slug)
     base = f"{a.prefix}_{slug.replace('-', '_')}"
     dab_schema, dab_state = run_bundle(a.profile, slug, a.catalog, f"{base}_dab_{epoch}", epoch)

@@ -232,8 +232,8 @@ db() {   # db <pg|my|py> <dialect> <client> <planner dir>: fill and check each w
 [ -n "${LIVE_PSQL:-}" ] && db pg "${LIVE_DIALECT:-postgres}" "$LIVE_PSQL" "${DIR_PG:-$DG/postgres}"
 [ -n "${LIVE_MYSQL:-}" ] && db my mysql "$LIVE_MYSQL" "${DIR_MY:-$DG/mysql}"
 [ -n "${LIVE_ENGINE:-}" ] && PY=${PY:-python3} && db py "${LIVE_DIALECT:-$LIVE_ENGINE}" "$LIVE_ENGINE" ""
-rm -rf "${T:?}"
 case "$TGROUP" in skip*) ;; *) python3 "$R/bin/test_gate.py" group-record "files passed through \$T" "$0" \
   "$T/group-inputs" "$([ $tfails -eq 0 ] && echo pass || echo fail)" --value "$GATE_ENV";; esac
+rm -rf "${T:?}"
 echo; [ $skipped -gt 0 ] && echo "$skipped skipped: unchanged since they passed (TEST_SKIP_AGAIN=1 runs them)"
 [ $fails -eq 0 ] && echo "all passed" || echo "$fails failed"; exit $((fails > 0))

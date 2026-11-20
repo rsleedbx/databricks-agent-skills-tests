@@ -121,7 +121,8 @@ GATE="$SCRIPT_DIR/bin/test_skip/scripts/test_skip.py"
 G=$(mktemp -d)
 gate_args() {   # <tag> <prompt as filled>: the arguments that fingerprint a tag
   printf '%s\n' "$(basename "$PROMPTS" .txt):$1" --value "$PIPELINE_WS" --value "$2" \
-    --value "$(grep "^$1+|" "$PROMPTS")" "$REPO_DIR/skills"
+    --value "$(grep "^$1+|" "$PROMPTS" | perl -pe 's/\$\{(\w+)\}/defined $ENV{$1} ? $ENV{$1} : "\${$1}"/ge')" \
+    "$REPO_DIR/skills"   # follow-ups filled like their turns, so a changed value there runs the tag
 }
 
 while IFS='|' read -r tag prompt; do

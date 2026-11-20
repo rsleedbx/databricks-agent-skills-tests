@@ -120,6 +120,8 @@ def group_add(cmd: list[str], cache: Path | None, acc: Path) -> None:
 
 def group_record(name: str, script: Path, values: list[str], acc: Path, ok: bool) -> None:
     paths = sorted({ln.strip() for ln in acc.read_text().splitlines() if ln.strip()}) if acc.exists() else []
+    if not paths:   # nothing collected (the list is gone, or no check of the group ran): never a pass to skip on
+        ok = False
     if ok:
         group_file().parent.mkdir(parents=True, exist_ok=True)
         group_file().write_text(json.dumps({"paths": paths}, indent=1))

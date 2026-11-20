@@ -16,10 +16,12 @@ Library:  fp = fingerprint(paths, values); skip, last = should_skip(runner, key,
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 IGNORE = {"__pycache__", ".git", ".databricks", ".pytest_cache", ".ruff_cache", "node_modules", ".venv"}
@@ -67,15 +69,19 @@ def should_skip(runner: str, key: str, fp: str, again: bool = False) -> tuple[bo
 
 
 def record(runner: str, key: str, fp: str, ok: bool) -> None:
-    """Keep this run's result; only a pass lets a later run skip."""
+    """Keep this run's result; only a pass lets a later run skip. Several runs may record at once (run_batch.sh
+    starts them in parallel): the read, change and write happen under a lock, through a temp file of this process."""
     p = ledger_path(runner)
     p.parent.mkdir(parents=True, exist_ok=True)
-    data = _load(runner)
-    data[key] = {"fingerprint": fp, "ok": ok,
-                 "when": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
-    tmp.replace(p)
+    with open(p.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data = _load(runner)
+        data[key] = {"fingerprint": fp, "ok": ok,
+                     "when": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=p.name + ".", suffix=".tmp")
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(data, indent=1, sort_keys=True))
+        os.replace(tmp, p)
 
 
 def forget(runner: str, key: str | None = None) -> None:

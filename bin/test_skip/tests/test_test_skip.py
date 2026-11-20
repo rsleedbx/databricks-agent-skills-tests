@@ -14,6 +14,12 @@ ts = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ts)
 
 
+def _record_one(args):
+    d, key = args
+    os.environ["TEST_SKIP_DIR"] = d
+    ts.record("r", key, ts.fingerprint([Path(d) / "src"]), True)
+
+
 class TestSkip(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.TemporaryDirectory()
@@ -52,6 +58,13 @@ class TestSkip(unittest.TestCase):
         (self.src / "pkg/__pycache__/a.cpython-310.pyc").write_bytes(b"\0")
         self.assertEqual(ts.fingerprint([self.src]), fp)
         self.assertNotEqual(ts.fingerprint([self.src, self.src / "gone"]), fp)
+
+    def test_parallel_records_keep_every_pass(self):
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(8) as pool:
+            list(pool.map(_record_one, [(self.d.name, f"k{i}") for i in range(40)]))
+        fp = ts.fingerprint([self.src])
+        self.assertTrue(all(ts.should_skip("r", f"k{i}", fp)[0] for i in range(40)))
 
     def test_the_cli_exits_0_to_skip(self):
         run = lambda *a: subprocess.run([sys.executable, str(SCRIPT), *a], capture_output=True, text=True)
