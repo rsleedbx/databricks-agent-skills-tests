@@ -40,6 +40,12 @@ signals:
       regional: "7,1,4,5,4,2,5,12,6,3"
       national: "21,3,10,5,10,5,10,12,14,5"
     measured: "lfc-source-datagen references/tpch-sources.md: % late by each cause, per profile"
+    # lfc_source_datagen.signals runs it from these: the step, the table whose comment keeps the parameters, the summary
+    table: order_line
+    sql: tpcc-delivery.sql
+    at_least_1: [handle_span, slow_every, jitter]
+    summary: "SELECT COUNT(*), ROUND(100.0 * AVG((d > :promise)::int), 1), PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY d) FROM (SELECT MAX(ol.ol_delivery_d::date - o.o_entry_d::date) AS d FROM {s}.orders o JOIN {s}.order_line ol ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id WHERE ol.ol_delivery_d IS NOT NULL GROUP BY o.o_w_id, o.o_d_id, o.o_id) x"
+    summary_columns: [orders, late_pct, median_days]
 
 tables:
 

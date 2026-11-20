@@ -20,7 +20,7 @@ on a task retry):
   2. SELECT for `login` (the reads may go through it);
   3. the fill: python/fill.py's fill(), its INSERTs sized from the key already there;
   4. the spec's checks where the model has them (tpc/<model>-verify.sql), once (a schema comment marks them);
-  5. `steps`, the model's own deterministic SQL (lfc_source_datagen.tpch: TPC-H's words and lead times);
+  5. `steps`, the model's own deterministic SQL (lfc_source_datagen.tpch: TPC-H's words and lead times; the\n     signals in a model's schema, lfc_source_datagen.signals, which lfc-sources --model runs itself);
   6. the source's name;
 then lfc_source_contract.cdc.publication over every source. Returns one row per source from `summary`, or its table and
 row counts.
@@ -273,8 +273,12 @@ def run(x, model: str, steps=None, summary=None, check=None) -> int:
 def main(argv: list[str] | None = None) -> int:
     a = arguments("lfc-sources")
     a.add_argument("--model", required=True, help="tpcb, tpcc, tpch, tpcds, tpce or tpcdi")
+    a.add_argument("--signals", action="store_true", help="print the signals' summary even when no source has them")
     x = a.parse_args(argv)
-    return run(x, x.model)
+    from .signals import bound                  # the model's signals from its schema (lfc_source_datagen.signals),
+    numbered = any(":" in s.split(":", 1)[-1] for s in x.sources)   # when a source gives their numbers; else the
+    chk, stp, summ = bound(x.model) if numbered or x.signals else (None, None, None)   # table and row counts as before
+    return run(x, x.model, stp, summ, chk)
 
 
 if __name__ == "__main__":

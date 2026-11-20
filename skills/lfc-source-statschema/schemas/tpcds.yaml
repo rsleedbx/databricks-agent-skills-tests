@@ -43,6 +43,11 @@ signals:
       fashion: "60,250,60,30,1,30"
       hardlines: "20,30,20,5,1,14"
     measured: "lfc-source-datagen references/tpch-sources.md: % returned by each cause, per profile"
+    table: store_returns
+    sql: tpcds-returns.sql
+    at_least_1: [lag_span]
+    summary: "SELECT (SELECT COUNT(*) FROM {s}.store_sales), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.store_returns) / GREATEST((SELECT COUNT(*) FROM {s}.store_sales), 1), 1)"
+    summary_columns: [store_lines, returned_pct]
   - name: web_ship_delay
     target: "web_sales lines: late when ws_ship_date_sk - ws_sold_date_sk is more than promise days"
     replaces: "the spec's ship date drawn on its own: a line could ship before it sold"
@@ -58,6 +63,11 @@ signals:
       standard: "6,1,3,2,5,3,80,2,3"
       marketplace: "12,2,6,3,5,5,60,4,5"
     measured: "lfc-source-datagen references/tpch-sources.md: % late by each cause, per profile"
+    table: web_sales
+    sql: tpcds-ship.sql
+    at_least_1: [handle_span, slow_every, jitter]
+    summary: "SELECT COUNT(*), ROUND(100.0 * AVG((d > :promise)::int), 1), PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY d) FROM (SELECT ws_ship_date_sk - ws_sold_date_sk AS d FROM {s}.web_sales WHERE ws_ship_date_sk IS NOT NULL AND ws_sold_date_sk IS NOT NULL) x"
+    summary_columns: [web_lines, late_pct, median_ship_days]
     date_keys: "days are date key differences: d_date_sk is a day number (1 is 1900-01-02), date_dim its calendar"
 
 tables:

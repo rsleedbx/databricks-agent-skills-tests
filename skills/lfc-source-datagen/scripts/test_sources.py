@@ -9,6 +9,7 @@ kept, broken rules stopping before the rename, and the command line refusing bad
 """
 from __future__ import annotations
 
+import decimal
 import io
 import json
 import os
@@ -23,8 +24,7 @@ for p in (HERE, os.path.join(HERE, "..", "..", "lfc-source-statschema", "scripts
           os.path.join(HERE, "..", "..", "lfc-source-contract", "scripts")):
     sys.path.insert(0, p)
 from lfc_source_datagen import sources as src
-from lfc_source_datagen import tpcc_sources as tc
-from lfc_source_datagen import tpcds_sources as tds
+from lfc_source_datagen import signals as sg
 from lfc_source_datagen import tpch_sources as tp
 
 
@@ -119,20 +119,37 @@ class SqlFiles(unittest.TestCase):
         self.assertIn("warehouse", tables); self.assertIn('CREATE TABLE "warehouse"', ddl)
 
 
+class Cur:
+    """A cursor for summary(): each table's comment (obj_description) from `comments`, any other query `rows`."""
+    def __init__(self, comments, rows=()):
+        self.comments, self.answers, self.q, self.rows = comments, list(rows), [], []
+
+    def execute(self, q, params=None):
+        self.q.append(q)
+        if "obj_description" in q:
+            self.rows = [(self.comments.get(re.search(r"\.(\w+)'::regclass", q).group(1)),)]
+        else:
+            self.rows = [self.answers.pop(0)]
+
+    def fetchall(self):
+        return self.rows
+
+
 class TpccDelivery(unittest.TestCase):
-    """TPC-C's delivery times: the parameters' form, the SQL filled, the signal in order_line's comment, the summary
-    reading the promise from it; and order_line's item now a foreign key (the backorder cause needs it)."""
+    """TPC-C's delivery times through lfc_source_datagen.signals: the parameters' form, the SQL filled, the signal in
+    order_line's comment, the summary reading the promise from it; and order_line's item a foreign key (the backorder
+    cause needs it)."""
     D = "3,0,2,5,2,1,2,12,3,2"
 
     def test_check_refuses_bad_forms(self):
-        tc.check(src.parse([f"a:1:{self.D}", "b:1"]))
+        sg.check("tpcc", src.parse([f"a:1:{self.D}", "b:1"]))
         for bad in ("a:1:1,2,3", "a:1:3,0,0,5,2,1,2,12,3,2", "a:1:3,0,2,0,2,1,2,12,3,2", "a:1:3,0,2,5,2,1,2,12,3,0"):
             with self.assertRaises(ValueError, msg=bad):
-                tc.check(src.parse([bad]))
+                sg.check("tpcc", src.parse([bad]))
 
     def test_steps_fill_every_variable_and_keep_the_signal(self):
-        self.assertEqual(tc.steps("a", ""), [])
-        steps = tc.steps("a", self.D)
+        self.assertEqual(sg.steps("tpcc", "a", ""), [])
+        steps = sg.steps("tpcc", "a", self.D)
         body = "\n".join(steps)
         self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+")                      # no psql variable left
         self.assertEqual(len(steps), 4)                                      # open orders x2, the delivery, the comment
@@ -144,20 +161,11 @@ class TpccDelivery(unittest.TestCase):
         self.assertEqual(json.loads(comment)["signal"], "order_late_delivery")
 
     def test_summary_reads_the_promise_from_the_comment(self):
-        class Cur:
-            def __init__(self, comment):
-                self.comment, self.q, self.rows = comment, [], []
-
-            def execute(self, q, params=None):
-                self.q.append(q)
-                self.rows = [(self.comment,)] if "obj_description" in q else [(21000, 39.9, 3.0)]
-
-            def fetchall(self):
-                return self.rows
-        cur = Cur(tc.signal_comment(self.D))
-        self.assertEqual(tc.summary(cur, "local"), {"orders": 21000, "late_pct": 39.9, "median_days": 3.0})
+        cur = Cur({"order_line": sg.comment("tpcc", "order_late_delivery", self.D)}, [(21000, decimal.Decimal("39.9"), 3.0)])
+        self.assertEqual(sg.summary("tpcc", cur, "local"), {"orders": 21000, "late_pct": 39.9, "median_days": 3.0})
         self.assertIn("d > 3", cur.q[1])
-        self.assertEqual(tc.summary(Cur(None), "local")["orders"], None)    # a source without delivery times
+        self.assertIn('"local".orders', cur.q[1])                             # {s}: the source's schema
+        self.assertEqual(sg.summary("tpcc", Cur({}), "local")["orders"], None)    # a source without delivery times
 
     def test_order_line_item_is_a_foreign_key(self):
         ddl, _ = src.model_ddl("tpcc", 0.01)
@@ -165,20 +173,20 @@ class TpccDelivery(unittest.TestCase):
 
 
 class TpcdsSignals(unittest.TestCase):
-    """TPC-DS's two signals: the <returns>/<ship> form, either half alone, the SQL filled, each signal in its table's
-    comment, the summary reading them back; and both signals' parameters as statschema's tpcds.yaml names them."""
+    """TPC-DS's two signals through lfc_source_datagen.signals: the <returns>/<ship> form, either half alone, the SQL
+    filled, each signal in its table's comment, the summary reading them back."""
     R, S = "40,80,40,15,1,30", "6,1,3,2,5,3,80,2,3"
 
     def test_check_refuses_bad_forms(self):
-        tds.check(src.parse([f"a:1:{self.R}/{self.S}", f"b:1:{self.R}/", f"c:1:/{self.S}", "d:1"]))
-        for bad in (f"a:1:{self.R}", "a:1:1,2,3/", f"a:1:40,80,40,15,1,0/", f"a:1:/6,1,0,2,5,3,80,2,3",
-                    f"a:1:/6,1,3,2,0,3,80,2,3", f"a:1:{self.R}/{self.S}/1", "a:1:x/"):
+        sg.check("tpcds", src.parse([f"a:1:{self.R}/{self.S}", f"b:1:{self.R}/", f"c:1:/{self.S}", "d:1"]))
+        for bad in (f"a:1:{self.R}", "a:1:1,2,3/", "a:1:40,80,40,15,1,0/", "a:1:/6,1,0,2,5,3,80,2,3",
+                    "a:1:/6,1,3,2,0,3,80,2,3", f"a:1:{self.R}/{self.S}/1", "a:1:x/"):
             with self.assertRaises(ValueError, msg=bad):
-                tds.check(src.parse([bad]))
+                sg.check("tpcds", src.parse([bad]))
 
     def test_steps_fill_every_variable_and_keep_each_signal(self):
-        self.assertEqual(tds.steps("a", ""), [])
-        both = tds.steps("a", f"{self.R}/{self.S}")
+        self.assertEqual(sg.steps("tpcds", "a", ""), [])
+        both = sg.steps("tpcds", "a", f"{self.R}/{self.S}")
         body = "\n".join(both)
         self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+")                     # no psql variable left
         self.assertEqual(len(both), 5)       # returns: delete, insert, comment; ship: update, comment
@@ -188,39 +196,59 @@ class TpcdsSignals(unittest.TestCase):
         comments = dict(re.findall(r"COMMENT ON TABLE (\w+) IS '(.*)'", body))
         self.assertEqual(json.loads(comments["store_returns"])["signal"], "return_propensity")
         self.assertEqual(json.loads(comments["web_sales"])["parameters"]["promise"], 6)
-        self.assertEqual(len(tds.steps("a", f"/{self.S}")), 2)
-        self.assertEqual(len(tds.steps("a", f"{self.R}/")), 3)
+        self.assertEqual(len(sg.steps("tpcds", "a", f"/{self.S}")), 2)
+        self.assertEqual(len(sg.steps("tpcds", "a", f"{self.R}/")), 3)
 
     def test_summary_reads_each_signal_from_its_comment(self):
-        class Cur:
-            def __init__(self, comments):
-                self.comments, self.q, self.rows = comments, [], []
-
-            def execute(self, q, params=None):
-                self.q.append(q)
-                if "obj_description" in q:
-                    self.rows = [(self.comments.get(re.search(r"\.(\w+)'::regclass", q).group(1)),)]
-                else:
-                    self.rows = [(57608, 5644)] if "store_returns" in q else [(14388, 41.0, 6.0)]
-
-            def fetchall(self):
-                return self.rows
-        both = Cur({"store_returns": tds.signal_comment("return_propensity", self.R),
-                    "web_sales": tds.signal_comment("web_ship_delay", self.S)})
-        self.assertEqual(tds.summary(both, "a"), {"store_lines": 57608, "returned_pct": 9.8, "web_lines": 14388,
-                                                  "late_pct": 41.0, "median_ship_days": 6.0})
+        both = Cur({"store_returns": sg.comment("tpcds", "return_propensity", self.R),
+                    "web_sales": sg.comment("tpcds", "web_ship_delay", self.S)},
+                   [(57608, decimal.Decimal("9.8")), (14388, decimal.Decimal("41.0"), 6.0)])
+        self.assertEqual(sg.summary("tpcds", both, "a"), {"store_lines": 57608, "returned_pct": 9.8, "web_lines": 14388,
+                                                          "late_pct": 41.0, "median_ship_days": 6.0})
         self.assertTrue(any("d > 6" in q for q in both.q))
-        self.assertEqual(set(tds.summary(Cur({}), "a").values()), {None})   # a source without either signal
+        self.assertEqual(set(sg.summary("tpcds", Cur({}), "a").values()), {None})   # a source without either signal
+        wrong = Cur({"store_returns": sg.comment("tpcds", "web_ship_delay", self.S)})   # another signal's comment
+        self.assertIsNone(sg.summary("tpcds", wrong, "a")["store_lines"])
+        short = Cur({"order_line": sg.comment("tpcc", "order_late_delivery", TpccDelivery.D)}, [(1, 2)])
+        with self.assertRaises(ValueError):                                   # a row unlike summary_columns
+            sg.summary("tpcc", short, "a")
 
-    def test_parameters_match_the_schema(self):
-        import yaml
-        doc = yaml.safe_load(open(os.path.join(HERE, "..", "..", "lfc-source-statschema", "schemas", "tpcds.yaml")))
-        sig = {s["name"]: s for s in doc["signals"]}
-        self.assertEqual(list(sig), list(tds.SIGNALS))
-        for name, (_t, _sql, names, _) in tds.SIGNALS.items():
-            self.assertEqual(tuple(sig[name]["parameters"]), names)
-        returns, ship = (sig[n]["profiles"] for n in tds.SIGNALS)
-        tds.check(src.parse([f"{r}_{s}:1:{returns[r]}/{ship[s]}" for r in returns for s in ship]))
+
+class SignalBlocks(unittest.TestCase):
+    """Every model's signals: block that lfc_source_datagen.signals runs: its SQL file is there with a variable for each
+    parameter and :'signal', its profiles pass check(), its summary names a column per value; the wrappers' commands
+    are lfc-sources --model."""
+
+    def test_every_block_runs(self):
+        models = [m for m in ("tpcb", "tpcc", "tpch", "tpcds", "tpce", "tpcdi") if sg.spec(m)]
+        self.assertIn("tpcc", models)
+        for m in models:
+            sigs = sg.spec(m)
+            for s in sigs:
+                sql = src.read_sql(s["sql"])
+                for k in s["parameters"]:
+                    self.assertRegex(sql, rf"(?<![:\w]):{k}\b", f"{m} {s['name']}: :{k} not in {s['sql']}")
+                self.assertIn(":'signal'", sql)
+                self.assertTrue(set(s.get("at_least_1") or []) <= set(s["parameters"]))
+                self.assertTrue(s["summary_columns"] and "{s}" in s["summary"], f"{m} {s['name']}: summary")
+            profiles = [list(s["profiles"].values()) for s in sigs]
+            combos = ["/".join(p[0] if i == j else "" for i, p in enumerate(profiles)) for j in range(len(sigs))]
+            sg.check(m, src.parse([f"s{i}:1:{c}" for i, c in enumerate(combos)] + [f"all{i}:1:" + "/".join(p[i % len(p)] for p in profiles) for i in range(3)]))
+
+    def test_lfc_sources_runs_signals_only_with_numbers(self):
+        for argv, want in ((["--model", "tpcc", "db", "a:1"], None), (["--model", "tpcc", "db", "a:1:" + TpccDelivery.D], "steps"),
+                           (["--model", "tpcc", "--signals", "db", "a:1"], "steps"), (["--model", "tpcb", "db", "a:1:1"], None)):
+            with mock.patch.object(src, "run", return_value=0) as run:
+                src.main(argv)
+            got = run.call_args.args[2]
+            self.assertEqual(None if got is None else "steps", want, argv)
+
+    def test_wrappers_are_lfc_sources(self):
+        from lfc_source_datagen import tpcc_sources, tpcds_sources
+        for mod, m in ((tpcc_sources, "tpcc"), (tpcds_sources, "tpcds")):
+            with mock.patch.object(mod, "_sources_main", return_value=0) as run:
+                self.assertEqual(mod.main(["db", "a:1"]), 0)
+            run.assert_called_once_with(["--model", m, "--signals", "db", "a:1"])
 
 
 class Build(unittest.TestCase):
