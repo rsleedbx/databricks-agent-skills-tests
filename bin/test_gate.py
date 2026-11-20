@@ -105,7 +105,10 @@ def group_decide(name: str, script: Path, values: list[str]) -> tuple[bool, str]
     f = group_file()
     if not f.exists():
         return False, "run -new"
-    paths = json.loads(f.read_text())["paths"] + [str(script)]
+    stored = json.loads(f.read_text())["paths"]
+    if any(Path(p).is_absolute() for p in stored):   # written for another checkout's paths: record again
+        return False, "run -new"
+    paths = [str(R / p) for p in stored] + [str(script)]   # in this checkout
     fp = test_skip.fingerprint(paths, values)
     skip, last = test_skip.should_skip(RUNNER, name, fp)
     return skip, (f"skip {last['when']}" if skip else f"run {fp}")
@@ -122,9 +125,10 @@ def group_record(name: str, script: Path, values: list[str], acc: Path, ok: bool
     paths = sorted({ln.strip() for ln in acc.read_text().splitlines() if ln.strip()}) if acc.exists() else []
     if not paths:   # nothing collected (the list is gone, or no check of the group ran): never a pass to skip on
         ok = False
-    if ok:
+    if ok:   # kept relative to the repo root, so another checkout compares its own files
+        rel = sorted({str(Path(p).relative_to(R)) if Path(p).is_relative_to(R) else p for p in paths})
         group_file().parent.mkdir(parents=True, exist_ok=True)
-        group_file().write_text(json.dumps({"paths": paths}, indent=1))
+        group_file().write_text(json.dumps({"paths": rel}, indent=1))
     test_skip.record(RUNNER, name, test_skip.fingerprint(paths + [str(script)], values), ok)
 
 

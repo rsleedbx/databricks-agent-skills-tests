@@ -1,4 +1,5 @@
 """Offline tests for bin/test_gate.py: which paths a check depends on, and the $T group."""
+import json
 import sys
 import tempfile
 import unittest
@@ -31,6 +32,7 @@ class GateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             os.environ["TEST_SKIP_DIR"] = d
             try:
+                old_r, g.R = g.R, Path(d)
                 script, acc, dep = Path(d) / "t.sh", Path(d) / "acc", Path(d) / "dep.py"
                 script.write_text("check ...\n")
                 dep.write_text("v1\n")
@@ -43,7 +45,9 @@ class GateTest(unittest.TestCase):
                 g.group_record("grp", script, [], acc, ok=True)
                 script.write_text("check ... edited\n")
                 self.assertFalse(g.group_decide("grp", script, [])[0])                    # the script changed
+                self.assertEqual(json.loads(g.group_file().read_text())["paths"], ["dep.py"])   # relative to the root
             finally:
+                g.R = old_r
                 os.environ.pop("TEST_SKIP_DIR", None)
 
 
