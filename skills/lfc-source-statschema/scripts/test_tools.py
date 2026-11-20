@@ -351,6 +351,64 @@ class CompositeKeys(unittest.TestCase):
         finally:
             db.close()
 
+    def test_the_slower_pointing_column_varies_too(self):
+        # 20 companies x (20 competitors x 7 industries), 3 rows each: one rotation of the whole number moved only the
+        # industry; each pointing column rotated on its own moves the competitor too
+        sch = {"version": "1.0", "tables": [
+            {"name": "ind", "row_count": 7, "columns": [{"name": "i", "type": "integer", "primary_key": True}]},
+            {"name": "co", "row_count": 20, "columns": [{"name": "c", "type": "integer", "primary_key": True}]},
+            {"name": "cc", "row_count": 60, "columns": [
+                {"name": "c", "type": "integer", "primary_key": True}, {"name": "o", "type": "integer", "primary_key": True},
+                {"name": "i", "type": "integer", "primary_key": True}],
+             "fk_constraints": [{"columns": ["c"], "parent_table": "co", "parent_columns": ["c"]},
+                                {"columns": ["o"], "parent_table": "co", "parent_columns": ["c"]},
+                                {"columns": ["i"], "parent_table": "ind", "parent_columns": ["i"]}]}]}
+        rows = self.keys(sch, "cc", ["c", "o", "i"])
+        self.assertEqual(len(set(rows)), 60)
+        sets = {}
+        for c, o, _ in rows:
+            sets.setdefault(c, set()).add(o)
+        self.assertGreater(len({frozenset(s) for s in sets.values()}), 1)        # not every company the same partners
+
+    def test_a_lookup_takes_the_parents_value_and_names_the_resume_column(self):
+        import re
+        import sqlite3
+        import sqlglot
+        from statschema.tools import shape
+        sch = {"version": "1.0", "tables": [
+            {"name": "cust", "row_count": 30, "columns": [{"name": "c", "type": "integer", "primary_key": True}]},
+            {"name": "acct", "row_count": 50, "columns": [{"name": "a", "type": "integer", "primary_key": True},
+                                                         {"name": "c", "type": "integer"}],
+             "fk_constraints": [{"columns": ["c"], "parent_table": "cust", "parent_columns": ["c"]}]},
+            {"name": "bal", "row_count": 40, "columns": [
+                {"name": "c", "type": "integer", "primary_key": True, "generation": {"lookup": {"via": "a", "column": "c"}}},
+                {"name": "a", "type": "integer", "primary_key": True}, {"name": "d", "type": "integer", "primary_key": True,
+                                                                         "generation": {"min_value": 1, "max_value": 9}}],
+             "fk_constraints": [{"columns": ["c"], "parent_table": "cust", "parent_columns": ["c"]},
+                                {"columns": ["a"], "parent_table": "acct", "parent_columns": ["a"]}]}]}
+        T = {x["name"]: x for x in yaml.safe_load(shape(sch)[0])["tables"]}
+        f = lambda tn, col: sqlglot.transpile(re.search(r"lfc:v=\{(.*)\}", next(c["comment"] for c in T[tn]["columns"] if c["name"] == col)).group(1),
+                                              read="mysql", write="sqlite")[0]
+        self.assertIn("lfc:by={a}", T["bal"]["lfc_tags"])
+        db = sqlite3.connect(":memory:")
+        try:
+            owner = {db.execute(f"SELECT {f('acct', 'a')} FROM (SELECT {n} AS n) x").fetchone()[0]:
+                     db.execute(f"SELECT {f('acct', 'c')} FROM (SELECT {n} AS n) x").fetchone()[0] for n in range(1, 51)}
+            for n in range(1, 41):
+                c, a = db.execute(f"SELECT {f('bal', 'c')}, {f('bal', 'a')} FROM (SELECT {n} AS n) x").fetchone()
+                self.assertEqual(c, owner[a], n)                                   # the balance's customer is its account's
+        finally:
+            db.close()
+        stats = {"tables": [{"name": "bal", "row_count": 40, "columns": [{"name": "a", "n_distinct": 20}]}]}
+        with tempfile.TemporaryDirectory() as d:                                  # the via column from statistics
+            sp, ss = os.path.join(d, "s.yaml"), os.path.join(d, "st.yaml")
+            yaml.safe_dump(sch, open(sp, "w")); yaml.safe_dump(stats, open(ss, "w"))
+            bal = {x["name"]: x for x in yaml.safe_load(shape(sp, stats=ss)[0])["tables"]}["bal"]
+            self.assertIn("lfc:v=", next(c["comment"] for c in bal["columns"] if c["name"] == "c"))
+        sch["tables"][2]["columns"][0]["generation"]["lookup"]["via"] = "d"          # not a foreign key: refused
+        with self.assertRaises(SystemExit):
+            shape(sch)
+
 
 if __name__ == "__main__":
     unittest.main()

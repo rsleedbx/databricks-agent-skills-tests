@@ -1225,6 +1225,7 @@ tables:
       - name: SK_BrokerID
         type: bigint
         not_null: true
+        generation: {lookup: {via: SK_AccountID, column: SK_BrokerID}}
       - name: SK_CreateDateID
         type: bigint
         not_null: true
@@ -1263,6 +1264,7 @@ tables:
       - name: SK_CompanyID
         type: bigint
         not_null: true
+        generation: {lookup: {via: SK_SecurityID, column: SK_CompanyID}}
       - name: Quantity
         type: integer
         not_null: true
@@ -1282,6 +1284,7 @@ tables:
       - name: SK_CustomerID
         type: bigint
         not_null: true
+        generation: {lookup: {via: SK_AccountID, column: SK_CustomerID}}
       - name: SK_AccountID
         type: bigint
         not_null: true
@@ -1371,6 +1374,7 @@ tables:
       - name: SK_CompanyID
         type: bigint
         not_null: true
+        generation: {lookup: {via: SK_SecurityID, column: SK_CompanyID}}
       - name: SK_DateID
         type: bigint
         not_null: true
@@ -1569,15 +1573,19 @@ tables:
       - name: SK_CustomerID
         type: bigint
         not_null: true
+        generation: {lookup: {via: CurrentTradeID, column: SK_CustomerID}}
       - name: SK_AccountID
         type: bigint
         not_null: true
+        generation: {lookup: {via: CurrentTradeID, column: SK_AccountID}}
       - name: SK_SecurityID
         type: bigint
         not_null: true
+        generation: {lookup: {via: CurrentTradeID, column: SK_SecurityID}}
       - name: SK_CompanyID
         type: bigint
         not_null: true
+        generation: {lookup: {via: CurrentTradeID, column: SK_CompanyID}}
       - name: SK_DateID
         type: bigint
         not_null: true
@@ -1637,6 +1645,7 @@ tables:
         type: bigint
         not_null: true
         primary_key: true
+        generation: {lookup: {via: SK_AccountID, column: SK_CustomerID}}
       - name: SK_AccountID
         type: bigint
         not_null: true
