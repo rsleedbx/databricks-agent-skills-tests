@@ -18,7 +18,9 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `bin/run_matrix.sh` Run the full Lakeflow Connect matrix (see MATRIX.md) against one workspace. LFC_SKIP_LAKEBASE=1 leaves the Lakebase t...
 - `bin/scripts_index.py` [--check]: write SCRIPTS.md, one line per runnable script (a #! line): its path and the first line of its usage heade...
 - `bin/stop_after.sh` Stop each pipeline's latest update once it has run longer than a limit.
+- `bin/test_gate.py` should a check of bin/test_scripts.sh run, given what changed since it last passed?
 - `bin/test_scripts.sh` regression tests for the skills' scripts.
+- `bin/test_skip/scripts/test_skip.py` Vendored copy of shared unit 'test_skip': edit the master, then run `reuse-first vendor sync` (any other edit shows a...
 
 ## account-token-fallback
 
@@ -72,6 +74,10 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 ## lfc-saas-answer
 
 - `skills/lfc-saas-answer/scripts/connector-index.sh` [--check]: the Lakeflow Connect connectors on docs.databricks.com, each with its doc pages and, for SaaS connectors, ...
+
+## lfc-saas-pipeline
+
+- `skills/lfc-saas-pipeline/scripts/run_tests.py` each SaaS connector's bundle and notebook deployed on a workspace, their rows compared; a connector runs only when wh...
 
 ## lfc-schema-change-test
 
