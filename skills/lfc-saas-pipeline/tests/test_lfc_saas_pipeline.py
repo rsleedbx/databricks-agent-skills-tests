@@ -60,16 +60,23 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(api.calls[0][3], {"filter": "name LIKE 'x%'"})
         self.assertEqual(p.arg("connection", "lfcsaas-1password"), "lfcsaas-1password")
 
-    def test_the_notebook_and_the_bundle_ingest_the_same_tables_through_the_same_connection(self):
+    def test_each_notebook_and_its_bundle_ingest_the_same_tables_through_the_same_connection(self):
+        import re
         root = Path(__file__).resolve().parents[1]
-        nb = (root / "notebooks/1password-event-logs-pipeline.py").read_text()
-        yml = (root / "bundles/1password-event-logs/resources/onepassword_event_logs.yml").read_text()
-        for t in ("audit_events", "item_usages", "sign_in_attempts"):
-            self.assertIn(t, nb)
-            self.assertIn(t, yml)
-        self.assertIn('arg("connection", "lfcsaas-1password")', nb)
-        self.assertIn("default: lfcsaas-1password", (root / "bundles/1password-event-logs/databricks.yml").read_text())
-        self.assertTrue(nb.startswith("# Databricks notebook source\n"))
+        pairs = {"1password-event-logs": "lfcsaas-1password", "marketo": "lfcsaas-marketo"}
+        self.assertEqual(sorted(p.stem.removesuffix("-pipeline") for p in (root / "notebooks").glob("*.py")),
+                         sorted(pairs))
+        for slug, conn in pairs.items():
+            nb = (root / f"notebooks/{slug}-pipeline.py").read_text()
+            bundle = root / f"bundles/{slug}"
+            yml = "".join(p.read_text() for p in sorted((bundle / "resources").glob("*.yml")))
+            nb_tables = re.findall(r'"([a-z_0-9]+)"', re.search(r"for t in \(([^)]*)\)", nb).group(1))
+            yml_tables = re.findall(r"source_table: ([a-z_0-9]+)", yml)
+            self.assertEqual(nb_tables, yml_tables, slug)
+            self.assertIn(f'arg("connection", "{conn}")', nb)
+            self.assertIn(f"default: {conn}", (bundle / "databricks.yml").read_text())
+            self.assertIn("group_name: users", yml)
+            self.assertTrue(nb.startswith("# Databricks notebook source\n"))
 
 
 if __name__ == "__main__":

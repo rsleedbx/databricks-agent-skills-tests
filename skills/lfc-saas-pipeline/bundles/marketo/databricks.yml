@@ -1,0 +1,25 @@
+# Marketo into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/marketo-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# workspace (open this file, Deployments, Deploy).
+bundle:
+  name: marketo
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The Marketo UC connection (client ID and secret of a LaunchPoint API service)
+    default: lfcsaas-marketo
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: marketo
+
+targets:
+  dev:
+    default: true
+    mode: development
