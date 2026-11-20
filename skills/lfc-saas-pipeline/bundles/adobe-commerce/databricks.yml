@@ -1,0 +1,25 @@
+# Adobe Commerce into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (no public docs page yet), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# workspace (open this file, Deployments, Deploy).
+bundle:
+  name: adobe_commerce
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The Adobe Commerce UC connection (an integration access token)
+    default: lfcsaas-adobe-commerce
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: adobe_commerce
+
+targets:
+  dev:
+    default: true
+    mode: development
