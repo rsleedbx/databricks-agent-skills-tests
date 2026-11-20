@@ -78,10 +78,10 @@ def inputs(args: list[str], graph_of) -> list[Path]:
         if n not in seen:
             seen.add(n)
             todo |= graph.get(n, set()) - seen
-    found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose) | set(root_inputs())
-    if any(reads_results(p) for p in found_paths):   # data a check reads (results/runs, results/ddl-matrix, ...)
-        found_paths.add(R / "results")
-    return sorted(found_paths)
+    found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose)
+    if any(reads_results(p) for p in found_paths):   # its code reads results/ (runs, ddl-matrix): scanned before
+        found_paths.add(R / "results")               # the root files are added (their text mentions results/ too)
+    return sorted(found_paths | set(root_inputs()))
 
 
 ROOT_KINDS = {".yaml", ".yml", ".sh", ".txt", ".json", ".py"}   # repo-root config and data, not prose
