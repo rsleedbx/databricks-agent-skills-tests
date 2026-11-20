@@ -2075,7 +2075,8 @@ tables:
       type: integer
       not_null: true
       primary_key: true
-      generation: {min_value: 35795, max_value: 37621}
+      description: "weekly: 1998-01-01 .. 2002-12-26, 261 weeks"
+      generation: {min_value: 35794, max_value: 37614, distribution_params: {step: 7}}
     - name: inv_item_sk
       type: integer
       not_null: true

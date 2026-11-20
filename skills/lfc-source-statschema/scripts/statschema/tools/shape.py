@@ -102,6 +102,23 @@ def codec(c, rows):                         # a key column: (kind, n back from t
     if k == "date": return "v", f"LFC_DAYS({name})", (lambda i: i), None
     if k == "ts": return "v", f"LFC_EPOCH({name})", (lambda i: i), None
     return "v", name, (lambda i: i), None
+def icodec(c):                              # a composite key's integer column with a range (by its step) or a list: its values,
+    g, name = c.get("generation") or {}, c["name"]   # not 1, 2, 3 (TPC-E fi_year 1999 .., TPC-DS inventory's weekly dates)
+    if kind(c) != "int" or g.get("distribution", "auto") in STRUCT: return None
+    ivals = sorted({int(x) for x in g.get("values") or []})
+    if len(ivals) > 1 and len({b - a for a, b in zip(ivals, ivals[1:])}) > 1:   # uneven: by position
+        back = "CASE " + name + " " + " ".join(f"WHEN {x} THEN {i + 1}" for i, x in enumerate(ivals)) + " END"
+        return "v", back, (lambda i, vs=ivals: "CASE (" + i + ") " + " ".join(f"WHEN {j + 1} THEN {x}" for j, x in enumerate(vs)) + " END"), len(ivals)
+    if ivals:                                    # evenly spaced: a range (TPC-DI's FI_QTR 1 .. 4)
+        lo, hi, st = ivals[0], ivals[-1], (ivals[1] - ivals[0]) if len(ivals) > 1 else 1
+    elif g.get("min_value") is not None and g.get("max_value") is not None:
+        lo, hi, st = int(g["min_value"]), int(g["max_value"]), int((g.get("distribution_params") or {}).get("step", 1))
+    else:
+        return None
+    if hi < lo or st < 1: return None
+    if lo == 1 and st == 1: return "v", name, (lambda i: i), hi
+    back = f"{name} - {lo - 1}" if st == 1 else f"({name} - {lo}) DIV {st} + 1"
+    return "v", back, (lambda i, lo=lo, st=st: f"({lo} + (({i}) - 1) * {st})"), (hi - lo) // st + 1
 def lit(s): return "'" + str(s).replace("'", "''") + "'"
 def perm(tn, col, salt, rows): return f"(x.n - 1) * {K(tn, col, salt)} % {rows}"
 def draw(tn, col, salt, m): return f"(x.n - 1) * {K(tn, col, salt)} % {m}"         # 0 .. m-1, each equally often
@@ -182,7 +199,11 @@ for tn in order:
     def pcodec(col):                           # a key column that is a foreign key: the parent column's codec
         if col not in fkcol: return None
         f, pc = fkcol[col]; pt = T[f["parent_table"]]
-        return codec(dict(next(x for x in pt["columns"] if x["name"] == pc), name=col), R[f["parent_table"]])   # read back from this column
+        c = dict(next(x for x in pt["columns"] if x["name"] == pc), name=col)   # read back from this column
+        ppk = [x["name"] for x in pt["columns"] if x.get("primary_key")]
+        pfk = {cc for x in pt.get("fk_constraints") or [] for cc in x["columns"]}
+        ranged = icodec(c) if len(ppk) > 1 and pc in ppk and pc not in pfk else None   # as the parent's key numbered it
+        return ranged or codec(c, R[f["parent_table"]])
     exp_cols = []
 
     def rule(c):                             # a generation rule -> (formula kind, text), or None
@@ -260,25 +281,42 @@ for tn in order:
             rows = R[tn] = pr; tags[0] = f"lfc:rows={rows}"
         if cd[1] != k: tags.append(f"lfc:n={{{cd[1]}}}")
         put(k, (cd[0], cd[2]("x.n"))); keyf[tn] = {k: (cd[0], cd[2]("x.n"))}
-    elif len(pk) > 1:                           # number by the first two columns: k1 = (n - 1) DIV f + 1, k2 = (n - 1) % f + 1
-        k1, k2 = pk[0], pk[1]
-        c1 = pcodec(k1) or codec(cols[k1], rows); c2 = pcodec(k2) or codec(cols[k2], rows)
+    elif len(pk) > 1:   # k1 = (n - 1) DIV f + 1; the other key columns share (n - 1) % f, as one mixed-radix number when
+        #                    their values are countable (each its own digit), else the second alone and the rest their first
+        def kcodec(col):                         # a foreign key's parent codec, an integer range or list, or the column's codec
+            return pcodec(col) or icodec(cols[col]) or codec(cols[col], rows)
+        k1, rest = pk[0], pk[1:]
+        c1 = kcodec(k1); cr = [kcodec(k) for k in rest]
         nd = (cs.get(k1) or {}).get("n_distinct") or 0
         cap = lambda k, cd: min(x for x in (cd[3], R.get(fkcol[k][0]["parent_table"]) if k in fkcol else None, 10 ** 18) if x)
+        caps = [cap(k, c) for k, c in zip(rest, cr)]
+        radix = len(rest) > 1 and max(caps) < 10 ** 18 and math.prod(caps) <= 10 ** 15
+        if not radix: rest, cr, caps = rest[:1], cr[:1], caps[:1]   # the rest keep their first value (below)
         d1 = min((math.ceil(-nd * rows) if nd < 0 else math.ceil(nd / rs * rows) if nd and rs else None) or rows, cap(k1, c1))
         f = max(1, math.ceil(rows / max(d1, 1)))         # rows per k1 value; a foreign key k1 stays within its parent
-        c2n = cap(k2, c2)
+        c2n = math.prod(caps) if radix else caps[0]
         if c2n < 10 ** 18 and f > c2n:          # (a small scale: TPC-E's 15 securities per watch list, 7 securities at SF 0.001)
-            log(f"{tn}: {f} {k2} per {k1} but only {c2n} values of {k2}; {c2n} per {k1}"); f = c2n
+            log(f"{tn}: {f} {'/'.join(rest)} per {k1} but only {c2n} values of them; {c2n} per {k1}"); f = c2n
             c1n = cap(k1, c1)
-            if c1n < 10 ** 18 and math.ceil(rows / f) > c1n:   # more rows than the two keys' pairs: the key can't be unique
-                log(f"{tn}: {rows} rows but only {c1n} x {f} key pairs; {c1n * f} rows")
+            if c1n < 10 ** 18 and math.ceil(rows / f) > c1n:   # more rows than the keys' combinations: the key can't be unique
+                log(f"{tn}: {rows} rows but only {c1n} x {f} key combinations; {c1n * f} rows")
                 rows = R[tn] = c1n * f; tags[0] = f"lfc:rows={rows}"
         step = max(1, c2n // f) if c2n < 10 ** 18 else 1
-        put(k1, (c1[0], c1[2](f"((x.n - 1) DIV {f} + 1)"))); put(k2, (c2[0], c2[2](f"(((x.n - 1) % {f}) * {step} + 1)")))
-        for k in pk[2:]:
-            ck = pcodec(k) or codec(cols[k], rows); put(k, (ck[0], ck[2]("1")))
-        tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({c2[1]} - 1) DIV {step} + 1}}")
+        if radix:                               # a step sharing a factor with the fastest column's count would hold it
+            while step > 1 and math.gcd(step, caps[-1]) > 1: step -= 1   # to a few values (one, if a multiple)
+        put(k1, (c1[0], c1[2](f"((x.n - 1) DIV {f} + 1)")))
+        if not radix:
+            put(rest[0], (cr[0][0], cr[0][2](f"(((x.n - 1) % {f}) * {step} + 1)")))
+            for k in pk[2:]:
+                ck = kcodec(k); put(k, (ck[0], ck[2]("1")))
+            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({cr[0][1]} - 1) DIV {step} + 1}}")
+        else:                                   # the last column is the fastest digit
+            strides = [math.prod(caps[j + 1:]) for j in range(len(rest))]
+            idx = f"((x.n - 1) % {f}) * {step}"
+            for k, c, m, s in zip(rest, cr, caps, strides):
+                put(k, (c[0], c[2](f"(({idx}) DIV {s} % {m} + 1)")))
+            inner = " + ".join(f"({c[1]} - 1) * {s}" for c, s in zip(cr, strides))
+            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({inner}) DIV {step} + 1}}")
         keyf[tn] = {k: ("v" if k in v else "e", v.get(k, e.get(k))) for k in pk}
     else:                                       # no key: a timestamp (one second per row) or an integer column numbers the rows
         free = [c for c in t["columns"] if c["name"] not in fkcol]
