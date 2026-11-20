@@ -59,6 +59,15 @@ PSQL="podman exec -i dg-pg psql -U postgres" MYSQL="podman exec -i dg-my mysql -
 bin/check_links.py                     # every relative link in every skill
 ```
 
+A check runs only when what it depends on changed since it last passed on this machine
+([bin/test_gate.py](../bin/test_gate.py), with [bin/test_skip](../bin/test_skip/scripts/test_skip.py)). Its
+fingerprint is its command plus the files it depends on: the repo paths it names, a skill widened to the skills and bin
+files its code references, a bin tool to the whole repo. The checks that pass files through the run's temp folder
+run or skip together. A check that names no repo path always runs, as do the `bash -n` loops (milliseconds each).
+Passes are kept outside the repo (`~/.cache/test-skip/test_scripts.json`; `TEST_SKIP_DIR` moves it), so CI and a fresh
+checkout run everything. `TEST_SKIP_AGAIN=1 bin/test_scripts.sh` runs every check. On 2026-11-20 a run with nothing
+changed took 33 s instead of 3 min 15 s.
+
 With databases, it fills TPC-C and the TPC-H spec schema on each engine (schemas named `test_*`) and checks every table's target, the spec's rules, and the audit. Run it after changing a skill's scripts.
 
 ## Schema-change tests
