@@ -367,17 +367,6 @@ for tn in order:
 
     if pk and pk[0] != pkall[0] and not any(x.startswith("lfc:by=") for x in tags):
         tags.append(f"lfc:by={{{pk[0]}}}")    # the planner's resume reads n from the key's first column unless told
-    for col, lk in look.items():
-        via, pcol = (lk or {}).get("via"), (lk or {}).get("column")
-        p = fkcol[via][0]["parent_table"] if via in fkcol and len(fkcol[via][0]["columns"]) == 1 else None
-        if not p or p not in nback or pcol not in colf.get(p, {}) or not (v.get(via) or e.get(via)):
-            raise SystemExit(f"shape.py: {tn}.{col}: lookup needs via, a one-column foreign key of {tn} to a table with a "
-                             f"one-column key shaped before it, and column, a column of that table")
-        back, key = nback[p]
-        pn = re.sub(rf"\b{re.escape(key)}\b", f"({v.get(via) or e.get(via)})", back)   # the parent row's n
-        kf = colf[p][pcol]; put(col, (kf[0], kf[1].replace("x.n", f"({pn})")))
-        if col in pkall: keyf.setdefault(tn, {})[col] = (kf[0], kf[1].replace("x.n", f"({pn})"))
-
     # 2. statistics for the rest
     for c in t["columns"]:
         name, k = c["name"], kind(c)
@@ -453,6 +442,18 @@ for tn in order:
             val = place(f"({perm(tn, name, 'j', rows)}) * {d} DIV {rows}", d)
         if p > 0: val = f"CASE WHEN {perm(tn, name, 'z', rows)} < {round(p * rows)} THEN NULL ELSE {val} END"
         v[name] = val
+
+    # lookups after the statistics, which may give the via column its formula
+    for col, lk in look.items():
+        via, pcol = (lk or {}).get("via"), (lk or {}).get("column")
+        p = fkcol[via][0]["parent_table"] if via in fkcol and len(fkcol[via][0]["columns"]) == 1 else None
+        if not p or p not in nback or pcol not in colf.get(p, {}) or not (v.get(via) or e.get(via)):
+            raise SystemExit(f"shape.py: {tn}.{col}: lookup needs via, a one-column foreign key of {tn} to a table with a "
+                             f"one-column key shaped before it, and column, a column of that table")
+        back, key = nback[p]
+        pn = re.sub(rf"\b{re.escape(key)}\b", f"({v.get(via) or e.get(via)})", back)   # the parent row's n
+        kf = colf[p][pcol]; put(col, (kf[0], kf[1].replace("x.n", f"({pn})")))
+        if col in pkall: keyf.setdefault(tn, {})[col] = (kf[0], kf[1].replace("x.n", f"({pn})"))
 
     # 3. order between columns. An offset rule (distribution: offset, distribution_params: {from: <column>, min, max}, in
     #    days for a date, seconds for a timestamp) is the other column's formula plus min .. max, each equally often, so the

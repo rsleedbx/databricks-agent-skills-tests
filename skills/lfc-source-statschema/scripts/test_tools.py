@@ -399,6 +399,12 @@ class CompositeKeys(unittest.TestCase):
                 self.assertEqual(c, owner[a], n)                                   # the balance's customer is its account's
         finally:
             db.close()
+        stats = {"tables": [{"name": "bal", "row_count": 40, "columns": [{"name": "a", "n_distinct": 20}]}]}
+        with tempfile.TemporaryDirectory() as d:                                  # the via column from statistics
+            sp, ss = os.path.join(d, "s.yaml"), os.path.join(d, "st.yaml")
+            yaml.safe_dump(sch, open(sp, "w")); yaml.safe_dump(stats, open(ss, "w"))
+            bal = {x["name"]: x for x in yaml.safe_load(shape(sp, stats=ss)[0])["tables"]}["bal"]
+            self.assertIn("lfc:v=", next(c["comment"] for c in bal["columns"] if c["name"] == "c"))
         sch["tables"][2]["columns"][0]["generation"]["lookup"]["via"] = "d"          # not a foreign key: refused
         with self.assertRaises(SystemExit):
             shape(sch)
