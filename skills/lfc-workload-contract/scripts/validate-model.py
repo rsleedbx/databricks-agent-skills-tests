@@ -14,7 +14,7 @@ Model format 1 (what a consumer may rely on): a mapping with
       name             a non-empty string, unique in its table
       type             a non-empty string (statschema's canonical type)
       primary_key      true or false (optional); the table's key is its columns with primary_key: true, none for a keyless table
-    builtin_generator  a string (optional)
+    formulas           a mapping of names to strings (optional): sub-formulas for the columns' generation rules
 Other keys are ignored: a new optional key keeps the format at 1.
 
 The reader handles the YAML subset the model files use: block mappings and sequences at any indentation (tables at 0 or 2
@@ -348,8 +348,8 @@ def problems_of(data) -> list[str]:
             out.append(f"{label}: row_count must be a whole number, 0 or more")
         elif have[0] == "row_count_per_sf" and not (is_num(t["row_count_per_sf"]) and t["row_count_per_sf"] > 0):
             out.append(f"{label}: row_count_per_sf must be a number above 0")
-        if "builtin_generator" in t and not isinstance(t["builtin_generator"], str):
-            out.append(f"{label}: builtin_generator must be a string")
+        if "formulas" in t and not (isinstance(t["formulas"], dict) and all(isinstance(v, str) for v in t["formulas"].values())):
+            out.append(f"{label}: formulas must be a mapping of names to strings")
         cols = t.get("columns")
         if not isinstance(cols, list) or not cols:
             out.append(f"{label}: columns must be a non-empty list")

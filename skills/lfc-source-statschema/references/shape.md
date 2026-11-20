@@ -8,6 +8,7 @@
 
    | Rule | Formula |
    |---|---|
+   | `expression` (a formula in `x.n`) | as written: for a number, date or time, the integer the column's cast reads; for text, the text. `{name}` is the table's `formulas:` entry of that name, in parentheses |
    | `sequential` (min) | `min + n − 1` |
    | `cyclic` (min, max) | `min + (n − 1) mod span` |
    | `block` (min, block_size) | `min + (n − 1) DIV block_size`; a foreign-key column wraps at its parent column's range |
@@ -27,6 +28,8 @@
    - **A foreign key**: spread over the parent's keys, with the source's share of parents that have children; hot parents first when it has most common values.
 
 3. **Nothing known**: no tag; the planner fills it with its own scramble (or a foreign key with its probe of the parent's range).
+
+**Rows a spec fixes** are written as rules too, in the YAML: TPC-DS `date_dim` is the calendar from 1900-01-02 (its `formulas:` turn day `n` into year, month and day by whole-number arithmetic, which every engine computes the same; no date functions, which no transpiler maps the same everywhere), `time_dim` the seconds of a day, and the demographics the spec's Cartesian products, each attribute a `DIV` and `mod` digit of `n - 1`.
 
 ## Keys
 
@@ -48,7 +51,7 @@
 
 ## Foreign keys without a rule
 
-The parent's key formula at a parent row `m`: `1 + permutation mod parent rows` (`fk_distribution: uniform`), or a zipf rank (`fk_distribution: zipf`). A column's own rule is replaced by the parent's key (and said so) unless it is a structural rule (`sequential`, `cyclic`, `block`, `block_cyclic`), which follows the parent by construction.
+The parent's key formula at a parent row `m`: `1 + permutation mod parent rows` (`fk_distribution: uniform`), or a zipf rank (`fk_distribution: zipf`). A column's own rule is replaced by the parent's key (and said so) unless it is a structural rule (`sequential`, `cyclic`, `block`, `block_cyclic`), which follows the parent by construction, or an `expression`, whose author chose the value.
 
 ## Checks
 

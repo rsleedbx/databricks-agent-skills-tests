@@ -21,7 +21,7 @@ A statschema model file: the shaped schema that `ddl.py` turns into DDL. Format 
 | `tables[].columns[].name` | yes | unique in its table |
 | `tables[].columns[].type` | yes | statschema's canonical type (a non-empty string) |
 | `tables[].columns[].primary_key` | no | `true` or `false`; the key is the columns with `true`, none for a keyless table |
-| `tables[].builtin_generator` | no | a string |
+| `tables[].formulas` | no | names to strings: sub-formulas the columns' rules use |
 
 Other keys are ignored. Tables may sit at indent 0 or 2, and columns in block or flow style. Block scalars, anchors, tags and tabs are refused. The shaped file (`shape.py`'s output) keeps `version` and writes `row_count`, and it passes.
 
