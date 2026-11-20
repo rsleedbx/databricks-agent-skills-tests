@@ -6,6 +6,7 @@
     classify.py <schema.yaml> [--activity activity.yaml] [--sf 1] > plan.yaml
     classify.py <schema.yaml> --truth <truth.yaml>        # compare the guess with known roles (exit 1 if any differ)
     classify.py <schema.yaml> --truth schema              # the same against the roles the schema itself carries (role:)
+    classify.py <schema.yaml> --review schema             # the plan with the schema's role: lines as the corrections
     classify.py <schema.yaml> --review <review.yaml>      # the guess, corrected where a review says otherwise
 
 The guess uses only what any schema has, documented or not: keys, foreign keys, row counts, activity and names
@@ -57,7 +58,9 @@ def main():
     model = a.model or re.sub(r"\.ya?ml$", "", a.schema.rsplit("/", 1)[-1])
     p = plan(blind, a.sf, act, model)   # never the answer it's scored against
     if a.review:   # corrections from the docs or the code: role (and silver, else the role's), with the citation
-        for n, r in (load(a.review) or {}).items():
+        roles = {t["name"]: {"role": t["role"], "cite": "the schema's role: (its specification)"}
+                 for t in schema.get("tables") or [] if t.get("role")}
+        for n, r in ((roles if a.review == "schema" else load(a.review)) or {}).items():
             r = r if isinstance(r, dict) else {"role": r}
             t = p["tables"].get(n)
             if t is None:

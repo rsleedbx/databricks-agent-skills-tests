@@ -1,5 +1,5 @@
 """classify.py's guess never reads the role: it's scored against: TPC-E's plan is the same with the schema's role: lines
-and without them, and --truth schema scores against those lines.
+and without them; --truth schema scores against those lines and --review schema corrects the plan with them.
 
   uv run --no-project --with pyyaml python -m unittest skills/cdc-table-plan/tests/test_classify.py
 """
@@ -34,6 +34,14 @@ class Blind(unittest.TestCase):
             self.assertEqual(with_roles.returncode, 0, with_roles.stderr)
             self.assertEqual(with_roles.stdout, without.stdout)
             self.assertEqual(classify(str(bare), "--truth", "schema").returncode, 2)   # no roles to compare with
+
+    def test_review_schema_corrects_the_plan_with_the_role_lines(self):
+        r = classify(str(TPCE), "--model", "tpce", "--review", "schema")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        plan = yaml.safe_load(r.stdout)["tables"]
+        want = {t["name"]: t["role"] for t in yaml.safe_load(TPCE.read_text())["tables"]}
+        self.assertEqual({n: t["role"] for n, t in plan.items()}, want)   # the 5 misses take the spec's role
+        self.assertEqual(sum(t.get("decided_by") == "docs" for t in plan.values()), 5)
 
     def test_truth_schema_scores_against_the_role_lines(self):
         r = classify(str(TPCE), "--truth", "schema")
