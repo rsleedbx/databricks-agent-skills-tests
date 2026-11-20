@@ -89,7 +89,7 @@ DECLARE
     RETURN 'HEXTORAW(' || h16 || ' || RPAD(' || md5 || ', ' || (2 * l - 32) || ', ' || md5 || ') || ' || h16 || ')';
   END;
   FUNCTION cst(ty VARCHAR2, p NUMBER, s NUMBER, clen NUMBER, lenv NUMBER) RETURN VARCHAR2 IS
-    ts VARCHAR2(400) := 'TIMESTAMP ''1970-01-01 00:00:00'' + NUMTODSINTERVAL(MOD(FLOOR(x.n / 86400), 2932896), ''DAY'') + NUMTODSINTERVAL(MOD(x.n, 86400), ''SECOND'')';
+    ts VARCHAR2(400) := 'TIMESTAMP ''1970-01-01 00:00:00'' + NUMTODSINTERVAL(MOD(FLOOR(x.n / 86400), 2932897), ''DAY'') + NUMTODSINTERVAL(MOD(x.n, 86400), ''SECOND'')';
   BEGIN
     IF ty = 'NUMBER' THEN
       IF p IS NULL THEN RETURN 'x.n'; END IF;                                         -- NUMBER, INTEGER
@@ -105,7 +105,7 @@ DECLARE
     IF ty = 'NCLOB' THEN RETURN 'TO_NCLOB(' || str(NVL(lenv, GREATEST(lob, 38))) || ')'; END IF;
     IF ty = 'RAW' THEN RETURN bin(NVL(lenv, clen)); END IF;
     IF ty = 'BLOB' THEN RETURN 'TO_BLOB(' || bin(NVL(lenv, GREATEST(lob, 16))) || ')'; END IF;
-    IF ty = 'DATE' THEN RETURN 'DATE ''1970-01-01'' + MOD(x.n, 2932896)'; END IF;
+    IF ty = 'DATE' THEN RETURN 'DATE ''1970-01-01'' + MOD(x.n, 2932897)'; END IF;
     IF ty LIKE 'TIMESTAMP(%) WITH LOCAL TIME ZONE' THEN RETURN 'CAST(FROM_TZ(' || ts || ', ''+00:00'') AS TIMESTAMP WITH LOCAL TIME ZONE)'; END IF;
     IF ty LIKE 'TIMESTAMP(%) WITH TIME ZONE' THEN RETURN 'FROM_TZ(' || ts || ', ''+00:00'')'; END IF;
     IF ty LIKE 'TIMESTAMP(%)' THEN RETURN ts; END IF;

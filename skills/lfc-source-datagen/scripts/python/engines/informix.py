@@ -17,7 +17,7 @@ BASE = {0: "CHAR", 1: "SMALLINT", 2: "INTEGER", 3: "FLOAT", 4: "SMALLFLOAT", 5: 
 QUAL = {0: "YEAR", 2: "MONTH", 4: "DAY", 6: "HOUR", 8: "MINUTE", 10: "SECOND"}
 P19 = "LPAD(CAST(x.n AS VARCHAR(20)), 19, '0')"
 # days by DATE arithmetic (NUMTODSINTERVAL(n, 'DAY') beyond a few hundred days gives NULL), then seconds
-TS = "EXTEND(MDY(1, 1, 1970) + MOD(TRUNC(x.n / 86400), 2932896), YEAR TO SECOND) + NUMTODSINTERVAL(MOD(x.n, 86400), 'SECOND')"
+TS = "EXTEND(MDY(1, 1, 1970) + MOD(TRUNC(x.n / 86400), 2932897), YEAR TO SECOND) + NUMTODSINTERVAL(MOD(x.n, 86400), 'SECOND')"
 INTS = ("SMALLINT", "INTEGER", "SERIAL", "INT8", "SERIAL8", "BIGINT", "BIGSERIAL")
 
 
@@ -145,5 +145,5 @@ class Engine:
 CAST = {"SMALLINT": "MOD(x.n, 32767)", "INTEGER": "MOD(x.n, 2147483647)", "SERIAL": "MOD(x.n, 2147483647)",
         "INT8": "x.n", "SERIAL8": "x.n", "BIGINT": "x.n", "BIGSERIAL": "x.n",
         "FLOAT": "CAST(x.n AS FLOAT)", "SMALLFLOAT": "CAST(x.n AS SMALLFLOAT)",
-        "DATE": "MDY(1, 1, 1970) + MOD(x.n, 2932896)",
+        "DATE": "MDY(1, 1, 1970) + MOD(x.n, 2932897)",
         "BOOLEAN": "CASE WHEN MOD(x.n, 2) = 1 THEN 't'::BOOLEAN ELSE 'f'::BOOLEAN END"}

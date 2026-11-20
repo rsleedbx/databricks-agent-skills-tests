@@ -135,7 +135,7 @@ class Engine:
 INTS = {"tinyint": (127, 255), "smallint": (32767, 65535), "mediumint": (8388607, 16777215), "int": (2147483647, 4294967295), "bigint": (None, None)}
 CAST = {
     "float": "CAST(x.n AS FLOAT)", "double": "CAST(x.n AS DOUBLE)",
-    "date": "DATE_ADD('1970-01-01', INTERVAL x.n % 2932896 DAY)", "datetime": "DATE_ADD('1970-01-01 00:00:00', INTERVAL x.n % 253402300800 SECOND)",
+    "date": "DATE_ADD('1970-01-01', INTERVAL x.n % 2932897 DAY)", "datetime": "DATE_ADD('1970-01-01 00:00:00', INTERVAL x.n % 253402300800 SECOND)",
     "timestamp": "FROM_UNIXTIME(1 + x.n % 2147483646)", "time": "SEC_TO_TIME(x.n % 86400)", "year": "1901 + x.n % 255",
     "json": "JSON_OBJECT('n', x.n)",
 }

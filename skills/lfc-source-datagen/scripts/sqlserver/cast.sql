@@ -89,10 +89,10 @@ UPDATE #lfc_cols SET expr0 = CASE ty
     WHEN 'float'    THEN 'CAST(x.n AS float)'
     WHEN 'real'     THEN 'CAST(x.n AS real)'
     -- date/time: 1970-01-01 plus n days or seconds (DATEADD takes an int, so seconds split into days and seconds)
-    WHEN 'date'     THEN 'DATEADD(day, CAST(x.n % 2932896 AS int), CAST(''1970-01-01'' AS date))'
-    WHEN 'datetime2' THEN 'DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932896 AS int), CAST(''1970-01-01'' AS datetime2(0))))'
-    WHEN 'datetime' THEN 'DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932896 AS int), CAST(''1970-01-01'' AS datetime2(0))))'
-    WHEN 'datetimeoffset' THEN 'TODATETIMEOFFSET(DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932896 AS int), CAST(''1970-01-01'' AS datetime2(0)))), ''+00:00'')'
+    WHEN 'date'     THEN 'DATEADD(day, CAST(x.n % 2932897 AS int), CAST(''1970-01-01'' AS date))'
+    WHEN 'datetime2' THEN 'DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932897 AS int), CAST(''1970-01-01'' AS datetime2(0))))'
+    WHEN 'datetime' THEN 'DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932897 AS int), CAST(''1970-01-01'' AS datetime2(0))))'
+    WHEN 'datetimeoffset' THEN 'TODATETIMEOFFSET(DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932897 AS int), CAST(''1970-01-01'' AS datetime2(0)))), ''+00:00'')'
     WHEN 'smalldatetime' THEN 'DATEADD(minute, CAST(x.n % 94063680 AS int), CAST(''1900-01-01'' AS smalldatetime))'
     WHEN 'time'     THEN 'CAST(DATEADD(second, CAST(x.n % 86400 AS int), CAST(''00:00'' AS time(0))) AS time)'
     -- strings: the padded n first (so a key maps back to n) and, from 38 characters, last; MD5 filler between; to the length

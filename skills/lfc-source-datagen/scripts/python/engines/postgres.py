@@ -132,7 +132,7 @@ LONG = {"int2": "smallint", "int4": "integer", "int8": "bigint", "float4": "real
 CAST = {                                # the rest of lfc_cast: n into a valid value of the type
     "smallint": "(x.n % 32767)::smallint", "integer": "(x.n % 2147483647)::int", "bigint": "x.n", "oid": "(x.n % 4294967296)::oid",
     "money": "((x.n % 100000000000)::numeric / 100)::money", "real": "x.n::real", "double precision": "x.n::float8",
-    "date": "(date '1970-01-01' + (x.n % 2932896)::int)",
+    "date": "(date '1970-01-01' + (x.n % 2932897)::int)",
     "timestamp without time zone": "(timestamp '1970-01-01' + (x.n % 253402300800) * interval '1 second')",
     "timestamp with time zone": "(timestamptz '1970-01-01 00:00:00+00' + (x.n % 253402300800) * interval '1 second')",
     "time without time zone": "(time '00:00' + (x.n % 86400) * interval '1 second')",
