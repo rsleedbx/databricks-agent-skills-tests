@@ -11,6 +11,8 @@ from .core.model import (
     CanonicalColumn,
     CanonicalForeignKey,
     CanonicalTableSchema,
+    KIND,
+    ROLES,
     build_fk_max_map,
     expand_table_instances,
     _expand_one,

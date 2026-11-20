@@ -30,6 +30,7 @@ PY="uv run"; S=skills/cdc-table-plan/scripts
 mysql -N -B -r -e "SET @db='sales'; SOURCE skills/lfc-source-statschema/scripts/collect-activity-mysql.sql" > activity.json
 $PY $S/classify.py schema.yaml --activity activity.json > plan.yaml          # the first guess, with its evidence
 $PY $S/classify.py schema.yaml --truth truth.yaml                             # against known roles: what it gets wrong
+$PY $S/classify.py schema.yaml --truth schema                                 # against the roles the schema's tables carry (role:)
 $PY $S/plan.py diff deployed-plan.yaml plan.yaml --schema schema.yaml         # what changing silver to the edit takes
 ```
 
@@ -51,7 +52,7 @@ little, `ask`: the question to put to the customer ("Is page_hits insert-only?")
 The rules one by one, what each miss costs (changes lost, history lost, or only extra work), and the signals from
 published work and the databases' catalogs not used yet: [references/heuristics.md](references/heuristics.md).
 
-Relations only, against the specifications' roles (`truth/`): TPC-H 8 of 8, TPC-B 4 of 4, TPC-DI 18 of 18, TPC-C 8 of 9,
+Relations only, against the specifications' roles (each TPC table's `role:` in its schema): TPC-H 8 of 8, TPC-B 4 of 4, TPC-DI 18 of 18, TPC-C 8 of 9,
 TPC-DS 22 of 24, TPC-E 27 of 32. Mautic 7.2.1 (128 tables, 199 foreign keys, collected from an installed database),
 against the 25 tables whose writes were traced in its code: 23 of 25 from relations, 24 of 25 with the activity of two
 rounds of its own traffic (`mautic-source`'s `traffic.sh`).

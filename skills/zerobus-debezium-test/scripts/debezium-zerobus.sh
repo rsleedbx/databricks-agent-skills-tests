@@ -1316,11 +1316,13 @@ if [ "$PHASE" -ge 2 ]; then
   [ -n "$PLACEMENT" ] && cp "$W/placement.tsv" "$W/_placement.tsv"
   for f in _sources.yaml _snapshot.tsv $([ -n "$PLACEMENT" ] && echo _placement.tsv); do dbx fs cp "$W/$f" "dbfs:$VOL/$f" --overwrite >/dev/null || { echo "$f upload failed"; exit 2; }; done
   # PLAN: what each table gets in silver (cdc-table-plan): auto (APP's default) classifies the collected schema from its
-  # relations, then corrects it with the tables checked in the app's code (truth/<APP>.yaml, --review); a file is used
+  # relations, then corrects it with the tables checked in the app's code (truth/<APP>.yaml, --review), else with the
+  # roles the schema's tables carry (a TPC model's role: lines, --review schema); a file is used
   # as it is; none (the default otherwise): every table gets scd1 and scd2 (append without a key)
   PLAN=${PLAN:-$([ -n "$APP" ] && echo auto || echo none)}; PLANDIR=$HERE/../../cdc-table-plan
   case $PLAN in none) ;;
-    auto) RV=$PLANDIR/truth/$MODEL.yaml; python3 -I "$PLANDIR/scripts/classify.py" "$MODEL_YAML" --model "$MODEL" $([ -f "$RV" ] && echo "--review $RV") > "$W/_plan.yaml" 2>"$W/plan.err" \
+    auto) RV=$PLANDIR/truth/$MODEL.yaml; [ -f "$RV" ] || RV=schema
+          python3 -I "$PLANDIR/scripts/classify.py" "$MODEL_YAML" --model "$MODEL" --review "$RV" > "$W/_plan.yaml" 2>"$W/plan.err" \
             || { echo "classify.py failed: $(head -c 300 "$W/plan.err")"; exit 2; };;
     *) cp "$PLAN" "$W/_plan.yaml" || exit 2;; esac
   if [ "$PLAN" != none ]; then dbx fs cp "$W/_plan.yaml" "dbfs:$VOL/_plan.yaml" --overwrite >/dev/null || { echo "_plan.yaml upload failed"; exit 2; }
@@ -1802,8 +1804,9 @@ if [ "$PHASE" -ge 2 ]; then
     done
     # the activity the rounds made, and what the plan would be with it (the relations' guess, now with evidence)
     { echo "SET @db='${SDB[1]}';"; cat "$STATSCHEMA/collect-activity-mysql.sql"; } | vm "$PODMAN exec -i $SRCC sh -c 'MYSQL_PWD=\$MYSQL_ROOT_PASSWORD exec mysql -uroot -N -B -r'" > "$W/activity.json" 2>/dev/null
-    if [ -s "$W/activity.json" ] && [ -f "$PLANDIR/truth/$MODEL.yaml" ]; then
-      observe plan-with-activity "relations only: $(python3 -I "$PLANDIR/scripts/classify.py" "$MODEL_YAML" --model "$MODEL" --truth "$PLANDIR/truth/$MODEL.yaml" 2>&1 | tail -1); with this run's activity: $(python3 -I "$PLANDIR/scripts/classify.py" "$MODEL_YAML" --model "$MODEL" --activity "$W/activity.json" --truth "$PLANDIR/truth/$MODEL.yaml" 2>&1 | tail -1)"
+    TR=$PLANDIR/truth/$MODEL.yaml; [ -f "$TR" ] || TR=schema   # an app's checked tables, else the schema's role: lines
+    if [ -s "$W/activity.json" ]; then
+      observe plan-with-activity "relations only: $(python3 -I "$PLANDIR/scripts/classify.py" "$MODEL_YAML" --model "$MODEL" --truth "$TR" 2>&1 | tail -1); with this run's activity: $(python3 -I "$PLANDIR/scripts/classify.py" "$MODEL_YAML" --model "$MODEL" --activity "$W/activity.json" --truth "$TR" 2>&1 | tail -1)"
     fi
   elif [ "$ROUNDS" = 0 ]; then
     [ "$st" = COMPLETED ] && claim silver-update-1 PASS "the first update of $PIPES $([ "$SILVER" = merge ] && echo 'merge-silver.py job(s)' || echo 'pipeline(s)') over $NT source table(s): ${U1_S}s ($(cat "$W/update_s"))" \

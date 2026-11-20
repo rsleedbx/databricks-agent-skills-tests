@@ -12,6 +12,10 @@
 # they cannot be enforced natively by dbldatagen column specs.
 #
 # TPC-C spec reference: https://tpc.org/tpcc/
+#
+# role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
+# Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
+# scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
 tables:
@@ -19,6 +23,7 @@ tables:
   # ── item ──────────────────────────────────────────────────────────────────
   # Fixed size: 100,000 items across all scale factors (per TPC-C §4.3.3.1).
   - name: item
+    role: lookup
     description: "TPC-C item catalogue — 100,000 items independent of warehouse count"
     row_count: 100000
     columns:
@@ -64,6 +69,7 @@ tables:
   # ── warehouse ─────────────────────────────────────────────────────────────
   # Exactly SF warehouses (1 per scale factor unit).
   - name: warehouse
+    role: dimension
     description: "TPC-C warehouse — one per scale factor unit (SF = number of warehouses)"
     row_count_per_sf: 1
     columns:
@@ -132,6 +138,7 @@ tables:
   # ── district ──────────────────────────────────────────────────────────────
   # 10 districts per warehouse.
   - name: district
+    role: dimension
     description: "TPC-C district — 10 per warehouse (d_w_id → warehouse.w_id)"
     row_count_per_sf: 10
     load_after: [warehouse]
@@ -224,6 +231,7 @@ tables:
   # ── customer ──────────────────────────────────────────────────────────────
   # 3,000 customers per district → 30,000 per warehouse → 30,000 * SF total.
   - name: customer
+    role: dimension
     description: "TPC-C customer — 3 000 per district (c_w_id,c_d_id → district)"
     row_count_per_sf: 30000
     load_after: [district]
@@ -396,6 +404,7 @@ tables:
   # ── history ───────────────────────────────────────────────────────────────
   # One history row per customer initially — 30,000 * SF total.
   - name: history
+    role: log
     description: "TPC-C payment history — one row per customer initially"
     row_count_per_sf: 30000
     load_after: [customer]
@@ -452,6 +461,7 @@ tables:
   # ── orders ────────────────────────────────────────────────────────────────
   # 3,000 orders per district → 30,000 * SF total.
   - name: orders
+    role: fact
     description: "TPC-C orders — 3 000 per district (o_w_id,o_d_id → district)"
     row_count_per_sf: 30000
     load_after: [customer]
@@ -529,6 +539,7 @@ tables:
   # ── new_order ─────────────────────────────────────────────────────────────
   # Last 900 orders per district are new orders → 9,000 * SF total.
   - name: new_order
+    role: queue
     description: "TPC-C new-order queue — last 900 orders per district"
     row_count_per_sf: 9000
     load_after: [orders]
@@ -570,6 +581,7 @@ tables:
   # ── order_line ────────────────────────────────────────────────────────────
   # Average 10 lines per order → 300,000 * SF total.
   - name: order_line
+    role: fact
     description: "TPC-C order line items — average 10 per order"
     row_count_per_sf: 300000
     load_after: [orders, item]
@@ -661,6 +673,7 @@ tables:
   # ── stock ─────────────────────────────────────────────────────────────────
   # 100,000 stock rows per warehouse → 100,000 * SF total.
   - name: stock
+    role: fact
     description: "TPC-C stock level — 100 000 items per warehouse"
     row_count_per_sf: 100000
     load_after: [warehouse, item]

@@ -1,5 +1,0 @@
-# TPC-B's tables by role (specification clause 1.3): the balances are updated in place; history is append-only.
-branch: dimension
-teller: dimension
-account: dimension
-history: log

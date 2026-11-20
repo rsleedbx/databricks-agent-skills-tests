@@ -13,13 +13,40 @@
 # shape.py's formulas keep the order without a fix-up step.
 #
 # TPC-H spec reference: https://tpc.org/tpch/
+#
+# role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
+# Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
+# scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
+
+# signals: patterns a model can learn, which the source build writes over the spec's random values. Every report on
+# data built that way names the signals it had and their parameters. scripts/describe.py prints them.
+signals:
+  - name: lineitem_lateness
+    target: "lineitem: late when l_receiptdate > l_commitdate"
+    replaces: "the spec's random dates: commit 30..90 days after the order, receipt 1..30 days after ship, so lateness is noise"
+    built_by: "lfc-source-datagen: scripts/tpc/tpch-lead-times.sql (lfc_source_datagen.tpch_sources), per source"
+    causes:
+      - "the promise: l_commitdate = o_orderdate + commit (the business's lead time)"
+      - "the supplier's nation: ship slow_nation days later when s_nationkey is a multiple of slow_every"
+      - "the ship mode: transit air (AIR, REG AIR), truck (TRUCK, MAIL, FOB) or sea (RAIL, SHIP) days"
+    noise: "handling 0..handle_span-1 days before ship and 0..jitter-1 days in transit, from the keys (deterministic)"
+    parameters: [commit, handle_min, handle_span, slow_nation, slow_every, air, truck, sea, jitter]
+    profiles:
+      express: "1,0,1,1,5,0,0,1,2"
+      grocery: "30,2,20,10,5,1,3,9,5"
+      aerospace: "365,60,260,90,5,3,14,45,30"
+    measured: "lfc-source-datagen references/tpch-sources.md: % late by slow nation and by ship mode, per profile"
+    labels: "--labels anonymous (Nation 01..25, Region 1..5): with slow nations, real country names read as a claim"
+    spec_rules: "the spec's date rules no longer hold once the lead times are written (they're checked before)"
+
 tables:
 
   # ── region ────────────────────────────────────────────────────────────────
   # Exactly 5 rows — fixed, independent of SF.
   - name: region
+    role: lookup
     description: "TPC-H region — 5 rows, fixed"
     row_count: 5
     columns:
@@ -50,6 +77,7 @@ tables:
   # ── nation ────────────────────────────────────────────────────────────────
   # Exactly 25 rows — fixed, independent of SF.
   - name: nation
+    role: lookup
     description: "TPC-H nation — 25 rows, fixed (n_regionkey → region)"
     row_count: 25
     load_after: [region]
@@ -88,6 +116,7 @@ tables:
   # ── supplier ──────────────────────────────────────────────────────────────
   # 10,000 per SF.
   - name: supplier
+    role: dimension
     description: "TPC-H supplier — 10 000 per SF (s_nationkey → nation)"
     row_count_per_sf: 10000
     load_after: [nation]
@@ -149,6 +178,7 @@ tables:
   # ── customer ──────────────────────────────────────────────────────────────
   # 150,000 per SF.
   - name: customer
+    role: dimension
     description: "TPC-H customer — 150 000 per SF (c_nationkey → nation)"
     row_count_per_sf: 150000
     load_after: [nation]
@@ -218,6 +248,7 @@ tables:
   # ── part ──────────────────────────────────────────────────────────────────
   # 200,000 per SF.
   - name: part
+    role: dimension
     description: "TPC-H part — 200 000 per SF"
     row_count_per_sf: 200000
     columns:
@@ -357,6 +388,7 @@ tables:
   # ── partsupp ──────────────────────────────────────────────────────────────
   # 4 suppliers per part → 800,000 per SF.
   - name: partsupp
+    role: bridge
     description: "TPC-H part-supplier — 4 suppliers per part (ps_partkey → part, ps_suppkey → supplier)"
     row_count_per_sf: 800000
     load_after: [part, supplier]
@@ -411,6 +443,7 @@ tables:
   # ── orders ────────────────────────────────────────────────────────────────
   # 1,500,000 per SF.
   - name: orders
+    role: fact
     description: "TPC-H orders — 1 500 000 per SF (o_custkey → customer)"
     row_count_per_sf: 1500000
     load_after: [customer]
@@ -501,6 +534,7 @@ tables:
   #   fk_distribution_params: {exponent: 4.0}              # higher = more skew
   # The exponent maps roughly to the -z flag of Microsoft's TPCDSkew dbgen.
   - name: lineitem
+    role: fact
     description: "TPC-H line items — avg 4 per order, 6 000 000 per SF"
     row_count_per_sf: 6000000
     load_after: [orders, part, supplier, partsupp]

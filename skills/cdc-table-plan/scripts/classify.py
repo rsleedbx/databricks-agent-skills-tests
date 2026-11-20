@@ -5,12 +5,15 @@
 
     classify.py <schema.yaml> [--activity activity.yaml] [--sf 1] > plan.yaml
     classify.py <schema.yaml> --truth <truth.yaml>        # compare the guess with known roles (exit 1 if any differ)
+    classify.py <schema.yaml> --truth schema              # the same against the roles the schema itself carries (role:)
+    classify.py <schema.yaml> --review schema             # the plan with the schema's role: lines as the corrections
     classify.py <schema.yaml> --review <review.yaml>      # the guess, corrected where a review says otherwise
 
 The guess uses only what any schema has, documented or not: keys, foreign keys, row counts, activity and names
 (decided_by: relations). For public software a review checks it against the docs or the code and corrects it
 (review.yaml: <table>: {role, silver?, cite}; decided_by: docs, with the citation), and the customer has the last word
-by editing the plan (decided_by: customer). A truth file is a review's roles alone (<table>: <role>).
+by editing the plan (decided_by: customer). A truth file is a review's roles alone (<table>: <role>); a schema whose
+tables say their role (the TPC models do, from their specifications) is its own truth. The guess never reads role:.
 
 Reads lfc-source-statschema's canonical format: keys, foreign keys (fk_constraints and columns' references), row
 counts (row_count, or row_count_per_sf x --sf). --activity adds each table's inserts, updates and deletes since the
@@ -50,11 +53,14 @@ def main():
     ap.add_argument("--truth"); ap.add_argument("--review"); ap.add_argument("--model")
     a = ap.parse_args()
     schema = load(a.schema)
+    blind = {**schema, "tables": [{k: v for k, v in t.items() if k != "role"} for t in schema.get("tables") or []]}
     act = load(a.activity) if a.activity else None
     model = a.model or re.sub(r"\.ya?ml$", "", a.schema.rsplit("/", 1)[-1])
-    p = plan(schema, a.sf, act, model)
+    p = plan(blind, a.sf, act, model)   # never the answer it's scored against
     if a.review:   # corrections from the docs or the code: role (and silver, else the role's), with the citation
-        for n, r in (load(a.review) or {}).items():
+        roles = {t["name"]: {"role": t["role"], "cite": "the schema's role: (its specification)"}
+                 for t in schema.get("tables") or [] if t.get("role")}
+        for n, r in ((roles if a.review == "schema" else load(a.review)) or {}).items():
             r = r if isinstance(r, dict) else {"role": r}
             t = p["tables"].get(n)
             if t is None:
@@ -66,7 +72,11 @@ def main():
                 t.update(guessed=f"{t['role']} {'+'.join(t['silver'])}", role=r["role"], silver=silver, confidence="high",
                          decided_by="docs", cite=r.get("cite") or a.review.rsplit("/", 1)[-1]); t.pop("ask", None)
     if a.truth:
-        truth = load(a.truth)
+        truth = ({t["name"]: t["role"] for t in schema.get("tables") or [] if t.get("role")} if a.truth == "schema"
+                 else load(a.truth))
+        if not truth:
+            print(f"--truth {a.truth}: no roles to compare with", file=sys.stderr)
+            sys.exit(2)
         bad = 0
         for n, want in truth.items():
             got = p["tables"].get(n, {}).get("role", "missing")

@@ -23,6 +23,10 @@
 #   HOLDING_SUMMARY, CASH_TRANSACTION
 # ZIP reference
 #   ZIP_CODE — builtin_generator for 14,741 US ZIP-code rows
+#
+# role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
+# Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
+# scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
 tables:
@@ -30,6 +34,7 @@ tables:
 # ── Reference tables ────────────────────────────────────────────────────────
 
 - name: exchange
+  role: lookup
   description: "Stock exchanges — 4 fixed rows."
   row_count: 4
   columns:
@@ -67,6 +72,7 @@ tables:
       length: 80
 
 - name: sector
+  role: lookup
   description: "Industry sectors — 12 fixed rows."
   row_count: 12
   columns:
@@ -96,6 +102,7 @@ tables:
           - "Utilities"
 
 - name: industry
+  role: lookup
   description: "Industry codes — 102 rows (GICS-derived)."
   row_count: 102
   columns:
@@ -191,6 +198,7 @@ tables:
       parent_columns: [sc_id]
 
 - name: status_type
+  role: lookup
   description: "Trade/order status codes — 5 fixed rows."
   row_count: 5
   columns:
@@ -208,6 +216,7 @@ tables:
         values: ["Active", "Completed", "Canceled", "Pending", "Submitted"]
 
 - name: trade_type
+  role: lookup
   description: "Trade type codes — 5 fixed rows."
   row_count: 5
   columns:
@@ -236,6 +245,7 @@ tables:
       generation: {values: [0, 0, 1, 1, 1]}
 
 - name: taxrate
+  role: lookup
   description: "Tax rate definitions — 320 rows (US states + territories + foreign)."
   row_count: 320
   columns:
@@ -308,6 +318,7 @@ tables:
       generation: {min_value: 0.00, max_value: 0.15}
 
 - name: charge
+  role: lookup
   description: "Brokerage fee schedule — 1 row per trade-type × tier."
   row_count: 15
   columns:
@@ -330,6 +341,7 @@ tables:
       generation: {min_value: 1.00, max_value: 30.00}
 
 - name: commission_rate
+  role: lookup
   description: "Broker commission rate schedule — 1 row per type × tier × qty range."
   row_count: 240
   columns:
@@ -368,6 +380,7 @@ tables:
       generation: {min_value: 0.01, max_value: 0.50}
 
 - name: zip_code
+  role: lookup
   description: "US ZIP code reference — 14,741 synthetic entries."
   builtin_generator: zip_code
   row_count: 14741
@@ -381,6 +394,7 @@ tables:
 # ── Customer & account tables ────────────────────────────────────────────────
 
 - name: address
+  role: dimension
   description: "Mailing addresses — 1.33 addresses per customer (2 per account owner on average)."
   row_count_per_sf: 1333333
   columns:
@@ -407,6 +421,7 @@ tables:
       generation: {values: ["United States"]}
 
 - name: customer
+  role: dimension
   description: "Brokerage customers — 1,000,000 per EF (expressed as SF)."
   row_count_per_sf: 1000000
   columns:
@@ -502,6 +517,7 @@ tables:
       parent_columns: [ad_id]
 
 - name: customer_taxrate
+  role: bridge
   description: "Customer→tax-rate mapping (2–4 tax rates per customer)."
   row_count_per_sf: 3000000
   load_after: [customer, taxrate]
@@ -529,6 +545,7 @@ tables:
       parent_columns: [tx_id]
 
 - name: broker
+  role: dimension
   description: "Broker accounts — 1 broker per 1,000 customers."
   row_count_per_sf: 1000
   columns:
@@ -565,6 +582,7 @@ tables:
       parent_columns: [st_id]
 
 - name: customer_account
+  role: dimension
   description: "Brokerage accounts — 5 accounts per customer on average."
   row_count_per_sf: 5000000
   load_after: [customer, broker]
@@ -602,6 +620,7 @@ tables:
       parent_columns: [c_id]
 
 - name: account_permission
+  role: bridge
   description: "Additional users permitted on an account — ~1.5 extra per account."
   row_count_per_sf: 7500000
   load_after: [customer_account]
@@ -637,6 +656,7 @@ tables:
       parent_columns: [ca_id]
 
 - name: watch_list
+  role: dimension
   description: "Customer watch lists — 1 per customer."
   row_count_per_sf: 1000000
   load_after: [customer]
@@ -658,6 +678,7 @@ tables:
       parent_columns: [c_id]
 
 - name: watch_item
+  role: bridge
   description: "Securities on customer watch lists — 10–20 securities per list."
   row_count_per_sf: 15000000
   load_after: [watch_list]
@@ -686,6 +707,7 @@ tables:
 # ── Market / securities tables ───────────────────────────────────────────────
 
 - name: company
+  role: dimension
   description: "Listed companies — 5,000 per SF."
   row_count_per_sf: 5000
   load_after: [exchange, industry, status_type]
@@ -742,6 +764,7 @@ tables:
       parent_columns: [ad_id]
 
 - name: company_competitor
+  role: bridge
   description: "Competitor pairs — 3 competitors per company."
   row_count_per_sf: 15000
   load_after: [company, industry]
@@ -772,6 +795,7 @@ tables:
       parent_columns: [in_id]
 
 - name: security
+  role: dimension
   description: "Listed securities — ~6,850 per SF (1–2 per company)."
   row_count_per_sf: 6850
   load_after: [company, exchange, status_type]
@@ -858,6 +882,7 @@ tables:
       parent_columns: [ex_id]
 
 - name: financial
+  role: fact
   description: "Annual financial summaries — 5 years × 4 quarters per company."
   row_count_per_sf: 100000
   load_after: [company]
@@ -931,6 +956,7 @@ tables:
       parent_columns: [co_id]
 
 - name: news_item
+  role: dimension
   description: "Financial news articles — ~4 articles per company."
   row_count_per_sf: 20000
   columns:
@@ -970,6 +996,7 @@ tables:
       generation: {format_pattern: full_name}
 
 - name: news_xref
+  role: bridge
   description: "News-to-company cross reference — ~3 companies per article."
   row_count_per_sf: 60000
   load_after: [news_item, company]
@@ -991,6 +1018,7 @@ tables:
       parent_columns: [co_id]
 
 - name: daily_market
+  role: fact
   description: "OHLCV data per security per day — ~1,825 trading days × 6,850 securities."
   row_count_per_sf: 12502750
   load_after: [security]
@@ -1034,6 +1062,7 @@ tables:
       parent_columns: [s_symb]
 
 - name: last_trade
+  role: fact
   description: "Most recent trade price per security — 1 row per security."
   row_count_per_sf: 6850
   load_after: [security]
@@ -1071,6 +1100,7 @@ tables:
 # ── Trade tables ─────────────────────────────────────────────────────────────
 
 - name: trade
+  role: fact
   description: "Core trade fact table — ~3,320 trades per account (3,318 × 5M accounts / some factor)."
   row_count_per_sf: 3338760
   load_after: [customer_account, security, broker, trade_type, status_type]
@@ -1160,6 +1190,7 @@ tables:
       parent_columns: [s_symb]
 
 - name: trade_history
+  role: log
   description: "State-transition log — ~3 status changes per trade."
   row_count_per_sf: 10000000
   load_after: [trade, status_type]
@@ -1187,6 +1218,7 @@ tables:
       parent_columns: [st_id]
 
 - name: trade_request
+  role: queue
   description: "Open limit-order queue (a small fraction of all trades)."
   row_count_per_sf: 100000
   load_after: [trade, security, broker]
@@ -1233,6 +1265,7 @@ tables:
       parent_columns: [s_symb]
 
 - name: holding
+  role: fact
   description: "Current portfolio positions — ~5,000 holdings per 1M customers."
   row_count_per_sf: 5000000
   load_after: [customer_account, trade]
@@ -1275,6 +1308,7 @@ tables:
       parent_columns: [s_symb]
 
 - name: holding_history
+  role: log
   description: "Holding modification log — ~2 events per holding."
   row_count_per_sf: 10000000
   load_after: [holding, trade]
@@ -1304,6 +1338,7 @@ tables:
       parent_columns: [t_id]
 
 - name: holding_summary
+  role: fact
   description: "Aggregated position per account+symbol — 1 row per unique (account, symbol) pair."
   row_count_per_sf: 3800000
   load_after: [customer_account]
@@ -1331,6 +1366,7 @@ tables:
       parent_columns: [s_symb]
 
 - name: cash_transaction
+  role: fact
   description: "Cash debits/credits linked to completed trades."
   row_count_per_sf: 3338760
   load_after: [trade]

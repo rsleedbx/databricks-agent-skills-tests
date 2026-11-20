@@ -6,6 +6,7 @@ text or a dict; the arguments, input, sys.path and sqlglot's MySQL reader are re
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -128,3 +129,39 @@ class Tools(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+SCHEMAS = os.path.join(HERE, "..", "schemas")
+TPC_MODELS = ("tpcb", "tpcc", "tpch", "tpcdi", "tpcds", "tpce")
+# fact and dimension counts per model, from the specifications' roles (TPC-DS: 7 fact, 17 dimension tables)
+KINDS = {"tpcb": (1, 3), "tpcc": (5, 4), "tpch": (3, 5), "tpcdi": (6, 12), "tpcds": (7, 17), "tpce": (15, 17)}
+
+
+class Roles(unittest.TestCase):
+    """Every TPC table says its role; the model keeps it on a load and a dump; describe.py groups by kind."""
+
+    def test_every_tpc_table_has_a_role_and_the_kinds_add_up(self):
+        from statschema.core.model import ROLES
+        from statschema.core.schema_io import load_canonical
+        for m in TPC_MODELS:
+            tables = load_canonical(os.path.join(SCHEMAS, f"{m}.yaml"))
+            self.assertTrue(all(t.role in ROLES for t in tables), m)
+            got = (sum(t.kind == "fact" for t in tables), sum(t.kind == "dimension" for t in tables))
+            self.assertEqual(got, KINDS[m], m)
+
+    def test_role_survives_a_dump_and_an_unknown_one_is_refused(self):
+        from statschema.core.model import CanonicalTableSchema
+        t = CanonicalTableSchema.from_dict({"name": "lineitem", "role": "fact", "columns": []})
+        self.assertEqual((t.role, t.kind, t.to_dict()["role"]), ("fact", "fact", "fact"))
+        self.assertIsNone(CanonicalTableSchema.from_dict({"name": "x", "columns": []}).kind)   # a collected schema
+        with self.assertRaises(ValueError):
+            CanonicalTableSchema.from_dict({"name": "x", "role": "facts", "columns": []})
+
+    def test_describe_lists_by_kind_and_tpch_has_its_lateness(self):
+        d = json.loads(cli("describe.py", os.path.join(SCHEMAS, "tpch.yaml"), "--json"))
+        self.assertEqual((d["tables"], d["fact"], d["dimension"]), (8, 3, 5))
+        self.assertEqual([r["table"] for r in d["by_table"] if r["kind"] == "fact"], ["partsupp", "lineitem", "orders"])
+        (sig,) = d["signals"]
+        self.assertEqual(sig["name"], "lineitem_lateness")
+        self.assertEqual(len(sig["parameters"]), 9)   # the nine numbers of lfc-tpch-sources' <name>:<sf>:<lead times>
+        self.assertIn("signals: none", cli("describe.py", os.path.join(SCHEMAS, "tpcb.yaml")))
