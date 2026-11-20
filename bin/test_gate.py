@@ -79,6 +79,7 @@ def inputs(args: list[str], graph_of) -> list[Path]:
             seen.add(n)
             todo |= graph.get(n, set()) - seen
     found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose)
+    found_paths |= {b for p in list(found_paths) for b in bin_refs(p)}   # bin/<dir>/... the layer edges don't follow
     if any(reads_results(p) for p in found_paths):   # its code reads results/ (runs, ddl-matrix): scanned before
         found_paths.add(R / "results")               # the root files are added (their text mentions results/ too)
     return sorted(found_paths | set(root_inputs()))
@@ -91,6 +92,33 @@ def root_inputs() -> list[Path]:
     """Files at the repo root that skill code may read (defaults.yaml, layers.yaml, env.sh, ...) and fixtures/."""
     return sorted([p for p in R.iterdir() if p.is_file() and p.suffix in ROOT_KINDS] +
                   ([R / "fixtures"] if (R / "fixtures").is_dir() else []))
+
+
+BIN_REF = re.compile(r"\bbin/[\w.-]+(?:/[\w.-]+)*")
+
+
+def _code_files(path: Path):
+    if path.is_file():
+        yield path
+    elif path.is_dir():
+        yield from (f for f in path.rglob("*") if f.is_file() and f.suffix.lower() not in DOCS)
+
+
+def bin_refs(path: Path) -> set[Path]:
+    """bin/ files and folders a skill's code names, below subfolders too (bin/test_skip/scripts/...)."""
+    out = set()
+    for f in _code_files(path):
+        try:
+            text = f.read_text(errors="ignore")
+        except OSError:
+            continue
+        for m in BIN_REF.findall(text):
+            p = R / m
+            while not p.exists() and p != R / "bin":
+                p = p.parent
+            if p != R / "bin":
+                out.add(p)
+    return out
 
 
 def reads_results(path: Path) -> bool:

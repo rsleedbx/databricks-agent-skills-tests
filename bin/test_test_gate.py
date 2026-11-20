@@ -30,6 +30,11 @@ class GateTest(unittest.TestCase):
                 (root / "baseline.txt").write_text("skills/x-results/references/y\n")   # a root file naming results/
                 got = {str(p.relative_to(root)) for p in g.inputs([f"uv run {root}/skills/a/x.py"], lambda: graph)}
                 self.assertNotIn("results", got)           # only a skill's own code reading results/ adds it
+                (root / "bin/vendored/scripts").mkdir(parents=True)
+                (root / "bin/vendored/scripts/v.py").write_text("")
+                (root / "skills/a/run.py").write_text('sys.path.insert(0, "bin/vendored/scripts")\n')
+                got = {str(p.relative_to(root)) for p in g.inputs([f"uv run {root}/skills/a/x.py"], lambda: graph)}
+                self.assertIn("bin/vendored/scripts", got)  # a bin subfolder its code names
                 self.assertEqual(g.inputs([f"python3 {root}/bin/check_layers.py"], lambda: graph), [root])
                 self.assertEqual(g.inputs(["test 4 -eq 4"], lambda: graph), [])   # no repo path: always runs
             finally:
