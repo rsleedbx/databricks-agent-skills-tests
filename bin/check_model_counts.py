@@ -4,6 +4,7 @@
 pipeline-diagram.py can't read statschema (the lakeflow layer doesn't reference the shape layer), so it keeps its own
 count per model. This compares each with the number of entries under tables: in lfc-source-statschema
 schemas/<model>.yaml, and checks every schema has a count. Exit 0 when they match, 1 with one line per mismatch.
+--count <model>: print that model's table count.
 Stdlib only.
 """
 import importlib.util
@@ -25,6 +26,9 @@ def tables_in(path: Path) -> int:
     return len(re.findall(rf"^{indent}- name:", body, re.M))
 
 
+if sys.argv[1:2] == ["--count"]:   # one model's table count, for the checks that need it (bin/test_scripts.sh)
+    print(tables_in(SCHEMAS / f"{sys.argv[2]}.yaml"))
+    sys.exit(0)
 problems = []
 for path in sorted(SCHEMAS.glob("*.yaml")):
     model, n = path.stem, tables_in(path)

@@ -45,7 +45,7 @@ class Blind(unittest.TestCase):
 
     def test_truth_schema_scores_against_the_role_lines(self):
         r = classify(str(TPCE), "--truth", "schema")
-        self.assertIn("tpce: 27 of 32 roles as expected", r.stdout)
+        self.assertIn("tpce: 28 of 33 roles as expected", r.stdout)
 
 
 if __name__ == "__main__":

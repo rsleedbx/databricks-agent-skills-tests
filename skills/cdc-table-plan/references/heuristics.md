@@ -115,7 +115,7 @@ publisher's page didn't open); Romero and Abelló survey the methods, data-drive
 2. ~~Integer quantities as measures~~ (after Phipps & Davis): tried, no gain. Counting integer columns named like
    quantities (qty, count, amount, price, total, balance, points) as measures changed nothing alone, because rule 5
    takes a link with one column of its own first. Letting a measure override rule 5 made TPC-E `holding_summary` a
-   fact (right) and `customer_taxrate` one too (wrong: a link whose one column is a rate): 27 of 32 either way. One
+   fact (right) and `customer_taxrate` one too (wrong: a link whose one column is a rate): 27 of 32 either way (TPC-E had 32 tables then; `settlement` came later). One
    numeric column doesn't tell a fact's quantity from a link's attribute; the queries (1) or the activity can.
 3. **Foreign key fan-out from statistics** (distinct count of the foreign key column against rows): 1:1 extensions and
    facts apart.

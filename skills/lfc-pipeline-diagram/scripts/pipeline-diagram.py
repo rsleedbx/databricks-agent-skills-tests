@@ -110,7 +110,7 @@ def capture_from_events(events):
 # tables: in lfc-source-statschema schemas/<model>.yaml (the repo's checks compare them).
 MODELS = {
     "tpcb": (4, "statschema + datagen"), "tpcc": (9, "statschema + datagen"), "tpch": (8, "statschema + datagen"),
-    "tpcdi": (18, "statschema + datagen"), "tpcds": (24, "statschema + datagen"), "tpce": (32, "statschema + datagen"),
+    "tpcdi": (19, "statschema + datagen"), "tpcds": (24, "statschema + datagen"), "tpce": (33, "statschema + datagen"),
     "mautic": (128, "the application: its own install and traffic"),
     # SaaS load tools: what they create, through the connector's own REST API (no fixed table count)
     "tag-simulator": (1, "producer.py's tag simulator"),

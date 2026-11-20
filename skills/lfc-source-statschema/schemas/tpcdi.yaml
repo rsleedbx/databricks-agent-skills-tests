@@ -813,6 +813,121 @@ tables:
           min_value: "2019-01-01"
           max_value: "9999-12-31"
 
+  # ── Prospect ─────────────────────────────────────────────────────────────────
+  # People a marketing agency sent, matched to customers by name and address (IsCustomer). Rows: about 4,000 per SF
+  # (an estimate; the spec's prospect file grows with the scale factor). FKs: the record and update dates -> DimDate.
+  - name: Prospect
+    role: dimension
+    description: "TPC-DI prospect dimension: people from a marketing agency's file, some of them customers"
+    row_count_per_sf: 4000
+    columns:
+      - name: AgencyID
+        type: string
+        length: 30
+        not_null: true
+        description: "The marketing agency's key for the prospect"
+        primary_key: true
+        generation: {distribution: sequential, min_value: 1, format_pattern: upper_id, length: 30, unique: true}
+      - name: SK_RecordDateID
+        type: bigint
+        not_null: true
+        description: "DimDate key: when the record arrived"
+        generation: {min_value: 1, max_value: 3652}
+      - name: SK_UpdateDateID
+        type: bigint
+        not_null: true
+        description: "DimDate key: when it last changed"
+        generation: {min_value: 1, max_value: 3652}
+      - name: BatchID
+        type: smallint
+        not_null: true
+        generation: {values: [1, 2, 3], weights: [0.6, 0.3, 0.1]}
+      - name: IsCustomer
+        type: boolean
+        not_null: true
+        description: "The prospect is also a current customer"
+        generation: {values: [true, false], weights: [0.2, 0.8]}
+      - name: LastName
+        type: string
+        length: 30
+        not_null: true
+      - name: FirstName
+        type: string
+        length: 30
+        not_null: true
+      - name: MiddleInitial
+        type: string
+        length: 1
+      - name: Gender
+        type: string
+        length: 1
+        generation: {values: ["M", "F", "U"], weights: [0.49, 0.49, 0.02]}
+      - name: AddressLine1
+        type: string
+        length: 80
+      - name: AddressLine2
+        type: string
+        length: 80
+      - name: PostalCode
+        type: string
+        length: 12
+      - name: City
+        type: string
+        length: 25
+        not_null: true
+      - name: State
+        type: string
+        length: 20
+        not_null: true
+      - name: Country
+        type: string
+        length: 24
+      - name: Phone
+        type: string
+        length: 30
+      - name: Income
+        type: integer
+        generation: {min_value: 10000, max_value: 400000}
+      - name: NumberCars
+        type: smallint
+        generation: {min_value: 0, max_value: 5}
+      - name: NumberChildren
+        type: smallint
+        generation: {min_value: 0, max_value: 6}
+      - name: MaritalStatus
+        type: string
+        length: 1
+        generation: {values: ["S", "M", "D", "W", "U"]}
+      - name: Age
+        type: smallint
+        generation: {min_value: 18, max_value: 99}
+      - name: CreditRating
+        type: smallint
+        generation: {min_value: 300, max_value: 850}
+      - name: OwnOrRentFlag
+        type: string
+        length: 1
+        generation: {values: ["O", "R", "U"]}
+      - name: Employer
+        type: string
+        length: 30
+      - name: NumberCreditCards
+        type: smallint
+        generation: {min_value: 0, max_value: 10}
+      - name: NetWorth
+        type: bigint
+        generation: {min_value: -100000, max_value: 5000000}
+      - name: MarketingNameplate
+        type: string
+        length: 100
+    fk_constraints:
+      - columns: [SK_RecordDateID]
+        parent_table: DimDate
+        parent_columns: [SK_DateID]
+      - columns: [SK_UpdateDateID]
+        parent_table: DimDate
+        parent_columns: [SK_DateID]
+
   # ── DimAccount ────────────────────────────────────────────────────────────────
   # ~1500 per SF. SCD Type 2. FK: SK_BrokerID → DimBroker, SK_CustomerID → DimCustomer.
   - name: DimAccount

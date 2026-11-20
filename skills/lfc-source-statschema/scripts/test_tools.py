@@ -134,7 +134,7 @@ if __name__ == "__main__":
 SCHEMAS = os.path.join(HERE, "..", "schemas")
 TPC_MODELS = ("tpcb", "tpcc", "tpch", "tpcdi", "tpcds", "tpce")
 # fact and dimension counts per model, from the specifications' roles (TPC-DS: 7 fact, 17 dimension tables)
-KINDS = {"tpcb": (1, 3), "tpcc": (5, 4), "tpch": (3, 5), "tpcdi": (6, 12), "tpcds": (7, 17), "tpce": (15, 17)}
+KINDS = {"tpcb": (1, 3), "tpcc": (5, 4), "tpch": (3, 5), "tpcdi": (6, 13), "tpcds": (7, 17), "tpce": (16, 17)}
 
 
 class Roles(unittest.TestCase):

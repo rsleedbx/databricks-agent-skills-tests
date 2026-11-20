@@ -49,7 +49,8 @@ tpc_dialects() {                              # tpc_dialects <workload>: its DDL
   uv run -q "$SS/validate.py" "$T/t-$1.yaml"
 }
 for w in tpcb tpcc tpch tpcds tpce tpcdi; do
-  n=$(case $w in (tpcb) echo 4;; (tpcc) echo 9;; (tpch) echo 8;; (tpcds) echo 24;; (tpce) echo 32;; (tpcdi) echo 18;; esac)
+  # the spec's DDL for tpcb and tpch; the others are statschema's schemas, so their count is the schema file's
+  n=$(case $w in (tpcb) echo 4;; (tpch) echo 8;; (*) python3 "$R/bin/check_model_counts.py" --count "$w";; esac)
   check "tpc-schema.sh $w (SF 1): $n tables, through ddl-to-schema and ddl.py to seven dialects" tpc_dialects $w
   check "tpc-schema.sh $w (SF 1): $n tables in the schema" test "$(grep -c '^- name:' "$T/t-$w.yaml")" -eq $n
 done
