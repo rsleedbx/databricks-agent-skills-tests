@@ -102,6 +102,23 @@ def codec(c, rows):                         # a key column: (kind, n back from t
     if k == "date": return "v", f"LFC_DAYS({name})", (lambda i: i), None
     if k == "ts": return "v", f"LFC_EPOCH({name})", (lambda i: i), None
     return "v", name, (lambda i: i), None
+def icodec(c):                              # a composite key's integer column with a range (by its step) or a list: its values,
+    g, name = c.get("generation") or {}, c["name"]   # not 1, 2, 3 (TPC-E fi_year 1999 .., TPC-DS inventory's weekly dates)
+    if kind(c) != "int" or g.get("distribution", "auto") in STRUCT: return None
+    ivals = sorted({int(x) for x in g.get("values") or []})
+    if len(ivals) > 1 and len({b - a for a, b in zip(ivals, ivals[1:])}) > 1:   # uneven: by position
+        back = "CASE " + name + " " + " ".join(f"WHEN {x} THEN {i + 1}" for i, x in enumerate(ivals)) + " END"
+        return "v", back, (lambda i, vs=ivals: "CASE (" + i + ") " + " ".join(f"WHEN {j + 1} THEN {x}" for j, x in enumerate(vs)) + " END"), len(ivals)
+    if ivals:                                    # evenly spaced: a range (TPC-DI's FI_QTR 1 .. 4)
+        lo, hi, st = ivals[0], ivals[-1], (ivals[1] - ivals[0]) if len(ivals) > 1 else 1
+    elif g.get("min_value") is not None and g.get("max_value") is not None:
+        lo, hi, st = int(g["min_value"]), int(g["max_value"]), int((g.get("distribution_params") or {}).get("step", 1))
+    else:
+        return None
+    if hi < lo or st < 1: return None
+    if lo == 1 and st == 1: return "v", name, (lambda i: i), hi
+    back = f"{name} - {lo - 1}" if st == 1 else f"({name} - {lo}) DIV {st} + 1"
+    return "v", back, (lambda i, lo=lo, st=st: f"({lo} + (({i}) - 1) * {st})"), (hi - lo) // st + 1
 def lit(s): return "'" + str(s).replace("'", "''") + "'"
 def perm(tn, col, salt, rows): return f"(x.n - 1) * {K(tn, col, salt)} % {rows}"
 def draw(tn, col, salt, m): return f"(x.n - 1) * {K(tn, col, salt)} % {m}"         # 0 .. m-1, each equally often
@@ -182,7 +199,11 @@ for tn in order:
     def pcodec(col):                           # a key column that is a foreign key: the parent column's codec
         if col not in fkcol: return None
         f, pc = fkcol[col]; pt = T[f["parent_table"]]
-        return codec(dict(next(x for x in pt["columns"] if x["name"] == pc), name=col), R[f["parent_table"]])   # read back from this column
+        c = dict(next(x for x in pt["columns"] if x["name"] == pc), name=col)   # read back from this column
+        ppk = [x["name"] for x in pt["columns"] if x.get("primary_key")]
+        pfk = {cc for x in pt.get("fk_constraints") or [] for cc in x["columns"]}
+        ranged = icodec(c) if len(ppk) > 1 and pc in ppk and pc not in pfk else None   # as the parent's key numbered it
+        return ranged or codec(c, R[f["parent_table"]])
     exp_cols = []
 
     def rule(c):                             # a generation rule -> (formula kind, text), or None
@@ -263,21 +284,7 @@ for tn in order:
     elif len(pk) > 1:   # k1 = (n - 1) DIV f + 1; the other key columns share (n - 1) % f, as one mixed-radix number when
         #                    their values are countable (each its own digit), else the second alone and the rest their first
         def kcodec(col):                         # a foreign key's parent codec, an integer range or list, or the column's codec
-            g = cols[col].get("generation") or {}
-            ivals = sorted({int(x) for x in g.get("values") or []}) if kind(cols[col]) == "int" else []
-            if col not in fkcol and len(ivals) > 1 and len({b - a for a, b in zip(ivals, ivals[1:])}) > 1:
-                back = "CASE " + col + " " + " ".join(f"WHEN {x} THEN {i + 1}" for i, x in enumerate(ivals)) + " END"
-                return "v", back, (lambda i, vs=ivals: "CASE (" + i + ") " + " ".join(f"WHEN {j + 1} THEN {x}" for j, x in enumerate(vs)) + " END"), len(ivals)
-            if ivals and col not in fkcol:       # an evenly spaced list is a range: TPC-DI's FI_QTR 1 .. 4
-                g = {"min_value": ivals[0], "max_value": ivals[-1], "distribution_params": {"step": (ivals[1] - ivals[0]) if len(ivals) > 1 else 1}}
-            if col not in fkcol and kind(cols[col]) == "int" and g.get("distribution", "auto") not in STRUCT \
-                    and g.get("min_value") is not None and g.get("max_value") is not None:
-                lo, hi = int(g["min_value"]), int(g["max_value"]); st = int((g.get("distribution_params") or {}).get("step", 1))
-                if hi >= lo and st >= 1:         # lo, lo + step, ... hi: TPC-DS inventory's weekly dates, TPC-E's fi_year
-                    if lo == 1 and st == 1: return "v", col, (lambda i: i), hi
-                    back = f"{col} - {lo - 1}" if st == 1 else f"({col} - {lo}) DIV {st} + 1"
-                    return "v", back, (lambda i, lo=lo, st=st: f"({lo} + (({i}) - 1) * {st})"), (hi - lo) // st + 1
-            return pcodec(col) or codec(cols[col], rows)
+            return pcodec(col) or icodec(cols[col]) or codec(cols[col], rows)
         k1, rest = pk[0], pk[1:]
         c1 = kcodec(k1); cr = [kcodec(k) for k in rest]
         nd = (cs.get(k1) or {}).get("n_distinct") or 0
@@ -295,6 +302,8 @@ for tn in order:
                 log(f"{tn}: {rows} rows but only {c1n} x {f} key combinations; {c1n * f} rows")
                 rows = R[tn] = c1n * f; tags[0] = f"lfc:rows={rows}"
         step = max(1, c2n // f) if c2n < 10 ** 18 else 1
+        if radix:                               # a step sharing a factor with the fastest column's count would hold it
+            while step > 1 and math.gcd(step, caps[-1]) > 1: step -= 1   # to a few values (one, if a multiple)
         put(k1, (c1[0], c1[2](f"((x.n - 1) DIV {f} + 1)")))
         if not radix:
             put(rest[0], (cr[0][0], cr[0][2](f"(((x.n - 1) % {f}) * {step} + 1)")))

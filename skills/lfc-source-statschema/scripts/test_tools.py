@@ -287,6 +287,44 @@ class CompositeKeys(unittest.TestCase):
         finally:
             db.close()
 
+    def keys(self, sch, table, cols):
+        import re
+        import sqlite3
+        import sqlglot
+        from statschema.tools import shape
+        t = {x["name"]: x for x in yaml.safe_load(shape(sch)[0])["tables"]}[table]
+        f = {c["name"]: re.search(r"lfc:v=\{(.*)\}", c["comment"]).group(1) for c in t["columns"]}
+        sel = ", ".join(sqlglot.transpile(f[c], read="mysql", write="sqlite")[0] for c in cols)
+        db = sqlite3.connect(":memory:")
+        try:
+            return [db.execute(f"SELECT {sel} FROM (SELECT {n} AS n) x").fetchone() for n in range(1, t["row_count"] + 1)]
+        finally:
+            db.close()
+
+    def test_the_fastest_column_varies_when_the_step_is_its_multiple(self):
+        # 10 customers x (6 accounts x 4 dates), 3 rows each: the even step 24 // 3 = 8 shares 4 with the dates' count
+        sch = {"version": "1.0", "tables": [
+            {"name": "cu", "row_count": 10, "columns": [{"name": "c", "type": "integer", "primary_key": True}]},
+            {"name": "ac", "row_count": 6, "columns": [{"name": "a", "type": "integer", "primary_key": True}]},
+            {"name": "bal", "row_count": 30, "columns": [
+                {"name": "c", "type": "integer", "primary_key": True}, {"name": "a", "type": "integer", "primary_key": True},
+                {"name": "d", "type": "integer", "primary_key": True, "generation": {"min_value": 1, "max_value": 4}}],
+             "fk_constraints": [{"columns": ["c"], "parent_table": "cu", "parent_columns": ["c"]},
+                                {"columns": ["a"], "parent_table": "ac", "parent_columns": ["a"]}]}]}
+        rows = self.keys(sch, "bal", ["c", "a", "d"])
+        self.assertEqual(len(set(rows)), 30)
+        self.assertGreater(len({r[2] for r in rows}), 1)
+
+    def test_a_child_key_into_a_ranged_parent_column_takes_its_values(self):
+        sch = {"version": "1.0", "tables": [
+            {"name": "wk", "row_count": 10, "columns": [
+                {"name": "w", "type": "integer", "primary_key": True, "generation": {"min_value": 100, "max_value": 128, "distribution_params": {"step": 7}}},
+                {"name": "r", "type": "integer", "primary_key": True, "generation": {"min_value": 1, "max_value": 2}}]},
+            {"name": "line", "row_count": 20, "columns": [
+                {"name": "w", "type": "integer", "primary_key": True}, {"name": "k", "type": "integer", "primary_key": True}],
+             "fk_constraints": [{"columns": ["w"], "parent_table": "wk", "parent_columns": ["w"]}]}]}
+        self.assertTrue({r[0] for r in self.keys(sch, "line", ["w"])} <= {100, 107, 114, 121, 128})
+
 
 if __name__ == "__main__":
     unittest.main()
