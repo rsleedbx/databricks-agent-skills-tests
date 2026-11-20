@@ -1,4 +1,4 @@
-"""Offline tests of lfc_source_datagen.sources and .tpch_sources (no database): sources parsed and refused (and
+"""Offline tests of lfc_source_datagen.sources and the per-model modules (no database): sources parsed and refused (and
 TPC-H's own checks), the SQL files split and their psql variables filled (casts kept), each model's DDL (tpc_schema for
 tpch and tpcb, statschema's shape for the others), a new source's steps in order on a fake DB-API connection (guarded
 DDL, the reader's grants before the fill, the checks qualified and marked once, the model's steps with search_path,
@@ -24,6 +24,7 @@ for p in (HERE, os.path.join(HERE, "..", "..", "lfc-source-statschema", "scripts
     sys.path.insert(0, p)
 from lfc_source_datagen import sources as src
 from lfc_source_datagen import tpcc_sources as tc
+from lfc_source_datagen import tpcds_sources as tds
 from lfc_source_datagen import tpch_sources as tp
 
 
@@ -161,6 +162,65 @@ class TpccDelivery(unittest.TestCase):
     def test_order_line_item_is_a_foreign_key(self):
         ddl, _ = src.model_ddl("tpcc", 0.01)
         self.assertRegex(ddl, r'FOREIGN KEY \("ol_i_id"\) REFERENCES "item"')
+
+
+class TpcdsSignals(unittest.TestCase):
+    """TPC-DS's two signals: the <returns>/<ship> form, either half alone, the SQL filled, each signal in its table's
+    comment, the summary reading them back; and both signals' parameters as statschema's tpcds.yaml names them."""
+    R, S = "40,80,40,15,1,30", "6,1,3,2,5,3,80,2,3"
+
+    def test_check_refuses_bad_forms(self):
+        tds.check(src.parse([f"a:1:{self.R}/{self.S}", f"b:1:{self.R}/", f"c:1:/{self.S}", "d:1"]))
+        for bad in (f"a:1:{self.R}", "a:1:1,2,3/", f"a:1:40,80,40,15,1,0/", f"a:1:/6,1,0,2,5,3,80,2,3",
+                    f"a:1:/6,1,3,2,0,3,80,2,3", f"a:1:{self.R}/{self.S}/1", "a:1:x/"):
+            with self.assertRaises(ValueError, msg=bad):
+                tds.check(src.parse([bad]))
+
+    def test_steps_fill_every_variable_and_keep_each_signal(self):
+        self.assertEqual(tds.steps("a", ""), [])
+        both = tds.steps("a", f"{self.R}/{self.S}")
+        body = "\n".join(both)
+        self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+")                     # no psql variable left
+        self.assertEqual(len(both), 5)       # returns: delete, insert, comment; ship: update, comment
+        self.assertIn("s.h % 1000 < 40 + s.is_fit * 80 + s.is_promo * 40 + s.tier * 15", body)
+        self.assertIn("ws.ws_warehouse_sk % 5 = 0 THEN 3", body)
+        self.assertIn("ws.ws_quantity >= 80 THEN 2", body)
+        comments = dict(re.findall(r"COMMENT ON TABLE (\w+) IS '(.*)'", body))
+        self.assertEqual(json.loads(comments["store_returns"])["signal"], "return_propensity")
+        self.assertEqual(json.loads(comments["web_sales"])["parameters"]["promise"], 6)
+        self.assertEqual(len(tds.steps("a", f"/{self.S}")), 2)
+        self.assertEqual(len(tds.steps("a", f"{self.R}/")), 3)
+
+    def test_summary_reads_each_signal_from_its_comment(self):
+        class Cur:
+            def __init__(self, comments):
+                self.comments, self.q, self.rows = comments, [], []
+
+            def execute(self, q, params=None):
+                self.q.append(q)
+                if "obj_description" in q:
+                    self.rows = [(self.comments.get(re.search(r"\.(\w+)'::regclass", q).group(1)),)]
+                else:
+                    self.rows = [(57608, 5644)] if "store_returns" in q else [(14388, 41.0, 6.0)]
+
+            def fetchall(self):
+                return self.rows
+        both = Cur({"store_returns": tds.signal_comment("return_propensity", self.R),
+                    "web_sales": tds.signal_comment("web_ship_delay", self.S)})
+        self.assertEqual(tds.summary(both, "a"), {"store_lines": 57608, "returned_pct": 9.8, "web_lines": 14388,
+                                                  "late_pct": 41.0, "median_ship_days": 6.0})
+        self.assertTrue(any("d > 6" in q for q in both.q))
+        self.assertEqual(set(tds.summary(Cur({}), "a").values()), {None})   # a source without either signal
+
+    def test_parameters_match_the_schema(self):
+        import yaml
+        doc = yaml.safe_load(open(os.path.join(HERE, "..", "..", "lfc-source-statschema", "schemas", "tpcds.yaml")))
+        sig = {s["name"]: s for s in doc["signals"]}
+        self.assertEqual(list(sig), list(tds.SIGNALS))
+        for name, (_t, _sql, names, _) in tds.SIGNALS.items():
+            self.assertEqual(tuple(sig[name]["parameters"]), names)
+        returns, ship = (sig[n]["profiles"] for n in tds.SIGNALS)
+        tds.check(src.parse([f"{r}_{s}:1:{returns[r]}/{ship[s]}" for r in returns for s in ship]))
 
 
 class Build(unittest.TestCase):
