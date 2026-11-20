@@ -228,6 +228,12 @@ class FixedRows(unittest.TestCase):
         self.assertEqual(self.row("income_band", 2, "ib_lower_bound", "ib_upper_bound"), (10001, 20000))
         self.assertNotIn("builtin_generator", open(os.path.join(SCHEMAS, "tpcds.yaml")).read())
         self.assertNotIn("formulas", self.T["date_dim"])   # spent: the tags hold them
+        from statschema.core.model import CanonicalTableSchema
+        raw = next(x for x in yaml.safe_load(open(os.path.join(SCHEMAS, "tpcds.yaml")))["tables"] if x["name"] == "date_dim")
+        back = CanonicalTableSchema.from_dict(raw).to_dict()   # a round trip through the model keeps the rules
+        self.assertEqual(back["formulas"], raw["formulas"])
+        self.assertEqual({c["name"]: (c.get("generation") or {}).get("expression") for c in back["columns"]},
+                         {c["name"]: (c.get("generation") or {}).get("expression") for c in raw["columns"]})
 
     def test_bad_names_stop_and_a_foreign_key_keeps_its_expression(self):
         from statschema.tools import shape
