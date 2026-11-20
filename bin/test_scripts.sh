@@ -33,7 +33,7 @@ check() {
   case "$*" in *"$T"*)
     case "$TGROUP" in
       skip*) printf "  skip  %s (unchanged since %s)\n" "$name" "${TGROUP#skip }"; skipped=$((skipped + 1));;
-      *) python3 "$R/bin/test_gate.py" group-add "$T/group-inputs" --cache "$T/edges.json" -- "$@"
+      *) python3 "$R/bin/test_gate.py" group-add "$T/group-inputs" --cache "$T/edges.json" -- "$@" || tfails=$((tfails + 1))   # inputs not added: no group pass
          run_check "$name" "$@" || tfails=$((tfails + 1));;
     esac; return;; esac
   d=$(python3 "$R/bin/test_gate.py" decide "$name" --value "$GATE_ENV" --value "$*" --cache "$T/edges.json" -- "$@")
