@@ -8,8 +8,9 @@ runs only when what it depends on changed since it last passed.
 Per connector (a notebooks/<slug>-pipeline.py with its bundles/<slug>/), one at a time:
   1. skip it when its notebook, its bundle folder, the package (scripts/lfc_saas_pipeline), its UC connection's
      updated_at and the workspace are what they were at its last pass (bin/test_skip, runner lfc-saas-pipeline);
-  2. the bundle: `databricks bundle deploy` and `bundle run` into <catalog>.<prefix>_<slug>_dab_<epoch>
-     (development mode prefixes it with dev_<user>_);
+  2. the bundle: `databricks bundle deploy` and `bundle run` from a copy named <bundle>_<epoch> (its own deployment,
+     so nothing deployed earlier is replaced) into <catalog>.<prefix>_<slug>_dab_<epoch> (development mode prefixes
+     it with dev_<user>_);
   3. the notebook: imported to your workspace folder lfc-saas-pipeline/, its %pip line pointed at --ref (default: the
      current branch, pushed, so a package change is what's tested), run as a one-time job into
      <prefix>_<slug>_nb_<epoch>, then its pipeline's first update waited for;
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,7 +54,9 @@ def connectors(only: str | None) -> list[str]:
 def cli(profile: str, *args: str, check: bool = True, cwd: Path | None = None) -> str:
     r = subprocess.run(["databricks", *args, "--profile", profile], capture_output=True, text=True, cwd=cwd)
     if check and r.returncode != 0:
-        raise RuntimeError(f"databricks {' '.join(args[:3])}: {(r.stderr or r.stdout).strip().splitlines()[-1][:300]}")
+        err = [ln for ln in (r.stderr or r.stdout).strip().splitlines() if ln.startswith("Error")] or \
+            (r.stderr or r.stdout).strip().splitlines()[-1:]
+        raise RuntimeError(f"databricks {' '.join(args[:3])}: {err[0][:300]}")
     return r.stdout
 
 
@@ -91,13 +95,18 @@ def counts(profile: str, catalog: str, schema: str, tables: list[str]) -> dict[s
     return out
 
 
-def run_bundle(profile: str, slug: str, schema: str) -> tuple[str, str]:
-    """Deploy and run the bundle; (destination schema as created, update result)."""
-    b = SKILL / "bundles" / slug
-    cli(profile, "bundle", "deploy", "--var", f"schema={schema}", cwd=b)
-    r = subprocess.run(["databricks", "bundle", "run", pipeline_key(slug), "--var", f"schema={schema}",
-                        "--profile", profile], capture_output=True, text=True, cwd=b)
-    summary = json.loads(cli(profile, "bundle", "summary", "--var", f"schema={schema}", "-o", "json", cwd=b))
+def run_bundle(profile: str, slug: str, schema: str, epoch: int) -> tuple[str, str]:
+    """Deploy and run the bundle from a copy named <bundle>_<epoch>: its own deployment, so no earlier deployment's
+    resources are replaced. (destination schema as created, update result)."""
+    with tempfile.TemporaryDirectory() as d:
+        b = Path(d) / slug
+        shutil.copytree(SKILL / "bundles" / slug, b, ignore=shutil.ignore_patterns(".databricks"))
+        yml = b / "databricks.yml"
+        yml.write_text(re.sub(r"(\nbundle:\n  name: )(\S+)", rf"\g<1>\g<2>_{epoch}", yml.read_text(), count=1))
+        cli(profile, "bundle", "deploy", "--var", f"schema={schema}", cwd=b)
+        r = subprocess.run(["databricks", "bundle", "run", pipeline_key(slug), "--var", f"schema={schema}",
+                            "--profile", profile], capture_output=True, text=True, cwd=b)
+        summary = json.loads(cli(profile, "bundle", "summary", "--var", f"schema={schema}", "-o", "json", cwd=b))
     created = next(iter(summary["resources"]["schemas"].values()))["name"]
     state = "COMPLETED" if r.returncode == 0 and "is COMPLETED" in (r.stdout + r.stderr) else "FAILED"
     return created, state
@@ -149,7 +158,7 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
         return False
     epoch, tables = int(time.time()), tables_of(slug)
     base = f"{a.prefix}_{slug.replace('-', '_')}"
-    dab_schema, dab_state = run_bundle(a.profile, slug, f"{base}_dab_{epoch}")
+    dab_schema, dab_state = run_bundle(a.profile, slug, f"{base}_dab_{epoch}", epoch)
     nb_schema = f"{base}_nb_{epoch}"
     nb_state = run_notebook(a.profile, slug, nb_schema, a.ref)
     dab_n, nb_n = counts(a.profile, a.catalog, dab_schema, tables), counts(a.profile, a.catalog, nb_schema, tables)

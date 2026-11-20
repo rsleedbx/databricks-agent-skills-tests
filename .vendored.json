@@ -4,13 +4,13 @@
    "unit": "test_skip",
    "file": "scripts/test_skip.py",
    "dest": "bin/test_skip/scripts/test_skip.py",
-   "hash": "bc1533f45e9838f8"
+   "hash": "58806baf4a04dd8f"
   },
   {
    "unit": "test_skip",
    "file": "tests/test_test_skip.py",
    "dest": "bin/test_skip/tests/test_test_skip.py",
-   "hash": "1c8dd8c019388e44"
+   "hash": "e5502a5fbc9b64f8"
   }
  ]
 }

@@ -15,7 +15,6 @@ Library:  fp = fingerprint(paths, values); skip, last = should_skip(runner, key,
 """
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import hashlib
 import json
@@ -92,33 +91,32 @@ def forget(runner: str, key: str | None = None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("skip")
-    s.add_argument("--again", action="store_true")
-    r = sub.add_parser("record")
-    for p in (s, r):
-        p.add_argument("runner")
-        p.add_argument("key")
-    r.add_argument("result", choices=["pass", "fail"])
-    for p in (s, r):
-        p.add_argument("--value", action="append", default=[])
-        p.add_argument("paths", nargs="*")
-    f = sub.add_parser("forget")
-    f.add_argument("runner")
-    f.add_argument("key", nargs="?")
-    a = ap.parse_args(argv)
-    if a.cmd == "forget":
-        forget(a.runner, a.key)
+    """skip|record|forget; --value V and --again may come anywhere (run.sh passes them before the paths)."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    values, again, rest = [], False, []
+    while args:
+        x = args.pop(0)
+        if x == "--value" and args:
+            values.append(args.pop(0))
+        elif x == "--again":
+            again = True
+        else:
+            rest.append(x)
+    cmd = rest[0] if rest else ""
+    if cmd == "forget" and len(rest) in (2, 3):
+        forget(rest[1], rest[2] if len(rest) == 3 else None)
         return 0
-    fp = fingerprint(a.paths, a.value)
-    if a.cmd == "skip":
-        skip, last = should_skip(a.runner, a.key, fp, a.again)
+    if cmd == "skip" and len(rest) >= 3:
+        runner, key, paths = rest[1], rest[2], rest[3:]
+        skip, last = should_skip(runner, key, fingerprint(paths, values), again)
         if skip:
             print(f"passed {last['when']}, unchanged since")
         return 0 if skip else 1
-    record(a.runner, a.key, fp, a.result == "pass")
-    return 0
+    if cmd == "record" and len(rest) >= 4 and rest[3] in ("pass", "fail"):
+        runner, key, result, paths = rest[1], rest[2], rest[3], rest[4:]
+        record(runner, key, fingerprint(paths, values), result == "pass")
+        return 0
+    sys.exit(__doc__)
 
 
 if __name__ == "__main__":

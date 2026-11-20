@@ -111,9 +111,22 @@ echo ""
 
 pass=0
 fail=0
+skipped=0
+# A tag (with its follow-up turns) runs only when what it depends on changed since it last passed on this machine:
+# its prompts as filled, the workspace profile and the skills repo's skills/ (bin/test_skip, runner run.sh; local,
+# never committed). TEST_SKIP_AGAIN=1 runs every tag.
+GATE="$SCRIPT_DIR/bin/test_skip/scripts/test_skip.py"
+G=$(mktemp -d)
+gate_args() {   # <tag> <prompt as filled>: the arguments that fingerprint a tag
+  printf '%s\n' "$(basename "$PROMPTS" .txt):$1" --value "$PIPELINE_WS" --value "$2" \
+    --value "$(grep "^$1+|" "$PROMPTS")" "$REPO_DIR/skills"
+}
 
 while IFS='|' read -r tag prompt; do
   [ -z "$tag" ] && continue
+  if [ -e "$G/skip-${tag%+}" ] && [ "${tag%+}" != "$tag" ]; then
+    echo "[$tag] skipped with ${tag%+}"; continue
+  fi
   # Fill ${VAR} placeholders from the environment; stop on an unset one
   if ! prompt=$(printf '%s' "$prompt" | perl -pe 's/\$\{(\w+)\}/defined $ENV{$1} ? $ENV{$1} : die "unset variable $1\n"/ge'); then
     echo "[$tag] SKIPPED: prompt uses an unset variable (see env.example.sh)"
@@ -134,6 +147,11 @@ while IFS='|' read -r tag prompt; do
     resume_args=(--resume "$session_id")
     echo "[$tag+] Follow-up: $prompt"
   else
+    gargs=(); while IFS= read -r a; do gargs+=("$a"); done < <(gate_args "$tag" "$prompt")
+    if last=$(python3 "$GATE" skip run.sh "${gargs[@]}"); then
+      echo "[$tag] SKIPPED: $last"; : > "$G/skip-$tag"; skipped=$((skipped + 1)); continue
+    fi
+    printf '%s\n' "${gargs[@]}" > "$G/args-$tag"; echo "$tag" >> "$G/ran"
     outfile="$RESULTS_DIR/${tag}.json"
     : > "$outfile"
     : > "$RESULTS_DIR/${tag}.err"
@@ -159,7 +177,7 @@ while IFS='|' read -r tag prompt; do
   if [ $exit_code -ne 0 ]; then
     echo "[$tag] FAILED (exit $exit_code)"
     [ -s "$errfile" ] && echo "[$tag] stderr: $(head -5 "$errfile")"
-    fail=$((fail + 1))
+    fail=$((fail + 1)); : > "$G/fail-$tag"
   else
     echo "[$tag] done -> $outfile ($lines lines)"
     pass=$((pass + 1))
@@ -167,5 +185,14 @@ while IFS='|' read -r tag prompt; do
   echo ""
 done < "$PROMPTS"
 
-echo "=== $pass passed, $fail failed ==="
+# record each tag that ran: a pass when it and all its follow-ups succeeded
+if [ -s "$G/ran" ]; then
+  while IFS= read -r t; do
+    gargs=(); while IFS= read -r a; do gargs+=("$a"); done < "$G/args-$t"
+    key=${gargs[0]}; rest=("${gargs[@]:1}")
+    python3 "$GATE" record run.sh "$key" "$([ -e "$G/fail-$t" ] && echo fail || echo pass)" "${rest[@]}"
+  done < "$G/ran"
+fi
+rm -rf "${G:?}"
+echo "=== $pass passed, $fail failed, $skipped skipped (unchanged since they passed; TEST_SKIP_AGAIN=1 runs them) ==="
 echo "Summarize: python3 $SCRIPT_DIR/summarize.py $RESULTS_DIR"

@@ -68,6 +68,14 @@ Passes are kept outside the repo (`~/.cache/test-skip/test_scripts.json`; `TEST_
 checkout run everything. `TEST_SKIP_AGAIN=1 bin/test_scripts.sh` runs every check. On 2026-11-20 a run with nothing
 changed took 33 s instead of 3 min 15 s.
 
+The live runs skip what didn't change too:
+- `run.sh` (and so `bin/run_batch.sh` and `bin/run_matrix.sh`): a tag and its follow-up turns run only when their
+  prompts (as filled), the workspace profile or the skills repo's `skills/` changed since the tag last passed on this
+  machine (its session exited 0). A skipped tag leaves no new `<tag>.json` in the results.
+- [lfc-saas-pipeline/scripts/run_tests.py](../skills/lfc-saas-pipeline/scripts/run_tests.py): a connector's bundle and
+  notebook run only when its notebook, bundle, the package, its UC connection's `updated_at` or the workspace changed.
+`TEST_SKIP_AGAIN=1` (or `run_tests.py --again`) runs everything.
+
 With databases, it fills TPC-C and the TPC-H spec schema on each engine (schemas named `test_*`) and checks every table's target, the spec's rules, and the audit. Run it after changing a skill's scripts.
 
 ## Schema-change tests

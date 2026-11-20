@@ -62,6 +62,10 @@ class TestSkip(unittest.TestCase):
         self.assertIn("unchanged since", out.stdout)
         run("forget", "r", "k")
         self.assertEqual(run("skip", "r", "k", str(self.src)).returncode, 1)
+        # values before the paths, as run.sh passes them
+        self.assertEqual(run("record", "r", "k2", "pass", "--value", "ws", "--value", "p", str(self.src)).returncode, 0)
+        self.assertEqual(run("skip", "r", "k2", "--value", "ws", "--value", "p", str(self.src)).returncode, 0)
+        self.assertEqual(run("skip", "r", "k2", "--value", "ws", "--value", "other", str(self.src)).returncode, 1)
 
 
 if __name__ == "__main__":
