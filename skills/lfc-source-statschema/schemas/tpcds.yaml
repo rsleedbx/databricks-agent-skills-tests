@@ -21,6 +21,43 @@
 # scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
+
+# signals: what a model can learn from a source built with them (lfc-source-datagen tpcds_sources), and how the data
+# was made so. Two in one source: a returns rate and a delivery time, as one retailer has both.
+signals:
+  - name: return_propensity
+    target: "store_sales lines: returned when a store_returns row has the line's sr_item_sk, sr_ticket_number"
+    replaces: "the spec's returns drawn on their own: no return names a sale, so nothing predicts one"
+    built_by: "lfc-source-datagen: scripts/tpc/tpcds-returns.sql (lfc_source_datagen.tpcds_sources), per source"
+    causes:
+      - "the item's category: fit more per mille for Clothing and Shoes (item.i_category)"
+      - "the promotion: promo more per mille when the sale's promotion has p_discount_active Y"
+      - "the household's income: income_step per mille per tier, income_band 1-5, 6-10, 11-15, 16-20 (ss_hdemo_sk)"
+    noise: "a line comes back when a hash of its keys % 1000 is under the rate: a propensity, learned per group"
+    follows: "return date lag_min + 0..lag_span-1 days after the sale, part of the quantity, the reason by the cause"
+    parameters: [base, fit, promo, income_step, lag_min, lag_span]
+    profiles:
+      mass: "40,80,40,15,1,30"
+      fashion: "60,250,60,30,1,30"
+      hardlines: "20,30,20,5,1,14"
+    measured: "lfc-source-datagen references/tpch-sources.md: % returned by each cause, per profile"
+  - name: web_ship_delay
+    target: "web_sales lines: late when ws_ship_date_sk - ws_sold_date_sk is more than promise days"
+    replaces: "the spec's ship date drawn on its own: a line could ship before it sold"
+    built_by: "lfc-source-datagen: scripts/tpc/tpcds-ship.sql (lfc_source_datagen.tpcds_sources), per source"
+    causes:
+      - "the ship mode's tier: sm_type OVERNIGHT, NEXT DAY AIR, EXPRESS 0; TWO DAY, PRIORITY 1; others 2 times mode_step"
+      - "a slow warehouse: slow_wh days more when ws_warehouse_sk is a multiple of slow_every"
+      - "a bulk line: bulk days more when ws_quantity is bulk_qty or more"
+    noise: "handling handle_min + 0..handle_span-1 days and 0..jitter-1 days, from the keys (deterministic)"
+    parameters: [promise, handle_min, handle_span, mode_step, slow_every, slow_wh, bulk_qty, bulk, jitter]
+    profiles:
+      express: "2,0,2,1,5,2,80,1,2"
+      standard: "6,1,3,2,5,3,80,2,3"
+      marketplace: "12,2,6,3,5,5,60,4,5"
+    measured: "lfc-source-datagen references/tpch-sources.md: % late by each cause, per profile"
+    date_keys: "days are date key differences, as d_date_sk is a day number; the fill's date_dim columns aren't a calendar"
+
 tables:
 
 # ── Fixed dimension tables ──────────────────────────────────────────────────

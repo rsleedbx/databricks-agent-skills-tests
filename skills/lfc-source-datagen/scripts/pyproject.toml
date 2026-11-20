@@ -1,7 +1,7 @@
 [project]
 name = "lfc-source-datagen"
 version = "0.3.0"
-description = "The datagen skill's Python side: TPC spec DDL and TPC-H business sources, for a notebook, job or pipeline"
+description = "The datagen skill's Python side: TPC spec DDL and TPC business sources, for a notebook, job or pipeline"
 requires-python = ">=3.10"
 dependencies = [
   "psycopg[binary]>=3.2",
@@ -14,6 +14,7 @@ dependencies = [
 lfc-sources = "lfc_source_datagen.sources:main"
 lfc-tpch-sources = "lfc_source_datagen.tpch_sources:main"
 lfc-tpcc-sources = "lfc_source_datagen.tpcc_sources:main"
+lfc-tpcds-sources = "lfc_source_datagen.tpcds_sources:main"
 
 [build-system]
 requires = ["setuptools>=68"]
