@@ -15,6 +15,7 @@ connection page); each defaults to `lfcsaas-<connector>`.
 |---|---|---|---|---|
 | 1Password Event Logs | [notebook](notebooks/1password-event-logs-pipeline.py) | [bundle](bundles/1password-event-logs) | `lfcsaas-1password` | audit_events, item_usages, sign_in_attempts |
 | Marketo | [notebook](notebooks/marketo-pipeline.py) | [bundle](bundles/marketo) | `lfcsaas-marketo` | leads, static_lists |
+| NetSuite | [notebook](notebooks/netsuite-pipeline.py) | [bundle](bundles/netsuite) | `lfcsaas-netsuite` | transaction; needs NetSuite's JDBC driver in a volume (`netsuite_jar_path`) |
 
 | Way | Files | When |
 |---|---|---|

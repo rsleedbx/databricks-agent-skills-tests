@@ -1,0 +1,37 @@
+resources:
+  schemas:
+    event_logs:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: NetSuite as Lakeflow Connect lands it
+
+  pipelines:
+    netsuite:
+      name: ${var.schema}
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.event_logs.name}
+      ingestion_definition:
+        connection_name: ${var.connection}
+        netsuite_jar_path: ${var.netsuite_jar_path}
+        objects:
+          # any table of the NetSuite2.com data source but DeletedRecords (source schema `default`)
+          - table: &t {source_schema: default, source_table: transaction,
+                       destination_catalog: "${var.catalog}", destination_schema: "${resources.schemas.event_logs.name}"}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+
+  jobs:
+    netsuite_refresh:
+      name: ${var.schema}_refresh
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: refresh
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.netsuite.id}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
