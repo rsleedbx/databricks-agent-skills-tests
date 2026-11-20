@@ -111,13 +111,32 @@ echo ""
 
 pass=0
 fail=0
+skipped=0
+# A tag (with its follow-up turns) runs only when what it depends on changed since it last passed on this machine:
+# its prompts as filled, the workspace profile, the claude version, CLAUDE_ARGS, the allowed tools and the skills
+# repo's skills/ (bin/test_skip, runner run.sh; local,
+# never committed). A pass: every turn exited 0 and ended in a result event that isn't an error; whether the answer
+# met the test's expectations is summarize.py's call, so check those before trusting a skip. A skipped tag leaves
+# <tag>.skipped (no <tag>.json) in the results. TEST_SKIP_AGAIN=1 runs every tag.
+GATE="$SCRIPT_DIR/bin/test_skip/scripts/test_skip.py"
+G=$(mktemp -d)
+CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1)
+gate_args() {   # <tag> <prompt as filled>: the arguments that fingerprint a tag (the run's settings too)
+  printf '%s\n' "$(basename "$PROMPTS" .txt):$1" --value "$PIPELINE_WS" --value "$2" \
+    --value "claude $CLAUDE_VERSION" --value "args ${CLAUDE_ARGS:-}" --value "tools ${CLAUDE_ALLOWED_TOOLS:-}" \
+    --value "$(grep "^$1+|" "$PROMPTS" | perl -pe 's/\$\{(\w+)\}/defined $ENV{$1} ? $ENV{$1} : "\${$1}"/ge')" \
+    "$REPO_DIR/skills"   # follow-ups filled like their turns, so a changed value there runs the tag
+}
 
 while IFS='|' read -r tag prompt; do
   [ -z "$tag" ] && continue
+  if [ -e "$G/skip-${tag%+}" ] && [ "${tag%+}" != "$tag" ]; then
+    echo "[$tag] skipped with ${tag%+}"; continue
+  fi
   # Fill ${VAR} placeholders from the environment; stop on an unset one
   if ! prompt=$(printf '%s' "$prompt" | perl -pe 's/\$\{(\w+)\}/defined $ENV{$1} ? $ENV{$1} : die "unset variable $1\n"/ge'); then
     echo "[$tag] SKIPPED: prompt uses an unset variable (see env.example.sh)"
-    fail=$((fail + 1))
+    fail=$((fail + 1)); : > "$G/fail-${tag%+}"
     continue
   fi
   resume_args=()
@@ -128,15 +147,23 @@ while IFS='|' read -r tag prompt; do
     session_id=$(grep -m1 -o '"session_id":"[^"]*"' "$outfile" 2>/dev/null | cut -d'"' -f4)
     if [ -z "$session_id" ]; then
       echo "[$tag+] SKIPPED: no session to resume in $outfile"
-      fail=$((fail + 1))
+      fail=$((fail + 1)); : > "$G/fail-$tag"
       continue
     fi
     resume_args=(--resume "$session_id")
     echo "[$tag+] Follow-up: $prompt"
   else
+    gargs=(); while IFS= read -r a; do gargs+=("$a"); done < <(gate_args "$tag" "$prompt")
+    if last=$(python3 "$GATE" skip run.sh "${gargs[@]}"); then
+      echo "[$tag] SKIPPED: $last"; : > "$G/skip-$tag"; skipped=$((skipped + 1))
+      rm -f "$RESULTS_DIR/$tag.json" "$RESULTS_DIR/$tag.err"   # an older run's output must not pass for this one's
+      echo "$last" > "$RESULTS_DIR/$tag.skipped"; continue
+    fi
+    echo "${gargs[0]} ${last#run }" > "$G/fp-$tag"; echo "$tag" >> "$G/ran"   # the fingerprint decided now
     outfile="$RESULTS_DIR/${tag}.json"
     : > "$outfile"
     : > "$RESULTS_DIR/${tag}.err"
+    rm -f "$RESULTS_DIR/${tag}.skipped"
     echo "[$tag] Running: $prompt"
   fi
   errfile="$RESULTS_DIR/${tag}.err"
@@ -156,10 +183,13 @@ while IFS='|' read -r tag prompt; do
   exit_code=$?
   lines=$(wc -l < "$outfile" 2>/dev/null || echo 0)
 
+  # a pass for the skip ledger: exit 0 and the session's last result event a success (not an error result)
+  tail -1 "$outfile" | grep -q '"type":"result"' && ! tail -1 "$outfile" | grep -q '"is_error":true' \
+    || : > "$G/fail-$tag"
   if [ $exit_code -ne 0 ]; then
     echo "[$tag] FAILED (exit $exit_code)"
     [ -s "$errfile" ] && echo "[$tag] stderr: $(head -5 "$errfile")"
-    fail=$((fail + 1))
+    fail=$((fail + 1)); : > "$G/fail-$tag"
   else
     echo "[$tag] done -> $outfile ($lines lines)"
     pass=$((pass + 1))
@@ -167,5 +197,13 @@ while IFS='|' read -r tag prompt; do
   echo ""
 done < "$PROMPTS"
 
-echo "=== $pass passed, $fail failed ==="
+# record each tag that ran: a pass when it and all its follow-ups succeeded
+if [ -s "$G/ran" ]; then
+  while IFS= read -r t; do   # what was tested: the fingerprint from before the run, not the files as they are now
+    read -r key fp < "$G/fp-$t"
+    python3 "$GATE" record run.sh "$key" "$([ -e "$G/fail-$t" ] && echo fail || echo pass)" --fingerprint "$fp"
+  done < "$G/ran"
+fi
+rm -rf "${G:?}"
+echo "=== $pass passed, $fail failed, $skipped skipped (unchanged since they passed; TEST_SKIP_AGAIN=1 runs them) ==="
 echo "Summarize: python3 $SCRIPT_DIR/summarize.py $RESULTS_DIR"

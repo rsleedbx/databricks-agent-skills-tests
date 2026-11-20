@@ -18,14 +18,40 @@ R=$(cd "$(dirname "$0")/.." && pwd); SK=$R/skills; SS=$SK/lfc-source-statschema/
 T=$(mktemp -d); fails=0
 ok() { printf "  ok    %s\n" "$1"; }
 no() { printf "  FAIL  %s\n" "$1"; fails=$((fails + 1)); }
-check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; else no "$name"; sed 's/^/        /' "$T/out" | tail -5; fi; }
+run_check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; return 0; else no "$name"; sed 's/^/        /' "$T/out" | tail -5; return 1; fi; }
+# A check runs only when what it depends on changed since it last passed (bin/test_gate.py: its command, its repo
+# paths widened to the skills they reference, or the whole repo for a bin tool); one that names no repo path always
+# runs: a shell function such as tpc_dialects or wl_offline (its body may write $T for a later check, so it must
+# never be gated on its own). TEST_SKIP_AGAIN=1 runs every check.
+# GATE_ENV: the run's database settings and this script's own text (an edited export or helper reruns every check)
+skipped=0; GATE_ENV="${PSQL:-}|${MYSQL:-}|${LIVE_PSQL:-}|${LIVE_MYSQL:-}|${LIVE_ENGINE:-}|${LIVE_DIALECT:-}|${LIVE_PY:-}|$(shasum "$0" | cut -c1-16)"
+# The checks that pass files through $T run or skip as one group (a skipped producer would leave its consumer without
+# input): it skips when the inputs its checks had at its last pass (from each one's full command) and this script are
+# unchanged; while it runs, each of its checks adds its inputs, and its pass is recorded when every one passed.
+TGROUP=$(python3 "$R/bin/test_gate.py" group-decide "files passed through \$T" "$0" --value "$GATE_ENV"); tfails=0
+check() {
+  local name=$1; shift; local d
+  case "$*" in *"$T"*)
+    case "$TGROUP" in
+      skip*) printf "  skip  %s (unchanged since %s)\n" "$name" "${TGROUP#skip }"; skipped=$((skipped + 1));;
+      *) python3 "$R/bin/test_gate.py" group-add "$T/group-inputs" --cache "$T/edges.json" -- "$@" || tfails=$((tfails + 1))   # inputs not added: no group pass
+         run_check "$name" "$@" || tfails=$((tfails + 1));;
+    esac; return;; esac
+  d=$(python3 "$R/bin/test_gate.py" decide "$name" --value "$GATE_ENV" --value "$*" --cache "$T/edges.json" -- "$@")
+  case "$d" in
+    skip*) printf "  skip  %s (unchanged since %s)\n" "$name" "${d#skip }"; skipped=$((skipped + 1)); return;;
+    "run -") run_check "$name" "$@"; return;;
+  esac
+  if run_check "$name" "$@"; then python3 "$R/bin/test_gate.py" record "$name" "${d#run }" pass
+  else python3 "$R/bin/test_gate.py" record "$name" "${d#run }" fail; fi
+}
 
 echo "== offline"
-for f in $(find "$SK" -name '*.sh'); do check "bash -n ${f#$SK/}" bash -n "$f"; done
+for f in $(find "$SK" -name '*.sh'); do run_check "bash -n ${f#$SK/}" bash -n "$f"; done   # milliseconds: never gated
 # and with bash 3.2 (macOS /bin/bash, or BASH32=<path>): the scripts run on it unchanged (lint_scripts.py rule bash32)
 B32=${BASH32:-$( /bin/bash -c '[ "${BASH_VERSINFO[0]}" -lt 4 ] && echo /bin/bash' 2>/dev/null )}
 if [ -n "$B32" ]; then
-  for f in $(find "$SK" "$R/bin" -name '*.sh'); do check "bash 3.2 -n ${f#$R/}" "$B32" -n "$f"; done
+  for f in $(find "$SK" "$R/bin" -name '*.sh'); do run_check "bash 3.2 -n ${f#$R/}" "$B32" -n "$f"; done
 fi
 check "links in every skill" python3 "$R/bin/check_links.py" "$SK"
 check "links in the contributor skills" python3 "$R/bin/check_links.py" "$R/.claude/skills"
@@ -35,6 +61,8 @@ check "results dir: checkout, LFC_TESTS_RESULTS, an installed plugin copy" pytho
 check "SCRIPTS.md is current" python3 "$R/bin/scripts_index.py" --check
 check "layers: every skill and bin script is in layers.yaml, every cross-skill reference is allowed or in layers-baseline.txt" python3 "$R/bin/check_layers.py"
 check "check_layers: unit tests on a fixture tree" python3 -m unittest -q "$R/bin/test_check_layers.py"
+check "test_gate: a check's inputs (skill, its code references, a bin tool, none) and the \$T group" python3 -m unittest -q "$R/bin/test_test_gate.py"
+check "test_skip: fingerprints, passes, failures, TEST_SKIP_AGAIN" python3 -m unittest -q "$R/bin/test_skip/tests/test_test_skip.py"
 check "shape.py order between columns: offset spread, GREATEST fallback, a rejected offset rule (fixture, every row)" python3 -m unittest -q "$R/bin/test_shape_order.py"
 for w in tpcb tpcc tpch tpcdi tpcds tpce; do
   check "shape.py $w" sh -c "uv run -q '$SS/shape.py' '$SK/lfc-source-statschema/schemas/$w.yaml' --sf 0.1 --expected '$T/$w.exp.json' > '$T/$w.yaml'"
@@ -208,5 +236,8 @@ db() {   # db <pg|my|py> <dialect> <client> <planner dir>: fill and check each w
 [ -n "${LIVE_PSQL:-}" ] && db pg "${LIVE_DIALECT:-postgres}" "$LIVE_PSQL" "${DIR_PG:-$DG/postgres}"
 [ -n "${LIVE_MYSQL:-}" ] && db my mysql "$LIVE_MYSQL" "${DIR_MY:-$DG/mysql}"
 [ -n "${LIVE_ENGINE:-}" ] && PY=${PY:-python3} && db py "${LIVE_DIALECT:-$LIVE_ENGINE}" "$LIVE_ENGINE" ""
+case "$TGROUP" in skip*) ;; *) python3 "$R/bin/test_gate.py" group-record "files passed through \$T" "$0" \
+  "$T/group-inputs" "$([ $tfails -eq 0 ] && echo pass || echo fail)" --value "$GATE_ENV";; esac
 rm -rf "${T:?}"
-echo; [ $fails -eq 0 ] && echo "all passed" || echo "$fails failed"; exit $((fails > 0))
+echo; [ $skipped -gt 0 ] && echo "$skipped skipped: unchanged since they passed (TEST_SKIP_AGAIN=1 runs them)"
+[ $fails -eq 0 ] && echo "all passed" || echo "$fails failed"; exit $((fails > 0))
