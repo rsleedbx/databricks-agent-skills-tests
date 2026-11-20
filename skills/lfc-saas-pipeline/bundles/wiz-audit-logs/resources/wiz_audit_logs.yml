@@ -12,6 +12,10 @@ resources:
       schema: ${resources.schemas.event_logs.name}
       ingestion_definition:
         connection_name: ${var.connection}
+        source_configurations:
+          - api_source_connector_config:
+              configs:
+                start_datetime: ${var.start_datetime}
         objects:
           # audit_log_entries, vulnerability_findings (source schema `default`)
           - table: &t {source_schema: default, source_table: audit_log_entries,

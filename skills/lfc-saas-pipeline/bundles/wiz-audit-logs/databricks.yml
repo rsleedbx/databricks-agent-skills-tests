@@ -18,6 +18,9 @@ variables:
   schema:
     description: Destination schema, created by the bundle
     default: wiz_audit_logs
+  start_datetime:
+    description: Earliest audit entry to ingest (yyyy-MM-ddTHH:mm:ssZ); the connector's own default is 365 days back
+    default: "2026-11-01T00:00:00Z"
 
 targets:
   dev:

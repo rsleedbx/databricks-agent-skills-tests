@@ -20,6 +20,8 @@ connection = arg("connection", "lfcsaas-wiz")
 catalog = arg("catalog", "main")
 schema = arg("schema", "wiz_audit_logs")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
+# Earliest audit entry to ingest (yyyy-MM-ddTHH:mm:ssZ); without start_datetime the connector starts 365 days back.
+start_datetime = arg("start_datetime", "2026-11-01T00:00:00Z")
 
 pipeline_spec = {
     "name": arg("name", schema),
@@ -27,6 +29,7 @@ pipeline_spec = {
     "schema": schema,
     "ingestion_definition": {
         "connection_name": connection,
+        "source_configurations": [{"api_source_connector_config": {"configs": {"start_datetime": start_datetime}}}],
         "objects": [
             {"table": {"source_schema": "default", "source_table": t,
                        "destination_catalog": catalog, "destination_schema": schema}}
