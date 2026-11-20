@@ -221,7 +221,7 @@ class SignalBlocks(unittest.TestCase):
 
     def test_every_block_runs(self):
         models = [m for m in ("tpcb", "tpcc", "tpch", "tpcds", "tpce", "tpcdi") if sg.spec(m)]
-        self.assertIn("tpcc", models)
+        self.assertTrue({"tpcc", "tpcds", "tpce"} <= set(models))
         for m in models:
             sigs = sg.spec(m)
             for s in sigs:
@@ -232,6 +232,9 @@ class SignalBlocks(unittest.TestCase):
                 self.assertTrue(set(s.get("at_least_1") or []) <= set(s["parameters"]))
                 self.assertTrue(s["summary_columns"] and "{s}" in s["summary"], f"{m} {s['name']}: summary")
             profiles = [list(s["profiles"].values()) for s in sigs]
+            body = "\n".join(sg.steps(m, "a", "/".join(p[0] for p in profiles)))
+            self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+", f"{m}: a psql variable left in its steps")
+            self.assertEqual(body.count("COMMENT ON TABLE"), len(sigs))
             combos = ["/".join(p[0] if i == j else "" for i, p in enumerate(profiles)) for j in range(len(sigs))]
             sg.check(m, src.parse([f"s{i}:1:{c}" for i, c in enumerate(combos)] + [f"all{i}:1:" + "/".join(p[i % len(p)] for p in profiles) for i in range(3)]))
 

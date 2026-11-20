@@ -144,6 +144,36 @@ Three sources at scale factor 0.1, each with 288,040 store lines and 71,938 web 
 
 Measured on PostgreSQL 14 on 2026-11-20. Every return names its sale, comes on or after it and is no larger; no web line ships before it sold. The other channels' returns (`catalog_returns`, `web_returns`) are still drawn on their own.
 
+## TPC-E trade failures
+
+The fill gives every trade status CMPT and draws its bid and history times on its own, so nothing predicts a cancelled or a slow trade. `tpce-trades.sql` (signal `trade_failure`, from `tpce.yaml`'s `signals:`) gives each source one brokerage's handling. A trade fails when it's cancelled or completes more than `promise` minutes after it was submitted.
+
+| Part | Minutes, or how often cancelled |
+|---|---|
+| a limit order's bid (`TLB`, `TLS`) | 0 … `spread` per mille from the security's `last_trade.lt_price`, below to buy, above to sell; over `far`, cancelled `cancel_far` percent of the time |
+| any trade cancelled | `cancel_base` per mille |
+| handling | `handle_min` + 0 … `handle_span` − 1 |
+| a limit order waiting | `limit_wait` |
+| a slow broker (`customer_account.ca_b_id` a multiple of `slow_every`) | `slow_broker` |
+| the customer's tier | (`c_tier` − 1) × `tier_step` |
+| a margin trade (`t_is_cash` 0) | `margin` |
+| jitter | 0 … `jitter` − 1 |
+
+- `trade_history` is rebuilt to match: SBMT at `t_dts`, PNDG a second later for a limit order, then CMPT or CNCL.
+- `settlement` keeps the completed trades. Its cash type comes from `t_is_cash`, and its due date is two days after completion.
+- `holding`, `holding_history` and `cash_transaction` still name cancelled trades.
+- The thirteen numbers, in order: `promise,handle_min,handle_span,limit_wait,slow_every,slow_broker,tier_step,margin,jitter,spread,far,cancel_far,cancel_base`.
+
+Three sources at scale factor 0.05 (166,938 trades each), `lfc-sources --model tpce`, as % of trades failed:
+
+| Source | Numbers | All | Cancelled | Limit far / near / market | Slow broker vs other | Tier 1 / 2 / 3 | Margin vs cash |
+|---|---|---|---|---|---|---|---|
+| online (8 min) | `8,0,3,3,5,4,1,2,3,50,30,60,5` | 25.0 | 9.9 | 74.5 / 34.6 / 8.2 | 61.1 vs 16.0 | 18.3 / 24.1 / 32.7 | 32.3 vs 17.7 |
+| full_service (26 min) | `26,2,10,8,5,15,4,6,5,80,40,50,3` | 33.4 | 10.1 | 72.0 / 44.1 / 17.1 | 85.4 vs 20.4 | 23.4 / 31.9 / 44.8 | 41.3 vs 25.5 |
+| institutional (75 min) | `75,5,30,20,5,40,10,15,10,100,50,40,2` | 26.6 | 8.1 | 60.1 / 33.2 / 13.4 | 77.8 vs 13.8 | 18.3 / 26.6 / 35.0 | 32.8 vs 20.5 |
+
+Measured on PostgreSQL 14 on 2026-11-20. In each source no history row comes before its trade, no cancelled trade keeps a settlement, every completed one has one, and every settlement's cash type matches `t_is_cash`.
+
 ## Publication
 
 On PostgreSQL 15 and later, the publication is `FOR TABLES IN SCHEMA` the sources' schemas, so a table added later is in it. Before 15, that form doesn't exist, so it lists the tables there now by name. A rerun with other sources `ALTER`s the publication to the new list.
