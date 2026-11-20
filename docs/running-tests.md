@@ -64,7 +64,7 @@ A check runs only when what it depends on changed since it last passed on this m
 fingerprint is its command plus the files it depends on: the repo paths it names, a skill widened to the skills and bin
 files its code references, a bin tool to the whole repo. The checks that pass files through the run's temp folder
 run or skip together. A check that names no repo path always runs, as do the `bash -n` loops (milliseconds each).
-Passes are kept outside the repo (`~/.cache/test-skip/test_scripts.json`; `TEST_SKIP_DIR` moves it), so CI and a fresh
+Passes are kept outside the repo (one ledger per checkout in `~/.cache/test-skip/`; `TEST_SKIP_DIR` moves it), so CI and a fresh
 checkout run everything. `TEST_SKIP_AGAIN=1 bin/test_scripts.sh` runs every check. On 2026-11-20 a run with nothing
 changed took 33 s instead of 3 min 15 s.
 

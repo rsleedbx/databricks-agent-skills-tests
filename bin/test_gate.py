@@ -14,11 +14,12 @@ A check's inputs are the repo paths in its command, widened so nothing it reads 
     transitively (bin/check_layers.py's edges from code files, not docs; cached per run in --cache);
   - a path under bin/ (a repo-wide tool such as check_layers.py or lint_scripts.py): the whole repo;
   - none: no inputs, so the check always runs.
---value adds what isn't a file (the database settings of a run). Passes are kept by bin/test_skip (runner
-test_scripts, local, never committed); TEST_SKIP_AGAIN=1 runs every check.
+--value adds what isn't a file (the database settings of a run). Passes are kept by bin/test_skip, one ledger per
+checkout (runner test_scripts.<hash of the repo root>; local, never committed); TEST_SKIP_AGAIN=1 runs every check.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -29,7 +30,9 @@ sys.path.insert(0, str(R / "bin"))
 sys.path.insert(0, str(R / "bin/test_skip/scripts"))
 import test_skip
 
-RUNNER = "test_scripts"
+# one ledger (and group file) per checkout: fingerprints hash absolute paths, so passes never carry across worktrees,
+# and worktrees never overwrite each other's
+RUNNER = "test_scripts." + hashlib.sha256(str(R).encode()).hexdigest()[:8]
 SKILL = re.compile(r"^(\.claude/skills|skills)/([^/]+)")
 DOCS = {".md", ".txt", ".html"}
 
@@ -92,11 +95,11 @@ def reads_results(path: Path) -> bool:
     return False
 
 
-GROUP_FILE = "test_scripts.temp-group.json"   # beside the ledger: the inputs the group's checks had at its last pass
+GROUP_SUFFIX = ".temp-group.json"   # beside the ledger: the inputs the group's checks had at its last pass
 
 
 def group_file() -> Path:
-    return test_skip.ledger_path(RUNNER).parent / GROUP_FILE
+    return test_skip.ledger_path(RUNNER).with_suffix(GROUP_SUFFIX)
 
 
 def group_decide(name: str, script: Path, values: list[str]) -> tuple[bool, str]:
@@ -105,10 +108,7 @@ def group_decide(name: str, script: Path, values: list[str]) -> tuple[bool, str]
     f = group_file()
     if not f.exists():
         return False, "run -new"
-    stored = json.loads(f.read_text())["paths"]
-    if any(Path(p).is_absolute() for p in stored):   # written for another checkout's paths: record again
-        return False, "run -new"
-    paths = [str(R / p) for p in stored] + [str(script)]   # in this checkout
+    paths = [str(R / p) for p in json.loads(f.read_text())["paths"]] + [str(script)]
     fp = test_skip.fingerprint(paths, values)
     skip, last = test_skip.should_skip(RUNNER, name, fp)
     return skip, (f"skip {last['when']}" if skip else f"run {fp}")
@@ -125,7 +125,7 @@ def group_record(name: str, script: Path, values: list[str], acc: Path, ok: bool
     paths = sorted({ln.strip() for ln in acc.read_text().splitlines() if ln.strip()}) if acc.exists() else []
     if not paths:   # nothing collected (the list is gone, or no check of the group ran): never a pass to skip on
         ok = False
-    if ok:   # kept relative to the repo root, so another checkout compares its own files
+    if ok:
         rel = sorted({str(Path(p).relative_to(R)) if Path(p).is_relative_to(R) else p for p in paths})
         group_file().parent.mkdir(parents=True, exist_ok=True)
         group_file().write_text(json.dumps({"paths": rel}, indent=1))
