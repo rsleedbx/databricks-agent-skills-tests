@@ -482,7 +482,6 @@ tables:
     - name: c_local_1
       type: varchar
       length: 7
-      generation: {format_pattern: upper_id, length: 7}
     - name: c_ctry_2
       type: varchar
       length: 3

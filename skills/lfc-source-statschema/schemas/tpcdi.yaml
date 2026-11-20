@@ -361,6 +361,11 @@ tables:
     role: dimension
     description: "TPC-DI company dimension (SCD2) — ~400 rows per SF"
     row_count_per_sf: 400
+    # SCD type 2: 90% of rows current (IsCurrent, EndDate 9999-12-31); the others ended 1 .. 365 days after they
+    # took effect. h and eff are shared, so IsCurrent and EndDate agree (dates as days since 1970).
+    formulas:
+      h: "(x.n - 1) * 37 % 100"
+      eff: "14610 + (x.n - 1) * 7919 % 3287"
     columns:
       - name: SK_CompanyID
         type: bigint
@@ -451,8 +456,7 @@ tables:
         type: boolean
         not_null: true
         generation:
-          values: [true, false]
-          weights: [0.90, 0.10]
+          expression: "CASE WHEN {h} < 90 THEN 1 ELSE 0 END"
       - name: BatchID
         type: smallint
         not_null: true
@@ -463,14 +467,12 @@ tables:
         type: date
         not_null: true
         generation:
-          min_value: "2010-01-01"
-          max_value: "2018-12-31"
+          expression: "{eff}"
       - name: EndDate
         type: date
         not_null: true
         generation:
-          min_value: "2019-01-01"
-          max_value: "9999-12-31"
+          expression: "CASE WHEN {h} < 90 THEN 2932896 ELSE {eff} + 1 + (x.n - 1) * 131 % 365 END"
 
   # ── DimBroker ─────────────────────────────────────────────────────────────────
   # ~100 per SF. SCD Type 2.
@@ -478,6 +480,11 @@ tables:
     role: dimension
     description: "TPC-DI broker dimension (SCD2) — ~100 rows per SF"
     row_count_per_sf: 100
+    # SCD type 2: 90% of rows current (IsCurrent, EndDate 9999-12-31); the others ended 1 .. 365 days after they
+    # took effect. h and eff are shared, so IsCurrent and EndDate agree (dates as days since 1970).
+    formulas:
+      h: "(x.n - 1) * 37 % 100"
+      eff: "14610 + (x.n - 1) * 7919 % 3287"
     columns:
       - name: SK_BrokerID
         type: bigint
@@ -520,8 +527,7 @@ tables:
         type: boolean
         not_null: true
         generation:
-          values: [true, false]
-          weights: [0.90, 0.10]
+          expression: "CASE WHEN {h} < 90 THEN 1 ELSE 0 END"
       - name: BatchID
         type: smallint
         not_null: true
@@ -532,14 +538,12 @@ tables:
         type: date
         not_null: true
         generation:
-          min_value: "2010-01-01"
-          max_value: "2018-12-31"
+          expression: "{eff}"
       - name: EndDate
         type: date
         not_null: true
         generation:
-          min_value: "2019-01-01"
-          max_value: "9999-12-31"
+          expression: "CASE WHEN {h} < 90 THEN 2932896 ELSE {eff} + 1 + (x.n - 1) * 131 % 365 END"
 
   # ── DimSecurity ───────────────────────────────────────────────────────────────
   # ~685 per SF. SCD Type 2. FK: SK_CompanyID → DimCompany.
@@ -554,6 +558,11 @@ tables:
         parent_columns: [SK_CompanyID]
         name: fk_dimsecurity_company
         fk_distribution: uniform
+    # SCD type 2: 93% of rows current (IsCurrent, EndDate 9999-12-31); the others ended 1 .. 365 days after they
+    # took effect. h and eff are shared, so IsCurrent and EndDate agree (dates as days since 1970).
+    formulas:
+      h: "(x.n - 1) * 37 % 100"
+      eff: "14610 + (x.n - 1) * 7919 % 3287"
     columns:
       - name: SK_SecurityID
         type: bigint
@@ -627,8 +636,7 @@ tables:
         type: boolean
         not_null: true
         generation:
-          values: [true, false]
-          weights: [0.93, 0.07]
+          expression: "CASE WHEN {h} < 93 THEN 1 ELSE 0 END"
       - name: BatchID
         type: smallint
         not_null: true
@@ -639,14 +647,12 @@ tables:
         type: date
         not_null: true
         generation:
-          min_value: "2010-01-01"
-          max_value: "2018-12-31"
+          expression: "{eff}"
       - name: EndDate
         type: date
         not_null: true
         generation:
-          min_value: "2019-01-01"
-          max_value: "9999-12-31"
+          expression: "CASE WHEN {h} < 93 THEN 2932896 ELSE {eff} + 1 + (x.n - 1) * 131 % 365 END"
 
   # ── DimCustomer ───────────────────────────────────────────────────────────────
   # ~950 per SF. SCD Type 2; ~1.05 rows per natural CustomerID.
@@ -654,6 +660,11 @@ tables:
     role: dimension
     description: "TPC-DI customer dimension (SCD2) — ~950 rows per SF"
     row_count_per_sf: 950
+    # SCD type 2: 94% of rows current (IsCurrent, EndDate 9999-12-31); the others ended 1 .. 365 days after they
+    # took effect. h and eff are shared, so IsCurrent and EndDate agree (dates as days since 1970).
+    formulas:
+      h: "(x.n - 1) * 37 % 100"
+      eff: "14610 + (x.n - 1) * 7919 % 3287"
     columns:
       - name: SK_CustomerID
         type: bigint
@@ -792,8 +803,7 @@ tables:
         type: boolean
         not_null: true
         generation:
-          values: [true, false]
-          weights: [0.94, 0.06]
+          expression: "CASE WHEN {h} < 94 THEN 1 ELSE 0 END"
       - name: BatchID
         type: smallint
         not_null: true
@@ -804,14 +814,12 @@ tables:
         type: date
         not_null: true
         generation:
-          min_value: "2010-01-01"
-          max_value: "2018-12-31"
+          expression: "{eff}"
       - name: EndDate
         type: date
         not_null: true
         generation:
-          min_value: "2019-01-01"
-          max_value: "9999-12-31"
+          expression: "CASE WHEN {h} < 94 THEN 2932896 ELSE {eff} + 1 + (x.n - 1) * 131 % 365 END"
 
   # ── Prospect ─────────────────────────────────────────────────────────────────
   # People a marketing agency sent, matched to customers by name and address (IsCustomer). Rows: about 4,000 per SF
@@ -948,6 +956,11 @@ tables:
         name: fk_dimaccount_customer
         fk_distribution: zipf
         fk_distribution_params: {exponent: 1.2}
+    # SCD type 2: 94% of rows current (IsCurrent, EndDate 9999-12-31); the others ended 1 .. 365 days after they
+    # took effect. h and eff are shared, so IsCurrent and EndDate agree (dates as days since 1970).
+    formulas:
+      h: "(x.n - 1) * 37 % 100"
+      eff: "14610 + (x.n - 1) * 7919 % 3287"
     columns:
       - name: SK_AccountID
         type: bigint
@@ -992,8 +1005,7 @@ tables:
         type: boolean
         not_null: true
         generation:
-          values: [true, false]
-          weights: [0.94, 0.06]
+          expression: "CASE WHEN {h} < 94 THEN 1 ELSE 0 END"
       - name: BatchID
         type: smallint
         not_null: true
@@ -1004,14 +1016,12 @@ tables:
         type: date
         not_null: true
         generation:
-          min_value: "2010-01-01"
-          max_value: "2018-12-31"
+          expression: "{eff}"
       - name: EndDate
         type: date
         not_null: true
         generation:
-          min_value: "2019-01-01"
-          max_value: "9999-12-31"
+          expression: "CASE WHEN {h} < 94 THEN 2932896 ELSE {eff} + 1 + (x.n - 1) * 131 % 365 END"
 
   # ── Financial ─────────────────────────────────────────────────────────────────
   # ~3200 per SF (~8 quarters × 400 companies/SF). Composite PK.

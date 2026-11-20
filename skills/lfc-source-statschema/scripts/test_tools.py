@@ -325,6 +325,32 @@ class CompositeKeys(unittest.TestCase):
              "fk_constraints": [{"columns": ["w"], "parent_table": "wk", "parent_columns": ["w"]}]}]}
         self.assertTrue({r[0] for r in self.keys(sch, "line", ["w"])} <= {100, 107, 114, 121, 128})
 
+    def test_a_pointing_second_column_rotates_by_the_first_and_reads_back(self):
+        # 8 tax rates x 100 customers, 3 rows each: without the rotation every rate drew the same 3 customers
+        import re
+        import sqlite3
+        import sqlglot
+        from statschema.tools import shape
+        sch = {"version": "1.0", "tables": [
+            {"name": "tx", "row_count": 8, "columns": [{"name": "t", "type": "integer", "primary_key": True}]},
+            {"name": "cu", "row_count": 100, "columns": [{"name": "c", "type": "integer", "primary_key": True}]},
+            {"name": "ctx", "row_count": 24, "columns": [
+                {"name": "t", "type": "integer", "primary_key": True}, {"name": "c", "type": "integer", "primary_key": True}],
+             "fk_constraints": [{"columns": ["t"], "parent_table": "tx", "parent_columns": ["t"]},
+                                {"columns": ["c"], "parent_table": "cu", "parent_columns": ["c"]}]}]}
+        rows = self.keys(sch, "ctx", ["t", "c"])
+        self.assertEqual(len(set(rows)), 24)
+        self.assertGreater(len({r[1] for r in rows}), 3)                         # not the same 3 customers
+        self.assertTrue({r[1] for r in rows} <= set(range(1, 101)))
+        t = {x["name"]: x for x in yaml.safe_load(shape(sch)[0])["tables"]}["ctx"]
+        back = sqlglot.transpile(re.search(r"lfc:n=\{(.*)\}", t["lfc_tags"]).group(1), read="mysql", write="sqlite")[0]
+        db = sqlite3.connect(":memory:")
+        try:
+            for n, (tt, c) in enumerate(rows, 1):
+                self.assertEqual(db.execute(f"SELECT {back} FROM (SELECT {tt} AS t, {c} AS c) x").fetchone()[0], n)
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
