@@ -1393,3 +1393,33 @@ tables:
     - columns: [ct_t_id]
       parent_table: trade
       parent_columns: [t_id]
+
+- name: settlement
+  role: fact
+  description: "How each completed trade settles: in cash or on margin, the amount and when it's due (TPC-E SETTLEMENT)."
+  row_count_per_sf: 3338760
+  load_after: [trade]
+  columns:
+    - name: se_t_id
+      type: long
+      not_null: true
+      primary_key: true
+    - name: se_cash_type
+      type: varchar
+      length: 40
+      not_null: true
+      generation: {values: ["Cash Account", "Margin"]}
+    - name: se_cash_due_date
+      type: date
+      not_null: true
+      generation: {min_value: "2000-01-03", max_value: "2005-01-05"}
+    - name: se_amt
+      type: decimal
+      precision: 10
+      scale: 2
+      not_null: true
+      generation: {min_value: -1000000.00, max_value: 1000000.00}
+  fk_constraints:
+    - columns: [se_t_id]
+      parent_table: trade
+      parent_columns: [t_id]

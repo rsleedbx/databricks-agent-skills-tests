@@ -52,8 +52,8 @@ little, `ask`: the question to put to the customer ("Is page_hits insert-only?")
 The rules one by one, what each miss costs (changes lost, history lost, or only extra work), and the signals from
 published work and the databases' catalogs not used yet: [references/heuristics.md](references/heuristics.md).
 
-Relations only, against the specifications' roles (each TPC table's `role:` in its schema): TPC-H 8 of 8, TPC-B 4 of 4, TPC-DI 18 of 18, TPC-C 8 of 9,
-TPC-DS 22 of 24, TPC-E 27 of 32. Mautic 7.2.1 (128 tables, 199 foreign keys, collected from an installed database),
+Relations only, against the specifications' roles (each TPC table's `role:` in its schema): TPC-H 8 of 8, TPC-B 4 of 4, TPC-DI 19 of 19, TPC-C 8 of 9,
+TPC-DS 22 of 24, TPC-E 28 of 33. Mautic 7.2.1 (128 tables, 199 foreign keys, collected from an installed database),
 against the 25 tables whose writes were traced in its code: 23 of 25 from relations, 24 of 25 with the activity of two
 rounds of its own traffic (`mautic-source`'s `traffic.sh`).
 
