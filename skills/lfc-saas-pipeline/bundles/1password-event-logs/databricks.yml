@@ -1,0 +1,25 @@
+# 1Password Event Logs into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/1password-event-logs-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# workspace (open this file, Deployments, Deploy).
+bundle:
+  name: onepassword_event_logs
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The 1Password Event Logs UC connection (a bearer token from 1Password's Events Reporting)
+    default: lfcsaas-1password
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: onepassword_event_logs
+
+targets:
+  dev:
+    default: true
+    mode: development
