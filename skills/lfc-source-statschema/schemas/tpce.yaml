@@ -29,6 +29,34 @@
 # scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
+# signals: what a model can learn from a source built with them (lfc_source_datagen.signals, lfc-sources --model tpce),
+# and how the data was made so.
+signals:
+  - name: trade_failure
+    target: "trade: fails when t_st_id is CNCL or it completes more than promise minutes after submit (trade_history SBMT -> CMPT)"
+    replaces: "the spec's random statuses (all CMPT), bids and history times: nothing predicts a cancel or a slow trade"
+    built_by: "lfc-source-datagen: scripts/tpc/tpce-trades.sql (lfc_source_datagen.signals), per source"
+    causes:
+      - "a limit order far from the price: bids 0..spread per mille from last_trade.lt_price; over far, cancel_far percent cancelled"
+      - "the trade type: limit_wait minutes more for TLB and TLS"
+      - "a slow broker: slow_broker minutes more when customer_account.ca_b_id is a multiple of slow_every"
+      - "the customer's tier: (c_tier - 1) * tier_step minutes"
+      - "a margin trade: margin minutes more when t_is_cash is 0"
+    noise: "handle_min + 0..handle_span-1 and 0..jitter-1 minutes, cancel_base per mille cancelled, from the keys (deterministic)"
+    follows: "trade_history rebuilt (SBMT, PNDG for limits, CMPT or CNCL); settlement keeps completed trades, cash type from t_is_cash, due 2 days after completion"
+    known: "holding, holding_history and cash_transaction still name cancelled trades"
+    parameters: [promise, handle_min, handle_span, limit_wait, slow_every, slow_broker, tier_step, margin, jitter, spread, far, cancel_far, cancel_base]
+    profiles:
+      online: "8,0,3,3,5,4,1,2,3,50,30,60,5"
+      full_service: "26,2,10,8,5,15,4,6,5,80,40,50,3"
+      institutional: "75,5,30,20,5,40,10,15,10,100,50,40,2"
+    measured: "lfc-source-datagen references/tpch-sources.md: % failed by each cause, per profile"
+    table: trade
+    sql: tpce-trades.sql
+    at_least_1: [handle_span, slow_every, jitter]
+    summary: "SELECT COUNT(*), ROUND(100.0 * AVG((t.t_st_id = 'CNCL' OR d.mins > :promise)::int), 1), ROUND(100.0 * AVG((t.t_st_id = 'CNCL')::int), 1), PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY d.mins) FILTER (WHERE t.t_st_id = 'CMPT') FROM {s}.trade t JOIN (SELECT th_t_id, FLOOR(EXTRACT(EPOCH FROM MAX(th_dts) - MIN(th_dts)) / 60) AS mins FROM {s}.trade_history GROUP BY th_t_id) d ON d.th_t_id = t.t_id"
+    summary_columns: [trades, failed_pct, cancelled_pct, median_minutes]
+
 tables:
 
 # ── Reference tables ────────────────────────────────────────────────────────
