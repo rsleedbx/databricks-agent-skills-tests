@@ -23,7 +23,8 @@ run_check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; re
 # paths widened to the skills they reference, or the whole repo for a bin tool); one that names no repo path always
 # runs: a shell function such as tpc_dialects or wl_offline (its body may write $T for a later check, so it must
 # never be gated on its own). TEST_SKIP_AGAIN=1 runs every check.
-skipped=0; GATE_ENV="${PSQL:-}|${MYSQL:-}|${LIVE_PSQL:-}|${LIVE_MYSQL:-}|${LIVE_ENGINE:-}|${LIVE_DIALECT:-}|${LIVE_PY:-}"
+# GATE_ENV: the run's database settings and this script's own text (an edited export or helper reruns every check)
+skipped=0; GATE_ENV="${PSQL:-}|${MYSQL:-}|${LIVE_PSQL:-}|${LIVE_MYSQL:-}|${LIVE_ENGINE:-}|${LIVE_DIALECT:-}|${LIVE_PY:-}|$(shasum "$0" | cut -c1-16)"
 # The checks that pass files through $T run or skip as one group (a skipped producer would leave its consumer without
 # input): it skips when the inputs its checks had at its last pass (from each one's full command) and this script are
 # unchanged; while it runs, each of its checks adds its inputs, and its pass is recorded when every one passed.

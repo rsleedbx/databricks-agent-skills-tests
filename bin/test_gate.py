@@ -11,7 +11,8 @@
 
 A check's inputs are the repo paths in its command, widened so nothing it reads is missed:
   - a path under skills/<x> or .claude/skills/<x>: that skill, and every skill and bin file its code references,
-    transitively (bin/check_layers.py's edges from code files, not docs; cached per run in --cache);
+    transitively (bin/check_layers.py's edges from code files, not docs; cached per run in --cache), the repo-root
+    config and data files (defaults.yaml, layers.yaml, env.sh, ...), fixtures/, and results/ when its code reads it;
   - a path under bin/ (a repo-wide tool such as check_layers.py or lint_scripts.py): the whole repo;
   - none: no inputs, so the check always runs.
 --value adds what isn't a file (the database settings of a run). Passes are kept by bin/test_skip, one ledger per
@@ -77,10 +78,19 @@ def inputs(args: list[str], graph_of) -> list[Path]:
         if n not in seen:
             seen.add(n)
             todo |= graph.get(n, set()) - seen
-    found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose)
+    found_paths = {p for p in (node_path(n) for n in seen) if p} | set(loose) | set(root_inputs())
     if any(reads_results(p) for p in found_paths):   # data a check reads (results/runs, results/ddl-matrix, ...)
         found_paths.add(R / "results")
     return sorted(found_paths)
+
+
+ROOT_KINDS = {".yaml", ".yml", ".sh", ".txt", ".json", ".py"}   # repo-root config and data, not prose
+
+
+def root_inputs() -> list[Path]:
+    """Files at the repo root that skill code may read (defaults.yaml, layers.yaml, env.sh, ...) and fixtures/."""
+    return sorted([p for p in R.iterdir() if p.is_file() and p.suffix in ROOT_KINDS] +
+                  ([R / "fixtures"] if (R / "fixtures").is_dir() else []))
 
 
 def reads_results(path: Path) -> bool:

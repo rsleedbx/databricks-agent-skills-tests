@@ -22,6 +22,11 @@ class GateTest(unittest.TestCase):
             try:
                 got = {str(p.relative_to(root)) for p in g.inputs([f"uv run {root}/skills/a/scripts/run.py"], lambda: graph)}
                 self.assertEqual(got, {"skills/a", "skills/b", "skills/c", "bin/tool.sh"})   # a, what its code uses
+                (root / "defaults.yaml").write_text("")
+                (root / "README.md").write_text("")
+                got = {str(p.relative_to(root)) for p in g.inputs([f"uv run {root}/skills/a/x.py"], lambda: graph)}
+                self.assertIn("defaults.yaml", got)        # repo-root config a skill's code may read
+                self.assertNotIn("README.md", got)         # prose isn't an input
                 self.assertEqual(g.inputs([f"python3 {root}/bin/check_layers.py"], lambda: graph), [root])
                 self.assertEqual(g.inputs(["test 4 -eq 4"], lambda: graph), [])   # no repo path: always runs
             finally:
@@ -31,6 +36,7 @@ class GateTest(unittest.TestCase):
         import os
         with tempfile.TemporaryDirectory() as d:
             os.environ["TEST_SKIP_DIR"] = d
+            again = os.environ.pop("TEST_SKIP_AGAIN", None)   # this test checks skipping itself
             try:
                 old_r, g.R = g.R, Path(d)
                 script, acc, dep = Path(d) / "t.sh", Path(d) / "acc", Path(d) / "dep.py"
@@ -49,6 +55,8 @@ class GateTest(unittest.TestCase):
             finally:
                 g.R = old_r
                 os.environ.pop("TEST_SKIP_DIR", None)
+                if again is not None:
+                    os.environ["TEST_SKIP_AGAIN"] = again
 
 
 if __name__ == "__main__":
