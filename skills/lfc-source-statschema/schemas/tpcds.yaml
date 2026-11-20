@@ -1,8 +1,8 @@
 # TPC-DS canonical schema  (TPC-DS v3 approximation)
 #
 # Row counts at SF=1 follow the TPC-DS specification §4.1.
-# Tables whose content is fully determined by the spec use
-# builtin_generator instead of random column synthesis.
+# Tables whose content is fully determined by the spec are written as rules: each column a
+# formula of the row number (generation: expression, and the table's formulas:).
 #
 # Fixed tables (do not scale with SF):
 #   date_dim              73,049   (1900-01-02 → 2100-01-01)
@@ -56,91 +56,224 @@ signals:
       standard: "6,1,3,2,5,3,80,2,3"
       marketplace: "12,2,6,3,5,5,60,4,5"
     measured: "lfc-source-datagen references/tpch-sources.md: % late by each cause, per profile"
-    date_keys: "days are date key differences, as d_date_sk is a day number; the fill's date_dim columns aren't a calendar"
+    date_keys: "days are date key differences: d_date_sk is a day number (1 is 1900-01-02), date_dim its calendar"
 
 tables:
 
 # ── Fixed dimension tables ──────────────────────────────────────────────────
+# Their rows are the spec's, written as rules (generation: expression and the table's formulas:, statschema shape.py):
+# a calendar, the seconds of a day, and Cartesian products, each column a formula of the row number n.
 
 - name: date_dim
   role: dimension
-  description: "Calendar day dimension — one row per day from 1900-01-02 to 2100-01-01."
-  builtin_generator: date_dim
+  description: "Calendar day dimension — one row per day from 1900-01-02 to 2100-01-01 (d_date_sk 1 is 1900-01-02)."
   row_count: 73049
+  # The civil date of day n by whole-number arithmetic only (days to year, month, day: March-based years of 400-year
+  # eras), so every engine computes it the same: z is days since 0000-03-01, mp the month from March (0 .. 11).
+  formulas:
+    z:    "x.n + 693901"
+    era:  "{z} DIV 146097"
+    doe:  "{z} % 146097"
+    yoe:  "({doe} - {doe} DIV 1460 + {doe} DIV 36524 - {doe} DIV 146096) DIV 365"
+    doy:  "{doe} - (365 * {yoe} + {yoe} DIV 4 - {yoe} DIV 100)"
+    mp:   "(5 * {doy} + 2) DIV 153"
+    dom:  "{doy} - (153 * {mp} + 2) DIV 5 + 1"
+    moy:  "{mp} + 3 - 12 * ({mp} DIV 10)"
+    year: "{yoe} + 400 * {era} + {mp} DIV 10"
+    qoy:  "({moy} - 1) DIV 3 + 1"
+    dow:  "(x.n + 1) % 7"
+    week: "(x.n + 1) DIV 7 + 1"
+    md:   "{mp} * 100 + {dom}"
+    leap: "CASE WHEN {year} % 4 = 0 AND ({year} % 100 <> 0 OR {year} % 400 = 0) THEN 1 ELSE 0 END"
+    mlen: "CASE WHEN {mp} = 11 THEN 28 + {leap} ELSE (153 * ({mp} + 1) + 2) DIV 5 - (153 * {mp} + 2) DIV 5 END"
   columns:
     - {name: d_date_sk,           type: integer,  not_null: true, primary_key: true}
     - {name: d_date_id,           type: varchar,  length: 16, not_null: true, unique: true}
-    - {name: d_date,              type: date}
-    - {name: d_month_seq,         type: integer}
-    - {name: d_week_seq,          type: integer}
-    - {name: d_quarter_seq,       type: integer}
-    - {name: d_year,              type: integer}
-    - {name: d_dow,               type: integer}
-    - {name: d_moy,               type: integer}
-    - {name: d_dom,               type: integer}
-    - {name: d_qoy,               type: integer}
-    - {name: d_fy_year,           type: integer}
-    - {name: d_fy_quarter_seq,    type: integer}
-    - {name: d_fy_week_seq,       type: integer}
-    - {name: d_day_name,          type: varchar,  length: 9}
-    - {name: d_quarter_name,      type: varchar,  length: 6}
-    - {name: d_holiday,           type: char,     length: 1}
-    - {name: d_weekend,           type: char,     length: 1}
-    - {name: d_following_holiday, type: char,     length: 1}
-    - {name: d_first_dom,         type: integer}
-    - {name: d_last_dom,          type: integer}
-    - {name: d_same_day_ly,       type: integer}
-    - {name: d_same_day_lq,       type: integer}
-    - {name: d_current_day,       type: char,     length: 1}
-    - {name: d_current_week,      type: char,     length: 1}
-    - {name: d_current_month,     type: char,     length: 1}
-    - {name: d_current_quarter,   type: char,     length: 1}
-    - {name: d_current_year,      type: char,     length: 1}
+    - name: d_date
+      type: date
+      generation: {distribution: sequential, min_value: "1900-01-02"}
+    - name: d_month_seq
+      type: integer
+      generation: {expression: "({year} - 1900) * 12 + {moy} - 1"}
+    - name: d_week_seq
+      type: integer
+      generation: {expression: "{week}"}
+    - name: d_quarter_seq
+      type: integer
+      generation: {expression: "({year} - 1900) * 4 + {qoy}"}
+    - name: d_year
+      type: integer
+      generation: {expression: "{year}"}
+    - name: d_dow
+      type: integer
+      description: "0 Sunday .. 6 Saturday"
+      generation: {expression: "{dow}"}
+    - name: d_moy
+      type: integer
+      generation: {expression: "{moy}"}
+    - name: d_dom
+      type: integer
+      generation: {expression: "{dom}"}
+    - name: d_qoy
+      type: integer
+      generation: {expression: "{qoy}"}
+    - name: d_fy_year
+      type: integer
+      generation: {expression: "{year}"}
+    - name: d_fy_quarter_seq
+      type: integer
+      generation: {expression: "({year} - 1900) * 4 + {qoy}"}
+    - name: d_fy_week_seq
+      type: integer
+      generation: {expression: "{week}"}
+    - name: d_day_name
+      type: varchar
+      length: 9
+      generation: {expression: "CASE {dow} WHEN 0 THEN 'Sunday' WHEN 1 THEN 'Monday' WHEN 2 THEN 'Tuesday' WHEN 3 THEN 'Wednesday' WHEN 4 THEN 'Thursday' WHEN 5 THEN 'Friday' ELSE 'Saturday' END"}
+    - name: d_quarter_name
+      type: varchar
+      length: 6
+      generation: {expression: "CONCAT('', {year}, 'Q', {qoy})"}
+    - name: d_holiday
+      type: char
+      length: 1
+      description: "Y on New Year's Day, July 4 and Christmas Day"
+      generation: {expression: "CASE WHEN {md} IN (1001, 404, 925) THEN 'Y' ELSE 'N' END"}
+    - name: d_weekend
+      type: char
+      length: 1
+      generation: {expression: "CASE WHEN {dow} IN (0, 6) THEN 'Y' ELSE 'N' END"}
+    - name: d_following_holiday
+      type: char
+      length: 1
+      generation: {expression: "CASE WHEN {md} IN (1002, 405, 926) THEN 'Y' ELSE 'N' END"}
+    - name: d_first_dom
+      type: integer
+      description: "d_date_sk of the month's first day"
+      generation: {expression: "x.n - {dom} + 1"}
+    - name: d_last_dom
+      type: integer
+      description: "d_date_sk of the month's last day"
+      generation: {expression: "x.n - {dom} + {mlen}"}
+    - name: d_same_day_ly
+      type: integer
+      description: "d_date_sk 365 days before (below 1 in the first year)"
+      generation: {expression: "x.n - 365"}
+    - name: d_same_day_lq
+      type: integer
+      description: "d_date_sk 91 days before (below 1 in the first quarter)"
+      generation: {expression: "x.n - 91"}
+    - {name: d_current_day,       type: char,     length: 1, generation: {distribution: constant, values: ["N"]}}
+    - {name: d_current_week,      type: char,     length: 1, generation: {distribution: constant, values: ["N"]}}
+    - {name: d_current_month,     type: char,     length: 1, generation: {distribution: constant, values: ["N"]}}
+    - {name: d_current_quarter,   type: char,     length: 1, generation: {distribution: constant, values: ["N"]}}
+    - {name: d_current_year,      type: char,     length: 1, generation: {distribution: constant, values: ["N"]}}
 
 - name: time_dim
   role: dimension
-  description: "Time-of-day dimension — one row per second (86,400 rows)."
-  builtin_generator: time_dim
+  description: "Time-of-day dimension — one row per second (86,400 rows); t_time_sk is the second of the day."
   row_count: 86400
+  formulas:
+    hour: "(x.n - 1) DIV 3600"
   columns:
-    - {name: t_time_sk,   type: integer, not_null: true, primary_key: true}
+    - name: t_time_sk
+      type: integer
+      not_null: true
+      primary_key: true
+      generation: {distribution: sequential, min_value: 0}
     - {name: t_time_id,   type: varchar, length: 16, not_null: true, unique: true}
-    - {name: t_time,      type: integer}
-    - {name: t_hour,      type: integer}
-    - {name: t_minute,    type: integer}
-    - {name: t_second,    type: integer}
-    - {name: t_am_pm,     type: char,    length: 2}
-    - {name: t_shift,     type: varchar, length: 20}
-    - {name: t_sub_shift, type: varchar, length: 20}
-    - {name: t_meal_time, type: varchar, length: 20}
+    - name: t_time
+      type: integer
+      generation: {distribution: sequential, min_value: 0}
+    - name: t_hour
+      type: integer
+      generation: {distribution: block, min_value: 0, distribution_params: {block_size: 3600}}
+    - name: t_minute
+      type: integer
+      generation: {distribution: block_cyclic, min_value: 0, distribution_params: {block_size: 60, cycle: 60}}
+    - name: t_second
+      type: integer
+      generation: {distribution: cyclic, min_value: 0, max_value: 59}
+    - name: t_am_pm
+      type: char
+      length: 2
+      generation: {expression: "CASE WHEN {hour} < 12 THEN 'AM' ELSE 'PM' END"}
+    - name: t_shift
+      type: varchar
+      length: 20
+      description: "third 0:00-7:59, first 8:00-15:59, second 16:00-23:59"
+      generation: {expression: "CASE WHEN {hour} < 8 THEN 'third' WHEN {hour} < 16 THEN 'first' ELSE 'second' END"}
+    - name: t_sub_shift
+      type: varchar
+      length: 20
+      description: "night 21:00-5:59, morning 6:00-11:59, afternoon 12:00-16:59, evening 17:00-20:59"
+      generation: {expression: "CASE WHEN {hour} < 6 THEN 'night' WHEN {hour} < 12 THEN 'morning' WHEN {hour} < 17 THEN 'afternoon' WHEN {hour} < 21 THEN 'evening' ELSE 'night' END"}
+    - name: t_meal_time
+      type: varchar
+      length: 20
+      description: "breakfast 6:00-8:59, lunch 11:00-13:59, dinner 17:00-19:59, else none"
+      generation: {expression: "CASE WHEN {hour} BETWEEN 6 AND 8 THEN 'breakfast' WHEN {hour} BETWEEN 11 AND 13 THEN 'lunch' WHEN {hour} BETWEEN 17 AND 19 THEN 'dinner' ELSE NULL END"}
 
 - name: customer_demographics
   role: dimension
-  description: "Full Cartesian product of 8 demographic attributes — 1,920,800 rows."
-  builtin_generator: customer_demographics
+  description: "Full Cartesian product of 8 demographic attributes — 1,920,800 rows (cd_gender varies fastest)."
   row_count: 1920800
+  formulas:
+    i: "x.n - 1"
   columns:
     - {name: cd_demo_sk,            type: integer, not_null: true, primary_key: true}
-    - {name: cd_gender,             type: char,    length: 1}
-    - {name: cd_marital_status,     type: char,    length: 1}
-    - {name: cd_education_status,   type: varchar, length: 20}
-    - {name: cd_purchase_estimate,  type: integer}
-    - {name: cd_credit_rating,      type: varchar, length: 10}
-    - {name: cd_dep_count,          type: integer}
-    - {name: cd_dep_employed_count, type: integer}
-    - {name: cd_dep_college_count,  type: integer}
+    - name: cd_gender
+      type: char
+      length: 1
+      generation: {expression: "CASE {i} % 2 WHEN 0 THEN 'M' ELSE 'F' END"}
+    - name: cd_marital_status
+      type: char
+      length: 1
+      generation: {expression: "CASE {i} DIV 2 % 5 WHEN 0 THEN 'M' WHEN 1 THEN 'S' WHEN 2 THEN 'D' WHEN 3 THEN 'W' ELSE 'U' END"}
+    - name: cd_education_status
+      type: varchar
+      length: 20
+      generation: {expression: "CASE {i} DIV 10 % 7 WHEN 0 THEN 'Primary' WHEN 1 THEN 'Secondary' WHEN 2 THEN 'College' WHEN 3 THEN '2 yr Degree' WHEN 4 THEN '4 yr Degree' WHEN 5 THEN 'Advanced Degree' ELSE 'Unknown' END"}
+    - name: cd_purchase_estimate
+      type: integer
+      description: "500 .. 10,000 in steps of 500"
+      generation: {expression: "500 + {i} DIV 70 % 20 * 500"}
+    - name: cd_credit_rating
+      type: varchar
+      length: 10
+      generation: {expression: "CASE {i} DIV 1400 % 4 WHEN 0 THEN 'Good' WHEN 1 THEN 'High Risk' WHEN 2 THEN 'Low Risk' ELSE 'Unknown' END"}
+    - name: cd_dep_count
+      type: integer
+      generation: {expression: "{i} DIV 5600 % 7"}
+    - name: cd_dep_employed_count
+      type: integer
+      generation: {expression: "{i} DIV 39200 % 7"}
+    - name: cd_dep_college_count
+      type: integer
+      generation: {expression: "{i} DIV 274400 % 7"}
 
 - name: household_demographics
   role: dimension
-  description: "Product of income_band × buy_potential × dep_count × vehicle_count — 7,200 rows."
-  builtin_generator: household_demographics
+  description: "Product of income_band × buy_potential × dep_count × vehicle_count — 7,200 rows (the income band fastest)."
   row_count: 7200
+  formulas:
+    i: "x.n - 1"
   columns:
     - {name: hd_demo_sk,         type: integer, not_null: true, primary_key: true}
-    - {name: hd_income_band_sk,  type: integer}
-    - {name: hd_buy_potential,   type: varchar, length: 15}
-    - {name: hd_dep_count,       type: integer}
-    - {name: hd_vehicle_count,   type: integer}
+    - name: hd_income_band_sk
+      type: integer
+      generation: {distribution: cyclic, min_value: 1, max_value: 20}
+    - name: hd_buy_potential
+      type: varchar
+      length: 15
+      generation: {expression: "CASE {i} DIV 20 % 6 WHEN 0 THEN '0-500' WHEN 1 THEN '501-1000' WHEN 2 THEN '1001-5000' WHEN 3 THEN '5001-10000' WHEN 4 THEN '>10000' ELSE 'Unknown' END"}
+    - name: hd_dep_count
+      type: integer
+      generation: {expression: "{i} DIV 120 % 10"}
+    - name: hd_vehicle_count
+      type: integer
+      description: "-1 (unknown) .. 4"
+      generation: {expression: "{i} DIV 1200 % 6 - 1"}
   fk_constraints:
     - columns: [hd_income_band_sk]
       parent_table: income_band
@@ -148,13 +281,16 @@ tables:
 
 - name: income_band
   role: lookup
-  description: "20 income bracket definitions, each spanning $10,000."
-  builtin_generator: income_band
+  description: "20 income bracket definitions, each spanning $10,000: 0-10,000, 10,001-20,000 .. 190,001-200,000."
   row_count: 20
   columns:
     - {name: ib_income_band_sk, type: integer, not_null: true, primary_key: true}
-    - {name: ib_lower_bound,    type: integer}
-    - {name: ib_upper_bound,    type: integer}
+    - name: ib_lower_bound
+      type: integer
+      generation: {expression: "CASE WHEN x.n = 1 THEN 0 ELSE (x.n - 1) * 10000 + 1 END"}
+    - name: ib_upper_bound
+      type: integer
+      generation: {expression: "x.n * 10000"}
 
 - name: reason
   role: lookup

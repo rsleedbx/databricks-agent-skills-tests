@@ -97,7 +97,7 @@ A TPC benchmark: `$PY $S/shape.py $S/../schemas/tpcc.yaml --sf 10 > shaped.yaml`
 | From | How |
 |---|---|
 | Row counts | `row_count_per_sf` × `--sf`, or a collected `row_count` × `--scale`; tables of `--keep-small` rows or fewer (default 1,000: lookup tables) keep their size |
-| Generation rules (`schema.yaml`) | `sequential`, `cyclic`, `block`, `block_cyclic`, `constant`, `uniform`, `zipf` (inverse power-law CDF), `normal` (Box–Muller), value lists with weights, `format_pattern` (names, phones, addresses, emails, URLs, ids, words, sentences, TPC-C last names), `unique` |
+| Generation rules (`schema.yaml`) | `expression` (a formula of `n`, with the table's `formulas:`), `sequential`, `cyclic`, `block`, `block_cyclic`, `constant`, `uniform`, `zipf` (inverse power-law CDF), `normal` (Box–Muller), value lists with weights, `format_pattern` (names, phones, addresses, emails, URLs, ids, words, sentences, TPC-C last names), `unique` |
 | Null fraction, most common values and their frequencies | Exactly: each takes its share of a permutation of the rows, `(n − 1) × p mod rows` with a large prime `p` per column |
 | Distinct count | At most the rows and the value range; one at least 10% of the rows grows with the table, a smaller one stays (categories) |
 | Histograms | The values that aren't most common spread through the equi-height bounds, so the median and quartiles follow the source |

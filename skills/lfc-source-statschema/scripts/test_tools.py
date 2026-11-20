@@ -1,6 +1,7 @@
 """Offline tests of statschema.tools: ddl() and ddl_to_schema() give the same text as the command-line wrappers
 (scripts/ddl.py, scripts/ddl-to-schema.py) for TPC-B and TPC-H from tpc-schema.sh, with the schema given as a path, YAML
-text or a dict; the arguments, input, sys.path and sqlglot's MySQL reader are restored after a call; the wrappers and canon.py still import.
+text or a dict; the arguments, input, sys.path and sqlglot's MySQL reader are restored after a call; the wrappers and
+canon.py still import; the rows a spec fixes, written as YAML rules (FixedRows).
 
   uv run --no-project --with pyyaml --with sqlglot python -m unittest test_tools.py
 """
@@ -127,8 +128,6 @@ class Tools(unittest.TestCase):
         self.assertIs(canon.canon, real)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 SCHEMAS = os.path.join(HERE, "..", "schemas")
@@ -167,3 +166,92 @@ class Roles(unittest.TestCase):
         self.assertIn("signals: none", cli("describe.py", os.path.join(SCHEMAS, "tpcb.yaml")))
         ds = json.loads(cli("describe.py", os.path.join(SCHEMAS, "tpcds.yaml"), "--json"))["signals"]
         self.assertEqual([s["name"] for s in ds], ["return_propensity", "web_ship_delay"])   # one retailer, both
+
+
+class FixedRows(unittest.TestCase):
+    """Rows a spec fixes, written as rules in the YAML (generation: expression and the table's formulas:, shape.py):
+    TPC-DS date_dim's calendar, time_dim and the demographics' products, run in SQLite (stdlib) after sqlglot's
+    transpile, against Python's calendar and the spec's first and last rows; a {name} not in formulas: or a loop stops
+    shape(); a foreign key column with an expression keeps it."""
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        import sqlite3
+        import sqlglot
+        from sqlglot.dialects.mysql import MySQL
+        from sqlglot.tokens import TokenType
+        from statschema.tools import model, shape
+        text, _ = shape(model("tpcds"), sf=0.01)
+        cls.T = {t["name"]: t for t in yaml.safe_load(text)["tables"]}
+        term, factor = MySQL.Parser.TERM, MySQL.Parser.FACTOR   # % binds with * in MySQL (ddl.py reads it so too)
+        MySQL.Parser.TERM = {k: v for k, v in term.items() if k != TokenType.MOD}
+        MySQL.Parser.FACTOR = {**factor, TokenType.MOD: sqlglot.exp.Mod}
+        try:
+            cls.sql = {(t, c["name"]): sqlglot.transpile(re.search(r"lfc:[ve]=\{(.*)\}", c["comment"]).group(1),
+                                                         read="mysql", write="sqlite")[0]
+                       for t in ("date_dim", "time_dim", "customer_demographics", "household_demographics", "income_band")
+                       for c in cls.T[t]["columns"] if "lfc:" in (c.get("comment") or "")}
+        finally:
+            MySQL.Parser.TERM, MySQL.Parser.FACTOR = term, factor
+        cls.db = sqlite3.connect(":memory:")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def row(self, table, n, *cols):
+        return tuple(self.db.execute(f"SELECT {self.sql[(table, c)]} FROM (SELECT {n} AS n) x").fetchone()[0] for c in cols)
+
+    def test_date_dim_is_the_calendar(self):
+        import datetime
+        d0 = datetime.date(1900, 1, 2)
+        days = [1, 73049, 36524, 36583] + list(range(2, 73049, 997)) + [(datetime.date(y, 2, 29) - d0).days + 1 for y in (1904, 2000, 2096)]
+        for n in days:
+            d = d0 + datetime.timedelta(n - 1)
+            end = ((d.replace(day=28) + datetime.timedelta(4)).replace(day=1) - datetime.timedelta(1)).day
+            self.assertEqual(self.row("date_dim", n, "d_year", "d_moy", "d_dom", "d_dow", "d_qoy", "d_day_name", "d_weekend", "d_last_dom"),
+                             (d.year, d.month, d.day, (d.weekday() + 1) % 7, (d.month - 1) // 3 + 1, d.strftime("%A"),
+                              "Y" if d.weekday() >= 5 else "N", n - d.day + end), d)
+        july4 = (datetime.date(2000, 7, 4) - d0).days + 1
+        self.assertEqual(self.row("date_dim", july4, "d_holiday", "d_following_holiday", "d_quarter_name"), ("Y", "N", "2000Q3"))
+        self.assertEqual(self.row("date_dim", july4 + 1, "d_holiday", "d_following_holiday"), ("N", "Y"))
+
+    def test_products_first_and_last_rows(self):
+        cd = ("cd_gender", "cd_marital_status", "cd_education_status", "cd_purchase_estimate", "cd_credit_rating",
+              "cd_dep_count", "cd_dep_employed_count", "cd_dep_college_count")
+        self.assertEqual(self.row("customer_demographics", 1, *cd), ("M", "M", "Primary", 500, "Good", 0, 0, 0))
+        self.assertEqual(self.row("customer_demographics", 1920800, *cd), ("F", "U", "Unknown", 10000, "Unknown", 6, 6, 6))
+        hd = ("hd_income_band_sk", "hd_buy_potential", "hd_dep_count", "hd_vehicle_count")
+        self.assertEqual(self.row("household_demographics", 7200, *hd), (20, "Unknown", 9, 4))
+        self.assertEqual(self.row("time_dim", 18 * 3600 + 1, "t_hour", "t_am_pm", "t_shift", "t_meal_time"), (18, "PM", "second", "dinner"))
+        self.assertEqual(self.row("income_band", 2, "ib_lower_bound", "ib_upper_bound"), (10001, 20000))
+        self.assertNotIn("builtin_generator", open(os.path.join(SCHEMAS, "tpcds.yaml")).read())
+        self.assertNotIn("formulas", self.T["date_dim"])   # spent: the tags hold them
+        from statschema.core.model import CanonicalTableSchema
+        raw = next(x for x in yaml.safe_load(open(os.path.join(SCHEMAS, "tpcds.yaml")))["tables"] if x["name"] == "date_dim")
+        back = CanonicalTableSchema.from_dict(raw).to_dict()   # a round trip through the model keeps the rules
+        self.assertEqual(back["formulas"], raw["formulas"])
+        self.assertEqual({c["name"]: (c.get("generation") or {}).get("expression") for c in back["columns"]},
+                         {c["name"]: (c.get("generation") or {}).get("expression") for c in raw["columns"]})
+
+    def test_bad_names_stop_and_a_foreign_key_keeps_its_expression(self):
+        from statschema.tools import shape
+
+        def schema(expr, formulas):
+            return {"version": "1.0", "tables": [
+                {"name": "p", "row_count": 5, "columns": [{"name": "id", "type": "integer", "primary_key": True}]},
+                {"name": "c", "row_count": 10, "formulas": formulas, "columns": [
+                    {"name": "id", "type": "integer", "primary_key": True},
+                    {"name": "pid", "type": "integer", "generation": {"expression": expr}}],
+                 "fk_constraints": [{"columns": ["pid"], "parent_table": "p", "parent_columns": ["id"]}]}]}
+        with self.assertRaises(SystemExit):
+            shape(schema("{nope}", {}))
+        with self.assertRaises(SystemExit):
+            shape(schema("{a}", {"a": "{b}", "b": "{a}"}))
+        c = {t["name"]: t for t in yaml.safe_load(shape(schema("{k} + 1", {"k": "(x.n - 1) % 5"}))[0])["tables"]}["c"]
+        self.assertIn("lfc:v={((x.n - 1) % 5) + 1}", next(x["comment"] for x in c["columns"] if x["name"] == "pid"))
+
+
+if __name__ == "__main__":
+    unittest.main()

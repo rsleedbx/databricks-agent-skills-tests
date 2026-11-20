@@ -11,7 +11,7 @@
 # ──────────────
 # Reference tables (static content, small)
 #   EXCHANGE, SECTOR, STATUS_TYPE, TRADE_TYPE, TAXRATE, CHARGE,
-#   COMMISSION_RATE — defined with fixed values lists or builtin_generator.
+#   COMMISSION_RATE — defined with fixed values lists.
 # Scaling customer tables
 #   CUSTOMER, ADDRESS, CUSTOMER_ACCOUNT, CUSTOMER_TAXRATE,
 #   ACCOUNT_PERMISSION, WATCH_LIST, WATCH_ITEM
@@ -22,7 +22,7 @@
 #   TRADE, TRADE_HISTORY, TRADE_REQUEST, HOLDING, HOLDING_HISTORY,
 #   HOLDING_SUMMARY, CASH_TRANSACTION
 # ZIP reference
-#   ZIP_CODE — builtin_generator for 14,741 US ZIP-code rows
+#   ZIP_CODE — 14,741 rows; the spec's are a reference file of real ZIP codes, these are synthetic
 #
 # role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
 # Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
@@ -381,15 +381,18 @@ tables:
 
 - name: zip_code
   role: lookup
-  description: "US ZIP code reference — 14,741 synthetic entries."
-  builtin_generator: zip_code
+  description: "US ZIP code reference — 14,741 synthetic entries (the spec's are a reference file of real ZIP codes)."
   row_count: 14741
   columns:
     - {name: zc_code,     type: varchar, length: 12, not_null: true, primary_key: true}
-    - {name: zc_town,     type: varchar, length: 80, not_null: true}
-    - {name: zc_div,      type: varchar, length: 80, not_null: true}
-    - {name: zc_country,  type: varchar, length: 80}
-    - {name: zc_is_metro, type: integer}
+    - {name: zc_town,     type: varchar, length: 80, not_null: true, generation: {format_pattern: city}}
+    - name: zc_div
+      type: varchar
+      length: 80
+      not_null: true
+      generation: {values: ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"]}
+    - {name: zc_country,  type: varchar, length: 80, generation: {distribution: constant, values: ["United States"]}}
+    - {name: zc_is_metro, type: integer, generation: {values: [0, 1], weights: [0.3, 0.7]}}
 
 # ── Customer & account tables ────────────────────────────────────────────────
 

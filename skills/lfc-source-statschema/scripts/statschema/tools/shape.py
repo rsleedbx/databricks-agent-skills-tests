@@ -10,8 +10,12 @@
 #   Rows: row_count_per_sf x --sf, or row_count (a collected schema: the source's rows) x --scale, where tables of
 #   --keep-small rows or fewer keep their size. Formulas are written in MySQL syntax; ddl.py transpiles them.
 #   A column's value, first match wins:
-#     1. its generation rule (schema.yaml): sequential, cyclic, block, block_cyclic, constant, uniform, zipf, normal, a value
-#        list with weights, or a format_pattern (names, phones, addresses, ...); unique columns keep plain n
+#     1. its generation rule (schema.yaml): an expression, sequential, cyclic, block, block_cyclic, constant, uniform,
+#        zipf, normal, a value list with weights, or a format_pattern (names, phones, addresses, ...); unique columns keep
+#        plain n. An expression is the value as a formula in x.n (MySQL syntax, like the formulas below): for a number, a
+#        date (days since 1970) or a time, the integer the column's cast turns into it; for text, the text. {name} in it
+#        is the table's formulas: entry of that name, in parentheses (formulas may use each other), so a calendar or a
+#        Cartesian product is written once in the YAML (TPC-DS date_dim, time_dim, the demographics).
 #     2. its statistics (stats.yaml): null fraction, most common values and frequencies, distinct count, range, histogram
 #     3. nothing: the planner's own scramble, or for a foreign key the planner's probe of the parent's range
 #   Foreign keys without a rule: the parent's key formula at a parent row drawn uniformly, or zipf if fk_distribution says so.
@@ -143,6 +147,16 @@ def pattern(p, tn, col, rows, length=None):
         return f"CONCAT({pick(WORDS['syl'], f'({d}) DIV 100')}, {pick(WORDS['syl'], f'(({d}) DIV 10) % 10')}, {pick(WORDS['syl'], f'({d}) % 10')})"
     return None
 
+def expand(text, formulas, where):         # {name} -> (the table's formulas: entry), until none is left
+    for _ in range(50):
+        new = re.sub(r"\{(\w+)\}", lambda m: f"({formulas[m[1]]})" if m[1] in formulas else m[0], text)
+        if new == text: break
+        text = new
+    left = re.findall(r"\{(\w+)\}", text)
+    if left: raise SystemExit(f"shape.py: {where}: {{{left[0]}}} isn't in the table's formulas:" if left[0] not in formulas
+                              else f"shape.py: {where}: formulas: refer to each other in a loop")
+    return text
+
 def zipf_rank(u, n, s):                    # 1 .. n with P(rank <= k) ~ k^(1-s) (s = 1: ~ log k): inverse CDF of a power law
     if abs(s - 1) < 1e-9: return f"CAST(LEAST({n}, FLOOR(POW({n} + 1, {u}))) AS SIGNED)"   # an integer: Postgres has no % on doubles
     return f"CAST(LEAST({n}, GREATEST(1, FLOOR(POW(1 + ({u}) * (POW({n} + 1, {1 - s}) - 1), {1 / (1 - s)})))) AS SIGNED)"
@@ -175,6 +189,9 @@ for tn in order:
         g = c.get("generation") or {}
         name, dist, pr = c["name"], g.get("distribution", "auto"), g.get("distribution_params") or {}
         lo, hi = to_u(c, g.get("min_value")), to_u(c, g.get("max_value"))
+        if g.get("expression") is not None:
+            f = expand(str(g["expression"]), t.get("formulas") or {}, f"{tn}.{name}")
+            return ("e", f, None) if kind(c) == "str" else ("v", f, None)
         if name in fkcol and dist in ("block", "sequential"):   # wrap at the parent column's range, so every value is a parent key
             f, pc = fkcol[name]; pg = next((x.get("generation") or {} for x in T[f["parent_table"]]["columns"] if x["name"] == pc), {})
             if pg.get("distribution") == "cyclic" and pg.get("max_value") is not None:
@@ -273,11 +290,12 @@ for tn in order:
         log(f"{tn}: no primary key; {n_col} numbers the rows" + (" (one second each, from 2023-11-14)" if ts else ""))
 
     # foreign keys: the parent's key formula at a parent row m, unless the column has a structural rule of its own (TPC-C's
-    # block and cyclic keys, which follow the parent's) or is part of this table's key (set above)
+    # block and cyclic keys, which follow the parent's), an expression, or is part of this table's key (set above)
     for f in fks:
         p = f["parent_table"]
         if p not in keyf: log(f"{tn}: foreign key to {p} isn't generated here: left to the planner"); continue
-        own = [cc for cc in f["columns"] if cc in pk or (cc in v and (cols[cc].get("generation") or {}).get("distribution") in STRUCT)]
+        own = [cc for cc in f["columns"] if cc in pk or (cc in v and ((cols[cc].get("generation") or {}).get("distribution") in STRUCT
+                                                                    or "expression" in (cols[cc].get("generation") or {})))]
         if len(own) == len(f["columns"]): continue
         s0 = cs.get(f["columns"][0]) or {}
         if len(f["columns"]) == 1 and keyf[p][f["parent_columns"][0]][0] == "v" and (s0.get("n_distinct") or s0.get("most_common_values")):
@@ -398,7 +416,7 @@ for tn in order:
         log(f"{tn}: {con} by GREATEST: {b_} below {a_}{' + 1' if strict else ''} is raised to it, so many rows sit there (an offset rule keeps {b_}'s spread)")
 
     # the shaped table: statschema's format, tags in the column comments and in lfc_tags (ddl.py writes the table comment)
-    nt = {k: x for k, x in t.items() if k not in ("row_count_per_sf",)}
+    nt = {k: x for k, x in t.items() if k not in ("row_count_per_sf", "formulas")}   # formulas: now in the tags
     nt["row_count"] = rows; nt["lfc_tags"] = " ".join(tags)
     nt["columns"] = []
     for c in t["columns"]:

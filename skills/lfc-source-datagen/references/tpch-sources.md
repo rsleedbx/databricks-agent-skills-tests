@@ -125,7 +125,7 @@ Whether a line comes back is a draw, so a model learns the rate per category, pr
 | jitter | 0 … `jitter` − 1 |
 
 - A line is late when it ships more than `promise` days after its sale.
-- The days are date-key differences, since `d_date_sk` is a day number. The fill's `date_dim` columns aren't a real calendar, so the weekday doesn't feed into the delay.
+- The days are date-key differences, since `d_date_sk` is a day number (1 is 1900-01-02, and `date_dim` is its calendar).
 - The nine numbers, in order: `promise,handle_min,handle_span,mode_step,slow_every,slow_wh,bulk_qty,bulk,jitter`.
 
 Three sources at scale factor 0.1, each with 288,040 store lines and 71,938 web lines:
