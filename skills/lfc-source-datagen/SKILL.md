@@ -27,7 +27,7 @@ How the planner works (every row from one integer, resuming, keys only at the en
 
 ### TPC-H as several business sources
 
-[`lfc_source_datagen.sources`](scripts/lfc_source_datagen/sources.py): any TPC model as n named Postgres schemas for an n:1 test, from a notebook (UC connections) or the laptop; TPC-H with spec words and learnable lead times: [references/tpch-sources.md](references/tpch-sources.md).
+[`lfc_source_datagen.sources`](scripts/lfc_source_datagen/sources.py): any TPC model as n named Postgres schemas for an n:1 test, from a notebook (UC connections) or the laptop; TPC-H with spec words and learnable lead times, TPC-C with delivery times: [references/tpch-sources.md](references/tpch-sources.md).
 
 ## Make a dataset
 

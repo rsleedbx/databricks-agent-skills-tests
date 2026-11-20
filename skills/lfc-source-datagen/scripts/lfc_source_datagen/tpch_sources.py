@@ -21,17 +21,11 @@ from __future__ import annotations
 import re
 import sys
 
-from lfc_source_contract.jdbc import ident, literal
+from lfc_source_contract.jdbc import ident
 
-from .sources import arguments, build, parse, read_sql, run, statements
+from .sources import arguments, build, parse, psql_vars, read_sql, run, statements
 
 LEAD = ("commit", "handle_min", "handle_span", "slow_nation", "slow_every", "air", "truck", "sea", "jitter")
-
-
-def psql_vars(text: str, values: dict) -> str:
-    """psql's :'name' (a quoted literal) and :name (as is) for the names given; :: casts stay."""
-    text = re.sub(r":'([a-z_]+)'", lambda m: literal(str(values[m.group(1)])), text)
-    return re.sub(r"(?<![:\w]):([a-z_]+)\b", lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), text)
 
 
 def check(srcs) -> None:

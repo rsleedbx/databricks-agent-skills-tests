@@ -18,6 +18,29 @@
 # scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
+
+# signals: patterns a model can learn, which the source build writes over the spec's values. Every report on data
+# built that way names the signals it had and their parameters (order_line's comment holds them). scripts/describe.py
+# prints them.
+signals:
+  - name: order_late_delivery
+    target: "orders: late when the delivery (MAX ol_delivery_d) - o_entry_d is more than promise days"
+    replaces: "the spec's same-day delivery: a delivered line's ol_delivery_d is its order's o_entry_d, so nothing is late"
+    built_by: "lfc-source-datagen: scripts/tpc/tpcc-delivery.sql (lfc_source_datagen.tpcc_sources), per source"
+    causes:
+      - "a slow district: slow_district days more when o_d_id is a multiple of slow_every"
+      - "the carrier's tier: (o_carrier_id - 1) % 3 times carrier_step days"
+      - "a credit hold: credit_hold days for a customer with c_credit BC"
+      - "a backorder: backorder days when a line's item has under low_stock at its supplying warehouse (stock)"
+    noise: "handling handle_min + 0..handle_span-1 days and 0..jitter-1 days, from the keys (deterministic)"
+    open_orders: "orders in new_order have no carrier and no delivery, as in the spec"
+    parameters: [promise, handle_min, handle_span, slow_every, slow_district, carrier_step, credit_hold, low_stock, backorder, jitter]
+    profiles:
+      local: "3,0,2,5,2,1,2,12,3,2"
+      regional: "7,1,4,5,4,2,5,12,6,3"
+      national: "21,3,10,5,10,5,10,12,14,5"
+    measured: "lfc-source-datagen references/tpch-sources.md: % late by each cause, per profile"
+
 tables:
 
   # ── item ──────────────────────────────────────────────────────────────────
@@ -593,6 +616,11 @@ tables:
         fk_distribution: uniform
         fk_children_min: 5
         fk_children_max: 15
+      - columns: [ol_i_id]       # the item a line is for (1 .. items): without it the fill drew any integer
+        parent_table: item
+        parent_columns: [i_id]
+        name: fk_order_line_item
+        fk_distribution: uniform
     columns:
       - name: ol_o_id
         type: integer

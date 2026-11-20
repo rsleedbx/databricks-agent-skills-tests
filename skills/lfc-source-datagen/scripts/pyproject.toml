@@ -13,6 +13,7 @@ dependencies = [
 [project.scripts]
 lfc-sources = "lfc_source_datagen.sources:main"
 lfc-tpch-sources = "lfc_source_datagen.tpch_sources:main"
+lfc-tpcc-sources = "lfc_source_datagen.tpcc_sources:main"
 
 [build-system]
 requires = ["setuptools>=68"]
