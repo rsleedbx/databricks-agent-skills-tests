@@ -305,18 +305,24 @@ for tn in order:
         if radix:                               # a step sharing a factor with the fastest column's count would hold it
             while step > 1 and math.gcd(step, caps[-1]) > 1: step -= 1   # to a few values (one, if a multiple)
         put(k1, (c1[0], c1[2](f"((x.n - 1) DIV {f} + 1)")))
+        # rotated by k1 when the rest points at other rows (a foreign key, a date or time): each k1 value then draws its
+        # own values, not the same few (TPC-E customer_taxrate's customers, each trade's history times); ordinals such as
+        # a line number or a year keep starting at their first value
+        rot = c2n < 10 ** 18 and any(k in fkcol or kind(cols[k]) in ("date", "ts") for k in rest)
+        idx = f"((x.n - 1) % {f}) * {step}"
+        if rot: idx = f"(({idx} + (x.n - 1) DIV {f}) % {c2n})"
+        unrot = lambda inner: f"(({inner} - ({c1[1]} - 1)) % {c2n} + {c2n}) % {c2n}" if rot else inner
         if not radix:
-            put(rest[0], (cr[0][0], cr[0][2](f"(((x.n - 1) % {f}) * {step} + 1)")))
+            put(rest[0], (cr[0][0], cr[0][2](f"({idx} + 1)")))
             for k in pk[2:]:
                 ck = kcodec(k); put(k, (ck[0], ck[2]("1")))
-            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({cr[0][1]} - 1) DIV {step} + 1}}")
+            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + {unrot(f'({cr[0][1]} - 1)')} DIV {step} + 1}}")
         else:                                   # the last column is the fastest digit
             strides = [math.prod(caps[j + 1:]) for j in range(len(rest))]
-            idx = f"((x.n - 1) % {f}) * {step}"
             for k, c, m, s in zip(rest, cr, caps, strides):
                 put(k, (c[0], c[2](f"(({idx}) DIV {s} % {m} + 1)")))
             inner = " + ".join(f"({c[1]} - 1) * {s}" for c, s in zip(cr, strides))
-            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({inner}) DIV {step} + 1}}")
+            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + {unrot(f'({inner})')} DIV {step} + 1}}")
         keyf[tn] = {k: ("v" if k in v else "e", v.get(k, e.get(k))) for k in pk}
     else:                                       # no key: a timestamp (one second per row) or an integer column numbers the rows
         free = [c for c in t["columns"] if c["name"] not in fkcol]
