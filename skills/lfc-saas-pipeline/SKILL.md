@@ -9,12 +9,18 @@ parent: lfc-saas-answer
 The docs' notebook for each SaaS connector has two cells of helper functions marked "Do NOT modify" and one spec
 cell. Here the helpers are a package, `scripts/lfc_saas_pipeline`, so a notebook installs it and keeps only the
 spec cell; the same pipeline is also a bundle. Both need a UC connection to the vendor first (the connector's
-connection page); the 1Password one defaults to `lfcsaas-1password`.
+connection page); each defaults to `lfcsaas-<connector>`.
+
+| Connector | Notebook | Bundle | Connection | Tables |
+|---|---|---|---|---|
+| 1Password Event Logs | [notebook](notebooks/1password-event-logs-pipeline.py) | [bundle](bundles/1password-event-logs) | `lfcsaas-1password` | audit_events, item_usages, sign_in_attempts |
+| Marketo | [notebook](notebooks/marketo-pipeline.py) | [bundle](bundles/marketo) | `lfcsaas-marketo` | leads, static_lists |
+| NetSuite | [notebook](notebooks/netsuite-pipeline.py) | [bundle](bundles/netsuite) | `lfcsaas-netsuite` | transaction; needs NetSuite's JDBC driver in a volume (`netsuite_jar_path`) |
 
 | Way | Files | When |
 |---|---|---|
-| Bundle | [bundles/1password-event-logs](bundles/1password-event-logs) | a repeatable deployment: the schema, the pipeline, a job (paused) that runs it daily, CAN_VIEW for `users` |
-| Notebook | [notebooks/1password-event-logs-pipeline.py](notebooks/1password-event-logs-pipeline.py) | the docs' notebook, short: run all, or run it as a job with parameters |
+| Bundle | [bundles/](bundles) (one folder per connector) | a repeatable deployment: the schema, the pipeline, a job (paused) that runs it daily, CAN_VIEW for `users` |
+| Notebook | [notebooks/](notebooks) (one per connector) | the docs' notebook, short: run all, or run it as a job with parameters |
 | Python (REST API) | `lfc_saas_pipeline` | tests from a notebook or a laptop: validate-only updates, `refresh_selection`, waiting for an update, editing or deleting a pipeline |
 
 ## Deploy the bundle
