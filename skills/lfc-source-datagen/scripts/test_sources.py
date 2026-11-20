@@ -10,6 +10,7 @@ kept, broken rules stopping before the rename, and the command line refusing bad
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import sys
@@ -22,6 +23,7 @@ for p in (HERE, os.path.join(HERE, "..", "..", "lfc-source-statschema", "scripts
           os.path.join(HERE, "..", "..", "lfc-source-contract", "scripts")):
     sys.path.insert(0, p)
 from lfc_source_datagen import sources as src
+from lfc_source_datagen import tpcc_sources as tc
 from lfc_source_datagen import tpch_sources as tp
 
 
@@ -114,6 +116,51 @@ class SqlFiles(unittest.TestCase):
         self.assertIn('CREATE TABLE "branch"', ddl)
         ddl, tables = src.model_ddl("tpcc", 0.01)                             # statschema's model, shaped
         self.assertIn("warehouse", tables); self.assertIn('CREATE TABLE "warehouse"', ddl)
+
+
+class TpccDelivery(unittest.TestCase):
+    """TPC-C's delivery times: the parameters' form, the SQL filled, the signal in order_line's comment, the summary
+    reading the promise from it; and order_line's item now a foreign key (the backorder cause needs it)."""
+    D = "3,0,2,5,2,1,2,12,3,2"
+
+    def test_check_refuses_bad_forms(self):
+        tc.check(src.parse([f"a:1:{self.D}", "b:1"]))
+        for bad in ("a:1:1,2,3", "a:1:3,0,0,5,2,1,2,12,3,2", "a:1:3,0,2,0,2,1,2,12,3,2", "a:1:3,0,2,5,2,1,2,12,3,0"):
+            with self.assertRaises(ValueError, msg=bad):
+                tc.check(src.parse([bad]))
+
+    def test_steps_fill_every_variable_and_keep_the_signal(self):
+        self.assertEqual(tc.steps("a", ""), [])
+        steps = tc.steps("a", self.D)
+        body = "\n".join(steps)
+        self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+")                      # no psql variable left
+        self.assertEqual(len(steps), 4)                                      # open orders x2, the delivery, the comment
+        self.assertIn("o.o_d_id % 5 = 0 THEN 2", body)
+        self.assertIn("((o.o_carrier_id - 1) % 3) * 1", body)
+        self.assertIn("s.s_quantity < 12", body)
+        comment = re.search(r"COMMENT ON TABLE order_line IS '(.*)'", body).group(1)
+        self.assertEqual(json.loads(comment)["parameters"]["promise"], 3)
+        self.assertEqual(json.loads(comment)["signal"], "order_late_delivery")
+
+    def test_summary_reads_the_promise_from_the_comment(self):
+        class Cur:
+            def __init__(self, comment):
+                self.comment, self.q, self.rows = comment, [], []
+
+            def execute(self, q, params=None):
+                self.q.append(q)
+                self.rows = [(self.comment,)] if "obj_description" in q else [(21000, 39.9, 3.0)]
+
+            def fetchall(self):
+                return self.rows
+        cur = Cur(tc.signal_comment(self.D))
+        self.assertEqual(tc.summary(cur, "local"), {"orders": 21000, "late_pct": 39.9, "median_days": 3.0})
+        self.assertIn("d > 3", cur.q[1])
+        self.assertEqual(tc.summary(Cur(None), "local")["orders"], None)    # a source without delivery times
+
+    def test_order_line_item_is_a_foreign_key(self):
+        ddl, _ = src.model_ddl("tpcc", 0.01)
+        self.assertRegex(ddl, r'FOREIGN KEY \("ol_i_id"\) REFERENCES "item"')
 
 
 class Build(unittest.TestCase):

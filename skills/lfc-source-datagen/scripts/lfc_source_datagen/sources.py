@@ -119,6 +119,12 @@ def statements(text: str) -> list[str]:
     return out
 
 
+def psql_vars(text: str, values: dict) -> str:
+    """psql's :'name' (a quoted literal) and :name (as is) for the names given; :: casts stay."""
+    text = re.sub(r":'([a-z_]+)'", lambda m: literal(str(values[m.group(1)])), text)
+    return re.sub(r"(?<![:\w]):([a-z_]+)\b", lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), text)
+
+
 def read_sql(name: str) -> str:
     with open(os.path.join(TPC, name)) as f:
         return f.read()
