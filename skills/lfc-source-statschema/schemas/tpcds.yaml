@@ -14,6 +14,8 @@
 #   ship_mode             20
 #
 # Scaling tables use row_count_per_sf; integer SF is assumed.
+# Dates are date_dim keys (1 is 1900-01-02): sales from 1998-01-02 (35795) to 2003-01-02 (37621), as in the spec;
+# a date that follows another (a ship date, a promotion's end) is an offset rule from it.
 # Reference: https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-ds_v3.2.0.pdf
 #
 # role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
@@ -642,7 +644,7 @@ tables:
       generation: {min_value: "2001-01-01", max_value: "2003-01-01"}
     - name: s_closed_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 36890, max_value: 37621}
     - name: s_store_name
       type: varchar
       length: 50
@@ -768,7 +770,7 @@ tables:
       type: integer
     - name: cc_open_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 40000}
+      generation: {min_value: 35429, max_value: 35794}
     - name: cc_name
       type: varchar
       length: 50
@@ -965,10 +967,10 @@ tables:
       type: integer
     - name: c_first_shipto_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 52000}
+      generation: {distribution: offset, distribution_params: {from: c_first_sales_date_sk, min: 0, max: 30}}
     - name: c_first_sales_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 52000}
+      generation: {min_value: 35795, max_value: 37621}
     - name: c_salutation
       type: varchar
       length: 10
@@ -1009,7 +1011,7 @@ tables:
       generation: {format_pattern: email}
     - name: c_last_review_date_sk
       type: integer
-      generation: {min_value: 50000, max_value: 73049}
+      generation: {min_value: 37256, max_value: 37621}
   fk_constraints:
     - columns: [c_current_addr_sk]
       parent_table: customer_address
@@ -1032,10 +1034,10 @@ tables:
       generation: {format_pattern: upper_id, length: 16}
     - name: p_start_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 52000}
+      generation: {min_value: 35795, max_value: 37621}
     - name: p_end_date_sk
       type: integer
-      generation: {min_value: 52000, max_value: 73049}
+      generation: {distribution: offset, distribution_params: {from: p_start_date_sk, min: 30, max: 180}}
     - name: p_item_sk
       type: integer
     - name: p_cost
@@ -1117,10 +1119,10 @@ tables:
       generation: {format_pattern: upper_id, length: 16}
     - name: cp_start_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 52000}
+      generation: {min_value: 35795, max_value: 37621}
     - name: cp_end_date_sk
       type: integer
-      generation: {min_value: 52000, max_value: 73049}
+      generation: {distribution: offset, distribution_params: {from: cp_start_date_sk, min: 30, max: 90}}
     - name: cp_department
       type: varchar
       length: 50
@@ -1169,7 +1171,7 @@ tables:
       generation: {format_pattern: word}
     - name: web_open_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 40000}
+      generation: {min_value: 35429, max_value: 35794}
     - name: web_close_date_sk
       type: integer
     - name: web_class
@@ -1277,10 +1279,10 @@ tables:
       generation: {min_value: "2001-01-01", max_value: "2003-01-01"}
     - name: wp_creation_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 52000}
+      generation: {min_value: 35795, max_value: 37621}
     - name: wp_access_date_sk
       type: integer
-      generation: {min_value: 52000, max_value: 73049}
+      generation: {distribution: offset, distribution_params: {from: wp_creation_date_sk, min: 0, max: 365}}
     - name: wp_autogen_flag
       type: char
       length: 1
@@ -1320,7 +1322,7 @@ tables:
     - name: ss_sold_date_sk
       type: integer
       references: [date_dim, d_date_sk]
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37621}
     - name: ss_sold_time_sk
       type: integer
       references: [time_dim, t_time_sk]
@@ -1438,7 +1440,7 @@ tables:
   columns:
     - name: sr_returned_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37711}
     - name: sr_return_time_sk
       type: integer
       generation: {min_value: 0, max_value: 86399}
@@ -1538,13 +1540,13 @@ tables:
   columns:
     - name: cs_sold_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37621}
     - name: cs_sold_time_sk
       type: integer
       generation: {min_value: 0, max_value: 86399}
     - name: cs_ship_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {distribution: offset, distribution_params: {from: cs_sold_date_sk, min: 2, max: 90}}
     - name: cs_bill_customer_sk
       type: integer
     - name: cs_bill_cdemo_sk
@@ -1693,7 +1695,7 @@ tables:
   columns:
     - name: cr_returned_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37711}
     - name: cr_returned_time_sk
       type: integer
       generation: {min_value: 0, max_value: 86399}
@@ -1806,13 +1808,13 @@ tables:
   columns:
     - name: ws_sold_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37621}
     - name: ws_sold_time_sk
       type: integer
       generation: {min_value: 0, max_value: 86399}
     - name: ws_ship_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {distribution: offset, distribution_params: {from: ws_sold_date_sk, min: 2, max: 90}}
     - name: ws_item_sk
       type: integer
       not_null: true
@@ -1964,7 +1966,7 @@ tables:
   columns:
     - name: wr_returned_date_sk
       type: integer
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37711}
     - name: wr_returned_time_sk
       type: integer
       generation: {min_value: 0, max_value: 86399}
@@ -2073,7 +2075,7 @@ tables:
       type: integer
       not_null: true
       primary_key: true
-      generation: {min_value: 36530, max_value: 73049}
+      generation: {min_value: 35795, max_value: 37621}
     - name: inv_item_sk
       type: integer
       not_null: true
