@@ -180,6 +180,7 @@ def zipf_rank(u, n, s):                    # 1 .. n with P(rank <= k) ~ k^(1-s) 
 
 out_tables, expected = [], []
 keyf = {}                                    # table -> {key column: formula in x.n}, for children's foreign keys
+colf, nback = {}, {}                         # table -> {column: (kind, formula)}; one-column key -> (n from it, the key)
 order, seen = [], set()
 def visit(n, stack=()):
     if n in seen or n in stack or n not in T: return
@@ -258,6 +259,12 @@ for tn in order:
                 return "v", f"{lo} + {draw(tn, name, 'u', span)}", None
         return None
 
+    # a lookup column is the value of another table's column at the row a foreign key of this one points to
+    # (generation: {lookup: {via: <this table's foreign key column>, column: <the parent's column>}}): a cash balance's
+    # customer is its account's. Not numbered with the key: the key's other columns already make it unique.
+    look = {c["name"]: (c.get("generation") or {})["lookup"] for c in t["columns"] if (c.get("generation") or {}).get("lookup")}
+    pkall, pk = pk, [k for k in pk if k not in look]
+
     # 1. rules for every column; then the keys, each through a codec (an integer index <-> the column's values) that its
     #    children's foreign keys share, so a child's value is always a parent key
     radix = {}
@@ -274,13 +281,14 @@ for tn in order:
             tags.append("lfc:n={1 + " + " + ".join(f"({k} - {radix[k][1]}) * {radix[k][2]}" for k in pk) + "}")
             if len(pk) > 1: tags.append(f"lfc:by={{{max(pk, key=lambda k: radix[k][2])}}}")
         keyf[tn] = {k: ("v", v[k]) for k in pk}
+        if len(pk) == 1 and radix[pk[0]][2] == 1: nback[tn] = (f"1 + ({pk[0]} - {radix[pk[0]][1]})", pk[0])
     elif len(pk) == 1:
         k = pk[0]; cd = pcodec(k) or codec(cols[k], rows)
         if k in fkcol and rows > R[fkcol[k][0]["parent_table"]]:   # one child per parent: no more rows than parents
             pr = R[fkcol[k][0]["parent_table"]]; log(f"{tn}: {rows} rows but its key {k} is unique and points at {pr} parents; {pr} rows")
             rows = R[tn] = pr; tags[0] = f"lfc:rows={rows}"
         if cd[1] != k: tags.append(f"lfc:n={{{cd[1]}}}")
-        put(k, (cd[0], cd[2]("x.n"))); keyf[tn] = {k: (cd[0], cd[2]("x.n"))}
+        put(k, (cd[0], cd[2]("x.n"))); keyf[tn] = {k: (cd[0], cd[2]("x.n"))}; nback[tn] = (cd[1], k)
     elif len(pk) > 1:   # k1 = (n - 1) DIV f + 1; the other key columns share (n - 1) % f, as one mixed-radix number when
         #                    their values are countable (each its own digit), else the second alone and the rest their first
         def kcodec(col):                         # a foreign key's parent codec, an integer range or list, or the column's codec
@@ -308,21 +316,26 @@ for tn in order:
         # rotated by k1 when the rest points at other rows (a foreign key, a date or time): each k1 value then draws its
         # own values, not the same few (TPC-E customer_taxrate's customers, each trade's history times); ordinals such as
         # a line number or a year keep starting at their first value
-        rot = c2n < 10 ** 18 and any(k in fkcol or kind(cols[k]) in ("date", "ts") for k in rest)
+        points = lambda k: k in fkcol or kind(cols[k]) in ("date", "ts")
+        rot = c2n < 10 ** 18 and any(points(k) for k in rest)
         idx = f"((x.n - 1) % {f}) * {step}"
-        if rot: idx = f"(({idx} + (x.n - 1) DIV {f}) % {c2n})"
-        unrot = lambda inner: f"(({inner} - ({c1[1]} - 1)) % {c2n} + {c2n}) % {c2n}" if rot else inner
         if not radix:
+            if rot: idx = f"(({idx} + (x.n - 1) DIV {f} + 1) % {c2n})"   # by k1 (1-based), so a row's first partner
+            unrot = lambda inner: f"(({inner} - ({c1[1]})) % {c2n} + {c2n}) % {c2n}" if rot else inner   # isn't k1 itself
             put(rest[0], (cr[0][0], cr[0][2](f"({idx} + 1)")))
             for k in pk[2:]:
                 ck = kcodec(k); put(k, (ck[0], ck[2]("1")))
             tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + {unrot(f'({cr[0][1]} - 1)')} DIV {step} + 1}}")
-        else:                                   # the last column is the fastest digit
+        else:                                   # the last column is the fastest digit; each pointing digit is rotated
+            #                                     by k1 on its own (one rotation of the whole number moved only the last)
             strides = [math.prod(caps[j + 1:]) for j in range(len(rest))]
+            k1i = f"((x.n - 1) DIV {f} + 1)"
             for k, c, m, s in zip(rest, cr, caps, strides):
-                put(k, (c[0], c[2](f"(({idx}) DIV {s} % {m} + 1)")))
-            inner = " + ".join(f"({c[1]} - 1) * {s}" for c, s in zip(cr, strides))
-            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + {unrot(f'({inner})')} DIV {step} + 1}}")
+                d = f"(({idx}) DIV {s} + {k1i}) % {m}" if rot and points(k) else f"({idx}) DIV {s} % {m}"
+                put(k, (c[0], c[2](f"({d} + 1)")))
+            undo = lambda k, c, m: f"((({c[1]} - 1) - ({c1[1]})) % {m} + {m}) % {m}" if rot and points(k) else f"({c[1]} - 1)"
+            inner = " + ".join(f"{undo(k, c, m)} * {s}" for k, c, m, s in zip(rest, cr, caps, strides))
+            tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({inner}) DIV {step} + 1}}")
         keyf[tn] = {k: ("v" if k in v else "e", v.get(k, e.get(k))) for k in pk}
     else:                                       # no key: a timestamp (one second per row) or an integer column numbers the rows
         free = [c for c in t["columns"] if c["name"] not in fkcol]
@@ -338,7 +351,7 @@ for tn in order:
     for f in fks:
         p = f["parent_table"]
         if p not in keyf: log(f"{tn}: foreign key to {p} isn't generated here: left to the planner"); continue
-        own = [cc for cc in f["columns"] if cc in pk or (cc in v and ((cols[cc].get("generation") or {}).get("distribution") in STRUCT
+        own = [cc for cc in f["columns"] if cc in pkall or cc in look or (cc in v and ((cols[cc].get("generation") or {}).get("distribution") in STRUCT
                                                                     or "expression" in (cols[cc].get("generation") or {})))]
         if len(own) == len(f["columns"]): continue
         s0 = cs.get(f["columns"][0]) or {}
@@ -351,6 +364,19 @@ for tn in order:
             if cc in own: continue
             if cc in v or cc in e: log(f"{tn}.{cc}: its own rule replaced by the parent key {p}.{pc}, so every value is a key")
             kf = keyf[p][pc]; put(cc, (kf[0], kf[1].replace("x.n", m)))
+
+    if pk and pk[0] != pkall[0] and not any(x.startswith("lfc:by=") for x in tags):
+        tags.append(f"lfc:by={{{pk[0]}}}")    # the planner's resume reads n from the key's first column unless told
+    for col, lk in look.items():
+        via, pcol = (lk or {}).get("via"), (lk or {}).get("column")
+        p = fkcol[via][0]["parent_table"] if via in fkcol and len(fkcol[via][0]["columns"]) == 1 else None
+        if not p or p not in nback or pcol not in colf.get(p, {}) or not (v.get(via) or e.get(via)):
+            raise SystemExit(f"shape.py: {tn}.{col}: lookup needs via, a one-column foreign key of {tn} to a table with a "
+                             f"one-column key shaped before it, and column, a column of that table")
+        back, key = nback[p]
+        pn = re.sub(rf"\b{re.escape(key)}\b", f"({v.get(via) or e.get(via)})", back)   # the parent row's n
+        kf = colf[p][pcol]; put(col, (kf[0], kf[1].replace("x.n", f"({pn})")))
+        if col in pkall: keyf.setdefault(tn, {})[col] = (kf[0], kf[1].replace("x.n", f"({pn})"))
 
     # 2. statistics for the rest
     for c in t["columns"]:
@@ -460,6 +486,7 @@ for tn in order:
         log(f"{tn}: {con} by GREATEST: {b_} below {a_}{' + 1' if strict else ''} is raised to it, so many rows sit there (an offset rule keeps {b_}'s spread)")
 
     # the shaped table: statschema's format, tags in the column comments and in lfc_tags (ddl.py writes the table comment)
+    colf[tn] = {**{c: ("v", x) for c, x in v.items()}, **{c: ("e", x) for c, x in e.items()}}
     nt = {k: x for k, x in t.items() if k not in ("row_count_per_sf", "formulas")}   # formulas: now in the tags
     nt["row_count"] = rows; nt["lfc_tags"] = " ".join(tags)
     nt["columns"] = []

@@ -119,6 +119,8 @@ class GenerationRule:
     # ── expression ────────────────────────────────────────────────────────
     # The value as a formula of the row number x.n (MySQL syntax); {name} is the table's formulas: entry (tools/shape.py)
     expression: Optional[str] = None
+    # lookup: {via: a foreign key column of this table, column: the parent's column}: the value at the row via points to
+    lookup: Optional[dict[str, str]] = None
 
     # ── injection flags ───────────────────────────────────────────────────
     inject_boundary_values: bool = True
@@ -144,6 +146,7 @@ class GenerationRule:
         if self.distribution_params:          d["distribution_params"] = self.distribution_params
         if self.format_pattern is not None:   d["format_pattern"] = self.format_pattern
         if self.expression is not None:       d["expression"] = self.expression
+        if self.lookup is not None:           d["lookup"] = dict(self.lookup)
         if not self.inject_boundary_values:   d["inject_boundary_values"] = False
         if not self.inject_nulls_from_stats:  d["inject_nulls_from_stats"] = False
         if not self.use_mcv_weights:          d["use_mcv_weights"] = False
@@ -176,6 +179,7 @@ class GenerationRule:
             distribution_params=dist_params,
             format_pattern=d.get("format_pattern"),
             expression=None if d.get("expression") is None else str(d["expression"]),
+            lookup=None if not d.get("lookup") else {str(k): str(x) for k, x in d["lookup"].items()},
             inject_boundary_values=bool(d.get("inject_boundary_values", True)),
             inject_nulls_from_stats=bool(d.get("inject_nulls_from_stats", True)),
             use_mcv_weights=bool(d.get("use_mcv_weights", True)),

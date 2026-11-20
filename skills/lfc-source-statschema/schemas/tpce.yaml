@@ -784,7 +784,7 @@ tables:
       length: 3
       not_null: true
       primary_key: true
-      generation: {min_value: 1, max_value: 102, format_pattern: zero_padded_int, length: 3}
+      generation: {lookup: {via: cp_co_id, column: co_in_id}}
   fk_constraints:
     - columns: [cp_co_id]
       parent_table: company
@@ -1233,12 +1233,12 @@ tables:
       type: varchar
       length: 3
       not_null: true
-      generation: {values: ["TLB", "TLS"]}
+      generation: {lookup: {via: tr_t_id, column: t_tt_id}}
     - name: tr_s_symb
       type: varchar
       length: 15
       not_null: true
-      generation: {format_pattern: upper_id, length: 7}
+      generation: {lookup: {via: tr_t_id, column: t_s_symb}}
     - name: tr_qty
       type: integer
       not_null: true
@@ -1279,11 +1279,12 @@ tables:
     - name: h_ca_id
       type: long
       not_null: true
+      generation: {lookup: {via: h_t_id, column: t_ca_id}}
     - name: h_s_symb
       type: varchar
       length: 15
       not_null: true
-      generation: {format_pattern: upper_id, length: 7}
+      generation: {lookup: {via: h_t_id, column: t_s_symb}}
     - name: h_dts
       type: timestamp
       not_null: true
