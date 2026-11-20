@@ -253,5 +253,40 @@ class FixedRows(unittest.TestCase):
         self.assertIn("lfc:v={((x.n - 1) % 5) + 1}", next(x["comment"] for x in c["columns"] if x["name"] == "pid"))
 
 
+class CompositeKeys(unittest.TestCase):
+    """A composite key's columns past the first: an integer range (with a step) or list keeps its values, and the rest
+    of the key is one mixed-radix number, so every column varies; each row's key is unique and lfc:n reads n back.
+    Run in SQLite (stdlib) after sqlglot's transpile."""
+
+    def test_three_columns_unique_in_range_and_read_back(self):
+        import re
+        import sqlite3
+        import sqlglot
+        from statschema.tools import shape
+        sch = {"version": "1.0", "tables": [
+            {"name": "item", "row_count": 6, "columns": [{"name": "i", "type": "integer", "primary_key": True}]},
+            {"name": "inv", "row_count": 60, "columns": [
+                {"name": "wk", "type": "integer", "primary_key": True, "generation": {"min_value": 100, "max_value": 128, "distribution_params": {"step": 7}}},
+                {"name": "item", "type": "integer", "primary_key": True},
+                {"name": "q", "type": "integer", "primary_key": True, "generation": {"values": [1, 2, 3, 4]}}],
+             "fk_constraints": [{"columns": ["item"], "parent_table": "item", "parent_columns": ["i"]}]}]}
+        t = {x["name"]: x for x in yaml.safe_load(shape(sch)[0])["tables"]}["inv"]
+        f = {c["name"]: re.search(r"lfc:v=\{(.*)\}", c["comment"]).group(1) for c in t["columns"]}
+        back = re.search(r"lfc:n=\{(.*)\}", t["lfc_tags"]).group(1)
+        lite = lambda s: sqlglot.transpile(s, read="mysql", write="sqlite")[0]
+        db = sqlite3.connect(":memory:")
+        try:
+            rows = [db.execute(f"SELECT {lite(f['wk'])}, {lite(f['item'])}, {lite(f['q'])} FROM (SELECT {n} AS n) x").fetchone()
+                    for n in range(1, t["row_count"] + 1)]
+            self.assertEqual(len(set(rows)), len(rows))                                   # unique
+            self.assertEqual(sorted({r[0] for r in rows}), [100, 107, 114, 121, 128])      # every week, by the step
+            self.assertTrue({r[1] for r in rows} <= set(range(1, 7)) and len({r[2] for r in rows}) > 1)   # q varies
+            for n, (wk, item, q) in enumerate(rows, 1):
+                got = db.execute(f"SELECT {lite(back)} FROM (SELECT {wk} AS wk, {item} AS item, {q} AS q) x").fetchone()[0]
+                self.assertEqual(got, n)
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
