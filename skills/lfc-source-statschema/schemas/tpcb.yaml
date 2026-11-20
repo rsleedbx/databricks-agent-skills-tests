@@ -20,6 +20,10 @@
 #
 # TPC-B spec: https://tpc.org/tpcb/
 # pgbench reference: https://www.postgresql.org/docs/current/pgbench.html
+#
+# role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
+# Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
+# scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
 tables:
@@ -27,6 +31,7 @@ tables:
   # ── branch ────────────────────────────────────────────────────────────────
   # 1 row per SF; pgbench checks COUNT(*) on its renamed version to detect SF.
   - name: branch
+    role: dimension
     description: "TPC-B branch — 1 row per SF unit"
     row_count_per_sf: 1
     columns:
@@ -56,6 +61,7 @@ tables:
   # ── teller ────────────────────────────────────────────────────────────────
   # 10 rows per SF; each teller belongs to a branch.
   - name: teller
+    role: dimension
     description: "TPC-B teller — 10 rows per SF unit"
     row_count_per_sf: 10
     load_after: [branch]
@@ -93,6 +99,7 @@ tables:
   # ── account ───────────────────────────────────────────────────────────────
   # 100,000 rows per SF; the hot table in TPC-B (every transaction touches it).
   - name: account
+    role: dimension
     description: "TPC-B account — 100 000 rows per SF unit"
     row_count_per_sf: 100000
     load_after: [branch]
@@ -131,6 +138,7 @@ tables:
   # No surrogate PK — append-only audit log, matches TPC-B spec.
   # pgbench inserts one row per transaction: (tid, bid, aid, delta, mtime).
   - name: history
+    role: log
     description: "TPC-B history — 100 000 rows per SF unit (initial population)"
     row_count_per_sf: 100000
     load_after: [account, teller, branch]

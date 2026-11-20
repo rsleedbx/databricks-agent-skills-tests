@@ -116,8 +116,9 @@ check "lfc_medallion merge_route: one route per table across sources, last run's
 check "lfc_medallion merge_all: copy, change-feed MERGE, unchanged, full refresh, new column, SCD type 2 key, stack_all skip (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_merge.py"
 check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
-  check "classify.py $m: every role as its truth file says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth "$SK/cdc-table-plan/truth/$m.yaml"
+  check "classify.py $m: every role as the schema's role: says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth schema
 done
+check "classify.py never reads role: (TPC-E's plan is the same without it); --truth schema scores against it" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/cdc-table-plan/tests/test_classify.py"
 check "lfc_medallion: sources and tables found, one n:1 view per table, a table some sources lack (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_stack.py"
 check "history-snapshot-scd2.py: the guards (a reload not finished, an emptied table); with pyspark + Java 17/21 also their DataFrame form and versions" python3 -m unittest -q "$SK/lfc-downstream-history/tests/test_history_snapshot_scd2.py"
 check "medallion.py: layer counts, how each table is written; the medallion box and the Zerobus drawing" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_medallion.py"

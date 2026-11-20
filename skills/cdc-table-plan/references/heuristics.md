@@ -57,7 +57,7 @@ binlog either: silver applies them itself (`zerobus-debezium-test`, `cdc.fk_acti
 
 ## How well, relations only
 
-Against roles from the specifications (`truth/`, TPC) and from Mautic's code (25 tables whose writes were traced). The
+Against roles from the specifications (each TPC table's `role:` in its schema) and from Mautic's code (`truth/mautic.yaml`) (25 tables whose writes were traced). The
 silver column counts what the pipeline builds, which is what matters; the history column, whether a table got history
 when it should.
 

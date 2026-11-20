@@ -15,6 +15,10 @@
 #
 # Scaling tables use row_count_per_sf; integer SF is assumed.
 # Reference: https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-ds_v3.2.0.pdf
+#
+# role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
+# Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
+# scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
 tables:
@@ -22,6 +26,7 @@ tables:
 # ── Fixed dimension tables ──────────────────────────────────────────────────
 
 - name: date_dim
+  role: dimension
   description: "Calendar day dimension — one row per day from 1900-01-02 to 2100-01-01."
   builtin_generator: date_dim
   row_count: 73049
@@ -56,6 +61,7 @@ tables:
     - {name: d_current_year,      type: char,     length: 1}
 
 - name: time_dim
+  role: dimension
   description: "Time-of-day dimension — one row per second (86,400 rows)."
   builtin_generator: time_dim
   row_count: 86400
@@ -72,6 +78,7 @@ tables:
     - {name: t_meal_time, type: varchar, length: 20}
 
 - name: customer_demographics
+  role: dimension
   description: "Full Cartesian product of 8 demographic attributes — 1,920,800 rows."
   builtin_generator: customer_demographics
   row_count: 1920800
@@ -87,6 +94,7 @@ tables:
     - {name: cd_dep_college_count,  type: integer}
 
 - name: household_demographics
+  role: dimension
   description: "Product of income_band × buy_potential × dep_count × vehicle_count — 7,200 rows."
   builtin_generator: household_demographics
   row_count: 7200
@@ -102,6 +110,7 @@ tables:
       parent_columns: [ib_income_band_sk]
 
 - name: income_band
+  role: lookup
   description: "20 income bracket definitions, each spanning $10,000."
   builtin_generator: income_band
   row_count: 20
@@ -111,6 +120,7 @@ tables:
     - {name: ib_upper_bound,    type: integer}
 
 - name: reason
+  role: lookup
   description: "Return-reason lookup — 55 fixed rows."
   row_count: 55
   columns:
@@ -146,6 +156,7 @@ tables:
           - "Poor quality"
 
 - name: ship_mode
+  role: lookup
   description: "Shipping method lookup — 20 fixed rows."
   row_count: 20
   columns:
@@ -204,6 +215,7 @@ tables:
 # ── Scaling dimension tables ────────────────────────────────────────────────
 
 - name: item
+  role: dimension
   description: "Product catalog — 18,000 rows per SF."
   row_count_per_sf: 18000
   columns:
@@ -361,6 +373,7 @@ tables:
       generation: {format_pattern: word}
 
 - name: warehouse
+  role: dimension
   description: "Warehouse locations — 5 rows at SF=1, grows as floor(5*sqrt(SF))."
   row_count: 5
   columns:
@@ -434,6 +447,7 @@ tables:
         values: [-5.0, -6.0, -7.0, -8.0]
 
 - name: store
+  role: dimension
   description: "Retail store locations — 12 rows at SF=1."
   row_count: 12
   columns:
@@ -557,6 +571,7 @@ tables:
       generation: {min_value: 0.0, max_value: 0.11}
 
 - name: call_center
+  role: dimension
   description: "Call-center dimension — 6 rows at SF=1."
   row_count: 6
   columns:
@@ -687,6 +702,7 @@ tables:
       generation: {min_value: 0.0, max_value: 0.11}
 
 - name: customer_address
+  role: dimension
   description: "Customer mailing addresses — 50,000 per SF."
   row_count_per_sf: 50000
   columns:
@@ -752,6 +768,7 @@ tables:
         values: ["condo", "apartment", "unknown", "single family"]
 
 - name: customer
+  role: dimension
   description: "Customer master — 100,000 per SF."
   row_count_per_sf: 100000
   columns:
@@ -826,6 +843,7 @@ tables:
       parent_columns: [ca_address_sk]
 
 - name: promotion
+  role: dimension
   description: "Promotion/coupon events — 300 per SF."
   row_count_per_sf: 300
   columns:
@@ -910,6 +928,7 @@ tables:
       parent_columns: [i_item_sk]
 
 - name: catalog_page
+  role: dimension
   description: "Catalog page inventory — 11,718 per SF."
   row_count_per_sf: 11718
   columns:
@@ -951,6 +970,7 @@ tables:
         values: ["bi-annual", "quarterly", "annual", "monthly"]
 
 - name: web_site
+  role: dimension
   description: "E-commerce web sites — 54 rows (grows slowly with SF)."
   row_count: 54
   columns:
@@ -1062,6 +1082,7 @@ tables:
       generation: {min_value: 0.0, max_value: 0.11}
 
 - name: web_page
+  role: dimension
   description: "Web pages — 2,040 per SF."
   row_count_per_sf: 2040
   columns:
@@ -1118,6 +1139,7 @@ tables:
 # ── Fact tables ─────────────────────────────────────────────────────────────
 
 - name: store_sales
+  role: fact
   description: "Primary retail-channel fact table — ~2,880,404 rows per SF."
   row_count_per_sf: 2880404
   load_after: [date_dim, time_dim, customer, customer_demographics, household_demographics, item, store, promotion]
@@ -1236,6 +1258,7 @@ tables:
       parent_columns: [p_promo_sk]
 
 - name: store_returns
+  role: fact
   description: "Retail-channel returns — ~287,514 rows per SF (≈10% of store_sales)."
   row_count_per_sf: 287514
   load_after: [store_sales, reason]
@@ -1335,6 +1358,7 @@ tables:
       parent_columns: [r_reason_sk]
 
 - name: catalog_sales
+  role: fact
   description: "Catalog-channel fact table — ~1,441,548 rows per SF."
   row_count_per_sf: 1441548
   load_after: [date_dim, time_dim, customer, item, call_center, ship_mode, warehouse, promotion]
@@ -1489,6 +1513,7 @@ tables:
       parent_columns: [w_warehouse_sk]
 
 - name: catalog_returns
+  role: fact
   description: "Catalog-channel returns — ~144,067 rows per SF."
   row_count_per_sf: 144067
   load_after: [catalog_sales, reason]
@@ -1601,6 +1626,7 @@ tables:
       parent_columns: [r_reason_sk]
 
 - name: web_sales
+  role: fact
   description: "Web-channel fact table — ~719,384 rows per SF."
   row_count_per_sf: 719384
   load_after: [date_dim, time_dim, customer, item, web_site, web_page, ship_mode, warehouse, promotion]
@@ -1758,6 +1784,7 @@ tables:
       parent_columns: [w_warehouse_sk]
 
 - name: web_returns
+  role: fact
   description: "Web-channel returns — ~71,763 rows per SF."
   row_count_per_sf: 71763
   load_after: [web_sales, reason]
@@ -1864,6 +1891,7 @@ tables:
       parent_columns: [r_reason_sk]
 
 - name: inventory
+  role: fact
   description: "Daily inventory snapshot per item per warehouse — ~11,745,000 rows per SF."
   row_count_per_sf: 11745000
   load_after: [date_dim, item, warehouse]

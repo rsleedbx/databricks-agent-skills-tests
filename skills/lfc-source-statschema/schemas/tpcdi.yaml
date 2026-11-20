@@ -33,6 +33,10 @@
 # TPC Benchmark™ DI is copyright © TPC, all rights reserved.
 # This schema is used for evaluation and development purposes only.
 # statschema does not publish TPC-certified benchmark results.
+#
+# role: each table's role in the model, from the specification: dimension, lookup, bridge, fact, log or queue.
+# Its kind is dimension for dimension and lookup, fact for the others (statschema core/model.py ROLES, KIND).
+# scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
 tables:
@@ -40,6 +44,7 @@ tables:
   # ── StatusType ────────────────────────────────────────────────────────────────
   # Fixed 5 rows (spec appendix §10: ACTV, CMPL, CNCL, PNDG, SBMT).
   - name: StatusType
+    role: lookup
     description: "TPC-DI lookup — 5 status codes, fixed (spec appendix §10)"
     row_count: 5
     columns:
@@ -63,6 +68,7 @@ tables:
   # ── TaxRate ───────────────────────────────────────────────────────────────────
   # Fixed ~320 rows — one entry per tax jurisdiction (spec appendix §10).
   - name: TaxRate
+    role: lookup
     description: "TPC-DI lookup — ~320 tax jurisdictions, fixed"
     row_count: 320
     columns:
@@ -92,6 +98,7 @@ tables:
   # ── TradeType ─────────────────────────────────────────────────────────────────
   # Fixed 5 rows (TMB, TMS, TSL, TLB, TLS per spec).
   - name: TradeType
+    role: lookup
     description: "TPC-DI lookup — 5 trade type codes, fixed"
     row_count: 5
     columns:
@@ -127,6 +134,7 @@ tables:
   # ── Industry ──────────────────────────────────────────────────────────────────
   # Fixed 102 rows (GICS-style industry codes, per spec appendix §10).
   - name: Industry
+    role: lookup
     description: "TPC-DI lookup — 102 industry codes, fixed (spec appendix §10)"
     row_count: 102
     columns:
@@ -157,6 +165,7 @@ tables:
   # Distribution-based generation approximates calendar metadata; see
   # tpcdi_rows('DimDate') in tpc_generators.py for accurate arithmetic values.
   - name: DimDate
+    role: dimension
     description: "TPC-DI date dimension — 3652 rows, fixed (one per calendar day, 2010-2019)"
     row_count: 3652
     columns:
@@ -278,6 +287,7 @@ tables:
   # Distribution-based generation approximates clock metadata; see
   # tpcdi_rows('DimTime') in tpc_generators.py for accurate arithmetic values.
   - name: DimTime
+    role: dimension
     description: "TPC-DI time dimension — 86 400 rows, fixed (one per second of day)"
     row_count: 86400
     columns:
@@ -348,6 +358,7 @@ tables:
   # ── DimCompany ────────────────────────────────────────────────────────────────
   # ~400 per SF. SCD Type 2: ~1.1 rows per natural CompanyID on average.
   - name: DimCompany
+    role: dimension
     description: "TPC-DI company dimension (SCD2) — ~400 rows per SF"
     row_count_per_sf: 400
     columns:
@@ -464,6 +475,7 @@ tables:
   # ── DimBroker ─────────────────────────────────────────────────────────────────
   # ~100 per SF. SCD Type 2.
   - name: DimBroker
+    role: dimension
     description: "TPC-DI broker dimension (SCD2) — ~100 rows per SF"
     row_count_per_sf: 100
     columns:
@@ -532,6 +544,7 @@ tables:
   # ── DimSecurity ───────────────────────────────────────────────────────────────
   # ~685 per SF. SCD Type 2. FK: SK_CompanyID → DimCompany.
   - name: DimSecurity
+    role: dimension
     description: "TPC-DI security dimension (SCD2) — ~685 rows per SF"
     row_count_per_sf: 685
     load_after: [DimCompany]
@@ -638,6 +651,7 @@ tables:
   # ── DimCustomer ───────────────────────────────────────────────────────────────
   # ~950 per SF. SCD Type 2; ~1.05 rows per natural CustomerID.
   - name: DimCustomer
+    role: dimension
     description: "TPC-DI customer dimension (SCD2) — ~950 rows per SF"
     row_count_per_sf: 950
     columns:
@@ -802,6 +816,7 @@ tables:
   # ── DimAccount ────────────────────────────────────────────────────────────────
   # ~1500 per SF. SCD Type 2. FK: SK_BrokerID → DimBroker, SK_CustomerID → DimCustomer.
   - name: DimAccount
+    role: dimension
     description: "TPC-DI account dimension (SCD2) — ~1500 rows per SF"
     row_count_per_sf: 1500
     load_after: [DimBroker, DimCustomer]
@@ -886,6 +901,7 @@ tables:
   # ── Financial ─────────────────────────────────────────────────────────────────
   # ~3200 per SF (~8 quarters × 400 companies/SF). Composite PK.
   - name: Financial
+    role: fact
     description: "TPC-DI quarterly financial data — ~3200 rows per SF"
     row_count_per_sf: 3200
     load_after: [DimCompany]
@@ -1017,6 +1033,7 @@ tables:
   # ── DimTrade ──────────────────────────────────────────────────────────────────
   # ~46000 per SF. Largest dimension table; fan-out from security and customer dims.
   - name: DimTrade
+    role: dimension
     description: "TPC-DI trade dimension — ~46 000 rows per SF"
     row_count_per_sf: 46000
     load_after: [DimDate, DimTime, DimSecurity, DimCompany, DimCustomer, DimAccount, DimBroker]
@@ -1191,6 +1208,7 @@ tables:
   # ~57000 per SF (≈685 securities × 83 trading days; composite PK).
   # Largest table at scale: SF=10 → 570 000 rows; SF=100 → 5.7 M rows.
   - name: FactMarketHistory
+    role: fact
     description: "TPC-DI daily market price history — ~57 000 rows per SF"
     row_count_per_sf: 57000
     load_after: [DimDate, DimSecurity, DimCompany]
@@ -1316,6 +1334,7 @@ tables:
   # ── FactWatches ───────────────────────────────────────────────────────────────
   # ~5000 per SF. Composite PK: SK_CustomerID + SK_SecurityID.
   - name: FactWatches
+    role: fact
     description: "TPC-DI watch list fact — ~5 000 rows per SF"
     row_count_per_sf: 5000
     load_after: [DimCustomer, DimSecurity, DimDate]
@@ -1367,6 +1386,7 @@ tables:
   # ── FactHoldings ──────────────────────────────────────────────────────────────
   # ~3000 per SF. FK: TradeID → DimTrade (must load after DimTrade).
   - name: FactHoldings
+    role: fact
     description: "TPC-DI holdings fact — ~3 000 rows per SF"
     row_count_per_sf: 3000
     load_after: [DimTrade, DimCustomer, DimAccount, DimSecurity, DimCompany, DimDate, DimTime]
@@ -1465,6 +1485,7 @@ tables:
   # ── FactCashBalances ──────────────────────────────────────────────────────────
   # ~2500 per SF. Composite PK.
   - name: FactCashBalances
+    role: fact
     description: "TPC-DI daily cash balance fact — ~2 500 rows per SF"
     row_count_per_sf: 2500
     load_after: [DimCustomer, DimAccount, DimDate]
@@ -1518,6 +1539,7 @@ tables:
   # ── DimMessage ────────────────────────────────────────────────────────────────
   # ~500 per SF. Audit trail from the ETL pipeline (simulated here as DW rows).
   - name: DimMessage
+    role: log
     description: "TPC-DI audit message log — ~500 rows per SF"
     row_count_per_sf: 500
     columns:

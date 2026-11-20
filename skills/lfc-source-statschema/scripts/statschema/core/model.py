@@ -451,6 +451,19 @@ class CanonicalForeignKey:
         )
 
 
+# A table's role in its model (the TPC specifications' schemas; cdc-table-plan's classifier is scored against these):
+#   dimension  an entity others refer to (customer, part)
+#   lookup     small fixed reference data (region, nation, status_type)
+#   bridge     a many-to-many link between two entities (partsupp, customer_account in TPC-E)
+#   fact       an event with measurements (orders, lineitem, trade)
+#   log        appended only, no key of its own (TPC-B history)
+#   queue      rows inserted, then deleted (TPC-C new_order)
+# KIND groups them for "which are the fact tables": dimension and lookup are dimensions; the others carry the events.
+ROLES = ("dimension", "lookup", "bridge", "fact", "log", "queue")
+KIND = {"dimension": "dimension", "lookup": "dimension",
+        "bridge": "fact", "fact": "fact", "log": "fact", "queue": "fact"}
+
+
 @dataclass
 class CanonicalTableSchema:
     """
@@ -528,6 +541,14 @@ class CanonicalTableSchema:
     columns: list[CanonicalColumn]
     description: Optional[str] = None
 
+    # The table's role in its model (ROLES); None when not known (a schema collected from a database)
+    role: Optional[str] = None
+
+    @property
+    def kind(self) -> Optional[str]:
+        """fact or dimension (KIND), from the role."""
+        return KIND.get(self.role) if self.role else None
+
     # Structured FK constraints (preferred; replaces the dict-list below)
     fk_constraints: Optional[list[CanonicalForeignKey]] = None
 
@@ -584,6 +605,8 @@ class CanonicalTableSchema:
         }
         if self.description:
             d["description"] = self.description
+        if self.role:
+            d["role"] = self.role
         if self.fk_constraints:
             d["fk_constraints"] = [fk.to_dict() for fk in self.fk_constraints]
         if self.foreign_keys:
@@ -609,10 +632,14 @@ class CanonicalTableSchema:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "CanonicalTableSchema":
         fks = [CanonicalForeignKey.from_dict(fk) for fk in d.get("fk_constraints", [])]
+        role = d.get("role")
+        if role is not None and role not in ROLES:
+            raise ValueError(f"table {d.get('name')}: role {role!r} isn't one of {', '.join(ROLES)}")
         return cls(
             name=str(d["name"]),
             columns=[CanonicalColumn.from_dict(c) for c in d.get("columns", [])],
             description=d.get("description"),
+            role=role,
             fk_constraints=fks if fks else None,
             foreign_keys=d.get("foreign_keys"),
             temporal_ordering_constraints=list(d.get("temporal_ordering_constraints", [])),
