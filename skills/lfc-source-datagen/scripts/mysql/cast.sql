@@ -42,7 +42,7 @@ SELECT c.table_schema AS db, c.table_name AS tbl, c.column_name AS col, c.ordina
     WHEN 'double'    THEN 'CAST(x.n AS DOUBLE)'
     WHEN 'bit'       THEN IF(c.numeric_precision = 64, 'x.n', CONCAT('x.n % ', CAST(POW(2, c.numeric_precision) AS UNSIGNED)))
     -- date/time: epoch plus n days or seconds, wrapped to stay inside the type's range
-    WHEN 'date'      THEN 'DATE_ADD(''1970-01-01'', INTERVAL x.n % 2932896 DAY)'
+    WHEN 'date'      THEN 'DATE_ADD(''1970-01-01'', INTERVAL x.n % 2932897 DAY)'
     WHEN 'datetime'  THEN 'DATE_ADD(''1970-01-01 00:00:00'', INTERVAL x.n % 253402300800 SECOND)'
     WHEN 'timestamp' THEN 'FROM_UNIXTIME(1 + x.n % 2147483646)'
     WHEN 'time'      THEN 'SEC_TO_TIME(x.n % 86400)'
@@ -77,7 +77,7 @@ SELECT c.table_schema AS db, c.table_name AS tbl, c.column_name AS col, c.ordina
     WHEN 'decimal'   THEN CONCAT('`', c.column_name, '` * 1', REPEAT('0', c.numeric_scale), ' = {k} % 1', REPEAT('0', LEAST(c.numeric_precision, 18)))
     WHEN 'double'    THEN CONCAT('`', c.column_name, '` = {k}')
     WHEN 'bit'       THEN CONCAT('`', c.column_name, '` + 0 = ', IF(c.numeric_precision = 64, '{k}', CONCAT('{k} % ', CAST(POW(2, c.numeric_precision) AS UNSIGNED))))
-    WHEN 'date'      THEN CONCAT('DATEDIFF(`', c.column_name, '`, ''1970-01-01'') = {k} % 2932896')
+    WHEN 'date'      THEN CONCAT('DATEDIFF(`', c.column_name, '`, ''1970-01-01'') = {k} % 2932897')
     WHEN 'datetime'  THEN CONCAT('TIMESTAMPDIFF(SECOND, ''1970-01-01 00:00:00'', `', c.column_name, '`) = {k} % 253402300800')
     WHEN 'timestamp' THEN CONCAT('UNIX_TIMESTAMP(`', c.column_name, '`) = 1 + {k} % 2147483646')
     WHEN 'time'      THEN CONCAT('TIME_TO_SEC(`', c.column_name, '`) = {k} % 86400')

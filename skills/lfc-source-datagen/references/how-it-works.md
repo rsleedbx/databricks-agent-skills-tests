@@ -2,7 +2,7 @@
 
 ## How it works
 
-- **Every row comes from one integer `n`.** Each column's value is a cast of `n` to its type, for example `n % 32767` for `smallint`, `date '1970-01-01' + n % 2932896` for `date`, or a zero-padded `n` followed by MD5 filler for text. Every cast in the engine references has been run at `n` = 1, 2, 10⁶, 10¹², 2⁶², and 2⁶³ − 2 on the live engine, and stays valid for all of them.
+- **Every row comes from one integer `n`.** Each column's value is a cast of `n` to its type, for example `n % 32767` for `smallint`, `date '1970-01-01' + n % 2932897` for `date`, or a zero-padded `n` followed by MD5 filler for text. Every cast in the engine references has been run at `n` = 1, 2, 10⁶, 10¹², 2⁶², and 2⁶³ − 2 on the live engine, and stays valid for all of them.
 - **A planner query reads the catalog once and writes the SQL.** For every table in a schema it emits one `INSERT ... SELECT` with the right cast for each column. That's one round trip, even for 10,000 tables.
 - **Each INSERT resumes by itself.** It reads the table's min and max key (two index probes) and continues above the max. After an interruption, **rerun the same file**: each INSERT is one statement, so a killed one rolls back completely and nothing is duplicated.
 - **Keys only change at the ends.** Inserts append above the max, and deletes remove keys from the head (lowest) or the tail (highest), never the middle. The keys stay contiguous, so **rows = max − min + 1**, with no `COUNT(*)`.

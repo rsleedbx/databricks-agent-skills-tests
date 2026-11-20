@@ -45,7 +45,7 @@ SELECT CASE
     WHEN 'name'      THEN pg_temp.lfc_str(67)
     WHEN 'bytea'     THEN pg_temp.lfc_bin(pg_temp.lfc_len(m))
     -- date/time: epoch plus n days or seconds, wrapped to stay at or before 9999-12-31
-    WHEN 'date'      THEN '(date ''1970-01-01'' + (x.n % 2932896)::int)'
+    WHEN 'date'      THEN '(date ''1970-01-01'' + (x.n % 2932897)::int)'
     WHEN 'timestamp without time zone' THEN '(timestamp ''1970-01-01'' + (x.n % 253402300800) * interval ''1 second'')'
     WHEN 'timestamp with time zone'    THEN '(timestamptz ''1970-01-01 00:00:00+00'' + (x.n % 253402300800) * interval ''1 second'')'
     WHEN 'time without time zone'      THEN '(time ''00:00'' + (x.n % 86400) * interval ''1 second'')'
@@ -130,7 +130,7 @@ SELECT CASE
     WHEN 'text'      THEN pg_temp.lfc_strchk(pg_temp.lfc_len(m), col, k)
     WHEN 'bytea'     THEN format('(''x'' || encode(substr(%1$s, 1, 8), ''hex''))::bit(64)::bigint = %2$s AND (''x'' || encode(substr(%1$s, length(%1$s) - 7, 8), ''hex''))::bit(64)::bigint = %2$s AND length(%1$s) = %3$s',
                                  col, k, pg_temp.lfc_len(m))
-    WHEN 'date'      THEN format('%s - date ''1970-01-01'' = %s %% 2932896', col, k)
+    WHEN 'date'      THEN format('%s - date ''1970-01-01'' = %s %% 2932897', col, k)
     WHEN 'timestamp without time zone' THEN format('extract(epoch from %s)::bigint = %s %% 253402300800', col, k)
     WHEN 'timestamp with time zone'    THEN format('extract(epoch from %s)::bigint = %s %% 253402300800', col, k)
     WHEN 'time without time zone'      THEN format('extract(epoch from %s)::bigint = %s %% 86400', col, k)

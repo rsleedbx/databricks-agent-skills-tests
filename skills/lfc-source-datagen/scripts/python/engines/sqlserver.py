@@ -120,10 +120,10 @@ CAST = {                                 # wrapped to the type's positive range 
     "money": "CAST((x.n % 100000000000) / 100.0 AS money)", "smallmoney": "CAST((x.n % 20000000) / 100.0 AS smallmoney)",
     "float": "CAST(x.n AS float)", "real": "CAST(x.n AS real)",
     # 1970-01-01 plus n days or seconds (DATEADD takes an int, so seconds split into days and seconds)
-    "date": "DATEADD(day, CAST(x.n % 2932896 AS int), CAST('1970-01-01' AS date))",
-    "datetime2": "DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932896 AS int), CAST('1970-01-01' AS datetime2(0))))",
-    "datetime": "DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932896 AS int), CAST('1970-01-01' AS datetime2(0))))",
-    "datetimeoffset": "TODATETIMEOFFSET(DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932896 AS int), CAST('1970-01-01' AS datetime2(0)))), '+00:00')",
+    "date": "DATEADD(day, CAST(x.n % 2932897 AS int), CAST('1970-01-01' AS date))",
+    "datetime2": "DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932897 AS int), CAST('1970-01-01' AS datetime2(0))))",
+    "datetime": "DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932897 AS int), CAST('1970-01-01' AS datetime2(0))))",
+    "datetimeoffset": "TODATETIMEOFFSET(DATEADD(second, CAST(x.n % 86400 AS int), DATEADD(day, CAST((x.n / 86400) % 2932897 AS int), CAST('1970-01-01' AS datetime2(0)))), '+00:00')",
     "smalldatetime": "DATEADD(minute, CAST(x.n % 94063680 AS int), CAST('1900-01-01' AS smalldatetime))",
     "time": "CAST(DATEADD(second, CAST(x.n % 86400 AS int), CAST('00:00' AS time(0))) AS time)",
     # n in a uuid's last 6 bytes, which SQL Server sorts first: keys stay in n order below 2^48

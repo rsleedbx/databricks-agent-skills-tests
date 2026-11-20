@@ -119,8 +119,8 @@ class Engine:
 CAST = {                                          # wrapped to the type's positive range
     "SMALLINT": "MOD(x.n, 32767)", "INTEGER": "MOD(x.n, 2147483647)", "BIGINT": "x.n",
     "REAL": "CAST(x.n AS REAL)", "DOUBLE": "CAST(x.n AS DOUBLE)", "DECFLOAT": "CAST(x.n AS DECFLOAT)",
-    "DATE": "DATE('1970-01-01') + MOD(x.n, 2932896) DAYS",
-    "TIMESTAMP": "TIMESTAMP('1970-01-01-00.00.00') + MOD(x.n / 86400, 2932896) DAYS + MOD(x.n, 86400) SECONDS",
+    "DATE": "DATE('1970-01-01') + MOD(x.n, 2932897) DAYS",
+    "TIMESTAMP": "TIMESTAMP('1970-01-01-00.00.00') + MOD(x.n / 86400, 2932897) DAYS + MOD(x.n, 86400) SECONDS",
     "TIME": "TIME('00:00:00') + MOD(x.n, 86400) SECONDS",
     "BOOLEAN": "CASE WHEN MOD(x.n, 2) = 1 THEN TRUE ELSE FALSE END",
 }
