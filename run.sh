@@ -113,14 +113,17 @@ pass=0
 fail=0
 skipped=0
 # A tag (with its follow-up turns) runs only when what it depends on changed since it last passed on this machine:
-# its prompts as filled, the workspace profile and the skills repo's skills/ (bin/test_skip, runner run.sh; local,
+# its prompts as filled, the workspace profile, the claude version, CLAUDE_ARGS, the allowed tools and the skills
+# repo's skills/ (bin/test_skip, runner run.sh; local,
 # never committed). A pass: every turn exited 0 and ended in a result event that isn't an error; whether the answer
 # met the test's expectations is summarize.py's call, so check those before trusting a skip. A skipped tag leaves
 # <tag>.skipped (no <tag>.json) in the results. TEST_SKIP_AGAIN=1 runs every tag.
 GATE="$SCRIPT_DIR/bin/test_skip/scripts/test_skip.py"
 G=$(mktemp -d)
-gate_args() {   # <tag> <prompt as filled>: the arguments that fingerprint a tag
+CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1)
+gate_args() {   # <tag> <prompt as filled>: the arguments that fingerprint a tag (the run's settings too)
   printf '%s\n' "$(basename "$PROMPTS" .txt):$1" --value "$PIPELINE_WS" --value "$2" \
+    --value "claude $CLAUDE_VERSION" --value "args ${CLAUDE_ARGS:-}" --value "tools ${CLAUDE_ALLOWED_TOOLS:-}" \
     --value "$(grep "^$1+|" "$PROMPTS" | perl -pe 's/\$\{(\w+)\}/defined $ENV{$1} ? $ENV{$1} : "\${$1}"/ge')" \
     "$REPO_DIR/skills"   # follow-ups filled like their turns, so a changed value there runs the tag
 }
@@ -156,7 +159,7 @@ while IFS='|' read -r tag prompt; do
       rm -f "$RESULTS_DIR/$tag.json" "$RESULTS_DIR/$tag.err"   # an older run's output must not pass for this one's
       echo "$last" > "$RESULTS_DIR/$tag.skipped"; continue
     fi
-    printf '%s\n' "${gargs[@]}" > "$G/args-$tag"; echo "$tag" >> "$G/ran"
+    echo "${gargs[0]} ${last#run }" > "$G/fp-$tag"; echo "$tag" >> "$G/ran"   # the fingerprint decided now
     outfile="$RESULTS_DIR/${tag}.json"
     : > "$outfile"
     : > "$RESULTS_DIR/${tag}.err"
@@ -196,10 +199,9 @@ done < "$PROMPTS"
 
 # record each tag that ran: a pass when it and all its follow-ups succeeded
 if [ -s "$G/ran" ]; then
-  while IFS= read -r t; do
-    gargs=(); while IFS= read -r a; do gargs+=("$a"); done < "$G/args-$t"
-    key=${gargs[0]}; rest=("${gargs[@]:1}")
-    python3 "$GATE" record run.sh "$key" "$([ -e "$G/fail-$t" ] && echo fail || echo pass)" "${rest[@]}"
+  while IFS= read -r t; do   # what was tested: the fingerprint from before the run, not the files as they are now
+    read -r key fp < "$G/fp-$t"
+    python3 "$GATE" record run.sh "$key" "$([ -e "$G/fail-$t" ] && echo fail || echo pass)" --fingerprint "$fp"
   done < "$G/ran"
 fi
 rm -rf "${G:?}"

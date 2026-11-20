@@ -2,8 +2,11 @@
 # Vendored copy of shared unit 'test_skip': edit the master, then run `reuse-first vendor sync` (any other edit shows as drift).
 """test_skip.py: run a test only when what it depends on changed since it last passed.
 
-  test_skip.py skip   <runner> <key> [--value V ...] <path>...     exit 0: unchanged since a pass (skip it); 1: run it
+  test_skip.py skip   <runner> <key> [--value V ...] <path>...     exit 0: unchanged since a pass (skip it); 1: run it,
+                                                                   printing "run <fingerprint>" to record afterwards
   test_skip.py record <runner> <key> pass|fail [--value V ...] <path>...
+  test_skip.py record <runner> <key> pass|fail --fingerprint <fp>  the one skip printed: what was tested, even if
+                                                                   files changed while it ran
   test_skip.py forget <runner> [<key>]
 
 A test's fingerprint is the SHA-256 of every file under its paths (directories recurse; caches and build output left
@@ -99,11 +102,13 @@ def forget(runner: str, key: str | None = None) -> None:
 def main(argv: list[str] | None = None) -> int:
     """skip|record|forget; --value V and --again may come anywhere (run.sh passes them before the paths)."""
     args = list(sys.argv[1:] if argv is None else argv)
-    values, again, rest = [], False, []
+    values, again, rest, given = [], False, [], ""
     while args:
         x = args.pop(0)
         if x == "--value" and args:
             values.append(args.pop(0))
+        elif x == "--fingerprint" and args:
+            given = args.pop(0)
         elif x == "--again":
             again = True
         else:
@@ -114,13 +119,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if cmd == "skip" and len(rest) >= 3:
         runner, key, paths = rest[1], rest[2], rest[3:]
-        skip, last = should_skip(runner, key, fingerprint(paths, values), again)
-        if skip:
-            print(f"passed {last['when']}, unchanged since")
+        fp = fingerprint(paths, values)
+        skip, last = should_skip(runner, key, fp, again)
+        print(f"passed {last['when']}, unchanged since" if skip else f"run {fp}")
         return 0 if skip else 1
     if cmd == "record" and len(rest) >= 4 and rest[3] in ("pass", "fail"):
         runner, key, result, paths = rest[1], rest[2], rest[3], rest[4:]
-        record(runner, key, fingerprint(paths, values), result == "pass")
+        record(runner, key, given or fingerprint(paths, values), result == "pass")
         return 0
     sys.exit(__doc__)
 

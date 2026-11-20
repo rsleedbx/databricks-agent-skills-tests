@@ -21,7 +21,8 @@ no() { printf "  FAIL  %s\n" "$1"; fails=$((fails + 1)); }
 run_check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; return 0; else no "$name"; sed 's/^/        /' "$T/out" | tail -5; return 1; fi; }
 # A check runs only when what it depends on changed since it last passed (bin/test_gate.py: its command, its repo
 # paths widened to the skills they reference, or the whole repo for a bin tool); one that names no repo path always
-# runs. TEST_SKIP_AGAIN=1 runs every check.
+# runs: a shell function such as tpc_dialects or wl_offline (its body may write $T for a later check, so it must
+# never be gated on its own). TEST_SKIP_AGAIN=1 runs every check.
 skipped=0; GATE_ENV="${PSQL:-}|${MYSQL:-}|${LIVE_PSQL:-}|${LIVE_MYSQL:-}|${LIVE_ENGINE:-}|${LIVE_DIALECT:-}|${LIVE_PY:-}"
 # The checks that pass files through $T run or skip as one group (a skipped producer would leave its consumer without
 # input): it skips when the inputs its checks had at its last pass (from each one's full command) and this script are

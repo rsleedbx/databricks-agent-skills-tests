@@ -79,6 +79,13 @@ class TestSkip(unittest.TestCase):
         self.assertEqual(run("record", "r", "k2", "pass", "--value", "ws", "--value", "p", str(self.src)).returncode, 0)
         self.assertEqual(run("skip", "r", "k2", "--value", "ws", "--value", "p", str(self.src)).returncode, 0)
         self.assertEqual(run("skip", "r", "k2", "--value", "ws", "--value", "other", str(self.src)).returncode, 1)
+        # skip prints the fingerprint it decided on; recording that one credits what ran, not files edited since
+        out = run("skip", "r", "k3", str(self.src))
+        self.assertEqual(out.returncode, 1)
+        fp = out.stdout.split()[1]
+        (self.src / "pkg/a.py").write_text("edited while the test ran\n")
+        run("record", "r", "k3", "pass", "--fingerprint", fp)
+        self.assertEqual(run("skip", "r", "k3", str(self.src)).returncode, 1)   # the edit isn't credited
 
 
 if __name__ == "__main__":
