@@ -1,6 +1,24 @@
 {
  "copies": [
   {
+   "unit": "repo_reuse_hook",
+   "file": "scripts/repo_reuse_hook.py",
+   "dest": "bin/repo_reuse_hook/scripts/repo_reuse_hook.py",
+   "hash": "2bed0f05fb9454be"
+  },
+  {
+   "unit": "repo_reuse_hook",
+   "file": "tests/test_repo_reuse_hook.py",
+   "dest": "bin/repo_reuse_hook/tests/test_repo_reuse_hook.py",
+   "hash": "44138b2a0b569c23"
+  },
+  {
+   "unit": "reuse_index",
+   "file": "scripts/reuse_index.py",
+   "dest": "bin/repo_reuse_hook/scripts/reuse_index.py",
+   "hash": "6269072bd7cab4c4"
+  },
+  {
    "unit": "test_skip",
    "file": "scripts/test_skip.py",
    "dest": "bin/test_skip/scripts/test_skip.py",
