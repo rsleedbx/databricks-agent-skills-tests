@@ -160,6 +160,41 @@ class SignalComment(unittest.TestCase):
         self.assertIn("""'lfc:signal={"signal":"x"}'""", s)
 
 
+class Reapply(unittest.TestCase):
+    """Signals re-applied on a source's rows now (after an append): fragments in the SQL files, each signal's own
+    parameters from its comment, the rows each statement changed; lfc-sources --append names the sources."""
+
+    def test_fragments(self):
+        self.assertEqual(sg.expand("-- fragment w\nSELECT 1\n-- end\nDELETE x WHERE NOT IN ({{w}});\nINSERT ({{w}});\n"),
+                         "DELETE x WHERE NOT IN (SELECT 1);\nINSERT (SELECT 1);\n")
+        with self.assertRaises(ValueError):
+            sg.expand("SELECT {{nope}}")
+        body = "\n".join(sg.steps("tpcds", "a", f"{TpcdsSignals.R}/"))
+        self.assertEqual(body.count("FROM (WITH r AS ("), 2)                    # the wanted returns in the delete and insert
+
+    def test_reapply_reads_each_signal_and_counts(self):
+        class Cur(globals()["Cur"]):
+            rowcount = 7
+
+            def execute(self, q, params=None):
+                if q.startswith("SELECT obj_description"):
+                    return super().execute(q, params)
+                self.q.append(q)
+                self.rows = []
+        cur = Cur({"web_sales": sg.comment("tpcds", "web_ship_delay", TpcdsSignals.S)}, [])
+        got = sg.reapply(cur, "tpcds", "a", log=lambda m: None)
+        self.assertEqual(list(got), ["web_ship_delay"])                       # store_returns has no signal comment
+        self.assertEqual(got["web_ship_delay"], [7, 0])                         # the update, then the comment (none)
+        self.assertTrue(any("ws.ws_quantity >= 80 THEN 2" in q for q in cur.q))  # its own parameters
+
+    def test_append_option_names_the_sources(self):
+        with mock.patch("lfc_source_datagen.signals.append", return_value=[{"source": "a", "changed": 0}]) as ap, \
+                mock.patch.object(src, "connector", return_value=lambda: None), redirect_stderr(io.StringIO()):
+            rc = src.main(["--model", "tpcds", "--append", "5", "--host", "h", "--password-file", __file__, "db", "a", "b:1"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(ap.call_args.args[1:4], ("tpcds", ["a", "b"], 5))
+
+
 class TpccDelivery(unittest.TestCase):
     """TPC-C's delivery times through lfc_source_datagen.signals: the parameters' form, the SQL filled, the signal in
     order_line's comment, the summary reading the promise from it; and order_line's item a foreign key (the backorder
@@ -261,6 +296,7 @@ class SignalBlocks(unittest.TestCase):
             profiles = [list(s["profiles"].values()) for s in sigs]
             body = "\n".join(sg.steps(m, "a", "/".join(p[0] for p in profiles)))
             self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+", f"{m}: a psql variable left in its steps")
+            self.assertNotIn("{{", body, f"{m}: a fragment left in its steps")
             self.assertEqual(body.count("COMMENT ON TABLE"), len(sigs))
             combos = ["/".join(p[0] if i == j else "" for i, p in enumerate(profiles)) for j in range(len(sigs))]
             sg.check(m, src.parse([f"s{i}:1:{c}" for i, c in enumerate(combos)] + [f"all{i}:1:" + "/".join(p[i % len(p)] for p in profiles) for i in range(3)]))
