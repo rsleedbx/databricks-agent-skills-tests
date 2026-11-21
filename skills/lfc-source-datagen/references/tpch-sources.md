@@ -223,11 +223,11 @@ Three sources at scale factor 5 (7,500 accounts each), `lfc-sources --model tpcd
 
 | Source | Numbers | All | Tier 1 / 2 / 3 | Slow broker vs other | Falling vs other | Falling |
 |---|---|---|---|---|---|---|
-| retail | `20,30,10,120,250,500,200` | 12.0 | 8.7 / 12.7 / 14.1 | 23.1 vs 11.4 | 30.9 vs 5.6 | 30.0 |
-| wealth | `8,15,10,60,150,500,250` | 6.1 | 4.0 / 6.8 / 7.1 | 12.7 vs 5.7 | 18.0 vs 3.0 | 24.9 |
-| discount | `40,40,5,100,300,300,100` | 17.9 | 13.0 / 18.6 / 21.4 | 27.2 vs 16.4 | 39.5 vs 9.6 | 33.3 |
+| retail | `20,30,10,120,250,500,200` | 12.3 | 9.5 / 11.3 / 15.2 | 24.1 vs 11.6 | 31.2 vs 5.9 | 30.0 |
+| wealth | `8,15,10,60,150,500,250` | 5.9 | 4.7 / 5.2 / 7.3 | 11.1 vs 5.6 | 17.9 vs 2.7 | 24.9 |
+| discount | `40,40,5,100,300,300,100` | 18.0 | 14.4 / 17.1 / 21.6 | 22.2 vs 17.4 | 40.2 vs 9.5 | 33.3 |
 
-Measured on PostgreSQL 14 on 2026-11-20. `DimAccount`'s comment keeps its fill tags with the signal after them, and an append fill after the signal added 100 accounts.
+Measured on PostgreSQL 14 on 2026-11-20. The closing draw has its own hash, so the cash shows nothing of it: in `retail` the closed rate is 13.3 to 13.7% in every quintile of the first balance. `DimAccount`'s comment keeps its fill tags with the signal after them, and an append fill after the signal added 100 accounts.
 
 ## Publication
 
