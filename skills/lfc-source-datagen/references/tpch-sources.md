@@ -244,6 +244,9 @@ Measured on PostgreSQL 14 on 2026-11-20. The closing draw has its own hash, so t
 - **Fixed tables:** a fixed-size table gets none (TPC-DS `income_band`, `reason`, `date_dim`; TPC-H `nation`, `region`), and neither does a code table whose key values are all used (`lfc:fixed`).
 - **Rebuilt tables:** a table a signal rebuilds (its YAML block's `rebuilds:`) is left to the signal.
 - **Too small an SF:** one that would give a scaling table less than one row is refused, with the smallest that works. A parent that doesn't grow would leave the children keyed under it pointing past it. TPC-B grows by whole branches (`--append 1`). TPC-C grows by whole warehouses, so a source built at 0.05 grows by 0.05.
+- **Whole steps:** the SF must be a whole number of steps of the smallest scaling table (1 ÷ its rows per scale factor). TPC-B 1.4 would give 1 branch but 14 tellers, so it's refused.
+- **Rounds:** the growth runs as the fill's own rounds, to each table's current rows plus its share, so a statement still has at most `--rows` rows and a rerun after a failure resumes.
+- **Parents of new rows:** a foreign key outside the key has a formula built from its parent's rows at build, so the new rows point at the parents that were there then (new history at the original tellers and accounts, new orders at the original customers). New parents get children only through their keys: a new branch's accounts, a new warehouse's districts and orders.
 - **`--append 0`:** it only re-applies.
 
 Each step changes only rows whose value differs, using `IS DISTINCT FROM`, deleting unwanted rows and inserting missing ones. On unchanged rows it changes none, so under CDC an append shows the new rows and what they change. The summary row starts with the number of rows the signals changed.

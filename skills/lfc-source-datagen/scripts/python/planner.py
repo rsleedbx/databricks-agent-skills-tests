@@ -55,6 +55,7 @@ class Opts:
     mode: str = "fill"                # fill: up to lfc:rows; append: rows more
     grow: float | None = None         # append by scale factor: each table lfc:sf_rows x grow rows (none without the tag)
     skip: frozenset = frozenset()     # tables to leave out (an append: the ones a signal rebuilds)
+    targets: dict | None = None       # a table's target instead of its lfc:rows (an append by scale factor, as fill rounds)
     order: str = "random"             # random | asc | desc
     data: str = "scramble"            # seq | scramble | random
     plain_every: int = 4
@@ -100,7 +101,7 @@ def plan(eng, tabs, sch, o):
             e, v = tag(c.tags, "e"), tag(c.tags, "v")
             c.expr = e if e is not None else base.replace("x.n", f"({v})") if v is not None and base else base
             c.formula = e is not None or v is not None
-        t.target = rows_tag(t.tags)
+        t.target = (o.targets or {}).get(t.name, rows_tag(t.tags))
         nkey, cols = tag(t.tags, "n"), {c.name: c for c in t.cols}
         k1 = cols.get(t.pk[0]) if len(t.pk) == 1 else None
         t.has_n = nkey is not None
@@ -123,6 +124,15 @@ def plan(eng, tabs, sch, o):
             elif float(m.group(1)) * o.grow < 1:         # a parent that grows by no row breaks the children keyed under it
                 raise ValueError(f"--grow {o.grow:g} gives {t.name} under one row ({m.group(1)} per scale factor): grow "
                                  f"by {1 / float(m.group(1)):g} or more, in whole steps of it")
+    if o.mode == "append" and o.grow is not None:   # whole steps of the smallest scaling table, so no child outgrows
+        sfs = [(float(m.group(1)), t.name) for t in tabs if not t.skipped   # its parent by rounding on its own
+               for m in [re.search(r"lfc:sf_rows=([0-9.]+)", t.tags or "")] if m]
+        if sfs:
+            low, name = min(sfs)
+            k = o.grow * low
+            if abs(k - round(k)) > 1e-6 * max(1.0, k):
+                raise ValueError(f"--grow {o.grow:g} isn't a whole number of steps of {1 / low:g} ({name}, the smallest "
+                                 f"scaling table, has {low:g} rows per scale factor): a child could outgrow its parent")
     out = []
     for t in sorted(tabs, key=lambda t: (t.level, t.name)):
         if t.skipped:

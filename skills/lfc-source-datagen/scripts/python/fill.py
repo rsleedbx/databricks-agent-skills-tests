@@ -13,6 +13,7 @@
 # e.g. FREEPDB1), --password-file (or LFC_PASSWORD_FILE); Informix also --server (the DBSERVERNAME). Run it with the
 # engine's driver installed, e.g.  uv run --with 'psycopg[binary]' fill.py pg tpch --host db --user postgres --password-file pg.pw
 import argparse, os, sys, threading, time
+from dataclasses import replace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import planner, drivers
 from engines import ENGINES
@@ -52,6 +53,15 @@ def fill(a, connect=None):
             print(f"{t.name}|{'' if lo is None else int(lo)}|{'' if hi is None else int(hi)}|{0 if lo is None else int(hi) - int(lo) + 1}|{t.target or ''}")
 
 
+    if a.mode == "append" and a.grow:              # an append by scale factor runs as fill rounds to current + growth, so
+        cnt = status(planned)                      # --rows still caps a statement and a rerun after a failure resumes
+        now = lambda n: 0 if cnt.get(n, (None,))[0] is None else int(cnt[n][1]) - int(cnt[n][0]) + 1
+        targets = {t.name: now(t.name) + t.grow_rows for t in planned}
+        o = replace(o, mode="fill", grow=None, targets=targets, skip=o.skip | {t.name for t in tabs if t.skipped})
+        a.mode = "fill"
+        tabs = eng.catalog(cur, sch)
+        stmts = planner.plan(eng, tabs, sch, o)
+        planned = [t for t in tabs if not t.skipped]
     if a.action == "plan":
         for _, _, s in stmts: print(s + ";")
         return 0

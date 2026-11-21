@@ -384,6 +384,13 @@ class AppendSkipsFullTables(unittest.TestCase):
         self.assertEqual(got, {"acct": "INSERT acct 1000", "hist": "INSERT hist 10000"})   # each its share; rets skipped
         with self.assertRaisesRegex(ValueError, r"grow by 0.0001 or more"):               # rets would get 0.1 of a row
             planner.plan(eng, tabs(), "s", planner.Opts(mode="append", grow=0.00001))
+        tb = lambda: [planner.Table("branch", [col()], ["id"], tags="lfc:rows=1 lfc:sf_rows=1"),
+                      planner.Table("teller", [col()], ["id"], tags="lfc:rows=10 lfc:sf_rows=10")]
+        with self.assertRaisesRegex(ValueError, r"isn't a whole number of steps of 1"):  # 1.4: 1 branch but 14 tellers
+            planner.plan(eng, tb(), "s", planner.Opts(mode="append", grow=1.4))
+        self.assertEqual(len(planner.plan(eng, tb(), "s", planner.Opts(mode="append", grow=2))), 2)
+        fill = planner.plan(eng, tb(), "s", planner.Opts(mode="fill", targets={"teller": 30}))   # growth as fill rounds
+        self.assertEqual([x.target for x in (lambda ts: (planner.plan(eng, ts, "s", planner.Opts(mode="fill", targets={"teller": 30})), ts)[1])(tb())], [1, 30])
 
 
 class Build(unittest.TestCase):
