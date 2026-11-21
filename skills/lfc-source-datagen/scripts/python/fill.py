@@ -53,8 +53,8 @@ def fill(a, connect=None):
             print(f"{t.name}|{'' if lo is None else int(lo)}|{'' if hi is None else int(hi)}|{0 if lo is None else int(hi) - int(lo) + 1}|{t.target or ''}")
 
 
-    if a.mode == "append" and a.grow:              # an append by scale factor runs as fill rounds to current + growth, so
-        cnt = status(planned)                      # --rows still caps a statement and a rerun after a failure resumes
+    if a.mode == "append" and a.grow:              # an append by scale factor runs as fill rounds to the rows at the start
+        cnt = status(planned)                      # plus growth, so --rows still caps a statement (a second run grows again)
         now = lambda n: 0 if cnt.get(n, (None,))[0] is None else int(cnt[n][1]) - int(cnt[n][0]) + 1
         targets = {t.name: now(t.name) + t.grow_rows for t in planned}
         o = replace(o, mode="fill", grow=None, targets=targets, skip=o.skip | {t.name for t in tabs if t.skipped})

@@ -245,7 +245,7 @@ Measured on PostgreSQL 14 on 2026-11-20. The closing draw has its own hash, so t
 - **Rebuilt tables:** a table a signal rebuilds (its YAML block's `rebuilds:`) is left to the signal.
 - **Too small an SF:** one that would give a scaling table less than one row is refused, with the smallest that works. A parent that doesn't grow would leave the children keyed under it pointing past it. TPC-B grows by whole branches (`--append 1`). TPC-C grows by whole warehouses, so a source built at 0.05 grows by 0.05.
 - **Whole steps:** the SF must be a whole number of steps of the smallest scaling table (1 ÷ its rows per scale factor). TPC-B 1.4 would give 1 branch but 14 tellers, so it's refused.
-- **Rounds:** the growth runs as the fill's own rounds, to each table's current rows plus its share, so a statement still has at most `--rows` rows and a rerun after a failure resumes.
+- **Rounds:** the growth runs as the fill's own rounds, to each table's rows at the start plus its share, so a statement still has at most `--rows` rows and the rounds go on until every table reaches its target. A second `--append` measures from the rows there then and grows again, so after a failed one, check the tables' counts before running it again.
 - **Parents of new rows:** a foreign key outside the key has a formula built from its parent's rows at build, so the new rows point at the parents that were there then (new history at the original tellers and accounts, new orders at the original customers). New parents get children only through their keys: a new branch's accounts, a new warehouse's districts and orders.
 - **`--append 0`:** it only re-applies.
 
