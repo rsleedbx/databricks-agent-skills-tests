@@ -112,7 +112,30 @@ sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
 An ingestion pipeline's time grows with its tables even when they're empty: about 2.6 s per table per update at 248.
 Plan the refresh interval from it: a 248-table pipeline can't refresh more often than about every 11 minutes.
 
-## Limits
+## Ramping up data and changes (designed, not built yet)
+
+Objects first, then data, then change rate, each step only after verify passes on the one before, with its
+timings recorded, so a slow snapshot never hides an object problem:
+
+```yaml
+modules:
+  bank:
+    pack: tpcb
+    lobs: 10
+    ramp:
+      data: [0.01, 0.1, 1]               # scale factors, one step at a time (the sources grow by append)
+      dml: {every_minutes: 1, rows: [10, 100, 1000, 10000]}   # rows per batch per LOB and log or fact table
+```
+
+- **Writes through the UC JDBC connection** the source job already holds (no password in code), as one batch a
+  minute from a scheduled job in the source bundle: the generator makes rows in bulk inside the database, so a batch
+  a minute is enough; nothing runs continuously.
+- **The DML comes from the YAML:** each table's role says what changes (log and fact tables get new rows by the
+  generation rules, continuing their row numbers: `append`), the signal's rule marks the new rows, and its `totals:`
+  add the batch's sums to their parents (TPC-B: a transaction's balances). No model or table is named in Python.
+- The ingestion pipelines are triggered; their steady time per update (above) sets how far behind bronze runs at a
+  given batch size, which is what the ramp measures.
+
 
 - One gateway, slot and publication per ingestion pipeline; the source's slot and sender limits cap the pipelines. A
   Lakebase project allows 10 of each and holds 2 physical slots of its own (`wal_proposer_slot`,
