@@ -5,9 +5,10 @@
 -- with bad credit, c_credit BC, waits :credit_hold days), and a backorder (a line whose item has under :low_stock in
 -- stock at its supplying warehouse holds the order :backorder days), plus a jitter.
 --   delivery = entry + :handle_min + 0 .. :handle_span - 1 + slow + tier + hold + backorder + 0 .. :jitter - 1
--- An order is late when delivery - entry > :promise days (TPC-C has no promised date: the comment on order_line keeps
--- the parameters, so a summary or a report reads them from the data). Orders still in new_order are open: no carrier,
--- no delivery, as in the spec. Deterministic (from the keys), so a rerun gives the same dates.
+-- An order is late when delivery - entry > :promise days (TPC-C has no promised date: lfc_source_datagen.signals adds
+-- the parameters to order_line's comment, after its fill tags, so a summary or a report reads them from the data).
+-- Orders still in new_order are open: no carrier, no delivery, as in the spec. Deterministic (from the keys), so a
+-- rerun gives the same dates.
 -- psql variables, all whole numbers: promise handle_min handle_span slow_every slow_district carrier_step credit_hold
 -- low_stock backorder jitter (days but slow_every and low_stock). handle_span, slow_every and jitter at least 1.
 UPDATE orders o SET o_carrier_id = NULL
@@ -33,4 +34,3 @@ d AS (   -- delivered orders (open ones have no carrier now)
 )
 UPDATE order_line ol SET ol_delivery_d = d.e + d.days * interval '1 day'
 FROM d WHERE ol.ol_w_id = d.w AND ol.ol_d_id = d.dd AND ol.ol_o_id = d.oid;
-COMMENT ON TABLE order_line IS :'signal';

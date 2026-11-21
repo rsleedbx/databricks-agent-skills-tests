@@ -1,7 +1,8 @@
 """lfc_source_datagen.signals: a model's signals as its schema's signals: block says (statschema schemas/<model>.yaml),
 on lfc_source_datagen.sources.build. Each signal is a SQL step (tpc/<sql>) with its parameters as psql variables, its
-parameters kept as JSON in <table>'s comment, and a summary query that reads them back. No model's data is in Python:
-a new signal is a SQL file and a YAML block.
+parameters added to <table>'s comment as lfc:signal=<JSON> after the fill's tags (lfc:rows, lfc:n, lfc:by, which a
+later fill of the table still reads), and a summary query that reads them back. No model's data is in Python: a new
+signal is a SQL file and a YAML block; one signal per table.
 
     from lfc_source_contract.jdbc import dbapi
     from lfc_source_datagen.signals import model_sources
@@ -11,7 +12,7 @@ a new signal is a SQL file and a YAML block.
 A source's numbers are its signals' parameters in the block's order, one signal's comma-separated, signals joined by
 '/' and either one empty for none (TPC-DS: <returns>/<ship>). Per signal, the block gives:
   table            the table whose comment keeps the signal's name and parameters
-  sql              its step, a file in tpc/ (psql variables: the parameters, and :'signal' for the comment)
+  sql              its step, a file in tpc/ (psql variables: the parameters)
   parameters       the numbers' names, in order; at_least_1: those that must be 1 or more
   summary          one row about a source: {s} is its schema, :<parameter> a parameter's value
   summary_columns  the row's names
@@ -25,7 +26,7 @@ import functools
 import json
 import re
 
-from lfc_source_contract.jdbc import ident
+from lfc_source_contract.jdbc import ident, literal
 
 from .sources import build, parse, psql_vars, read_sql, statements
 
@@ -71,14 +72,40 @@ def comment(model: str, sig: str, nums: str) -> str:
     return json.dumps({"signal": sig, "parameters": dict(zip(names, map(int, nums.split(","))))}, separators=(",", ":"))
 
 
+TAG = "lfc:signal="
+
+
+def tag(table: str, text: str) -> str:
+    """The statement that puts lfc:signal=<text> last in the table's comment, keeping the fill's tags before it (and
+    replacing an earlier lfc:signal, so a rerun leaves one). Run with search_path at the source's copy."""
+    t = literal(table)
+    return ("DO $sig$ BEGIN EXECUTE format('COMMENT ON TABLE %I IS %L', " + t + ", concat_ws(' ', NULLIF(regexp_replace("
+            "COALESCE(obj_description(to_regclass(" + t + "), 'pg_class'), ''), ' *lfc:signal=.*$', ''), ''), "
+            + literal(TAG + text) + ")); END $sig$")
+
+
 def steps(model: str, name: str, extra: str) -> list[str]:
-    """build()'s steps: each signal the source has, in the block's order (deterministic)."""
+    """build()'s steps: each signal the source has, in the block's order (deterministic), then its comment."""
     sigs = {s["name"]: s for s in spec(model)}
     out = []
     for sig, nums in split(model, extra).items():
-        values = dict(zip(sigs[sig]["parameters"], nums.split(","))) | {"signal": comment(model, sig, nums)}
-        out += statements(psql_vars(read_sql(sigs[sig]["sql"]), values))
+        out += statements(psql_vars(read_sql(sigs[sig]["sql"]), dict(zip(sigs[sig]["parameters"], nums.split(",")))))
+        out.append(tag(sigs[sig]["table"], comment(model, sig, nums)))
     return out
+
+
+def parameters(text: str | None, sig: str) -> dict | None:
+    """The signal's parameters from a table's comment: the JSON after lfc:signal=, or a comment that is only the JSON
+    (sources built before the tag); None when the comment names another signal or none."""
+    if not text:
+        return None
+    i = text.find(TAG)
+    body = text[i + len(TAG):] if i >= 0 else text if text.lstrip().startswith("{") else None
+    try:
+        got = json.loads(body) if body else None
+        return got["parameters"] if got and got.get("signal") == sig else None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
 
 
 def _number(x):
@@ -94,12 +121,7 @@ def summary(model: str, cur, name: str) -> dict:
     for sig in spec(model):
         cols = sig.get("summary_columns") or []
         cur.execute(f"SELECT obj_description('{s}.{sig['table']}'::regclass, 'pg_class')")
-        text = (cur.fetchall() or [[None]])[0][0]
-        try:
-            got = json.loads(text) if text else None
-            params = got["parameters"] if got and got.get("signal") == sig["name"] else None
-        except (ValueError, KeyError, TypeError, AttributeError):
-            params = None
+        params = parameters((cur.fetchall() or [[None]])[0][0], sig["name"])
         if params is None or not sig.get("summary"):
             out |= dict.fromkeys(cols)
             continue

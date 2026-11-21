@@ -135,6 +135,30 @@ class Cur:
         return self.rows
 
 
+def tagged(body: str) -> dict:
+    """{table: the signal JSON} from steps' comment statements."""
+    return {t: json.loads(j) for t, j in re.findall(r"%L', '(\w+)'.*?'lfc:signal=(\{.*?\})'\)\); END", body)}
+
+
+class SignalComment(unittest.TestCase):
+    """The signal goes into the table's comment after the fill's tags, which a later fill reads (lfc:rows, lfc:n,
+    lfc:by); a comment that is only the JSON (a source built before) still reads; another signal's doesn't."""
+
+    def test_parameters_read_after_the_fill_tags(self):
+        j = sg.comment("tpcc", "order_late_delivery", TpccDelivery.D)
+        for text in (f"lfc:rows=300 lfc:n={{(ol_w_id - 1) * 30 + 1}} lfc:by={{ol_w_id}} {sg.TAG}{j}", j, f"{sg.TAG}{j}"):
+            self.assertEqual(sg.parameters(text, "order_late_delivery")["promise"], 3, text)
+        for text in (None, "", "lfc:rows=300", f"lfc:rows=3 {sg.TAG}{j}x"):
+            self.assertIsNone(sg.parameters(text, "order_late_delivery"), text)
+        self.assertIsNone(sg.parameters(j, "web_ship_delay"))
+
+    def test_the_statement_keeps_the_tags_and_replaces_an_old_signal(self):
+        s = sg.tag("trade", '{"signal":"x"}')
+        self.assertTrue(s.startswith("DO $sig$") and s.endswith("END $sig$"))
+        self.assertIn("regexp_replace(COALESCE(obj_description(to_regclass('trade'), 'pg_class'), ''), ' *lfc:signal=.*$', '')", s)
+        self.assertIn("""'lfc:signal={"signal":"x"}'""", s)
+
+
 class TpccDelivery(unittest.TestCase):
     """TPC-C's delivery times through lfc_source_datagen.signals: the parameters' form, the SQL filled, the signal in
     order_line's comment, the summary reading the promise from it; and order_line's item a foreign key (the backorder
@@ -156,9 +180,10 @@ class TpccDelivery(unittest.TestCase):
         self.assertIn("o.o_d_id % 5 = 0 THEN 2", body)
         self.assertIn("((o.o_carrier_id - 1) % 3) * 1", body)
         self.assertIn("s.s_quantity < 12", body)
-        comment = re.search(r"COMMENT ON TABLE order_line IS '(.*)'", body).group(1)
-        self.assertEqual(json.loads(comment)["parameters"]["promise"], 3)
-        self.assertEqual(json.loads(comment)["signal"], "order_late_delivery")
+        self.assertIn("COMMENT ON TABLE %I IS %L', 'order_line'", steps[-1])     # after the step, keeping the fill tags
+        got = tagged(body)
+        self.assertEqual(got["order_line"]["parameters"]["promise"], 3)
+        self.assertEqual(got["order_line"]["signal"], "order_late_delivery")
 
     def test_summary_reads_the_promise_from_the_comment(self):
         cur = Cur({"order_line": sg.comment("tpcc", "order_late_delivery", self.D)}, [(21000, decimal.Decimal("39.9"), 3.0)])
@@ -193,9 +218,9 @@ class TpcdsSignals(unittest.TestCase):
         self.assertIn("s.h % 1000 < 40 + s.is_fit * 80 + s.is_promo * 40 + s.tier * 15", body)
         self.assertIn("ws.ws_warehouse_sk % 5 = 0 THEN 3", body)
         self.assertIn("ws.ws_quantity >= 80 THEN 2", body)
-        comments = dict(re.findall(r"COMMENT ON TABLE (\w+) IS '(.*)'", body))
-        self.assertEqual(json.loads(comments["store_returns"])["signal"], "return_propensity")
-        self.assertEqual(json.loads(comments["web_sales"])["parameters"]["promise"], 6)
+        comments = tagged(body)
+        self.assertEqual(comments["store_returns"]["signal"], "return_propensity")
+        self.assertEqual(comments["web_sales"]["parameters"]["promise"], 6)
         self.assertEqual(len(sg.steps("tpcds", "a", f"/{self.S}")), 2)
         self.assertEqual(len(sg.steps("tpcds", "a", f"{self.R}/")), 3)
 
@@ -228,9 +253,10 @@ class SignalBlocks(unittest.TestCase):
                 sql = src.read_sql(s["sql"])
                 for k in s["parameters"]:
                     self.assertRegex(sql, rf"(?<![:\w]):{k}\b", f"{m} {s['name']}: :{k} not in {s['sql']}")
-                self.assertIn(":'signal'", sql)
+                self.assertNotIn("COMMENT ON", sql.upper(), f"{m}: {s['sql']} writes the comment; signals.steps does")
                 self.assertTrue(set(s.get("at_least_1") or []) <= set(s["parameters"]))
                 self.assertTrue(s["summary_columns"] and "{s}" in s["summary"], f"{m} {s['name']}: summary")
+            self.assertEqual(len({s["table"] for s in sigs}), len(sigs), f"{m}: one signal per table")
             profiles = [list(s["profiles"].values()) for s in sigs]
             body = "\n".join(sg.steps(m, "a", "/".join(p[0] for p in profiles)))
             self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+", f"{m}: a psql variable left in its steps")

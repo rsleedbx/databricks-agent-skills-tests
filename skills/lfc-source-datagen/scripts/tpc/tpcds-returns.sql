@@ -8,7 +8,8 @@
 -- A line's return is a draw, so the target is a propensity: a model learns the rate per category, promotion and income,
 -- not each line. The return comes :lag_min + 0 .. :lag_span - 1 days (date keys) after the sale, with part of the
 -- line's quantity and a reason that follows the cause ('Did not fit' for the fit categories, 'Changed mind' for a
--- discounted sale, else any). The comment on store_returns keeps the parameters. Deterministic (from the keys).
+-- discounted sale, else any). lfc_source_datagen.signals adds the parameters to store_returns's comment, after its
+-- fill tags. Deterministic (from the keys).
 -- psql variables, whole numbers: base fit promo income_step (per mille) lag_min lag_span (days); lag_span at least 1.
 DELETE FROM store_returns;
 WITH r AS (   -- the reasons, numbered, and the two the causes name
@@ -48,4 +49,3 @@ SELECT LEAST(ret.ss_sold_date_sk + :lag_min + (ret.h / 13) % :lag_span, last_day
          + ROUND(COALESCE(ret.ss_ext_tax, 0) * ret.qty / GREATEST(COALESCE(ret.ss_quantity, 1), 1), 2),
        0.50 + (ret.h / 19) % 50, 0, ROUND(COALESCE(ret.ss_sales_price, 0) * ret.qty, 2), 0, 0, 0.50 + (ret.h / 19) % 50
 FROM ret CROSS JOIN named CROSS JOIN last_day;
-COMMENT ON TABLE store_returns IS :'signal';
