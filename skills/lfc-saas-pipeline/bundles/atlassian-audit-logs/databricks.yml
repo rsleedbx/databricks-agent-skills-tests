@@ -1,0 +1,25 @@
+# Atlassian Audit Logs into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/atlassian-audit-logs-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# workspace (open this file, Deployments, Deploy).
+bundle:
+  name: atlassian_audit_logs
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The Atlassian Audit Logs UC connection (an organization API key)
+    default: lfcsaas-atlassian-audit-logs
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: atlassian_audit_logs
+
+targets:
+  dev:
+    default: true
+    mode: development

@@ -1,0 +1,28 @@
+# Wiz Audit Logs into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/wiz-audit-logs-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# workspace (open this file, Deployments, Deploy).
+bundle:
+  name: wiz_audit_logs
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The Wiz Audit Logs UC connection (client ID and secret of a Wiz service account)
+    default: lfcsaas-wiz
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: wiz_audit_logs
+  start_datetime:
+    description: Earliest audit entry to ingest (yyyy-MM-ddTHH:mm:ssZ); the connector's own default is 365 days back
+    default: "2026-11-01T00:00:00Z"
+
+targets:
+  dev:
+    default: true
+    mode: development

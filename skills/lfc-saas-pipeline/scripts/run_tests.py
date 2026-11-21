@@ -14,7 +14,10 @@ Per connector (a notebooks/<slug>-pipeline.py with its bundles/<slug>/), one at 
   3. the notebook: imported to your workspace folder lfc-saas-pipeline/, its %pip line pointed at --ref (default: the
      current branch, pushed, so a package change is what's tested), run as a one-time job into
      <prefix>_<slug>_nb_<epoch>, then its pipeline's first update waited for;
-  4. rows per source table in both destinations: a pass is both updates COMPLETED and equal counts.
+  4. rows per source table in both destinations: a pass is both updates COMPLETED and equal counts (an event-log
+     table in CURSORS: rows before the bundle run's start, since entries keep arriving between the two runs).
+A bundle with a start_datetime variable gets START_DAYS ago in both runs (those connectors default to a year back);
+an update still running after UPDATE_TIMEOUT_S is stopped and fails the connector.
 Each result prints as it comes and goes to the ledger; --again runs every connector. What it creates stays (the
 schemas, pipelines and bundle deployment carry the epoch); delete them when done.
 """
@@ -37,6 +40,15 @@ sys.path.insert(0, str(REPO / "bin/test_skip/scripts"))
 import test_skip
 
 RUNNER = "lfc-saas-pipeline"
+START_DAYS = 1   # start_datetime the tests pass, days back (Wiz: ~35k audit entries a day), where the bundle has that variable
+UPDATE_TIMEOUT_S = 3600   # a first update longer than this fails the connector (and is stopped)
+# Event logs keep getting entries between the two runs: their rows are compared up to the bundle run's start, by
+# the table's cursor column (from the connector's manifest; an expression for a non-timestamp one).
+CURSORS = {
+    "wiz-audit-logs": {"audit_log_entries": "`timestamp`"},
+    "atlassian-audit-logs": {"audit_logs": "`time`"},
+    "openai": {"audit_logs": "timestamp_seconds(effective_at)"},
+}
 ARCHIVE = "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/{ref}.zip"
 
 
@@ -102,19 +114,29 @@ def current_ref() -> str:
     return r.stdout.strip() or "main"
 
 
-def counts(profile: str, catalog: str, schema: str, tables: list[str]) -> dict[str, int | None]:
+def counts(profile: str, catalog: str, schema: str, tables: list[str], until: dict[str, str],
+           cutoff: str) -> dict[str, int | None]:
+    """Rows per table; a table in until counts only rows whose cursor is before cutoff (UTC)."""
     out: dict[str, int | None] = {}
     for t in tables:
+        where = f" WHERE {until[t]} < timestamp'{cutoff}'" if t in until else ""
         try:
             rows = json.loads(cli(profile, "experimental", "aitools", "tools", "query",
-                                  f"SELECT count(*) AS n FROM `{catalog}`.`{schema}`.`{t}`", "-o", "json"))
+                                  f"SELECT count(*) AS n FROM `{catalog}`.`{schema}`.`{t}`{where}", "-o", "json"))
             out[t] = int(rows[0]["n"])
         except Exception:  # noqa: BLE001  a table that didn't land
             out[t] = None
     return out
 
 
-def run_bundle(profile: str, slug: str, catalog: str, schema: str, epoch: int) -> tuple[str, str]:
+def start_vars(slug: str, start: str) -> dict[str, str]:
+    """{start_datetime: start} when the bundle has that variable (connectors that backfill a year by default)."""
+    return {"start_datetime": start} if "\n  start_datetime:" in (SKILL / "bundles" / slug / "databricks.yml").read_text() \
+        else {}
+
+
+def run_bundle(profile: str, slug: str, catalog: str, schema: str, epoch: int,
+               extra: dict[str, str]) -> tuple[str, str]:
     """Deploy and run the bundle from a copy named <bundle>_<epoch>: its own deployment, so no earlier deployment's
     resources are replaced. (destination schema as created, update result)."""
     with tempfile.TemporaryDirectory() as d:
@@ -123,16 +145,25 @@ def run_bundle(profile: str, slug: str, catalog: str, schema: str, epoch: int) -
         yml = b / "databricks.yml"
         yml.write_text(re.sub(r"(\nbundle:\n  name: )(\S+)", rf"\g<1>\g<2>_{epoch}", yml.read_text(), count=1))
         v = ["--var", f"schema={schema}", "--var", f"catalog={catalog}"]
+        for k, val in extra.items():
+            v += ["--var", f"{k}={val}"]
         cli(profile, "bundle", "deploy", *v, cwd=b)
-        r = subprocess.run(["databricks", "bundle", "run", pipeline_key(slug), *v, "--profile", profile],
-                           capture_output=True, text=True, cwd=b, check=False)
+        try:
+            r = subprocess.run(["databricks", "bundle", "run", pipeline_key(slug), *v, "--profile", profile],
+                               capture_output=True, text=True, cwd=b, check=False, timeout=UPDATE_TIMEOUT_S)
+            out = r.stdout + r.stderr if r.returncode == 0 else ""
+        except subprocess.TimeoutExpired:
+            out = None
         summary = json.loads(cli(profile, "bundle", "summary", *v, "-o", "json", cwd=b))
     created = next(iter(summary["resources"]["schemas"].values()))["name"]
-    state = "COMPLETED" if r.returncode == 0 and "is COMPLETED" in (r.stdout + r.stderr) else "FAILED"
-    return created, state
+    if out is None:   # stop the update, so a timed-out test doesn't keep running
+        pid = next(iter(summary["resources"]["pipelines"].values()))["id"]
+        cli(profile, "pipelines", "stop", pid, "--no-wait", check=False)
+        return created, "TIMEOUT"
+    return created, "COMPLETED" if "is COMPLETED" in out else "FAILED"
 
 
-def run_notebook(profile: str, slug: str, catalog: str, schema: str, ref: str) -> str:
+def run_notebook(profile: str, slug: str, catalog: str, schema: str, ref: str, extra: dict[str, str]) -> str:
     """Import the notebook (its %pip line at ref), run it as a one-time job, wait for its pipeline's update."""
     me = json.loads(cli(profile, "current-user", "me", "-o", "json"))["userName"]
     path = f"/Users/{me}/lfc-saas-pipeline/{slug}-pipeline"
@@ -147,7 +178,7 @@ def run_notebook(profile: str, slug: str, catalog: str, schema: str, ref: str) -
     run = {"run_name": f"lfc-saas-pipeline test {slug} {schema}",
            "tasks": [{"task_key": "notebook", "notebook_task": {"notebook_path": path,
                                                                 "base_parameters": {"schema": schema,
-                                                                                    "catalog": catalog}}}]}
+                                                                                    "catalog": catalog, **extra}}}]}
     out = json.loads(cli(profile, "jobs", "submit", "--json", json.dumps(run), "-o", "json", check=False) or "{}")
     if (out.get("state") or {}).get("result_state") != "SUCCESS":
         return "FAILED (notebook job)"
@@ -155,11 +186,12 @@ def run_notebook(profile: str, slug: str, catalog: str, schema: str, ref: str) -
     if not pipes:
         return "FAILED (no pipeline)"
     pid = pipes[0]["pipeline_id"]
-    for _ in range(240):   # up to an hour for the first update
+    for _ in range(UPDATE_TIMEOUT_S // 15):
         st = (json.loads(cli(profile, "pipelines", "get", pid, "-o", "json")).get("latest_updates") or [{}])[0]
         if st.get("state") in ("COMPLETED", "FAILED", "CANCELED"):
             return st["state"]
         time.sleep(15)
+    cli(profile, "pipelines", "stop", pid, "--no-wait", check=False)
     return "TIMEOUT"
 
 
@@ -188,13 +220,17 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
 def run_one(a: argparse.Namespace, slug: str, fp: str) -> bool:
     """Deploy both ways, compare, record the result."""
     epoch, tables = int(time.time()), tables_of(slug)
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))   # Z: SQL reads a zoneless literal in the session timezone
+    extra = start_vars(slug, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch - START_DAYS * 86400)))
     base = f"{a.prefix}_{slug.replace('-', '_')}"
-    dab_schema, dab_state = run_bundle(a.profile, slug, a.catalog, f"{base}_dab_{epoch}", epoch)
+    dab_schema, dab_state = run_bundle(a.profile, slug, a.catalog, f"{base}_dab_{epoch}", epoch, extra)
     nb_schema = f"{base}_nb_{epoch}"
-    nb_state = run_notebook(a.profile, slug, a.catalog, nb_schema, a.ref)
-    dab_n, nb_n = counts(a.profile, a.catalog, dab_schema, tables), counts(a.profile, a.catalog, nb_schema, tables)
+    nb_state = run_notebook(a.profile, slug, a.catalog, nb_schema, a.ref, extra)
+    until = CURSORS.get(slug, {})
+    dab_n = counts(a.profile, a.catalog, dab_schema, tables, until, cutoff)
+    nb_n = counts(a.profile, a.catalog, nb_schema, tables, until, cutoff)
     ok = dab_state == "COMPLETED" and nb_state == "COMPLETED" and dab_n == nb_n and None not in dab_n.values()
-    rows = ", ".join(f"{t} {dab_n[t]}/{nb_n[t]}" for t in tables)
+    rows = ", ".join(f"{t} {dab_n[t]}/{nb_n[t]}" + (f" (before {cutoff})" if t in until else "") for t in tables)
     print(f"  {'ok  ' if ok else 'FAIL'}  {slug}: bundle {dab_state}, notebook {nb_state}; rows bundle/notebook: {rows}")
     if ok and a.unpushed:
         print(f"        not recorded as a pass: the package has changes the notebook can't install ({a.unpushed})")
@@ -212,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--catalog", default="main")
     ap.add_argument("--prefix", default="lfc_saas_pipeline_test")
     a = ap.parse_args(argv)
+    sys.stdout.reconfigure(line_buffering=True)   # each result shows as it comes, also when redirected to a file
     a.ref = a.ref or current_ref()
     a.ref_sha, a.unpushed = pushed_state(a.ref)
     host = json.loads(cli(a.profile, "auth", "describe", "-o", "json", check=False) or "{}").get("details", {}).get(

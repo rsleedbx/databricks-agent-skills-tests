@@ -1,0 +1,41 @@
+resources:
+  schemas:
+    event_logs:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: Wiz Audit Logs as Lakeflow Connect lands it
+
+  pipelines:
+    wiz_audit_logs:
+      name: ${var.schema}
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.event_logs.name}
+      ingestion_definition:
+        connection_name: ${var.connection}
+        source_configurations:
+          - api_source_connector_config:
+              configs:
+                start_datetime: ${var.start_datetime}
+        objects:
+          # audit_log_entries, vulnerability_findings (source schema `default`)
+          - table: &t {source_schema: default, source_table: audit_log_entries,
+                       destination_catalog: "${var.catalog}", destination_schema: "${resources.schemas.event_logs.name}"}
+          - table: {<<: *t, source_table: vulnerability_findings}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+
+  jobs:
+    wiz_audit_logs_refresh:
+      name: ${var.schema}_refresh
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: refresh
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.wiz_audit_logs.id}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

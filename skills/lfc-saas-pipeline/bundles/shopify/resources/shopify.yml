@@ -1,0 +1,38 @@
+resources:
+  schemas:
+    event_logs:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: Shopify as Lakeflow Connect lands it
+
+  pipelines:
+    shopify:
+      name: ${var.schema}
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.event_logs.name}
+      ingestion_definition:
+        connection_name: ${var.connection}
+        objects:
+          # customers, orders, products (source schema `default`)
+          - table: &t {source_schema: default, source_table: customers,
+                       destination_catalog: "${var.catalog}", destination_schema: "${resources.schemas.event_logs.name}"}
+          - table: {<<: *t, source_table: orders}
+          - table: {<<: *t, source_table: products}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+
+  jobs:
+    shopify_refresh:
+      name: ${var.schema}_refresh
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: refresh
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.shopify.id}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

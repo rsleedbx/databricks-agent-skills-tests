@@ -63,7 +63,8 @@ class PipelineTest(unittest.TestCase):
     def test_each_notebook_and_its_bundle_ingest_the_same_tables_through_the_same_connection(self):
         import re
         root = Path(__file__).resolve().parents[1]
-        pairs = {"1password-event-logs": "lfcsaas-1password", "marketo": "lfcsaas-marketo", "netsuite": "lfcsaas-netsuite"}
+        pairs = {"1password-event-logs": "lfcsaas-1password", "marketo": "lfcsaas-marketo", "netsuite": "lfcsaas-netsuite",
+                 "square": "lfcsaas-square", "wiz-audit-logs": "lfcsaas-wiz", "shopify": "lfcsaas-shopify", "zoom": "lfcsaas-zoom", "atlassian-audit-logs": "lfcsaas-atlassian-audit-logs", "openai": "lfcsaas-openai", "adobe-commerce": "lfcsaas-adobe-commerce"}
         self.assertEqual(sorted(p.stem.removesuffix("-pipeline") for p in (root / "notebooks").glob("*.py")),
                          sorted(pairs))
         for slug, conn in pairs.items():

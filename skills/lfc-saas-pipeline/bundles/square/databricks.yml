@@ -1,0 +1,25 @@
+# Square into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/square-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# workspace (open this file, Deployments, Deploy).
+bundle:
+  name: square
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The Square UC connection (an access token of a Square application)
+    default: lfcsaas-square
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: square
+
+targets:
+  dev:
+    default: true
+    mode: development
