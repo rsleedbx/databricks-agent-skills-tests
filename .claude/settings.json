@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"$CLAUDE_PROJECT_DIR/bin/repo_reuse_hook/scripts/repo_reuse_hook.py\"; [ ! -f \"$f\" ] || python3 -I \"$f\"",
+            "timeout": 20,
+            "statusMessage": "Looking for existing code in this repo"
+          }
+        ]
+      }
+    ]
+  }
+}

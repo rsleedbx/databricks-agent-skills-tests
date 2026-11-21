@@ -8,6 +8,10 @@ Results, fixes and new tests are welcome. The repo works like a shared notebook 
 2. Run the checks your change touches: `bash bin/test_scripts.sh`, `uv run bin/check_links.py`, and `uv run bin/scripts_index.py` when you add or change a script ([docs/running-tests.md](docs/running-tests.md)).
 3. Open a pull request to `main`. The maintainer reviews and merges it; while there's one maintainer, the maintainer's own changes are merged after the checks above pass, and a second reviewer is added when there is one.
 
+## The reuse hook
+
+With Claude Code, the repo's [.claude/settings.json](.claude/settings.json) runs `bin/repo_reuse_hook` before an edit: when the edit adds a function like one the repo already has, it asks, naming the existing function. Use or extend that one unless the job differs. It compares only with this repo's code and sends nothing anywhere. It's a vendored copy ([.vendored.json](.vendored.json)), so change it upstream, not here. If you run a reuse hook of your own across your repos, set `REUSE_FIRST_GLOBAL=1` in your Claude Code settings' `env` and this one stays silent.
+
 ## Adding test results
 
 Record each result with `record.py` ([lfc-test-results](skills/lfc-test-results/SKILL.md)). With the skills installed as a plugin, your records are in `~/.lfc/tests/results/`: copy the run files into `results/runs/` of your fork and open a pull request.
