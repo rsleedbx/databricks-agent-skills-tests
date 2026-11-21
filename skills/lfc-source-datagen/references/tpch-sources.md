@@ -201,6 +201,34 @@ Three sources at scale factor 1 (100,000 history rows each), `lfc-sources --mode
 
 Measured on PostgreSQL 14 on 2026-11-20. In each source the account, teller and branch sums equal the history's, and no normal row is larger than `normal_max`. An append fill after the signal added 1,000 history rows that continue the row numbers.
 
+## TPC-DI account closings
+
+The fill draws an account's `Status` (6% Inactive) and every cash balance on its own, so nothing predicts a closing. `tpcdi-account-close.sql` (signal `account_close`, from `tpcdi.yaml`'s `signals:`) gives each source one broker-dealer's book.
+- **Cash:** each account's cash moves by its own drift, −`drift_span` … `drift_span` dollars from one `FactCashBalances` row to the next by date.
+- **Falling:** an account is falling when its drift is below −`fall_at` and it has two or more balances, so the fall shows in the data.
+- **Closing:** an account closes (`Status` Inactive) at a per-mille rate:
+
+| Part | Per mille |
+|---|---|
+| base | `base` |
+| the customer's tier (`DimCustomer.Tier`; tier 3 closes most) | (`Tier` − 1) × `tier_step` |
+| a slow broker (`SK_BrokerID` a multiple of `broker_every`) | `broker` |
+| a falling balance | `falling` |
+
+- About 1 in 6 accounts has no balances at scale factor 1 to 5, so it can't be falling.
+- A closing changes `Status` in place; it doesn't add an SCD version.
+- The seven numbers, in order: `base,tier_step,broker_every,broker,falling,drift_span,fall_at`.
+
+Three sources at scale factor 5 (7,500 accounts each), `lfc-sources --model tpcdi`, as % of accounts closed:
+
+| Source | Numbers | All | Tier 1 / 2 / 3 | Slow broker vs other | Falling vs other | Falling |
+|---|---|---|---|---|---|---|
+| retail | `20,30,10,120,250,500,200` | 12.3 | 9.5 / 11.3 / 15.2 | 24.1 vs 11.6 | 31.2 vs 5.9 | 30.0 |
+| wealth | `8,15,10,60,150,500,250` | 5.9 | 4.7 / 5.2 / 7.3 | 11.1 vs 5.6 | 17.9 vs 2.7 | 24.9 |
+| discount | `40,40,5,100,300,300,100` | 18.0 | 14.4 / 17.1 / 21.6 | 22.2 vs 17.4 | 40.2 vs 9.5 | 33.3 |
+
+Measured on PostgreSQL 14 on 2026-11-20. The closing draw has its own hash, so the cash shows nothing of it: in `retail` the closed rate is 13.3 to 13.7% in every quintile of the first balance. `DimAccount`'s comment keeps its fill tags with the signal after them, and an append fill after the signal added 100 accounts.
+
 ## Publication
 
 On PostgreSQL 15 and later, the publication is `FOR TABLES IN SCHEMA` the sources' schemas, so a table added later is in it. Before 15, that form doesn't exist, so it lists the tables there now by name. A rerun with other sources `ALTER`s the publication to the new list.

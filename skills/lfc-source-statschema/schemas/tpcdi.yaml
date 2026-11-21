@@ -39,6 +39,32 @@
 # scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
+# signals: what a model can learn from a source built with them (lfc_source_datagen.signals, lfc-sources --model tpcdi),
+# and how the data was made so.
+signals:
+  - name: account_close
+    target: "DimAccount: closed when Status is Inactive"
+    replaces: "the spec's random Status (6% Inactive) and cash balances: nothing predicts a closing"
+    built_by: "lfc-source-datagen: scripts/tpc/tpcdi-account-close.sql (lfc_source_datagen.signals), per source"
+    causes:
+      - "the customer's tier: (DimCustomer.Tier - 1) * tier_step per mille (tier 3 closes most)"
+      - "a slow broker: broker per mille when SK_BrokerID is a multiple of broker_every"
+      - "a falling balance: falling per mille when the account's cash drifts down by more than fall_at per balance (two or more FactCashBalances rows)"
+    noise: "an account closes when a hash of its key % 1000 is under the rate: a propensity, learned per group"
+    follows: "FactCashBalances.Cash rebuilt: a start per account plus its drift (-drift_span .. drift_span) per balance, by date"
+    known: "accounts without balances (about 1 in 6 at SF 1) can't be falling; the closing doesn't add an SCD version"
+    parameters: [base, tier_step, broker_every, broker, falling, drift_span, fall_at]
+    profiles:
+      retail: "20,30,10,120,250,500,200"
+      wealth: "8,15,10,60,150,500,250"
+      discount: "40,40,5,100,300,300,100"
+    measured: "lfc-source-datagen references/tpch-sources.md: % closed by each cause, per profile"
+    table: DimAccount
+    sql: tpcdi-account-close.sql
+    at_least_1: [broker_every, drift_span]
+    summary: "SELECT COUNT(*), ROUND(100.0 * AVG((\"Status\" = 'Inactive')::int), 1) FROM {s}.\"DimAccount\""
+    summary_columns: [accounts, closed_pct]
+
 tables:
 
   # ── StatusType ────────────────────────────────────────────────────────────────
