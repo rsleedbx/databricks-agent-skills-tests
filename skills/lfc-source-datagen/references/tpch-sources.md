@@ -201,6 +201,34 @@ Three sources at scale factor 1 (100,000 history rows each), `lfc-sources --mode
 
 Measured on PostgreSQL 14 on 2026-11-20. In each source the account, teller and branch sums equal the history's, and no normal row is larger than `normal_max`. An append fill after the signal added 1,000 history rows that continue the row numbers.
 
+## TPC-DI account closings
+
+The fill draws an account's `Status` (6% Inactive) and every cash balance on its own, so nothing predicts a closing. `tpcdi-account-close.sql` (signal `account_close`, from `tpcdi.yaml`'s `signals:`) gives each source one broker-dealer's book.
+- **Cash:** each account's cash moves by its own drift, −`drift_span` … `drift_span` dollars from one `FactCashBalances` row to the next by date.
+- **Falling:** an account is falling when its drift is below −`fall_at` and it has two or more balances, so the fall shows in the data.
+- **Closing:** an account closes (`Status` Inactive) at a per-mille rate:
+
+| Part | Per mille |
+|---|---|
+| base | `base` |
+| the customer's tier (`DimCustomer.Tier`; tier 3 closes most) | (`Tier` − 1) × `tier_step` |
+| a slow broker (`SK_BrokerID` a multiple of `broker_every`) | `broker` |
+| a falling balance | `falling` |
+
+- About 1 in 6 accounts has no balances at scale factor 1 to 5, so it can't be falling.
+- A closing changes `Status` in place; it doesn't add an SCD version.
+- The seven numbers, in order: `base,tier_step,broker_every,broker,falling,drift_span,fall_at`.
+
+Three sources at scale factor 5 (7,500 accounts each), `lfc-sources --model tpcdi`, as % of accounts closed:
+
+| Source | Numbers | All | Tier 1 / 2 / 3 | Slow broker vs other | Falling vs other | Falling |
+|---|---|---|---|---|---|---|
+| retail | `20,30,10,120,250,500,200` | 12.0 | 8.7 / 12.7 / 14.1 | 23.1 vs 11.4 | 30.9 vs 5.6 | 30.0 |
+| wealth | `8,15,10,60,150,500,250` | 6.1 | 4.0 / 6.8 / 7.1 | 12.7 vs 5.7 | 18.0 vs 3.0 | 24.9 |
+| discount | `40,40,5,100,300,300,100` | 17.9 | 13.0 / 18.6 / 21.4 | 27.2 vs 16.4 | 39.5 vs 9.6 | 33.3 |
+
+Measured on PostgreSQL 14 on 2026-11-20. `DimAccount`'s comment keeps its fill tags with the signal after them, and an append fill after the signal added 100 accounts.
+
 ## Publication
 
 On PostgreSQL 15 and later, the publication is `FOR TABLES IN SCHEMA` the sources' schemas, so a table added later is in it. Before 15, that form doesn't exist, so it lists the tables there now by name. A rerun with other sources `ALTER`s the publication to the new list.

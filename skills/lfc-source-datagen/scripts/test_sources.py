@@ -127,7 +127,7 @@ class Cur:
     def execute(self, q, params=None):
         self.q.append(q)
         if "obj_description" in q:
-            self.rows = [(self.comments.get(re.search(r"\.(\w+)'::regclass", q).group(1)),)]
+            self.rows = [(self.comments.get(re.search(r"\.\"?(\w+)\"?'::regclass", q).group(1)),)]
         else:
             self.rows = [self.answers.pop(0)]
 
@@ -155,7 +155,8 @@ class SignalComment(unittest.TestCase):
     def test_the_statement_keeps_the_tags_and_replaces_an_old_signal(self):
         s = sg.tag("trade", '{"signal":"x"}')
         self.assertTrue(s.startswith("DO $sig$") and s.endswith("END $sig$"))
-        self.assertIn("regexp_replace(COALESCE(obj_description(to_regclass('trade'), 'pg_class'), ''), ' *lfc:signal=.*$', '')", s)
+        self.assertIn("""regexp_replace(COALESCE(obj_description(to_regclass('"trade"'), 'pg_class'), ''), ' *lfc:signal=.*$', '')""", s)
+        self.assertIn("""to_regclass('"DimAccount"')""", sg.tag("DimAccount", "{}"))   # a mixed-case name, quoted
         self.assertIn("""'lfc:signal={"signal":"x"}'""", s)
 
 
@@ -246,7 +247,7 @@ class SignalBlocks(unittest.TestCase):
 
     def test_every_block_runs(self):
         models = [m for m in ("tpcb", "tpcc", "tpch", "tpcds", "tpce", "tpcdi") if sg.spec(m)]
-        self.assertTrue({"tpcb", "tpcc", "tpcds", "tpce"} <= set(models))
+        self.assertTrue({"tpcb", "tpcc", "tpcds", "tpce", "tpcdi"} <= set(models))
         for m in models:
             sigs = sg.spec(m)
             for s in sigs:

@@ -78,9 +78,9 @@ TAG = "lfc:signal="
 def tag(table: str, text: str) -> str:
     """The statement that puts lfc:signal=<text> last in the table's comment, keeping the fill's tags before it (and
     replacing an earlier lfc:signal, so a rerun leaves one). Run with search_path at the source's copy."""
-    t = literal(table)
+    t, q = literal(table), literal(ident(table))   # to_regclass reads a quoted name as is (TPC-DI's DimAccount)
     return ("DO $sig$ BEGIN EXECUTE format('COMMENT ON TABLE %I IS %L', " + t + ", concat_ws(' ', NULLIF(regexp_replace("
-            "COALESCE(obj_description(to_regclass(" + t + "), 'pg_class'), ''), ' *lfc:signal=.*$', ''), ''), "
+            "COALESCE(obj_description(to_regclass(" + q + "), 'pg_class'), ''), ' *lfc:signal=.*$', ''), ''), "
             + literal(TAG + text) + ")); END $sig$")
 
 
@@ -120,7 +120,7 @@ def summary(model: str, cur, name: str) -> dict:
     out = {}
     for sig in spec(model):
         cols = sig.get("summary_columns") or []
-        cur.execute(f"SELECT obj_description('{s}.{sig['table']}'::regclass, 'pg_class')")
+        cur.execute(f"SELECT obj_description({literal(s + '.' + ident(sig['table']))}::regclass, 'pg_class')")
         params = parameters((cur.fetchall() or [[None]])[0][0], sig["name"])
         if params is None or not sig.get("summary"):
             out |= dict.fromkeys(cols)
