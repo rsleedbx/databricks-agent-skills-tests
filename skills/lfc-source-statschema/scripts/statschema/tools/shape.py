@@ -288,6 +288,7 @@ for tn in order:
             pr = R[fkcol[k][0]["parent_table"]]; log(f"{tn}: {rows} rows but its key {k} is unique and points at {pr} parents; {pr} rows")
             rows = R[tn] = pr; tags[0] = f"lfc:rows={rows}"
         if cd[1] != k: tags.append(f"lfc:n={{{cd[1]}}}")
+        if cd[3] is not None and rows >= cd[3]: tags.append("lfc:fixed")   # every key value used: an append can't add
         put(k, (cd[0], cd[2]("x.n"))); keyf[tn] = {k: (cd[0], cd[2]("x.n"))}; nback[tn] = (cd[1], k)
     elif len(pk) > 1:   # k1 = (n - 1) DIV f + 1; the other key columns share (n - 1) % f, as one mixed-radix number when
         #                    their values are countable (each its own digit), else the second alone and the rest their first
@@ -310,6 +311,9 @@ for tn in order:
                 log(f"{tn}: {rows} rows but only {c1n} x {f} key combinations; {c1n * f} rows")
                 rows = R[tn] = c1n * f; tags[0] = f"lfc:rows={rows}"
         step = max(1, c2n // f) if c2n < 10 ** 18 else 1
+        c1n = cap(k1, c1)
+        if c1n < 10 ** 18 and c2n < 10 ** 18 and rows >= c1n * c2n and (radix or len(pk) == 2):
+            tags.append("lfc:fixed")              # every key combination used (TPC-E charge: 5 trade types x 3 tiers)
         if radix:                               # a step sharing a factor with the fastest column's count would hold it
             while step > 1 and math.gcd(step, caps[-1]) > 1: step -= 1   # to a few values (one, if a multiple)
         put(k1, (c1[0], c1[2](f"((x.n - 1) DIV {f} + 1)")))

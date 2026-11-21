@@ -5,7 +5,8 @@
 # key to the parent's one-column key takes a value inside the parent's current range; key, UNIQUE, foreign-key, and
 # formula columns keep their own value, the rest are plain n, or scrambled per column (data=scramble | random) except
 # in every plain_every-th block of `block` keys. A table qualifies with a one-column primary key that maps back to n,
-# or with lfc:n={n from a row}; lfc:by={column} names the column n rises with; lfc:rows=N is its target.
+# or with lfc:n={n from a row}; lfc:by={column} names the column n rises with; lfc:rows=N is its target; an append
+# skips a table tagged lfc:fixed (every key value used).
 # The scramble's constants (a, b per column) come from a hash of the table and column (and --seed), so every plan of
 # the same schema writes the same rows.
 import re, zlib
@@ -106,6 +107,8 @@ def plan(eng, tabs, sch, o):
             t.skipped = "no primary key" if not t.pk else "composite key" if len(t.pk) > 1 else f"key type {k1.ty if k1 else '?'}"
         elif o.mode == "fill" and t.target is None:
             t.skipped = "no lfc:rows target"
+        elif o.mode == "append" and re.search(r"(^|\s)lfc:fixed(\s|$)", t.tags or ""):
+            t.skipped = "fixed size: every key value used"
     out = []
     for t in sorted(tabs, key=lambda t: (t.level, t.name)):
         if t.skipped:

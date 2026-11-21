@@ -27,6 +27,7 @@ BEGIN
         tn := names(i);                                                                      -- (SQL takes variables, not calls)
         tgt := TO_NUMBER(tg(names(i), NULL, 'rows'));
         CONTINUE WHEN md = 'fill' AND tgt IS NULL;
+        CONTINUE WHEN md <> 'fill' AND tg(names(i), NULL, 'fixed') IS NOT NULL;               -- an append skips a full table
         cols := NULL; exprs := NULL; first := TRUE;
         FOR c IN (SELECT column_name, data_type, data_precision, data_scale, char_length, identity_column FROM all_tab_cols
                   WHERE owner = sch AND table_name = tn AND hidden_column = 'NO' AND virtual_column = 'NO' ORDER BY column_id) LOOP

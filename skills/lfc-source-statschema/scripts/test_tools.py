@@ -417,6 +417,22 @@ class CompositeKeys(unittest.TestCase):
         with self.assertRaises(SystemExit):
             shape(sch)
 
+    def test_a_full_key_is_tagged_fixed_for_appends(self):
+        from statschema.tools import shape
+        codes = lambda rows: {"name": "codes", "row_count": rows, "columns": [
+            {"name": "c", "type": "varchar", "length": 4, "primary_key": True, "generation": {"values": ["A", "B", "C"]}}]}
+        pair = {"name": "pair", "row_count": 6, "columns": [
+            {"name": "c", "type": "varchar", "length": 4, "primary_key": True}, {"name": "t", "type": "integer", "primary_key": True,
+                                                                               "generation": {"min_value": 1, "max_value": 2}}],
+                "fk_constraints": [{"columns": ["c"], "parent_table": "codes", "parent_columns": ["c"]}]}
+        T = {x["name"]: x for x in yaml.safe_load(shape({"version": "1.0", "tables": [codes(3), pair]})[0])["tables"]}
+        self.assertIn("lfc:fixed", T["codes"]["lfc_tags"].split())                 # 3 codes, 3 rows
+        self.assertIn("lfc:fixed", T["pair"]["lfc_tags"].split())                  # 3 codes x 2 = 6 rows
+        roomy = {x["name"]: x for x in yaml.safe_load(shape({"version": "1.0", "tables": [codes(2)]})[0])["tables"]}
+        self.assertNotIn("lfc:fixed", roomy["codes"]["lfc_tags"].split())        # one code left
+        my = ddl(shape({"version": "1.0", "tables": [codes(3)]})[0].replace("lfc:fixed", "lfc:fixed " + "lfc:x=" + "y" * 2000), "mysql")
+        self.assertRegex(my, r"COMMENT\s*=\s*'lfc:rows=3 lfc:fixed lfc:ref'")        # kept when MySQL's comment is cut
+
 
 if __name__ == "__main__":
     unittest.main()

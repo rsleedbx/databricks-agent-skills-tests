@@ -27,11 +27,11 @@ DECLARE
   FUNCTION q(s VARCHAR2) RETURN VARCHAR2 IS BEGIN RETURN '"' || s || '"'; END;
   FUNCTION g(m smap, k VARCHAR2) RETURN VARCHAR2 IS BEGIN IF m.EXISTS(k) THEN RETURN m(k); END IF; RETURN NULL; END;
   -- a tag: lfc:v={...} (a column's formula in x.n), e (its value as is), len (its string length), n (a table's n from a
-  -- row), by (the column n rises with), rows (the target)
+  -- row), by (the column n rises with), rows (the target), fixed (every key value used: an append skips the table)
   FUNCTION tg(t VARCHAR2, c VARCHAR2, k VARCHAR2) RETURN VARCHAR2 IS s VARCHAR2(32767) := g(tags, t || '.' || NVL(c, '-'));
   BEGIN
     IF s IS NULL THEN RETURN NULL; END IF;
-    IF k IN ('rows', 'added') THEN RETURN REGEXP_SUBSTR(s, 'lfc:' || k || '(=([0-9]+))?', 1, 1, NULL, CASE k WHEN 'rows' THEN 2 ELSE 0 END); END IF;
+    IF k IN ('rows', 'added', 'fixed') THEN RETURN REGEXP_SUBSTR(s, 'lfc:' || k || '(=([0-9]+))?', 1, 1, NULL, CASE k WHEN 'rows' THEN 2 ELSE 0 END); END IF;
     RETURN REGEXP_SUBSTR(s, 'lfc:' || k || '=\{([^}]*)\}', 1, 1, NULL, 1);
   END;
   PROCEDURE init IS

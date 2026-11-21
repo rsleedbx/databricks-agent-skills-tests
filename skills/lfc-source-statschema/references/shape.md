@@ -1,6 +1,6 @@
 # How shape.py chooses each column
 
-[`shape.py`](../scripts/shape.py) reads `schema.yaml` (and `stats.yaml`, if any) and writes the same schema with each table's target rows and each column's **lfc-source-datagen** tags in its comment: `lfc:v={integer formula in x.n}` (the column's usual cast of the formula), `lfc:e={SQL expression}` (the value as is: literal strings), `lfc:len={L}`, and in the table's `lfc_tags`: `lfc:rows=`, `lfc:n={n from a row}`, `lfc:by={column}`. Formulas are written in MySQL syntax; [`ddl.py`](../scripts/ddl.py) transpiles them for the target. Every decision it makes (a cut list, a capped table, a replaced rule) is printed to stderr.
+[`shape.py`](../scripts/shape.py) reads `schema.yaml` (and `stats.yaml`, if any) and writes the same schema with each table's target rows and each column's **lfc-source-datagen** tags in its comment: `lfc:v={integer formula in x.n}` (the column's usual cast of the formula), `lfc:e={SQL expression}` (the value as is: literal strings), `lfc:len={L}`, and in the table's `lfc_tags`: `lfc:rows=`, `lfc:n={n from a row}`, `lfc:by={column}`, and `lfc:fixed` when the rows use every value the key can take (a code table such as TPC-E `status_type`), so an append, which could only repeat a key, leaves the table out. Formulas are written in MySQL syntax; [`ddl.py`](../scripts/ddl.py) transpiles them for the target. Every decision it makes (a cut list, a capped table, a replaced rule) is printed to stderr.
 
 ## A column's value, first match wins
 

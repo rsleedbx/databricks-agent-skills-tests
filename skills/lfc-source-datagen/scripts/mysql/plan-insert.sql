@@ -44,8 +44,9 @@ FROM (SELECT db, tbl, GROUP_CONCAT(CONCAT('`', col, '`') ORDER BY pos SEPARATOR 
                  ORDER BY pos SEPARATOR ', ') AS exprs
       FROM lfc_cols GROUP BY db, tbl) k
 JOIN lfc_keys kk ON kk.db = k.db AND kk.tbl = k.tbl
-JOIN (SELECT table_schema, table_name, CAST(NULLIF(REGEXP_SUBSTR(table_comment, '(?<=lfc:rows=)[0-9]+'), '') AS UNSIGNED) AS target
+JOIN (SELECT table_schema, table_name, CAST(NULLIF(REGEXP_SUBSTR(table_comment, '(?<=lfc:rows=)[0-9]+'), '') AS UNSIGNED) AS target,
+             CONCAT(' ', table_comment, ' ') LIKE '% lfc:fixed %' AS fixed
       FROM information_schema.tables WHERE table_schema = @db) t ON t.table_schema = k.db AND t.table_name = k.tbl
 JOIN lv ON lv.tbl = k.tbl
-WHERE @mode <> 'fill' OR t.target IS NOT NULL
+WHERE (@mode <> 'fill' OR t.target IS NOT NULL) AND NOT (@mode <> 'fill' AND t.fixed)   -- an append skips a full table
 ORDER BY lv.lvl, k.tbl;
