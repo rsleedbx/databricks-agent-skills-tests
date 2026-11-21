@@ -7,6 +7,7 @@
 -- A line is late when ship - sold > :promise days (lfc_source_datagen.signals adds the parameters to web_sales's
 -- comment, after its fill tags, so a summary or a report reads the promise from the data). Deterministic (from the
 -- keys), so a rerun gives the same dates.
+-- Each statement updates only the rows whose value changes, so a rerun after an append touches only those.
 -- psql variables, whole numbers: promise handle_min handle_span mode_step slow_every slow_wh bulk_qty bulk jitter
 -- (days but slow_every and bulk_qty). handle_span, slow_every and jitter at least 1.
 WITH last_day AS (SELECT MAX(d_date_sk) AS sk FROM date_dim),
@@ -22,4 +23,5 @@ w AS (
   WHERE ws.ws_sold_date_sk IS NOT NULL
 )
 UPDATE web_sales ws SET ws_ship_date_sk = LEAST(ws.ws_sold_date_sk + w.days, last_day.sk)
-FROM w CROSS JOIN last_day WHERE ws.ws_item_sk = w.item AND ws.ws_order_number = w.ord;
+FROM w CROSS JOIN last_day WHERE ws.ws_item_sk = w.item AND ws.ws_order_number = w.ord
+  AND ws.ws_ship_date_sk IS DISTINCT FROM LEAST(ws.ws_sold_date_sk + w.days, last_day.sk);

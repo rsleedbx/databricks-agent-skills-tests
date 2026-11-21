@@ -229,6 +229,24 @@ Three sources at scale factor 5 (7,500 accounts each), `lfc-sources --model tpcd
 
 Measured on PostgreSQL 14 on 2026-11-20. The closing draw has its own hash, so the cash shows nothing of it: in `retail` the closed rate is 13.3 to 13.7% in every quintile of the first balance. `DimAccount`'s comment keeps its fill tags with the signal after them, and an append fill after the signal added 100 accounts.
 
+## Appending to a source
+
+`lfc-sources --model <model> --append ROWS <database> <source> ...` runs the fill in append mode on existing sources:
+- it adds ROWS rows to every table, leaving out a table whose rows use every key value (`lfc:fixed`);
+- then it re-applies each source's signals with the parameters kept in their tables' comments, so the new rows follow the signals too.
+
+`--append 0` only re-applies. Each step changes only rows whose value differs, using `IS DISTINCT FROM`, deleting unwanted rows and inserting missing ones. Run on unchanged rows it changes none, so under CDC an append shows the new rows and what they change, not a rewrite of every table. The summary row starts with the number of rows the signals changed.
+
+Measured on PostgreSQL 14 on 2026-11-20, one source per model. Re-applying changed 0 rows, `--append 100` changed the rows below, and re-applying again changed 0. The signals' rates stayed as built.
+
+| Model | Rows changed by --append 100 |
+|---|---|
+| TPC-C | 130 |
+| TPC-DS | 222 (100 random returns the append added, deleted; 23 returns of the new sales; 99 new web lines' ship dates) |
+| TPC-E | 528 |
+| TPC-B | 504 (the new history rows and the balances they move) |
+| TPC-DI | 107 |
+
 ## Publication
 
 On PostgreSQL 15 and later, the publication is `FOR TABLES IN SCHEMA` the sources' schemas, so a table added later is in it. Before 15, that form doesn't exist, so it lists the tables there now by name. A rerun with other sources `ALTER`s the publication to the new list.

@@ -140,10 +140,11 @@ def model_ddl(model: str, sf: float, use_spec: bool | None = None) -> tuple[str,
     return ddl(schema, "postgres"), [t["name"] for t in yaml.safe_load(schema)["tables"]]
 
 
-def _fill(connect, schema: str, sessions: int) -> None:
-    """python/fill.py's fill() on one schema, through connect(): the same planner and rounds as its command line."""
+def _fill(connect, schema: str, sessions: int, extra: tuple = ()) -> None:
+    """python/fill.py's fill() on one schema, through connect(): the same planner and rounds as its command line
+    (extra: more of its options, e.g. --mode append --rows N)."""
     fillpy = _planner("fill")
-    if fillpy.fill(fillpy.options(["postgres", schema, "--sessions", str(sessions)]), connect):
+    if fillpy.fill(fillpy.options(["postgres", schema, "--sessions", str(sessions), *extra]), connect):
         raise RuntimeError(f"fill of {schema} failed (its output above)")
 
 
@@ -232,6 +233,8 @@ def arguments(prog: str, extra_help: str = "") -> argparse.ArgumentParser:
     a.add_argument("--login", help="the reading login (the connection's): SELECT on each source")
     a.add_argument("--publication"); a.add_argument("--sessions", type=int, default=4)
     a.add_argument("--slot", help="create this replication slot (with --drop: drop it) instead of building sources")
+    a.add_argument("--append", type=int, metavar="ROWS", help="add ROWS rows to every table of the named sources, then "
+                   "re-apply their signals from their comments (0: only re-apply); the sources must exist")
     a.add_argument("--drop", action="store_true")
     a.add_argument("database"); a.add_argument("sources", nargs="*", help=f"<name>:<sf>{extra_help}")
     return a
@@ -240,7 +243,7 @@ def arguments(prog: str, extra_help: str = "") -> argparse.ArgumentParser:
 def run(x, model: str, steps=None, summary=None, check=None) -> int:
     """Parsed arguments -> build or slot on the laptop; prints one row per source (tab-separated)."""
     try:
-        if not x.slot:
+        if not x.slot and getattr(x, "append", None) is None:
             srcs = parse(x.sources)
             if check:
                 check(srcs)                  # bad arguments stop before any connection
@@ -255,6 +258,13 @@ def run(x, model: str, steps=None, summary=None, check=None) -> int:
         else:
             print("sources: give --lakebase PROJECT, or --host and --password-file", file=sys.stderr)
             return 2
+        if getattr(x, "append", None) is not None:
+            from .signals import append
+            rows = append(connect, model, [s.split(":", 1)[0] for s in x.sources], x.append, x.sessions,
+                          log=lambda m: print(m, file=sys.stderr))
+            for r in rows:
+                print("\t".join(str(v) for v in r.values()))
+            return 0
         if x.slot:
             r = cdc.slot(connect().cursor(), x.slot, x.drop)
             if r:

@@ -9,12 +9,15 @@
 -- the parameters to order_line's comment, after its fill tags, so a summary or a report reads them from the data).
 -- Orders still in new_order are open: no carrier, no delivery, as in the spec. Deterministic (from the keys), so a
 -- rerun gives the same dates.
+-- Each statement updates only the rows whose value changes, so a rerun after an append touches only those.
 -- psql variables, all whole numbers: promise handle_min handle_span slow_every slow_district carrier_step credit_hold
 -- low_stock backorder jitter (days but slow_every and low_stock). handle_span, slow_every and jitter at least 1.
 UPDATE orders o SET o_carrier_id = NULL
-WHERE EXISTS (SELECT 1 FROM new_order n WHERE n.no_w_id = o.o_w_id AND n.no_d_id = o.o_d_id AND n.no_o_id = o.o_id);
+WHERE o.o_carrier_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM new_order n WHERE n.no_w_id = o.o_w_id AND n.no_d_id = o.o_d_id AND n.no_o_id = o.o_id);
 UPDATE order_line ol SET ol_delivery_d = NULL
-WHERE EXISTS (SELECT 1 FROM new_order n WHERE n.no_w_id = ol.ol_w_id AND n.no_d_id = ol.ol_d_id AND n.no_o_id = ol.ol_o_id);
+WHERE ol.ol_delivery_d IS NOT NULL
+  AND EXISTS (SELECT 1 FROM new_order n WHERE n.no_w_id = ol.ol_w_id AND n.no_d_id = ol.ol_d_id AND n.no_o_id = ol.ol_o_id);
 WITH short AS (   -- orders with a line short of stock at its supplying warehouse
   SELECT DISTINCT ol.ol_w_id AS w, ol.ol_d_id AS d, ol.ol_o_id AS o
   FROM order_line ol JOIN stock s ON s.s_w_id = ol.ol_supply_w_id AND s.s_i_id = ol.ol_i_id
@@ -33,4 +36,5 @@ d AS (   -- delivered orders (open ones have no carrier now)
   WHERE o.o_carrier_id IS NOT NULL
 )
 UPDATE order_line ol SET ol_delivery_d = d.e + d.days * interval '1 day'
-FROM d WHERE ol.ol_w_id = d.w AND ol.ol_d_id = d.dd AND ol.ol_o_id = d.oid;
+FROM d WHERE ol.ol_w_id = d.w AND ol.ol_d_id = d.dd AND ol.ol_o_id = d.oid
+  AND ol.ol_delivery_d IS DISTINCT FROM d.e + d.days * interval '1 day';
