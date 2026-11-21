@@ -64,7 +64,7 @@ class PipelineTest(unittest.TestCase):
         import re
         root = Path(__file__).resolve().parents[1]
         pairs = {"1password-event-logs": "lfcsaas-1password", "marketo": "lfcsaas-marketo", "netsuite": "lfcsaas-netsuite",
-                 "square": "lfcsaas-square", "wiz-audit-logs": "lfcsaas-wiz", "shopify": "lfcsaas-shopify", "zoom": "lfcsaas-zoom", "atlassian-audit-logs": "lfcsaas-atlassian-audit-logs", "openai": "lfcsaas-openai", "adobe-commerce": "lfcsaas-adobe-commerce", "github": "lfcsaas-github"}
+                 "square": "lfcsaas-square", "wiz-audit-logs": "lfcsaas-wiz", "shopify": "lfcsaas-shopify", "zoom": "lfcsaas-zoom", "atlassian-audit-logs": "lfcsaas-atlassian-audit-logs", "openai": "lfcsaas-openai", "adobe-commerce": "lfcsaas-adobe-commerce", "github": "lfcsaas-github", "meta-ads": "lfcsaas-metaads"}
         self.assertEqual(sorted(p.stem.removesuffix("-pipeline") for p in (root / "notebooks").glob("*.py")),
                          sorted(pairs))
         for slug, conn in pairs.items():
