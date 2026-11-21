@@ -10,7 +10,8 @@ Every module (the no-data test too):
 With data (data: true):
   rows         each table's rows in n:1 equal the sum of its bronze tables' (no LOB lost or doubled)
   readout      the pack's signal read back from gold: per LOB, the label's share against the rate its tier's numbers
-               give each row (readout.rate, SQL over the gold table's columns with :<parameter>), within tolerance;
+               give each row (the model's signal rule, its columns as gold names them; or readout.rate), within
+               tolerance;
                and per tier, the shares in the tiers' order of their expected rates
 """
 from __future__ import annotations
@@ -43,6 +44,14 @@ def params(model: str, signals: str) -> dict:
         if nums:
             out |= dict(zip(sig["parameters"], (int(x) for x in nums.split(","))))
     return out
+
+
+def readout_rate(model: str, ro: dict) -> str:
+    """The rate a gold row should be labelled at: the model's signal rule (lfc_source_datagen.signals.expected_rate)
+    with the rule's columns and formulas as the gold table has them (readout: columns, formulas)."""
+    from lfc_source_datagen.signals import expected_rate, spec
+    sig = next(s for s in spec(model) if s["name"] == ro["signal"])
+    return expected_rate(sig, ro.get("columns"), ro.get("formulas"))
 
 
 def bind(expr: str, values: dict) -> str:
@@ -82,7 +91,9 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, marts: dict[s
     short = {k: v for k, v in short.items() if v}
     out.append(_row("bronze tables", len(want) * len(m["tables"]),
                     sum(len(set(m["tables"]) & tabs.get(lob, set())) for lob in want), not short,
-                    f"LOBs short of tables: {dict(list(short.items())[:3])}"))
+                    f"{len(short)} LOBs short of tables, e.g. {dict(list(short.items())[:3])}" + (
+                        ": LOBs added to a deployed pipeline need its gateway restarted (it reads the source's tables "
+                        "when it starts), then the refresh again" if short else "")))
     for t in m["tables"]:
         cols = [r.col_name for r in _one(spark, f"DESCRIBE TABLE {silver}.`all_{t}`")]
         out.append(_row(f"n1 all_{t}", f"{col} first", cols[:1], cols[:1] == [col]))
@@ -104,11 +115,12 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, marts: dict[s
     ro = m.get("readout")
     if not ro:
         return out
+    rate = ro.get("rate") or readout_rate(m["model"], ro)
     tiers: dict[str, list] = {}
     for x in m["lobs"]:
         p = params(m["model"], x["signals"])
         r = _one(spark, f"SELECT COUNT(*) AS n, AVG(CASE WHEN {ro['label']} THEN 1.0 ELSE 0.0 END) AS got, "
-                        f"AVG({bind(ro['rate'], p)}) AS want FROM {gold}.`{ro['table']}` "
+                        f"AVG({bind(rate, p)}) AS want FROM {gold}.`{ro['table']}` "
                         f"WHERE `{col}` = '{x['name']}'")[0]
         cnt, got, exp = int(r.n), float(r.got or 0), float(r.want or 0)
         se = math.sqrt(max(exp * (1 - exp), 1e-9) / max(cnt, 1))

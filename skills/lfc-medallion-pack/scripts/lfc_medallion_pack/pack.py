@@ -5,13 +5,14 @@ The runner (plan, source, verify) knows no model; a pack says, as data:
     name, model         the pack's name; the model its sources are built from (statschema's schemas/<model>.yaml, or a
                         schema.yaml in the pack: `schema: schema.yaml`)
     source_column       the column the n:1 layer adds to every table, naming the LOB (default lob)
-    tables              the model's tables, as the source has them (the n:1 layer stacks each)
+    (tables and roles   read from the model's schema YAML, not listed here: each table and its role, fact or
+                        dimension, as statschema's schema says)
     tiers               per tier (high, core, low: lobs.py), what a LOB's data looks like: its scale factor and its
                         signal numbers (lfc_source_datagen.signals: the model's signals: block, in order)
     marts               the SQL files of silver and gold, in order; they read all_<table> and key every join on the
                         source column
-    readout             how the data test reads a signal back from gold: the table, the label column, and the rate each
-                        row should have from its LOB's numbers (expected: SQL over the table's columns, :<parameter>)
+    readout             how the data test reads a signal back from gold: the signal, the gold table and its label, and
+                        the rule's columns and formulas as gold names them (the rate comes from the signal's rule)
     contract            for an app and a model: grain, keys, label, features, measure
 
 TPC packs ship in this package (packs/<name>); a customer's packs are folders in their own repo, passed by path.
@@ -24,7 +25,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILTIN = os.path.join(HERE, "packs")
-REQUIRED = ("name", "model", "tables", "tiers", "marts")
+REQUIRED = ("name", "model", "tiers", "marts")
 
 
 def builtin() -> list[str]:
@@ -47,6 +48,9 @@ def load(ref: str, base: str | None = None) -> dict:
         raise ValueError(f"pack {ref}: pack.yaml lacks {', '.join(missing)}")
     p.setdefault("source_column", "lob")
     p["dir"] = path
+    if "tables" not in p:
+        p["roles"] = model_roles(p["model"])
+        p["tables"] = list(p["roles"])
     for t in ("high", "core", "low"):
         if t not in p["tiers"]:
             raise ValueError(f"pack {ref}: tiers lacks {t}")
@@ -54,6 +58,16 @@ def load(ref: str, base: str | None = None) -> dict:
         if not os.path.isfile(os.path.join(path, m)):
             raise ValueError(f"pack {ref}: marts file {m} isn't in {path}")
     return p
+
+
+def model_roles(model: str) -> dict[str, str]:
+    """The model's tables and each one's role (dimension, lookup, bridge, fact, log, queue), from its schema YAML."""
+    from lfc_source_datagen.sources import model_schema
+    from statschema.tools import model as model_path
+    with open(model_path(model)) as fh:
+        declared = {t["name"]: t.get("role", "") for t in (yaml.safe_load(fh) or {}).get("tables", [])}
+    built = [t["name"] for t in yaml.safe_load(model_schema(model, 1))["tables"]]
+    return {t: declared.get(t, "") for t in built}
 
 
 def mart_sql(p: dict) -> dict[str, str]:

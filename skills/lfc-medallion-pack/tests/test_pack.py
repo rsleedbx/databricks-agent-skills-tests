@@ -14,7 +14,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
-from lfc_medallion_pack import check, cli, lobs, pack, plan, verify  # noqa: E402
+from lfc_medallion_pack import check, cli, lobs, pack, plan, timings, verify  # noqa: E402
 
 COLS = {"branch": ["b_id", "b_balance", "b_filler"], "teller": ["t_id", "t_b_id", "t_balance", "t_filler"],
         "account": ["a_id", "a_b_id", "a_balance", "a_filler"],
@@ -132,6 +132,31 @@ class Verify(unittest.TestCase):
         sql = open(os.path.join(pack.load("tpcb")["dir"], "gold.sql")).read()
         self.assertEqual(verify.mart_names(sql), ["transactions", "unusual_by_hour", "lob_summary"])
         self.assertEqual(verify.bind("(:base + :teller) / 1000.0", {"base": 5, "teller": 60}), "(5 + 60) / 1000.0")
+
+
+class Timings(unittest.TestCase):
+    def test_scale_at_a_past_size(self):
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 250}))
+        finally:
+            shutil.rmtree(d)
+        sc = timings.scale(pl, "bank", lobs=3)
+        self.assertEqual((sc["lobs"], sc["tables"], sc["pipelines"], sc["group_tables"]), (3, 12, 1, [12]))
+        self.assertEqual(timings.scale(pl, "bank")["group_tables"], [248, 248, 248, 248, 8])
+
+    def test_predict_fits_two_sizes_and_keeps_one_as_is(self):
+        base = {"date": "d", "module": "m", "data": False, "lobs": 1, "pipelines": 1, "tables_per_pipeline": 1}
+        rows = [base | {"step": "ingest_1", "kind": "steady", "tables": 1000, "pipeline_tables": 8, "seconds": 60},
+                base | {"step": "ingest_2", "kind": "steady", "tables": 1000, "pipeline_tables": 248, "seconds": 680},
+                base | {"step": "ingest_3", "kind": "first", "tables": 1000, "pipeline_tables": 248, "seconds": 800,
+                        "result": "FAILED"},
+                base | {"step": "verify", "tables": 40, "seconds": 70, "data": True}]
+        got = timings.predict(rows, 488)
+        self.assertEqual(got["ingest steady"]["seconds"], 1300.0)          # 60 + (680 - 60) / 240 * 480
+        self.assertEqual(got["verify data"], {"seconds": 70.0, "fit": "none", "from_tables": [40]})
+        self.assertNotIn("ingest first", got)                              # a failed task isn't a time
+        self.assertIn("| ingest_2, its 248 |", timings.report(rows))
 
 
 if __name__ == "__main__":

@@ -66,19 +66,65 @@ and stops when the pipelines need more replication slots than `max_slots`. The s
 
 Start from `packs/tpcb` (and, in order of size, the other TPC packs as they're added). A pack is:
 
-- `pack.yaml`: `model` (statschema's `schemas/<model>.yaml`, or the customer's canonical schema), `source_column`,
-  `tables`, `tiers` (per tier: `sf` and the model's signal numbers, in its `signals:` order), `marts`,
-  `configuration` (pipeline settings the marts read as `${name}`), `readout` (gold table, label, and the per-row
-  rate from the signal's parameters) and `contract` (grain, keys, label, features, measure).
+- `pack.yaml`: `model` (statschema's `schemas/<model>.yaml`, or the customer's canonical schema: its tables and each
+  table's `role`, fact or dimension, come from there, not from the pack), `source_column`, `tiers` (per tier: `sf`
+  and the numbers of the model's signals, in its `signals:` order), `marts`, `configuration` (pipeline settings the
+  marts read as `${name}`), `readout` (the signal, gold's table and label, and the signal rule's columns and formulas
+  as gold names them: the expected rate comes from the rule itself) and `contract` (grain, keys, label, features).
 - `silver.sql`, `gold.sql`: materialized views over `all_<table>`. Every key and join includes the source column:
   keys repeat across LOBs.
+
+The data is generated from the YAML alone: the schema's `generation:` rules and `formulas:` (statschema shape) and its
+`signals:` rules (lfc_source_datagen.signals.rule_sql: a per-mille rate from a base and causes, the values of marked
+and unmarked rows, and parent totals). No Python names a model, table or column, so a customer's schema and statistics
+drive the same code.
 
 Then `lfc-medallion-pack check <pack>`: every `all_<table>` is a table of the model, every column read is one of its
 columns, every join equates the source column on both sides. Keep the signal and its readout in the same pack: a
 change to one is a change to the other.
 
+## Recording and predicting the time each step takes
+
+After every run, record it, so the next, bigger deployment can be planned from measurements:
+
+```bash
+lmp timings --plan source/plan.json --module <m> --run <refresh run id> [--source-run <setup_source run id>] \
+  [--deploy-seconds S] --kind first|steady|grown [--task-kind ingest_1=grown] --note "..." --out runs.jsonl
+lmp predict runs.jsonl --tables 2000      # each step's seconds at that size: a line through two sizes or more
+lmp report runs.jsonl                     # the records as a table
+```
+
+A record names no workspace, id or user. The measured runs so far: [references/scale.md](references/scale.md).
+
+| Measured (TPC-B on Lakebase, 2026-11-21) | 3 LOBs, 12 tables | 250 LOBs, 1,000 tables in 5 pipelines |
+|---|---|---|
+| Source, empty (the job) | 124 s | 1,700 s (247 LOBs added: about 7 s each, one JDBC session per statement) |
+| Deploy | 11 s | 28 s (255 resources) |
+| Ingest, first snapshot of a pipeline | 124 s (12 tables) | about 810 s per 248-table pipeline: initializing 170, setting up tables 165, running 445 |
+| Ingest, steady (no new tables, no data) | | about 680 s per 248-table pipeline: initializing 175, setting up 100, running 345 |
+| Transform (n:1, silver, gold) | 84 s | 356 s first, 617 s next (initializing 301: finding 250 sources' tables) |
+| Verify | 63 s (mostly installing) | 66 s |
+
+The data test (10 LOBs at SF 1, 1,000,000 history rows): source 392 s, ingest 235 s, transform 94 s; gold's unusual
+share per tier 0.49% / 3.05% / 7.02% (high / core / low), as the rule gives each row, and every balance equal to the
+sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
+
+An ingestion pipeline's time grows with its tables even when they're empty: about 2.6 s per table per update at 248.
+Plan the refresh interval from it: a 248-table pipeline can't refresh more often than about every 11 minutes.
+
 ## Limits
 
-- One gateway, slot and publication per ingestion pipeline; the source's slot and sender limits cap the pipelines.
+- One gateway, slot and publication per ingestion pipeline; the source's slot and sender limits cap the pipelines. A
+  Lakebase project allows 10 of each and holds 2 physical slots of its own (`wal_proposer_slot`,
+  `wal_retention_slot`), so it takes 8 ingestion pipelines (measured 2026-11-21); set `source.max_slots: 8` for it.
+- **Adding LOBs to a deployed pipeline needs its gateway restarted.** A gateway reads the source's tables when it
+  starts: given more schemas, the ingestion pipeline found none of the new ones (measured: 59 LOBs, 236 tables, absent
+  after a full update; verify's bronze check fails and says so). Restart the gateway, then refresh.
+- Every bronze table also gets a backing table (`__materialization_mat_*`): Unity Catalog objects are about twice
+  the tables; the first LOB's bronze schema holds its pipeline's `cdc_staging_table` and event log.
+- Every LOB of a tier is the same data (the generator is deterministic and the tier's numbers are shared): the score
+  decides the tier only. Spread within a tier is not done yet.
+- Tiers are by rank among the module's LOBs: adding LOBs can move a LOB to another tier, while its data keeps the
+  numbers it was built with (a built LOB is kept). Draw the full count once for a data module.
 - A table without a primary key (TPC-B's history) has no key for SCD type 1: see the measured results.
 - Not covered yet: the merge route (lfc-medallion) for the quiet tables at many LOBs; an app over the contract.

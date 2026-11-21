@@ -41,7 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)          # a checkout's scripts/; an installed package has the same files under _tpc, _planner
 TPC = os.path.join(HERE, "_tpc") if os.path.isdir(os.path.join(HERE, "_tpc")) else os.path.join(SCRIPTS, "tpc")
 PLANNER = os.path.join(HERE, "_planner") if os.path.isdir(os.path.join(HERE, "_planner")) else os.path.join(SCRIPTS, "python")
-SPEC = ("tpch", "tpcb")                  # the models tpc_schema writes from the spec (keys, prices, dates across tables)
+SPEC = ("tpch",)                         # the models still written from tpc_schema.py (TPC-B: its YAML; TPC-H: next)
 NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 CHECKED = "lfc:spec-checked"             # a copy's schema comment once its spec checks passed
 

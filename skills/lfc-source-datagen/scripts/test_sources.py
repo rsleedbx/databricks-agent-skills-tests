@@ -300,7 +300,7 @@ class TpcdsSignals(unittest.TestCase):
 
 
 class SignalBlocks(unittest.TestCase):
-    """Every model's signals: block that lfc_source_datagen.signals runs: its SQL file is there with a variable for each
+    """Every model's signals: block that lfc_source_datagen.signals runs: its rule or SQL file has a variable for each
     parameter and :'signal', its profiles pass check(), its summary names a column per value; the wrappers' commands
     are lfc-sources --model."""
 
@@ -310,10 +310,11 @@ class SignalBlocks(unittest.TestCase):
         for m in models:
             sigs = sg.spec(m)
             for s in sigs:
-                sql = src.read_sql(s["sql"])
+                sql = sg.rule_sql(s) if s.get("rule") else src.read_sql(s["sql"])   # a YAML rule, or a SQL file
+                where = s.get("sql") or "its rule"
                 for k in s["parameters"]:
-                    self.assertRegex(sql, rf"(?<![:\w]):{k}\b", f"{m} {s['name']}: :{k} not in {s['sql']}")
-                self.assertNotIn("COMMENT ON", sql.upper(), f"{m}: {s['sql']} writes the comment; signals.steps does")
+                    self.assertRegex(sql, rf"(?<![:\w]):{k}\b", f"{m} {s['name']}: :{k} not in {where}")
+                self.assertNotIn("COMMENT ON", sql.upper(), f"{m}: {where} writes the comment; signals.steps does")
                 self.assertTrue(set(s.get("at_least_1") or []) <= set(s["parameters"]))
                 self.assertTrue(s["summary_columns"] and "{s}" in s["summary"], f"{m} {s['name']}: summary")
             self.assertEqual(len({s["table"] for s in sigs}), len(sigs), f"{m}: one signal per table")
@@ -441,6 +442,33 @@ class Build(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "spec rules broken"):
             build_tpch(db, ["a:0.03"])
         self.assertFalse([s for s in db.log if "RENAME" in s])
+
+
+class Rule(unittest.TestCase):
+    RULE = {"name": "big", "table": "t", "parameters": ["base", "every", "extra", "big"], "rule": {
+        "formulas": {"n": "id - 1"}, "row": "{n} * 7 % 1003", "per_mille": ":base",
+        "causes": [{"when": "k % :every = 0", "add": ":extra"}],
+        "marked": {"amount": "-:big"}, "unmarked": {"amount": "1 + {n} % 9"},
+        "totals": [{"table": "p", "column": "total", "key": "pid", "sum": "amount", "by": "k"}]}}
+
+    def test_rule_names_only_what_the_yaml_says(self):
+        sql = sg.rule_sql(self.RULE)
+        self.assertIn('CASE WHEN ((id - 1) * 7 % 1003) % 1000 < (:base) + CASE WHEN (k % :every = 0) THEN (:extra) '
+                      'ELSE 0 END THEN (-:big) ELSE (1 + (id - 1) % 9) END AS "v_amount" FROM "t"', sql)
+        self.assertIn('UPDATE "t" x SET "amount" = v."v_amount"', sql)
+        self.assertIn('UPDATE "p" p SET "total" = s.v FROM s WHERE p."pid" = s.id AND p."total" IS DISTINCT FROM s.v', sql)
+        self.assertEqual(len(src.statements(sql)), 2)
+
+    def test_expected_rate_renames_columns_and_formulas(self):
+        self.assertEqual(sg.expected_rate(self.RULE, {"k": "key_id"}),
+                         "(((:base) + CASE WHEN (key_id % :every = 0) THEN (:extra) ELSE 0 END) / 1000.0)")
+
+    def test_tpcb_is_its_yaml(self):
+        self.assertNotIn("tpcb", src.SPEC)
+        ddl, tables = src.model_ddl("tpcb", 2)
+        self.assertEqual(tables, ["branch", "teller", "account", "history"])
+        self.assertIn("% NULLIF(20, 0)", ddl)          # {rows:teller} at SF 2
+        self.assertIn('ADD FOREIGN KEY ("h_a_id") REFERENCES "account" ("a_id")', ddl)
 
 
 class CommandLine(unittest.TestCase):

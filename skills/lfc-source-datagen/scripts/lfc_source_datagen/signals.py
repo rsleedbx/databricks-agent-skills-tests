@@ -35,11 +35,71 @@ from .sources import _fill, build, check_name, parse, psql_vars, read_sql, state
 
 @functools.lru_cache(maxsize=None)
 def spec(model: str) -> tuple[dict, ...]:
-    """The model's signals that have a SQL step (TPC-H's lead times are built by tpch_sources)."""
+    """The model's signals that have a step: a rule (rule_sql) or a SQL file (TPC-H's lead times are built by
+    tpch_sources)."""
     import yaml
     from statschema.tools import model as model_path
     with open(model_path(model)) as f:
-        return tuple(s for s in (yaml.safe_load(f) or {}).get("signals") or [] if s.get("sql"))
+        return tuple(s for s in (yaml.safe_load(f) or {}).get("signals") or [] if s.get("sql") or s.get("rule"))
+
+
+def _formulas(text: str, f: dict) -> str:
+    """{name} -> (the rule's formulas: entry), formulas using each other."""
+    for _ in range(20):
+        new = re.sub(r"\{(\w+)\}", lambda m: f"({f[m.group(1)]})" if m.group(1) in f else m.group(0), text)
+        if new == text:
+            return text
+        text = new
+    raise ValueError("rule formulas refer to each other in a loop")
+
+
+def rule_sql(sig: dict) -> str:
+    """A signal's rule (the schema's signals: block) as its SQL step, psql variables (:<parameter>) left in. Nothing
+    here names a model, table or column: the rule says them all.
+
+      table      the table whose rows the rule marks (signals: table)
+      rule:
+        formulas   names for expressions over the table's columns, used as {name}
+        row        the row's scramble, a whole number that is the same on every rerun: row % 1000 decides the mark
+        per_mille  the base rate, and causes: [{when: <predicate>, add: <per mille>}], each added when it holds
+        marked     {column: expression} for a marked row; unmarked: {column: expression} for the others
+        totals     [{table, column, key, sum, by}]: a parent's column set to the sum of the marked table's `sum` over
+                   its rows (by = key), so balances stay the sum of their history
+    Each statement updates only the rows whose value changes, so a rerun changes nothing."""
+    r, t = sig["rule"], sig["table"]
+    f = r.get("formulas") or {}
+    x = lambda e: _formulas(str(e), f)   # noqa: E731
+    row = f"({x(r['row'])})"
+    rate = " + ".join([f"({x(r['per_mille'])})"] +
+                      [f"CASE WHEN ({x(c['when'])}) THEN ({x(c['add'])}) ELSE 0 END" for c in r.get("causes") or []])
+    marked, unmarked = r["marked"], r.get("unmarked") or {}
+    cols = list(dict.fromkeys(list(marked) + list(unmarked)))
+    v = {c: ident(f"v_{c}") for c in cols}
+    val = [f"CASE WHEN {row} % 1000 < {rate} THEN ({x(marked.get(c, c))}) ELSE ({x(unmarked.get(c, c))}) END AS {v[c]}"
+           for c in cols]
+    out = [f"WITH v AS (SELECT ctid AS rid, {', '.join(val)} FROM {ident(t)})\n"
+           f"UPDATE {ident(t)} x SET {', '.join(f'{ident(c)} = v.{v[c]}' for c in cols)} FROM v WHERE x.ctid = v.rid "
+           f"AND (" + " OR ".join(f"x.{ident(c)} IS DISTINCT FROM v.{v[c]}" for c in cols) + ");"]
+    for g in r.get("totals") or []:
+        p, k, c = ident(g["table"]), ident(g["key"]), ident(g["column"])
+        out.append(f"WITH s AS (SELECT p.{k} AS id, COALESCE(SUM(h.{ident(g['sum'])}), 0) AS v FROM {p} p "
+                   f"LEFT JOIN {ident(t)} h ON h.{ident(g['by'])} = p.{k} GROUP BY 1)\n"
+                   f"UPDATE {p} p SET {c} = s.v FROM s WHERE p.{k} = s.id AND p.{c} IS DISTINCT FROM s.v;")
+    return "\n".join(out) + "\n"
+
+
+def expected_rate(sig: dict, columns: dict[str, str] | None = None, formulas: dict[str, str] | None = None) -> str:
+    """The rate a row of the marked table is marked at (0 .. 1), as SQL over its columns, :<parameter> left in:
+    per_mille plus each cause that holds, / 1000. columns renames them ({h_t_id: teller_id}: a gold table's names),
+    so a readout of the signal comes from the same rule as the data; formulas replaces some of the rule's ({hr: hour}:
+    a column the gold table already has)."""
+    r = sig["rule"]
+    f = (r.get("formulas") or {}) | (formulas or {})
+    e = _formulas(" + ".join([f"({r['per_mille']})"] + [f"CASE WHEN ({c['when']}) THEN ({c['add']}) ELSE 0 END"
+                                                        for c in r.get("causes") or []]), f)
+    for a, b in (columns or {}).items():
+        e = re.sub(rf"\b{re.escape(a)}\b", b, e)
+    return f"(({e}) / 1000.0)"
 
 
 def split(model: str, extra: str) -> dict[str, str]:
@@ -108,7 +168,8 @@ def steps(model: str, name: str, extra: str) -> list[str]:
     sigs = {s["name"]: s for s in spec(model)}
     out = []
     for sig, nums in split(model, extra).items():
-        out += statements(psql_vars(expand(read_sql(sigs[sig]["sql"])), dict(zip(sigs[sig]["parameters"], nums.split(",")))))
+        text = rule_sql(sigs[sig]) if sigs[sig].get("rule") else expand(read_sql(sigs[sig]["sql"]))
+        out += statements(psql_vars(text, dict(zip(sigs[sig]["parameters"], nums.split(",")))))
         out.append(tag(sigs[sig]["table"], comment(model, sig, nums)))
     return out
 

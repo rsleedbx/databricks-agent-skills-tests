@@ -4,6 +4,7 @@ archive: @@ARCHIVE@@       # where the pipelines and notebooks install the tests
 
 source:
   slot_prefix: @@NAME@@     # replication slots and publications: <slot_prefix>_<module>_<k>
+  max_slots: 8              # the source's replication slots: Lakebase allows 10 and keeps 2 of its own
 
 limits:
   tables_per_pipeline: 250  # Lakeflow Connect: at most 999 source tables per ingestion pipeline, 250 recommended

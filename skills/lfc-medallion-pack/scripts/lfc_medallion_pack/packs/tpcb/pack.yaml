@@ -5,7 +5,6 @@ name: tpcb
 model: tpcb
 description: "Banks (one per LOB): unusual withdrawals by teller, account and hour, across every LOB"
 source_column: lob
-tables: [branch, teller, account, history]
 
 # What each tier's LOB looks like: its scale factor (branches; 100,000 accounts and history rows each) and its numbers
 # for unusual_withdrawal, in the signal's order: base teller_every teller account_every account night_from night_to
@@ -20,17 +19,14 @@ marts: [silver.sql, gold.sql]
 configuration:
   large_withdrawal: 5000        # gold: a withdrawal of this many dollars or more is unusual (the signal's big_min)
 
-# The data test: gold's label against the rate a row's LOB numbers give it (the signal's own formula, over gold's
-# columns); verify.py binds :<parameter> per LOB.
+# The data test: gold's label against the rate the signal's own rule (statschema tpcb.yaml, unusual_withdrawal) gives
+# each row from its LOB's numbers, with the rule's columns as gold names them (verify.py).
 readout:
+  signal: unusual_withdrawal
   table: transactions
   label: unusual
-  rate: >-
-    (:base + CASE WHEN teller_id % :teller_every = 0 THEN :teller ELSE 0 END
-     + CASE WHEN account_id % :account_every = 0 THEN :account ELSE 0 END
-     + CASE WHEN (:night_from <= :night_to AND hour >= :night_from AND hour < :night_to)
-              OR (:night_from > :night_to AND (hour >= :night_from OR hour < :night_to)) THEN :night ELSE 0 END)
-    / 1000.0
+  columns: {h_t_id: teller_id, h_a_id: account_id}
+  formulas: {hr: hour}
 
 # For an app and a model: what a gold row is and what it says.
 contract:

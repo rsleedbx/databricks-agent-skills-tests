@@ -14,6 +14,7 @@ model), repeated across LOBs, that becomes one n:1 bronze, silver and gold:
         lobs: 10                  # how many LOBs (lob_001 ..), or names: [east, west]
         seed: 7                   # the 20-70-10 draw (lobs.py)
         data: true                # fill the sources (false: the tables empty, for the no-data test)
+        tables_per_pipeline: 999  # optional: this module's own limit (the project's otherwise)
 
 render() writes, under the repo:
     resources/<module>.yml        the bundle resources: schemas (staging, a bronze per LOB, silver, gold), one gateway
@@ -59,7 +60,7 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     for x in items:
         t = p["tiers"][x["tier"]]
         x |= {"sf": t.get("sf", 1), "signals": pack_mod.signals(p, x["tier"]), "source_schema": f"{name}_{x['name']}"}
-    limit = int(project["limits"]["tables_per_pipeline"])
+    limit = int(m.get("tables_per_pipeline") or project["limits"]["tables_per_pipeline"])
     if limit > HARD_TABLES:
         raise ValueError(f"tables_per_pipeline {limit}: an ingestion pipeline takes at most {HARD_TABLES} source tables")
     per = max(1, limit // len(p["tables"]))
@@ -71,9 +72,10 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
         groups.append({"k": k + 1, "lobs": [x["name"] for x in part], "tables": len(part) * len(p["tables"]),
                        "slot": slot, "publication": f"{slot}_pub"})
     return {"module": name, "pack": p["name"], "pack_dir": p["dir"], "model": p["model"],
-            "source_column": p["source_column"], "tables": p["tables"], "data": bool(m.get("data", False)),
+            "source_column": p["source_column"], "tables": p["tables"], "roles": p.get("roles", {}),
+            "data": bool(m.get("data", False)),
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
-            "readout": p.get("readout"), "marts": p["marts"]}
+            "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit}
 
 
 def plan(project_path: str) -> dict:

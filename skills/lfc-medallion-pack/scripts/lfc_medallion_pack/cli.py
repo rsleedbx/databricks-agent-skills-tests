@@ -4,6 +4,9 @@
     lfc-medallion-pack render <dir>/febar.yaml        # resources/<module>.yml, marts/<pack>/, source/plan.json
     lfc-medallion-pack check <pack name or folder>    # the marts against the model, offline
     lfc-medallion-pack lobs 10 --seed 7               # the LOBs and their 20-70-10 tiers
+    lfc-medallion-pack timings --plan source/plan.json --module m --run <id> --out runs.jsonl   # each step's seconds
+    lfc-medallion-pack predict runs.jsonl --tables 4000   # each step's seconds at that many tables
+    lfc-medallion-pack report runs.jsonl                 # the records as a markdown table
 """
 from __future__ import annotations
 
@@ -56,7 +59,46 @@ def main(argv: list[str] | None = None) -> int:
     lo = sub.add_parser("lobs")
     lo.add_argument("n", type=int)
     lo.add_argument("--seed", type=int, default=1)
+    tm = sub.add_parser("timings")
+    tm.add_argument("--plan", required=True)
+    tm.add_argument("--module", required=True)
+    tm.add_argument("--run", type=int, required=True)
+    tm.add_argument("--source-run", type=int)
+    tm.add_argument("--deploy-seconds", type=float)
+    tm.add_argument("--note", default="")
+    tm.add_argument("--kind", default="", choices=["", "first", "steady", "grown"],
+                    help="first: each pipeline's first snapshot; steady: no new tables; grown: tables added")
+    tm.add_argument("--task-kind", action="append", default=[], help="a task's own kind: ingest_1=grown")
+    tm.add_argument("--lobs", type=int, help="the module's LOBs at the time of the run, when the plan grew since")
+    tm.add_argument("--profile")
+    tm.add_argument("--out", required=True)
+    pr = sub.add_parser("predict")
+    pr.add_argument("records")
+    pr.add_argument("--tables", type=int, required=True)
+    rp = sub.add_parser("report")
+    rp.add_argument("records")
     a = ap.parse_args(argv)
+    if a.cmd == "report":
+        from . import timings
+        with open(a.records) as fh:
+            print(timings.report([json.loads(ln) for ln in fh if ln.strip()]), end="")
+        return 0
+    if a.cmd == "timings":
+        from . import timings
+        rows = timings.record(timings.Api(a.profile), plan_mod.read_plan(a.plan), a.module, a.run, a.source_run, a.deploy_seconds, a.note,
+                                a.lobs, a.kind,
+                                dict(x.split("=", 1) for x in a.task_kind))
+        with open(a.out, "a") as fh:
+            for r in rows:
+                fh.write(json.dumps(r) + "\n")
+                print(json.dumps(r))
+        return 0
+    if a.cmd == "predict":
+        from . import timings
+        with open(a.records) as fh:
+            rows = [json.loads(ln) for ln in fh if ln.strip()]
+        print(json.dumps(timings.predict(rows, a.tables), indent=1))
+        return 0
     if a.cmd == "init":
         for f in init(a.dir, a.name, a.archive):
             print(f)

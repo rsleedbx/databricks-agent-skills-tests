@@ -149,6 +149,8 @@ for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: class
 done
 check "classify.py never reads role: (TPC-E's plan is the same without it); --truth schema scores against it" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/cdc-table-plan/tests/test_classify.py"
 check "lfc_medallion: sources and tables found, one n:1 view per table, a table some sources lack (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_stack.py"
+check "lfc_medallion_pack: 20-70-10 tiers, pipelines within the table limit, render, the TPC-B marts against the model, timings and predict" \
+  sh -c "PYTHONPATH='$SK/lfc-medallion-pack/scripts:$DG:$SS:$SK/lfc-source-contract/scripts' uv run -q --no-project --with pyyaml --with sqlglot python -W ignore -m unittest -q '$SK/lfc-medallion-pack/tests/test_pack.py' 2>&1"
 check "history-snapshot-scd2.py: the guards (a reload not finished, an emptied table); with pyspark + Java 17/21 also their DataFrame form and versions" python3 -m unittest -q "$SK/lfc-downstream-history/tests/test_history_snapshot_scd2.py"
 check "medallion.py: layer counts, how each table is written; the medallion box and the Zerobus drawing" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_medallion.py"
 check "pipeline-diagram.py's model table counts match the statschema schemas" python3 "$R/bin/check_model_counts.py"

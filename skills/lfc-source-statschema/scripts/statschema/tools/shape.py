@@ -15,7 +15,8 @@
 #        plain n. An expression is the value as a formula in x.n (MySQL syntax, like the formulas below): for a number, a
 #        date (days since 1970) or a time, the integer the column's cast turns into it; for text, the text. {name} in it
 #        is the table's formulas: entry of that name, in parentheses (formulas may use each other), so a calendar or a
-#        Cartesian product is written once in the YAML (TPC-DS date_dim, time_dim, the demographics).
+#        Cartesian product is written once in the YAML (TPC-DS date_dim, time_dim, the demographics); {rows:<table>} is
+#        that table's rows at this scale (a uniform pick of a parent row: 1 + <hash> % {rows:teller}).
 #     2. its statistics (stats.yaml): null fraction, most common values and frequencies, distinct count, range, histogram
 #     3. nothing: the planner's own scramble, or for a foreign key the planner's probe of the parent's range
 #   Foreign keys without a rule: the parent's key formula at a parent row drawn uniformly, or zipf if fk_distribution says so.
@@ -164,8 +165,12 @@ def pattern(p, tn, col, rows, length=None):
         return f"CONCAT({pick(WORDS['syl'], f'({d}) DIV 100')}, {pick(WORDS['syl'], f'(({d}) DIV 10) % 10')}, {pick(WORDS['syl'], f'({d}) % 10')})"
     return None
 
-def expand(text, formulas, where):         # {name} -> (the table's formulas: entry), until none is left
+def expand(text, formulas, where):         # {name} -> (the table's formulas: entry), until none is left; {rows:t} -> t's rows
+    def rows(m):
+        if m[1] not in R: raise SystemExit(f"shape.py: {where}: {{rows:{m[1]}}}: no table {m[1]}")
+        return str(R[m[1]])
     for _ in range(50):
+        text = re.sub(r"\{rows:(\w+)\}", rows, text)
         new = re.sub(r"\{(\w+)\}", lambda m: f"({formulas[m[1]]})" if m[1] in formulas else m[0], text)
         if new == text: break
         text = new
