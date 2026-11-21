@@ -26,6 +26,32 @@
 # scripts/describe.py schemas/<model>.yaml lists the tables by kind, and the model's signals:.
 
 version: "1.0"
+# signals: what a model can learn from a source built with them (lfc_source_datagen.signals, lfc-sources --model tpcb),
+# and how the data was made so.
+signals:
+  - name: unusual_withdrawal
+    target: "history: unusual when h_delta <= -big_min dollars (a large withdrawal)"
+    replaces: "the fill's h_delta, the row number / 100: no amount means anything"
+    built_by: "lfc-source-datagen: scripts/tpc/tpcb-withdrawals.sql (lfc_source_datagen.signals), per source"
+    causes:
+      - "a risky teller: teller more per mille when h_t_id is a multiple of teller_every"
+      - "a watch-listed account: account more per mille when h_a_id is a multiple of account_every"
+      - "the hour: night more per mille from night_from to before night_to (h_time's hour, wrapping past midnight)"
+    noise: "a row is large when a hash of its number % 1000 is under base plus the causes: a rate, learned per group"
+    follows: "the other rows +-1..normal_max dollars; every account's, teller's and branch's balance the sum of its deltas"
+    not_a_cause: "the branch: one per scale-factor unit, so it rarely varies in a test source"
+    parameters: [base, teller_every, teller, account_every, account, night_from, night_to, night, normal_max, big_min, big_span]
+    profiles:
+      retail: "5,5,60,50,150,22,6,40,500,5000,20000"
+      cash_heavy: "10,5,120,20,100,20,4,60,2000,10000,40000"
+      online: "2,5,10,100,300,0,5,30,300,3000,10000"
+    measured: "lfc-source-datagen references/tpch-sources.md: % unusual by each cause, per profile"
+    table: history
+    sql: tpcb-withdrawals.sql
+    at_least_1: [teller_every, account_every, normal_max, big_span]
+    summary: "SELECT COUNT(*), ROUND(100.0 * AVG((h_delta <= -:big_min)::int), 1), (SELECT SUM(a_balance) FROM {s}.account) - SUM(h_delta) FROM {s}.history"
+    summary_columns: [history_rows, unusual_pct, balance_gap]
+
 tables:
 
   # ── branch ────────────────────────────────────────────────────────────────
