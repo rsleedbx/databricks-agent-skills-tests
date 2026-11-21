@@ -43,7 +43,7 @@ Where it differs from the spec:
 | TPC-H `o_totalprice`, `o_orderstatus`, `l_returnflag`, `l_linestatus`: derived from other rows and dates | Ordinary casts (non-negative, the right type and length) | Derived from other rows; not needed for size or constraints |
 | Text columns (`p_name`, `c_phone`, comments, …): word lists and formats | Zero-padded `n` and MD5 filler, at the declared length | The planners' auditable strings |
 | TPC-B `history` size: storage for the measurement interval | `HISTORY` rows (default: as many as accounts) | The spec ties it to the benchmark run |
-| TPC-B `h_delta`: the transaction's amount | `n` / 100 | Gives `history`, which has no key, a column that maps back to `n` |
+| TPC-B `h_delta`: the transaction's amount | `n` / 100 | A distinct amount per row; `history`, which has no key, maps back to `n` from `h_time` (one second per row), so a signal can rewrite the amounts |
 | TPC-DS and TPC-E word-list text columns (11 and 7 columns) whose formula would pass MySQL's 1,024-character comment | No tag: the planner's default text cast | A comment holds 1,024 characters; the DDL has no side table |
 
 ## Files

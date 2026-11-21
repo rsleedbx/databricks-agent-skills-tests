@@ -246,7 +246,7 @@ class SignalBlocks(unittest.TestCase):
 
     def test_every_block_runs(self):
         models = [m for m in ("tpcb", "tpcc", "tpch", "tpcds", "tpce", "tpcdi") if sg.spec(m)]
-        self.assertTrue({"tpcc", "tpcds", "tpce"} <= set(models))
+        self.assertTrue({"tpcb", "tpcc", "tpcds", "tpce"} <= set(models))
         for m in models:
             sigs = sg.spec(m)
             for s in sigs:
@@ -266,7 +266,7 @@ class SignalBlocks(unittest.TestCase):
 
     def test_lfc_sources_runs_signals_only_with_numbers(self):
         for argv, want in ((["--model", "tpcc", "db", "a:1"], None), (["--model", "tpcc", "db", "a:1:" + TpccDelivery.D], "steps"),
-                           (["--model", "tpcc", "--signals", "db", "a:1"], "steps"), (["--model", "tpcb", "db", "a:1:1"], None)):
+                           (["--model", "tpcc", "--signals", "db", "a:1"], "steps"), (["--model", "tpch", "db", "a:1:1,0,1,1,5,0,0,1,2"], None)):
             with mock.patch.object(src, "run", return_value=0) as run:
                 src.main(argv)
             got = run.call_args.args[2]

@@ -163,7 +163,15 @@ class Roles(unittest.TestCase):
         (sig,) = d["signals"]
         self.assertEqual(sig["name"], "lineitem_lateness")
         self.assertEqual(len(sig["parameters"]), 9)   # the nine numbers of lfc-tpch-sources' <name>:<sf>:<lead times>
-        self.assertIn("signals: none", cli("describe.py", os.path.join(SCHEMAS, "tpcb.yaml")))
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:   # a schema without signals
+            yaml.safe_dump({"version": "1.0", "tables": [{"name": "t", "role": "fact", "row_count": 1,
+                                                          "columns": [{"name": "id", "type": "integer", "primary_key": True}]}]}, f)
+        try:
+            self.assertIn("signals: none", cli("describe.py", f.name))
+        finally:
+            os.unlink(f.name)
+        tb = json.loads(cli("describe.py", os.path.join(SCHEMAS, "tpcb.yaml"), "--json"))["signals"]
+        self.assertEqual([s["name"] for s in tb], ["unusual_withdrawal"])
         ds = json.loads(cli("describe.py", os.path.join(SCHEMAS, "tpcds.yaml"), "--json"))["signals"]
         self.assertEqual([s["name"] for s in ds], ["return_propensity", "web_ship_delay"])   # one retailer, both
 

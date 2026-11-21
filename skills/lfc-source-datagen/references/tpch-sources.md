@@ -174,6 +174,33 @@ Three sources at scale factor 0.05 (166,938 trades each), `lfc-sources --model t
 
 Measured on PostgreSQL 14 on 2026-11-20. In each source no history row comes before its trade, no cancelled trade keeps a settlement, every completed one has one, and every settlement's cash type matches `t_is_cash`.
 
+## TPC-B unusual withdrawals
+
+The fill's `h_delta` is the row number divided by 100, so no amount means anything. `tpcb-withdrawals.sql` (signal `unusual_withdrawal`, from `tpcb.yaml`'s `signals:`) gives each source one bank's history. A row is a large withdrawal at a per-mille rate:
+
+| Part | Per mille |
+|---|---|
+| base | `base` |
+| a risky teller (`h_t_id` a multiple of `teller_every`) | `teller` |
+| a watch-listed account (`h_a_id` a multiple of `account_every`) | `account` |
+| a night hour of `h_time` (from `night_from`, before `night_to`, wrapping past midnight) | `night` |
+
+- A large withdrawal is −`big_min` … −(`big_min` + `big_span` − 1) dollars, and every other row is ±1 … `normal_max`. A row is unusual when `h_delta` ≤ −`big_min`, so keep `normal_max` below `big_min`.
+- Every account's, teller's and branch's balance becomes the sum of its deltas, so the three sums equal the history's, as in the spec.
+- The branch isn't a cause: TPC-B has one per scale-factor unit, so it rarely varies in a test source.
+- `history` has no key. The planner reads its row number from `h_time` (one second per row), and the step reads it there too, so the amounts can be rewritten and a later append still works.
+- The eleven numbers, in order: `base,teller_every,teller,account_every,account,night_from,night_to,night,normal_max,big_min,big_span`.
+
+Three sources at scale factor 1 (100,000 history rows each), `lfc-sources --model tpcb`, as % of rows unusual:
+
+| Source | Numbers | All | Risky teller vs other | Watched account vs other | Night vs day | None of the three |
+|---|---|---|---|---|---|---|
+| retail | `5,5,60,50,150,22,6,40,500,5000,20000` | 3.0 | 9.0 vs 2.2 | 20.6 vs 2.9 | 5.5 vs 1.2 | 0.5 |
+| cash_heavy | `10,5,120,20,100,20,4,60,2000,10000,40000` | 5.2 | 18.0 vs 3.5 | 22.9 vs 4.7 | 9.8 vs 1.8 | 1.0 |
+| online | `2,5,10,100,300,0,5,30,300,3000,10000` | 1.2 | 2.5 vs 1.0 | 30.6 vs 1.1 | 3.3 vs 0.5 | 0.2 |
+
+Measured on PostgreSQL 14 on 2026-11-20. In each source the account, teller and branch sums equal the history's, and no normal row is larger than `normal_max`. An append fill after the signal added 1,000 history rows that continue the row numbers.
+
 ## Publication
 
 On PostgreSQL 15 and later, the publication is `FOR TABLES IN SCHEMA` the sources' schemas, so a table added later is in it. Before 15, that form doesn't exist, so it lists the tables there now by name. A rerun with other sources `ALTER`s the publication to the new list.
