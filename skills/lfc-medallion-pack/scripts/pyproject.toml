@@ -1,0 +1,20 @@
+[project]
+name = "lfc-medallion-pack"
+version = "0.1.0"
+description = "Model packs and their runner: a schema repeated across many LOBs, built n:1 into bronze, silver and gold"
+requires-python = ">=3.10"
+# lfc-source-datagen by name: install it from the same archive (a branch or tag) in the same pip command
+dependencies = ["pyyaml>=6", "sqlglot>=25", "lfc-source-datagen"]
+
+[project.scripts]
+lfc-medallion-pack = "lfc_medallion_pack.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lfc_medallion_pack"]
+
+[tool.setuptools.package-data]
+lfc_medallion_pack = ["packs/*/*", "templates/*", "templates/*/*"]

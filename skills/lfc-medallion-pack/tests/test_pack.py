@@ -1,0 +1,138 @@
+"""Offline checks of lfc_medallion_pack: the 20-70-10 tiers, a project planned into pipelines within the table limit,
+render's files, the TPC-B pack's marts against its model, and the mistakes check must catch.
+
+    PYTHONPATH=skills/lfc-medallion-pack/scripts:skills/lfc-source-datagen/scripts:skills/lfc-source-statschema/scripts:\
+skills/lfc-source-contract/scripts python3 -m unittest skills/lfc-medallion-pack/tests/test_pack.py
+"""
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+
+import yaml
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+from lfc_medallion_pack import check, cli, lobs, pack, plan, verify  # noqa: E402
+
+COLS = {"branch": ["b_id", "b_balance", "b_filler"], "teller": ["t_id", "t_b_id", "t_balance", "t_filler"],
+        "account": ["a_id", "a_b_id", "a_balance", "a_filler"],
+        "history": ["h_t_id", "h_b_id", "h_a_id", "h_delta", "h_time", "h_filler"]}
+
+
+def project(folder, **modules):
+    f = os.path.join(folder, "p.yaml")
+    with open(f, "w") as fh:
+        yaml.safe_dump({"archive": "https://example.invalid/a.zip", "source": {"slot_prefix": "p"},
+                        "modules": modules}, fh)
+    return f
+
+
+class Lobs(unittest.TestCase):
+    def test_twenty_seventy_ten(self):
+        for n, want in ((10, (2, 7, 1)), (250, (50, 175, 25)), (3, (1, 1, 1))):
+            got = [x["tier"] for x in lobs.lobs(n, seed=7)]
+            self.assertEqual((got.count("high"), got.count("core"), got.count("low")), want)
+
+    def test_seeded_and_ranked(self):
+        a, b = lobs.lobs(20, seed=3), lobs.lobs(20, seed=3)
+        self.assertEqual(a, b)
+        hi = min(x["score"] for x in a if x["tier"] == "high")
+        self.assertTrue(all(x["score"] <= hi for x in a if x["tier"] != "high"))
+
+    def test_names(self):
+        self.assertEqual([x["name"] for x in lobs.lobs(names=["east", "west"])], ["east", "west"])
+        with self.assertRaises(ValueError):
+            lobs.lobs(names=["East"])
+
+
+class Plan(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def test_groups_within_the_table_limit(self):
+        pl = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 250, "seed": 7}))
+        m = pl["modules"][0]
+        self.assertEqual([len(g["lobs"]) for g in m["groups"]], [62, 62, 62, 62, 2])   # 248 tables: 4 x 62 <= 250
+        self.assertTrue(all(g["tables"] <= 250 for g in m["groups"]))
+        self.assertEqual(m["groups"][0]["slot"], "p_bank_1")
+        self.assertEqual(pl["slots"], 5)
+        low = next(x for x in m["lobs"] if x["tier"] == "low")
+        self.assertEqual(low["signals"], pack.signals(pack.load("tpcb"), "low"))
+        self.assertEqual(low["source_schema"], f"bank_{low['name']}")
+
+    def test_limits_refused(self):
+        f = project(self.d, bank={"pack": "tpcb", "lobs": 3})
+        p = yaml.safe_load(open(f))
+        p["limits"] = {"tables_per_pipeline": 1000}
+        yaml.safe_dump(p, open(f, "w"))
+        with self.assertRaisesRegex(ValueError, "at most 999"):
+            plan.plan(f)
+        p["limits"], p["source"]["max_slots"] = {}, 1
+        p["modules"]["bank"]["lobs"] = 100
+        yaml.safe_dump(p, open(f, "w"))
+        with self.assertRaisesRegex(ValueError, "replication slots"):
+            plan.plan(f)
+
+    def test_render_writes_resources_marts_and_plan(self):
+        f = project(self.d, bank={"pack": "tpcb", "lobs": 70, "data": True}, scale={"pack": "tpcb", "lobs": 3})
+        got = plan.render(f, "https://example.invalid/a.zip")
+        self.assertEqual(got["modules"]["bank"], {"lobs": 70, "pipelines": 2, "tables": 280})
+        r = yaml.safe_load(open(os.path.join(self.d, "resources", "bank.yml")))["resources"]
+        self.assertEqual(len([s for s in r["schemas"] if "_bronze_" in s]), 70)
+        ing = r["pipelines"]["bank_ingest_2"]["ingestion_definition"]
+        self.assertEqual(len(ing["objects"]), 8)
+        self.assertEqual(ing["source_configurations"][0]["catalog"]["postgres"]["slot_config"],
+                         {"slot_name": "p_bank_2", "publication_name": "p_bank_2_pub"})
+        t = r["pipelines"]["bank_transform"]
+        self.assertEqual(t["configuration"]["large_withdrawal"], "5000")
+        self.assertEqual([x["file"]["path"] for x in t["libraries"]],
+                         ["../transform/n1.py", "../marts/tpcb/silver.sql", "../marts/tpcb/gold.sql"])
+        self.assertTrue(os.path.isfile(os.path.join(self.d, "marts", "tpcb", "gold.sql")))
+        open(os.path.join(self.d, "marts", "tpcb", "gold.sql"), "a").write("-- mine\n")
+        plan.render(f, "https://example.invalid/a.zip")
+        self.assertTrue(open(os.path.join(self.d, "marts", "tpcb", "gold.sql")).read().endswith("-- mine\n"))
+        pl = plan.read_plan(os.path.join(self.d, "source", "plan.json"))
+        self.assertEqual([m["module"] for m in pl["modules"]], ["bank", "scale"])
+
+    def test_init_fills_the_templates_once(self):
+        got = cli.init(self.d, "acme", "https://example.invalid/a.zip")
+        self.assertIn(os.path.join(self.d, "acme.yaml"), got)
+        src = open(os.path.join(self.d, "source", "databricks.yml")).read()
+        self.assertIn("acme_source", src)
+        self.assertNotIn("@@", src)
+        self.assertEqual(cli.init(self.d, "acme", "x"), [])
+
+
+class Check(unittest.TestCase):
+    def test_tpcb_pack_is_right(self):
+        self.assertEqual(check.check(pack.load("tpcb"), COLS), [])
+
+    def test_mistakes_found(self):
+        d = tempfile.mkdtemp()
+        try:
+            shutil.copytree(pack.load("tpcb")["dir"], os.path.join(d, "p"))
+            with open(os.path.join(d, "p", "silver.sql"), "a") as fh:
+                fh.write("\nCREATE OR REFRESH MATERIALIZED VIEW bad AS SELECT h.h_amount, t.t_id FROM all_history h "
+                         "JOIN all_teller t ON t.t_id = h.h_t_id JOIN all_nation n ON n.lob = h.lob;\n")
+            got = check.check(pack.load(os.path.join(d, "p")), COLS)
+        finally:
+            shutil.rmtree(d)
+        self.assertTrue(any("h_amount" in p for p in got))
+        self.assertTrue(any("join of t doesn't equate lob" in p for p in got))
+        self.assertTrue(any("no table nation" in p for p in got))
+
+
+class Verify(unittest.TestCase):
+    def test_mart_names_and_bind(self):
+        sql = open(os.path.join(pack.load("tpcb")["dir"], "gold.sql")).read()
+        self.assertEqual(verify.mart_names(sql), ["transactions", "unusual_by_hour", "lob_summary"])
+        self.assertEqual(verify.bind("(:base + :teller) / 1000.0", {"base": 5, "teller": 60}), "(5 + 60) / 1000.0")
+
+
+if __name__ == "__main__":
+    unittest.main()

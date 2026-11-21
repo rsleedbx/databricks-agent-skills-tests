@@ -424,6 +424,18 @@ class Build(unittest.TestCase):
         self.assertIn("LOG sources: orders.a exists: kept", db.log)
         self.assertFalse([s for s in db.log if s.startswith("DO ")])
 
+    def test_no_fill_builds_empty_tables_only(self):
+        db = Db()
+        with mock.patch.object(src, "_fill") as fill, mock.patch.object(src.cdc, "publication") as pub:
+            rows = sg.model_sources(db.connect, "tpcb", ["a:1"], login="lfc_cdc", fill=False,
+                                    log=lambda m: db.log.append(f"LOG {m}"))
+        fill.assert_not_called()
+        self.assertTrue([s for s in db.log if s.startswith("DO ") and 'CREATE TABLE "history"' in s])
+        self.assertFalse([s for s in db.log if s.startswith("SELECT 'bad") or s.startswith("WITH r AS")])
+        self.assertTrue([s for s in db.log if 'RENAME TO "a"' in s])
+        self.assertEqual(pub.call_args.args[1:], ("orders_pub", ["a"]))
+        self.assertEqual(rows[0]["source"], "a")
+
     def test_broken_rules_stop_before_the_rename(self):
         db = Db(bad=3)
         with self.assertRaisesRegex(RuntimeError, "spec rules broken"):

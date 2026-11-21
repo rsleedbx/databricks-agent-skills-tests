@@ -1,0 +1,42 @@
+# TPC-B as a model pack: a bank's branches, tellers, accounts and their history, one bank per LOB (a regional bank, an
+# acquired one, a brand). The signal is statschema's unusual_withdrawal (schemas/tpcb.yaml signals:), built into each
+# LOB by lfc-source-datagen; gold labels the same withdrawals, so the data test reads the signal back per LOB.
+name: tpcb
+model: tpcb
+description: "Banks (one per LOB): unusual withdrawals by teller, account and hour, across every LOB"
+source_column: lob
+tables: [branch, teller, account, history]
+
+# What each tier's LOB looks like: its scale factor (branches; 100,000 accounts and history rows each) and its numbers
+# for unusual_withdrawal, in the signal's order: base teller_every teller account_every account night_from night_to
+# night normal_max big_min big_span (per mille rates; dollars). Every tier keeps big_min at 5000 and normal_max below
+# it, so gold's one threshold (large_withdrawal) labels exactly the large ones in every LOB.
+tiers:
+  high: {sf: 1, signals: "1,5,10,100,50,0,5,10,300,5000,10000"}      # few, and little that drives them
+  core: {sf: 1, signals: "5,5,60,50,150,22,6,40,500,5000,20000"}     # statschema's retail profile
+  low:  {sf: 1, signals: "15,5,150,20,150,20,4,80,2000,5000,40000"}  # risky tellers, a long night, a big watch list
+
+marts: [silver.sql, gold.sql]
+configuration:
+  large_withdrawal: 5000        # gold: a withdrawal of this many dollars or more is unusual (the signal's big_min)
+
+# The data test: gold's label against the rate a row's LOB numbers give it (the signal's own formula, over gold's
+# columns); verify.py binds :<parameter> per LOB.
+readout:
+  table: transactions
+  label: unusual
+  rate: >-
+    (:base + CASE WHEN teller_id % :teller_every = 0 THEN :teller ELSE 0 END
+     + CASE WHEN account_id % :account_every = 0 THEN :account ELSE 0 END
+     + CASE WHEN (:night_from <= :night_to AND hour >= :night_from AND hour < :night_to)
+              OR (:night_from > :night_to AND (hour >= :night_from OR hour < :night_to)) THEN :night ELSE 0 END)
+    / 1000.0
+
+# For an app and a model: what a gold row is and what it says.
+contract:
+  grain: "transactions: one history row (lob, at)"
+  keys: [lob, at]
+  label: unusual
+  features: [teller_id, account_id, branch_id, hour, amount, account_balance]
+  measure: unusual_share
+  summary: lob_summary

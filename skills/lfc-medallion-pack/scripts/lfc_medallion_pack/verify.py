@@ -1,0 +1,123 @@
+"""verify: what a deployed module holds, against its plan (plan.py), from a notebook or job after the transform:
+
+    from lfc_medallion_pack.verify import run
+    rows = run(spark, plan, "bank", catalog="main", prefix="me_febar")     # one row per check: check, want, got, ok
+
+Every module (the no-data test too):
+  bronze       one bronze schema per LOB, each with every table of the pack
+  n1           all_<table> per table, with the source column, in the silver schema
+  marts        every view the pack's marts create, in silver or gold
+With data (data: true):
+  rows         each table's rows in n:1 equal the sum of its bronze tables' (no LOB lost or doubled)
+  readout      the pack's signal read back from gold: per LOB, the label's share against the rate its tier's numbers
+               give each row (readout.rate, SQL over the gold table's columns with :<parameter>), within tolerance;
+               and per tier, the shares in the tiers' order of their expected rates
+"""
+from __future__ import annotations
+
+import math
+import os
+import re
+
+MART = re.compile(r"CREATE\s+OR\s+REFRESH\s+(?:MATERIALIZED\s+VIEW|STREAMING\s+TABLE)\s+([\w.${}]+)", re.I)
+
+
+def mart_names(sql: str) -> list[str]:
+    """The views a marts file creates, by their last name part (${catalog}.${gold_schema}.x -> x)."""
+    return [n.split(".")[-1] for n in MART.findall(sql)]
+
+
+def _one(spark, q: str):
+    return spark.sql(q).collect()
+
+
+def _row(check: str, want, got, ok: bool, detail: str = "") -> dict:
+    return {"check": check, "want": str(want), "got": str(got), "ok": bool(ok), "detail": detail}
+
+
+def params(model: str, signals: str) -> dict:
+    """A LOB's signal numbers by their names, from the model's signals: block (lfc_source_datagen.signals)."""
+    from lfc_source_datagen.signals import spec
+    out = {}
+    for sig, nums in zip(spec(model), signals.split("/")):
+        if nums:
+            out |= dict(zip(sig["parameters"], (int(x) for x in nums.split(","))))
+    return out
+
+
+def bind(expr: str, values: dict) -> str:
+    return re.sub(r":([a-z_]+)\b", lambda m: str(values[m.group(1)]), expr)
+
+
+def read_marts(folder: str) -> dict[str, str]:
+    """{file name: SQL} of a marts folder (the repo's marts/<pack>/)."""
+    out = {}
+    for f in sorted(os.listdir(folder)):
+        if f.endswith(".sql"):
+            with open(os.path.join(folder, f)) as fh:
+                out[f] = fh.read()
+    return out
+
+
+def run(spark, plan: dict, module: str, catalog: str, prefix: str, marts: dict[str, str] | None = None,
+        tolerance: float = 4.0, marts_dir: str | None = None) -> list[dict]:
+    """The checks (the module's docstring); marts: the SQL files, or marts_dir/<pack>/ read for them."""
+    m = next(x for x in plan["modules"] if x["module"] == module)
+    if marts is None and marts_dir:
+        marts = read_marts(os.path.join(marts_dir, m["pack"]))
+    n, col = m["module"], m["source_column"]
+    bronze = f"{prefix}_{n}_bronze_"
+    silver, gold = f"`{catalog}`.`{prefix}_{n}_silver`", f"`{catalog}`.`{prefix}_{n}_gold`"
+    out = []
+    have = {r.databaseName[len(bronze):] for r in _one(spark, f"SHOW SCHEMAS IN `{catalog}` LIKE '{bronze}*'")}
+    want = [x["name"] for x in m["lobs"]]
+    missing = sorted(set(want) - have)
+    out.append(_row("bronze schemas", len(want), len(have & set(want)), not missing, f"missing {missing[:5]}"))
+    q = (f"SELECT table_schema, table_name FROM `{catalog}`.information_schema.tables "
+         f"WHERE table_schema LIKE '{bronze}%'")
+    tabs: dict[str, set] = {}
+    for r in _one(spark, q):
+        tabs.setdefault(r.table_schema[len(bronze):], set()).add(r.table_name)
+    short = {lob: sorted(set(m["tables"]) - tabs.get(lob, set())) for lob in want}
+    short = {k: v for k, v in short.items() if v}
+    out.append(_row("bronze tables", len(want) * len(m["tables"]),
+                    sum(len(set(m["tables"]) & tabs.get(lob, set())) for lob in want), not short,
+                    f"LOBs short of tables: {dict(list(short.items())[:3])}"))
+    for t in m["tables"]:
+        cols = [r.col_name for r in _one(spark, f"DESCRIBE TABLE {silver}.`all_{t}`")]
+        out.append(_row(f"n1 all_{t}", f"{col} first", cols[:1], cols[:1] == [col]))
+    views = {}
+    for f, sql in (marts or {}).items():
+        for v in mart_names(sql):
+            views[v] = f
+    for v in sorted(views):
+        found = [s for s in (silver, gold) if _one(spark, f"SHOW TABLES IN {s} LIKE '{v}'")]
+        out.append(_row(f"mart {v}", "exists", found[:1] or "missing", bool(found), views[v]))
+    if not m["data"]:
+        return out
+    for t in m["tables"]:
+        parts = [f"SELECT COUNT(*) AS c FROM `{catalog}`.`{bronze}{lob}`.`{t}`" for lob in want]
+        b = sum(int(r.c) for k in range(0, len(parts), 100)
+                for r in _one(spark, " UNION ALL ".join(parts[k:k + 100])))
+        s = int(_one(spark, f"SELECT COUNT(*) AS c FROM {silver}.`all_{t}`")[0].c)
+        out.append(_row(f"rows all_{t}", b, s, b == s and b > 0))
+    ro = m.get("readout")
+    if not ro:
+        return out
+    tiers: dict[str, list] = {}
+    for x in m["lobs"]:
+        p = params(m["model"], x["signals"])
+        r = _one(spark, f"SELECT COUNT(*) AS n, AVG(CASE WHEN {ro['label']} THEN 1.0 ELSE 0.0 END) AS got, "
+                        f"AVG({bind(ro['rate'], p)}) AS want FROM {gold}.`{ro['table']}` "
+                        f"WHERE `{col}` = '{x['name']}'")[0]
+        cnt, got, exp = int(r.n), float(r.got or 0), float(r.want or 0)
+        se = math.sqrt(max(exp * (1 - exp), 1e-9) / max(cnt, 1))
+        ok = cnt > 0 and abs(got - exp) <= tolerance * se + 0.001
+        out.append(_row(f"readout {x['name']} ({x['tier']})", f"{exp:.4f}", f"{got:.4f}", ok, f"{cnt} rows"))
+        tiers.setdefault(x["tier"], []).append((exp, got))
+    means = {t: (sum(e for e, _ in v) / len(v), sum(g for _, g in v) / len(v)) for t, v in tiers.items()}
+    by_want = sorted(means, key=lambda t: means[t][0])
+    by_got = sorted(means, key=lambda t: means[t][1])
+    out.append(_row("readout tiers in order", by_want, by_got, by_want == by_got,
+                    ", ".join(f"{t} {means[t][1]:.4f} (want {means[t][0]:.4f})" for t in by_want)))
+    return out

@@ -4,6 +4,7 @@
 # (bin/ and the contributor skills): it may use every layer, and no layer may use it.
 #
 #   shape: uses contract, common        contract: use common        sources: use shape, contract, common        lakeflow: uses contract, common
+#   packs: uses lakeflow, sources, shape, contract, common (model packs and their runner compose the others)
 #
 # skills: skill folders in skills/ (contributor skills: .claude/skills/) in this layer.
 # pending: names that an open branch adds; classified here whether or not they're on main yet.
@@ -48,6 +49,11 @@ layers:
       - lfc-source-aws-aurora
       - lfc-source-firewall
       - lfc-source-eventhubs
+
+  packs:
+    may_use: [lakeflow, sources, shape, contract, common]
+    skills:
+      - lfc-medallion-pack
 
   lakeflow:
     may_use: [contract, common]

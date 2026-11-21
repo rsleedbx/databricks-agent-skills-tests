@@ -1,0 +1,186 @@
+"""plan: a project's modules, each a model pack built as many LOBs, planned into what to deploy.
+
+A project file (the customer's repo, e.g. febar.yaml) lists its modules; each is one schema of theirs (or a TPC
+model), repeated across LOBs, that becomes one n:1 bronze, silver and gold:
+
+    source:                       # the source database: one Lakebase project and database, a schema per module's LOB
+      slot_prefix: febar          # replication slots and publications: <slot_prefix>_<module>_<k>
+      max_slots: 10               # the source's max_replication_slots, if known: render stops past it
+    limits:
+      tables_per_pipeline: 250    # an ingestion pipeline's tables (Lakeflow Connect: 1,000 hard, 250 recommended)
+    modules:
+      bank:                       # a module: its name is in every schema of its own
+        pack: tpcb                # a builtin pack, or a folder of the repo's own (packs/<name>)
+        lobs: 10                  # how many LOBs (lob_001 ..), or names: [east, west]
+        seed: 7                   # the 20-70-10 draw (lobs.py)
+        data: true                # fill the sources (false: the tables empty, for the no-data test)
+
+render() writes, under the repo:
+    resources/<module>.yml        the bundle resources: schemas (staging, a bronze per LOB, silver, gold), one gateway
+                                  and ingestion pipeline per group of LOBs, the transform pipeline, the verify job
+    marts/<pack>/*.sql            the pack's silver and gold, once (yours to change; kept on a rerun)
+    source/plan.json              every module's LOBs, tiers, groups and names, for the source and verify jobs (in
+                                  source/, which both bundles sync)
+Source schemas are <module>_<lob> in the one database; bronze schemas <prefix>_<module>_bronze_<lob>.
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import shutil
+
+import yaml
+
+from . import lobs as lobs_mod
+from . import pack as pack_mod
+
+TABLES_PER_PIPELINE = 250      # recommended; a pipeline takes at most 999 source tables (1,000 with its staging table)
+HARD_TABLES = 999
+
+
+def load_project(path: str) -> dict:
+    with open(path) as fh:
+        p = yaml.safe_load(fh) or {}
+    if not p.get("modules"):
+        raise ValueError(f"{path}: no modules")
+    p.setdefault("source", {}).setdefault("slot_prefix", "lfc")
+    p.setdefault("limits", {}).setdefault("tables_per_pipeline", TABLES_PER_PIPELINE)
+    return p
+
+
+def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
+    """One module: its pack, LOBs with tiers and data settings, and its groups (one ingestion pipeline each)."""
+    if not lobs_mod.NAME.match(name):
+        raise ValueError(f"module {name}: lower-case letters, digits and _")
+    p = pack_mod.load(m["pack"], base)
+    items = lobs_mod.lobs(m.get("lobs") if isinstance(m.get("lobs"), int) else None, m.get("seed", 1),
+                          m.get("lobs") if isinstance(m.get("lobs"), list) else m.get("names"))
+    for x in items:
+        t = p["tiers"][x["tier"]]
+        x |= {"sf": t.get("sf", 1), "signals": pack_mod.signals(p, x["tier"]), "source_schema": f"{name}_{x['name']}"}
+    limit = int(project["limits"]["tables_per_pipeline"])
+    if limit > HARD_TABLES:
+        raise ValueError(f"tables_per_pipeline {limit}: an ingestion pipeline takes at most {HARD_TABLES} source tables")
+    per = max(1, limit // len(p["tables"]))
+    sp = project["source"]["slot_prefix"]
+    groups = []
+    for k in range(math.ceil(len(items) / per)):
+        part = items[k * per:(k + 1) * per]
+        slot = f"{sp}_{name}_{k + 1}"
+        groups.append({"k": k + 1, "lobs": [x["name"] for x in part], "tables": len(part) * len(p["tables"]),
+                       "slot": slot, "publication": f"{slot}_pub"})
+    return {"module": name, "pack": p["name"], "pack_dir": p["dir"], "model": p["model"],
+            "source_column": p["source_column"], "tables": p["tables"], "data": bool(m.get("data", False)),
+            "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
+            "readout": p.get("readout"), "marts": p["marts"]}
+
+
+def plan(project_path: str) -> dict:
+    project = load_project(project_path)
+    base = os.path.dirname(os.path.abspath(project_path))
+    mods = [module_plan(n, m, project, base) for n, m in project["modules"].items()]
+    slots = sum(len(m["groups"]) for m in mods)
+    mx = project["source"].get("max_slots")
+    if mx and slots > int(mx):
+        raise ValueError(f"{slots} ingestion pipelines need {slots} replication slots; the source allows {mx} "
+                         "(raise max_replication_slots and max_wal_senders, or tables_per_pipeline)")
+    return {"project": os.path.basename(project_path), "source": project["source"], "limits": project["limits"],
+            "slots": slots, "modules": mods}
+
+
+def read_plan(path: str = "plan.json") -> dict:
+    """A plan render wrote (source/plan.json), as the source and verify jobs read it."""
+    with open(path) as fh:
+        return json.load(fh)
+
+
+def _schema(name: str, comment: str) -> dict:
+    return {"catalog_name": "${var.catalog}", "name": f"${{var.prefix}}_{name}", "comment": comment}
+
+
+def resources(m: dict, archive: str) -> dict:
+    """The bundle resources of one module (the file resources/<module>.yml)."""
+    n, col = m["module"], m["source_column"]
+    schemas = {f"{n}_staging": _schema(f"{n}_staging", f"Lakeflow Connect gateway staging of module {n}"),
+               f"{n}_silver": _schema(f"{n}_silver", f"Module {n}: n:1 (all_<table>: every LOB's table, with {col}) "
+                                                     "and silver"),
+               f"{n}_gold": _schema(f"{n}_gold", f"Module {n}: gold, across every LOB")}
+    for x in m["lobs"]:
+        schemas[f"{n}_bronze_{x['name']}"] = _schema(f"{n}_bronze_{x['name']}",
+                                                     f"Bronze of module {n}, LOB {x['name']}, as Lakeflow Connect "
+                                                     "lands it (SCD type 1)")
+    pipelines = {}
+    for g in m["groups"]:
+        gw, ing = f"{n}_gw_{g['k']}", f"{n}_ingest_{g['k']}"
+        pipelines[gw] = {
+            "name": f"${{var.prefix}}_{gw}", "catalog": "${var.catalog}",
+            "schema": f"${{resources.schemas.{n}_staging.name}}", "serverless": True, "continuous": True,
+            "gateway_definition": {"connection_name": "${var.connection}", "gateway_storage_catalog": "${var.catalog}",
+                                   "gateway_storage_schema": f"${{resources.schemas.{n}_staging.name}}",
+                                   "gateway_storage_name": f"${{var.prefix}}_{gw}"}}
+        objects = [{"schema": {"source_catalog": "${var.source_database}", "destination_catalog": "${var.catalog}",
+                               "source_schema": f"{n}_{lob}",
+                               "destination_schema": f"${{resources.schemas.{n}_bronze_{lob}.name}}",
+                               "table_configuration": {"scd_type": "SCD_TYPE_1"}}} for lob in g["lobs"]]
+        pipelines[ing] = {
+            "name": f"${{var.prefix}}_{ing}", "catalog": "${var.catalog}",
+            "schema": f"${{resources.schemas.{n}_bronze_{g['lobs'][0]}.name}}", "serverless": True,
+            "ingestion_definition": {
+                "ingestion_gateway_id": f"${{resources.pipelines.{gw}.id}}", "source_type": "POSTGRESQL",
+                "source_configurations": [{"catalog": {"source_catalog": "${var.source_database}", "postgres": {
+                    "slot_config": {"slot_name": g["slot"], "publication_name": g["publication"]}}}}],
+                "objects": objects}}
+    conf = {"catalog": "${var.catalog}", "bronze_prefix": f"${{var.prefix}}_{n}_bronze_", "source_column": col,
+            "gold_schema": f"${{resources.schemas.{n}_gold.name}}"} | {k: str(v) for k, v in m["configuration"].items()}
+    pipelines[f"{n}_transform"] = {
+        "name": f"${{var.prefix}}_{n}_transform", "catalog": "${var.catalog}",
+        "schema": f"${{resources.schemas.{n}_silver.name}}", "serverless": True, "photon": True,
+        "environment": {"dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]},
+        "configuration": conf,
+        "libraries": [{"file": {"path": "../transform/n1.py"}}] +
+                     [{"file": {"path": f"../marts/{m['pack']}/{f}"}} for f in m["marts"]]}
+    ingest_tasks = [{"task_key": f"ingest_{g['k']}", "pipeline_task": {
+        "pipeline_id": f"${{resources.pipelines.{n}_ingest_{g['k']}.id}}"}} for g in m["groups"]]
+    jobs = {f"{n}_refresh": {
+        "name": f"${{var.prefix}}_{n}_refresh",
+        "tasks": ingest_tasks + [
+            {"task_key": "transform", "depends_on": [{"task_key": t["task_key"]} for t in ingest_tasks],
+             "pipeline_task": {"pipeline_id": f"${{resources.pipelines.{n}_transform.id}}"}},
+            {"task_key": "verify", "depends_on": [{"task_key": "transform"}],
+             "notebook_task": {"notebook_path": "../checks/verify.py", "base_parameters": {
+                 "module": n, "catalog": "${var.catalog}", "prefix": "${var.prefix}", "archive": archive}}}]}}
+    return {"resources": {"schemas": schemas, "pipelines": pipelines, "jobs": jobs}}
+
+
+def render(project_path: str, archive: str, out: str | None = None) -> dict:
+    """Write resources/<module>.yml, marts/<pack>/ (when missing) and source/plan.json under out (the project's
+    folder)."""
+    out = out or os.path.dirname(os.path.abspath(project_path))
+    pl = plan(project_path)
+    os.makedirs(os.path.join(out, "resources"), exist_ok=True)
+    written = []
+    for m in pl["modules"]:
+        f = os.path.join(out, "resources", f"{m['module']}.yml")
+        head = (f"# Module {m['module']}: pack {m['pack']} as {len(m['lobs'])} LOBs in {len(m['groups'])} ingestion "
+                f"pipeline(s), then n:1, silver and gold.\n# Written by lfc-medallion-pack render from "
+                f"{pl['project']}: change that and render again, not this file.\n")
+        with open(f, "w") as fh:
+            fh.write(head + yaml.safe_dump(resources(m, archive), sort_keys=False, width=120))
+        written.append(f)
+        md = os.path.join(out, "marts", m["pack"])
+        os.makedirs(md, exist_ok=True)
+        for name in m["marts"]:
+            dst = os.path.join(md, name)
+            if not os.path.exists(dst):
+                shutil.copyfile(os.path.join(m["pack_dir"], name), dst)
+                written.append(dst)
+    keep = dict(pl)
+    keep["modules"] = [{k: v for k, v in m.items() if k != "pack_dir"} for m in pl["modules"]]
+    os.makedirs(os.path.join(out, "source"), exist_ok=True)
+    with open(os.path.join(out, "source", "plan.json"), "w") as fh:
+        json.dump(keep, fh, indent=1)
+    written.append(os.path.join(out, "source", "plan.json"))
+    return {"written": written, "slots": pl["slots"],
+            "modules": {m["module"]: {"lobs": len(m["lobs"]), "pipelines": len(m["groups"]),
+                                      "tables": sum(g["tables"] for g in m["groups"])} for m in pl["modules"]}}

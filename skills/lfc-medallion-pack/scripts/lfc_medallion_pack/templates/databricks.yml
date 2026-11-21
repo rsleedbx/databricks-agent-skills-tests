@@ -1,0 +1,28 @@
+# The lakehouse bundle: every module of @@NAME@@.yaml from its LOBs' bronze to one silver and gold (n:1). Each
+# resources/<module>.yml is written by `lfc-medallion-pack render @@NAME@@.yaml`; deploy the source bundle first
+# (source/databricks.yml: the database, logins, connections and slots the gateways use).
+bundle:
+  name: @@NAME@@
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog of every schema
+    default: main
+  prefix:
+    description: Schema and pipeline name prefix (one deployment per prefix; BUNDLE_VAR_prefix sets yours)
+    default: @@NAME@@
+  connection:
+    description: UC POSTGRESQL connection to the source (the source bundle's setup_source makes it)
+    default: @@NAME@@_pg
+  source_database:
+    description: The source's PostgreSQL database (every module's LOBs are schemas in it)
+    default: @@NAME@@
+
+targets:
+  dev:
+    default: true
+    workspace:
+      root_path: ~/.bundle/${bundle.name}/${bundle.target}

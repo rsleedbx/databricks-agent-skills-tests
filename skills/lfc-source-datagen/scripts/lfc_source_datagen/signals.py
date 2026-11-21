@@ -153,9 +153,12 @@ def summary(model: str, cur, name: str) -> dict:
 
 
 def model_sources(connect, model: str, sources, login: str | None = None, publication: str | None = None,
-                  sessions: int = 4, log=print) -> list[dict]:
-    """The model's sources with their signals (the module's docstring); see sources.build."""
+                  sessions: int = 4, log=print, fill: bool = True) -> list[dict]:
+    """The model's sources with their signals (the module's docstring); see sources.build (fill=False: empty
+    tables, no signals and no summary)."""
     srcs = parse(sources)
+    if not fill:
+        return build(connect, model, srcs, login, publication, sessions, log=log, fill=False)
     check(model, srcs)
     return build(connect, model, srcs, login, publication, sessions, *bound(model)[1:3], log=log)
 
