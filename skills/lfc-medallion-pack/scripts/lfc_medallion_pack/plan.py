@@ -77,7 +77,8 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
             "source_column": p["source_column"], "tables": p["tables"], "roles": p.get("roles", {}),
             "data": bool(m.get("data", False)),
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
-            "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit}
+            "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit,
+            "hints": m.get("hints") or {}}
 
 
 def plan(project_path: str) -> dict:
@@ -147,9 +148,10 @@ def resources(m: dict, archive: str) -> dict:
                      [{"file": {"path": f"../marts/{m['pack']}/{f}"}} for f in m["marts"]]}
     ingest_tasks = [{"task_key": f"ingest_{g['k']}", "pipeline_task": {
         "pipeline_id": f"${{resources.pipelines.{n}_ingest_{g['k']}.id}}"}} for g in m["groups"]]
-    # the merge route (lfc-medallion): each table's role from the schema YAML as a hint, so dimensions, lookups and
-    # bridges are kept by MERGE from their sources' change feeds and facts, logs and queues by the pipeline
-    hints = json.dumps({t: r for t, r in (m.get("roles") or {}).items() if r}, sort_keys=True)
+    # the merge route (lfc-medallion): merge_route classifies each table from evidence (keys, foreign keys, change
+    # counters) and keeps dimensions, lookups and bridges by MERGE, facts, logs and queues in the pipeline; a module's
+    # own hints (febar.yaml) override a table's role only where the evidence can't tell
+    hints = json.dumps(m.get("hints") or {}, sort_keys=True)
     merge_task = {"task_key": "merge", "depends_on": [{"task_key": t["task_key"]} for t in ingest_tasks],
                   "environment_key": "medallion",
                   "python_wheel_task": {"package_name": "lfc-medallion", "entry_point": "lfc-medallion-merge",

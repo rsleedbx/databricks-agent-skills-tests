@@ -99,8 +99,7 @@ class Plan(unittest.TestCase):
         self.assertEqual(keys, ["ingest_1", "ingest_2", "merge", "transform", "verify"])
         merge = job["tasks"][2]
         self.assertEqual(merge["python_wheel_task"]["entry_point"], "lfc-medallion-merge")
-        self.assertEqual(json.loads(merge["python_wheel_task"]["named_parameters"]["hints"]),
-                         {"account": "dimension", "branch": "dimension", "history": "log", "teller": "dimension"})
+        self.assertEqual(json.loads(merge["python_wheel_task"]["named_parameters"]["hints"]), {})   # evidence decides
         self.assertEqual(t["configuration"]["silver_schema"], "${resources.schemas.bank_silver.name}")
         open(os.path.join(self.d, "marts", "tpcb", "gold.sql"), "a").write("-- mine\n")
         plan.render(f, "https://example.invalid/a.zip")
