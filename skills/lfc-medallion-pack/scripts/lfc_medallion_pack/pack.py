@@ -49,6 +49,7 @@ def load(ref: str, base: str | None = None) -> dict:
     p.setdefault("source_column", "lob")
     p["dir"] = path
     if "tables" not in p:
+        from lfc_source_datagen.sources import model_roles
         p["roles"] = model_roles(p["model"])
         p["tables"] = list(p["roles"])
     for t in ("high", "core", "low"):
@@ -58,16 +59,6 @@ def load(ref: str, base: str | None = None) -> dict:
         if not os.path.isfile(os.path.join(path, m)):
             raise ValueError(f"pack {ref}: marts file {m} isn't in {path}")
     return p
-
-
-def model_roles(model: str) -> dict[str, str]:
-    """The model's tables and each one's role (dimension, lookup, bridge, fact, log, queue), from its schema YAML."""
-    from lfc_source_datagen.sources import model_schema
-    from statschema.tools import model as model_path
-    with open(model_path(model)) as fh:
-        declared = {t["name"]: t.get("role", "") for t in (yaml.safe_load(fh) or {}).get("tables", [])}
-    built = [t["name"] for t in yaml.safe_load(model_schema(model, 1))["tables"]]
-    return {t: declared.get(t, "") for t in built}
 
 
 def mart_sql(p: dict) -> dict[str, str]:

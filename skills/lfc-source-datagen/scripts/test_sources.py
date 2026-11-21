@@ -471,6 +471,15 @@ class Rule(unittest.TestCase):
         self.assertIn('ADD FOREIGN KEY ("h_a_id") REFERENCES "account" ("a_id")', ddl)
 
 
+class Batch(unittest.TestCase):
+    def test_rows_go_to_the_tables_that_are_not_dimensions_by_the_yaml(self):
+        with mock.patch.object(sg, "_fill") as fill, mock.patch.object(sg, "reapply", return_value={"s": [3, None]}):
+            got = sg.batch(Db().connect, "tpcb", ["a"], 500, log=lambda m: None)
+        self.assertEqual(fill.call_args.args[1:], ("a", 1, ("--mode", "append", "--rows", "500", "--skip",
+                                                            "branch,teller,account")))
+        self.assertEqual(got, [{"source": "a", "rows": 500, "changed": None}])   # a count the connection didn't give
+
+
 class CommandLine(unittest.TestCase):
     def test_bad_arguments_before_connecting(self):
         with mock.patch.object(src, "connector", side_effect=AssertionError("connected")), \

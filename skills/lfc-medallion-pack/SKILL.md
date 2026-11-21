@@ -112,7 +112,7 @@ sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
 An ingestion pipeline's time grows with its tables even when they're empty: about 2.6 s per table per update at 248.
 Plan the refresh interval from it: a 248-table pipeline can't refresh more often than about every 11 minutes.
 
-## Ramping up data and changes (designed, not built yet)
+## Ramping up data and changes (the batch is built; the ramp job isn't yet)
 
 Objects first, then data, then change rate, each step only after verify passes on the one before, with its
 timings recorded, so a slow snapshot never hides an object problem:
@@ -133,6 +133,13 @@ modules:
 - **The DML comes from the YAML:** each table's role says what changes (log and fact tables get new rows by the
   generation rules, continuing their row numbers: `append`), the signal's rule marks the new rows, and its `totals:`
   add the batch's sums to their parents (TPC-B: a transaction's balances). No model or table is named in Python.
+- The batch is `lfc_source_datagen.signals.batch(connect, model, sources, rows)`, on whichever DB-API connection
+  `connect()` gives: psycopg, or the UC JDBC connection (`lfc_source_contract.jdbc.dbapi`). Measured 2026-11-21 on a
+  local PostgreSQL 14, TPC-B at SF 1: 500 history rows a batch in 0.6 s through both, the dimension tables' counts
+  unchanged, every account and teller balance still the sum of its history. Through UC JDBC the rows changed come back
+  as unknown (`None`): Spark's `sessionInitStatement` returns no count. Not yet run from a workspace job.
+- `append` (whole scale factors of every table) is not the batch: TPC-B's branch is one row per scale factor, so its
+  smallest step is 100,000 accounts.
 - The ingestion pipelines are triggered; their steady time per update (above) sets how far behind bronze runs at a
   given batch size, which is what the ramp measures.
 

@@ -235,7 +235,8 @@ def bound(model: str):
 def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
     """Each signal the source has (its table's comment), run again with its own parameters on the rows there now:
     {signal: rows each statement changed}. The steps change only rows whose values differ, so on unchanged rows every
-    count is 0 (the last statement, the comment, counts none)."""
+    count is 0 (the last statement, the comment, counts none). A count is None where the connection doesn't report one
+    (a UC JDBC connection's writes run as Spark's sessionInitStatement, which returns no count)."""
     s = ident(name)
     cur.execute(f"SET search_path = {s}")
     out = {}
@@ -248,7 +249,8 @@ def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
         counts = []
         for st in steps(model, name, "/".join(nums if x["name"] == sig["name"] else "" for x in spec(model))):
             cur.execute(st)
-            counts.append(max(cur.rowcount, 0) if not st.startswith("DO ") else 0)
+            rc = getattr(cur, "rowcount", -1)
+            counts.append(0 if st.startswith("DO ") else None if rc is None or rc < 0 else rc)   # UC JDBC: -1
         out[sig["name"]] = counts
         log(f"signals: {name}: {sig['name']} re-applied, rows changed per statement {counts}")
     return out
@@ -271,6 +273,31 @@ def append(connect, model: str, names, grow: float, sessions: int = 4, log=print
             rebuilt = sorted({tb for s in spec(model) for tb in s.get("rebuilds") or []})   # the signals rebuild these
             _fill(connect, name, sessions, ("--mode", "append", "--grow", repr(float(grow)), "--skip", ",".join(rebuilt)))
         changed = reapply(cur, model, name, log)
-        out.append({"source": name, "changed": sum(sum(v) for v in changed.values())} | summary(model, cur, name))
+        n = [c for v in changed.values() for c in v]
+        out.append({"source": name, "changed": None if None in n else sum(n)} | summary(model, cur, name))
+        con.close()
+    return out
+
+
+DIMENSION_ROLES = ("dimension", "lookup", "bridge")
+
+
+def batch(connect, model: str, names, rows: int, log=print) -> list[dict]:
+    """One batch of changes per source, as the model's YAML says: `rows` new rows in every table whose role isn't a
+    dimension, lookup or bridge (python/fill.py --mode append, continuing each table's row numbers by its generation
+    rules), then its signals re-applied (their totals: the parents' sums). Safe to repeat on a retry (the fill sizes
+    itself from the key already there; the signal changes only rows whose values differ). Works on any DB-API connection
+    connect() returns: psycopg, or a UC JDBC connection (lfc_source_contract.jdbc.dbapi)."""
+    from .sources import model_roles
+    dims = [t for t, r in model_roles(model).items() if r in DIMENSION_ROLES]
+    out = []
+    for name in names:
+        check_name(name, "source")
+        _fill(connect, name, 1, ("--mode", "append", "--rows", str(int(rows))) + (("--skip", ",".join(dims)) if dims else ()))
+        con = connect()
+        cur = con.cursor()
+        changed = reapply(cur, model, name, log)
+        n = [c for v in changed.values() for c in v]
+        out.append({"source": name, "rows": int(rows), "changed": None if None in n else sum(n)})
         con.close()
     return out

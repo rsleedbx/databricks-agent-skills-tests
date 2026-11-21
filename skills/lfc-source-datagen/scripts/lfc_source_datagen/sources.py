@@ -139,6 +139,16 @@ def model_schema(model: str, sf: float, use_spec: bool | None = None) -> str:
     return ddl_to_schema(tpc_schema(model, sf), "mysql") if spec else shape(model_path(model), sf=sf)[0]
 
 
+def model_roles(model: str) -> dict[str, str]:
+    """The model's tables, in build order, and each one's role (dimension, lookup, bridge, fact, log, queue) as its
+    schema YAML declares it ('' where it doesn't)."""
+    import yaml
+    from statschema.tools import model as model_path
+    with open(model_path(model)) as fh:
+        declared = {t["name"]: t.get("role", "") for t in (yaml.safe_load(fh) or {}).get("tables", [])}
+    return {t["name"]: declared.get(t["name"], "") for t in yaml.safe_load(model_schema(model, 1))["tables"]}
+
+
 def model_ddl(model: str, sf: float, use_spec: bool | None = None) -> tuple[str, list[str]]:
     """The model's PostgreSQL DDL at scale factor sf, and its table names."""
     import yaml
