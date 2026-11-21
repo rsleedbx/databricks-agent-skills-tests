@@ -14,8 +14,8 @@ for name in ("module", "catalog", "prefix", "archive"):
 
 import subprocess, sys
 a = dbutils.widgets.get("archive")
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", f"{a}#subdirectory=skills/lfc-source-datagen/scripts",
-                       f"{a}#subdirectory=skills/lfc-medallion-pack/scripts"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", f"lfc-source-datagen @ {a}#subdirectory=skills/lfc-source-datagen/scripts",
+                       f"lfc-medallion-pack @ {a}#subdirectory=skills/lfc-medallion-pack/scripts"])
 dbutils.library.restartPython()
 
 # COMMAND ----------

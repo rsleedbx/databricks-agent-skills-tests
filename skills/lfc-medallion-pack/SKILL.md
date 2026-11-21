@@ -22,15 +22,17 @@ gold. This skill is the runner and the examples; the customer's repo is theirs a
 
 ```bash
 A=https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip   # or a branch or tag
-uvx --from "$A#subdirectory=skills/lfc-medallion-pack/scripts" --with "$A#subdirectory=skills/lfc-source-datagen/scripts" \
-  lfc-medallion-pack init my-lakehouse --name acme --archive "$A"     # both bundles, the notebooks, acme.yaml
+alias lmp='uvx --from "lfc-medallion-pack @ $A#subdirectory=skills/lfc-medallion-pack/scripts" \
+  --with "lfc-source-datagen @ $A#subdirectory=skills/lfc-source-datagen/scripts" lfc-medallion-pack'
+lmp init my-lakehouse --name acme --archive "$A"     # both bundles, the notebooks, acme.yaml
 # edit acme.yaml: the modules (pack, LOBs, seed, data), then
-lfc-medallion-pack render my-lakehouse/acme.yaml    # resources/<module>.yml, marts/<pack>/, source/plan.json
+lmp render my-lakehouse/acme.yaml    # resources/<module>.yml, marts/<pack>/, source/plan.json
 (cd my-lakehouse/source && databricks bundle deploy && databricks bundle run setup_source)
 (cd my-lakehouse && databricks bundle deploy && databricks bundle run <module>_refresh)   # ingest, transform, verify
 ```
 
-`BUNDLE_VAR_prefix` (and the other variables) give each person their own names. `<module>_refresh` runs every
+Each package by name (`name @ URL#subdirectory=...`): two requirements from one archive URL by subdirectory alone
+confuse uv ("Package metadata name ... does not match"). `BUNDLE_VAR_prefix` (and the other variables) give each person their own names. `<module>_refresh` runs every
 ingestion pipeline of the module, then the transform, then `checks/verify.py`, which fails the job when a check does.
 When done: `databricks bundle run setup_source --params step=drop_slots` (a slot keeps WAL), then `bundle destroy`.
 

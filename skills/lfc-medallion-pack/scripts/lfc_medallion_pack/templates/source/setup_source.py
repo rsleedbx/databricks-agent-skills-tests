@@ -17,8 +17,8 @@ w = {k: dbutils.widgets.get(k) for k in ("project", "database", "role", "connect
 
 import subprocess, sys
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q",
-                       f"{w['archive']}#subdirectory=skills/lfc-source-datagen/scripts",
-                       f"{w['archive']}#subdirectory=skills/lfc-medallion-pack/scripts"])
+                       f"lfc-source-datagen @ {w['archive']}#subdirectory=skills/lfc-source-datagen/scripts",
+                       f"lfc-medallion-pack @ {w['archive']}#subdirectory=skills/lfc-medallion-pack/scripts"])
 dbutils.library.restartPython()
 
 # COMMAND ----------
