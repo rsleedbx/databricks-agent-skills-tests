@@ -281,6 +281,32 @@ class SignalBlocks(unittest.TestCase):
             run.assert_called_once_with(["--model", m, "--signals", "db", "a:1"])
 
 
+class AppendSkipsFullTables(unittest.TestCase):
+    """python/planner.py: an append leaves out a table tagged lfc:fixed (every key value used, shape.py says so), whose
+    new rows could only repeat a key; a fill still plans it."""
+
+    def test_append_skips_a_fixed_table_only(self):
+        planner = src._planner("planner")
+        class eng:                                # only what plan() asks of an engine
+            cast = staticmethod(lambda c, n, o: "x.n")
+            length = staticmethod(lambda c, o: None)
+            to_int = staticmethod(lambda c, q: q)
+            q = qby = staticmethod(lambda s: f'"{s}"')
+            insert = staticmethod(lambda sch, t, cols, exprs, o: f"INSERT INTO {t.name}")
+
+        def tabs():
+            col = lambda: planner.Col("id", 1, "int4", pk=True)
+            return [planner.Table("codes", [col()], ["id"], tags="lfc:rows=5 lfc:fixed"),
+                    planner.Table("facts", [col()], ["id"], tags="lfc:rows=500")]
+        for mode, want in (("append", ["facts"]), ("fill", ["codes", "facts"])):
+            ts = tabs()
+            planned = sorted(n for _, n, _ in planner.plan(eng, ts, "s", planner.Opts(mode=mode)))
+            self.assertEqual(planned, want, mode)
+        self.assertEqual(next(x for x in ts if x.name == "codes").skipped, None)
+        ts = tabs(); planner.plan(eng, ts, "s", planner.Opts(mode="append"))
+        self.assertIn("fixed size", next(x for x in ts if x.name == "codes").skipped)
+
+
 class Build(unittest.TestCase):
     def test_new_source_steps_in_order(self):
         db = Db()

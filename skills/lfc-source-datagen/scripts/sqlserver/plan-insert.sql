@@ -44,5 +44,5 @@ SELECT CONCAT(CAST('/* lfc level ' AS nvarchar(max)), lvl, ' */ ', IIF(ident = 1
               CASE COALESCE(@order, 'random') WHEN 'asc' THEN ' ORDER BY x.n' WHEN 'desc' THEN ' ORDER BY x.n DESC' ELSE '' END, ';',
               IIF(ident = 1, CONCAT(' SET IDENTITY_INSERT ', t, ' OFF;'), ''))
 FROM q
-WHERE @mode <> 'fill' OR target IS NOT NULL
+WHERE (@mode <> 'fill' OR target IS NOT NULL) AND NOT (@mode <> 'fill' AND fixed = 1)   -- an append skips a full table
 ORDER BY lvl, tbl;

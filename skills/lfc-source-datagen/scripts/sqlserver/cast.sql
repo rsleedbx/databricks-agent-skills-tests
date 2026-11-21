@@ -29,6 +29,7 @@ SELECT t.object_id AS oid, t.name AS tbl,
        (SELECT val FROM #lfc_tag g WHERE g.tbl = t.name AND g.col = '' AND g.k = 'n') AS nkey,
        (SELECT val FROM #lfc_tag g WHERE g.tbl = t.name AND g.col = '' AND g.k = 'by') AS byc,
        TRY_CAST((SELECT val FROM #lfc_tag g WHERE g.tbl = t.name AND g.col = '' AND g.k = 'rows') AS bigint) AS target,
+       IIF(EXISTS (SELECT 1 FROM #lfc_tag g WHERE g.tbl = t.name AND g.col = '' AND g.k = 'fixed'), 1, 0) AS fixed,
        (SELECT COUNT(*) FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
         WHERE i.object_id = t.object_id AND i.is_primary_key = 1) AS npk,
        (SELECT c.name FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
@@ -122,7 +123,7 @@ UPDATE #lfc_cols SET expr0 = e WHERE e IS NOT NULL;
 UPDATE #lfc_cols SET expr0 = REPLACE(expr0, 'x.n', CONCAT('(', v, ')')) WHERE v IS NOT NULL AND e IS NULL;
 -- each table's key: the column to probe, n from a row (the key decoded, or lfc:n), and the cast from n for a one-column key
 IF OBJECT_ID('tempdb..#lfc_keys') IS NOT NULL DROP TABLE #lfc_keys;
-SELECT tb.oid, tb.tbl, tb.target, COALESCE(tb.byc, QUOTENAME(tb.pk1)) AS pk, COALESCE(tb.nkey, c.to_int) AS pk_int,
+SELECT tb.oid, tb.tbl, tb.target, tb.fixed, COALESCE(tb.byc, QUOTENAME(tb.pk1)) AS pk, COALESCE(tb.nkey, c.to_int) AS pk_int,
        IIF(tb.npk = 1, c.expr0, NULL) AS pk_expr, IIF(tb.nkey IS NULL, 0, 1) AS has_n
 INTO #lfc_keys
 FROM #lfc_tabs tb LEFT JOIN #lfc_cols c ON c.oid = tb.oid AND c.col = tb.pk1

@@ -195,7 +195,7 @@ side = []                                     # MySQL: tags longer than a commen
 def fit(tbl, col, text, limit):
     if D != "mysql" or len(text) <= limit: return text
     side.append(f"REPLACE INTO lfc_seed.tags VALUES (DATABASE(), {exp.Literal.string(tbl).sql(R)}, {exp.Literal.string(col).sql(R)}, {exp.Literal.string(text).sql(R)})")
-    keep = " ".join(x for x in text.split() if x.startswith("lfc:rows="))
+    keep = " ".join(x for x in text.split() if x.startswith("lfc:rows=") or x == "lfc:fixed")
     return (keep + " lfc:ref").strip()
 for t in tables:
     defs = []

@@ -75,7 +75,8 @@ WITH c AS (
          CASE WHEN max(nkey) IS NOT NULL THEN max(nkey) WHEN count(*) FILTER (WHERE is_pk) = 1 THEN max(to_int) FILTER (WHERE is_pk) END AS pk_int,
          max(nkey) AS nkey, quote_ident(coalesce(max(byc), max(attname) FILTER (WHERE kpos = 1))) AS byc,
          max(attname) FILTER (WHERE is_pk) AS pk,
-         substring(obj_description(c.rel, 'pg_class') from 'lfc:rows=([0-9]+)')::bigint AS target
+         substring(obj_description(c.rel, 'pg_class') from 'lfc:rows=([0-9]+)')::bigint AS target,
+         coalesce(obj_description(c.rel, 'pg_class') ~ '(^|\s)lfc:fixed(\s|$)', false) AS fixed
   FROM c JOIN lv ON lv.rel = c.rel GROUP BY c.rel, nspname, relname
   HAVING max(nkey) IS NOT NULL OR (count(*) FILTER (WHERE is_pk) = 1 AND max(to_int) FILTER (WHERE is_pk) IS NOT NULL)
 ), pr AS (                                                                       -- the max and min of n: two index probes
@@ -97,5 +98,5 @@ SELECT format('/* lfc level %s */ INSERT INTO %I.%I (%s)%s SELECT %s FROM (SELEC
          CASE :'order' WHEN 'asc' THEN ' ORDER BY g.i' WHEN 'desc' THEN ' ORDER BY g.i DESC'
                        ELSE CASE WHEN :'src' <> 'seed' THEN ' ORDER BY random()' ELSE '' END END)
 FROM pr
-WHERE :'mode' <> 'fill' OR target IS NOT NULL
+WHERE (:'mode' <> 'fill' OR target IS NOT NULL) AND NOT (:'mode' <> 'fill' AND fixed)   -- an append skips a full table
 ORDER BY lvl, relname;
