@@ -160,6 +160,17 @@ class SignalComment(unittest.TestCase):
         self.assertIn("""'lfc:signal={"signal":"x"}'""", s)
 
 
+class TpceTrades(unittest.TestCase):
+    """TPC-E's trade failures keep the trade's other rows consistent: no holding, holding history or cash transaction
+    of a cancelled trade, and cash transactions only for completed cash trades."""
+
+    def test_the_other_rows_of_a_cancelled_trade_go(self):
+        body = "\n".join(sg.steps("tpce", "a", "8,0,3,3,5,4,1,2,3,50,30,60,5"))
+        for tbl in ("settlement", "holding_history", "holding", "cash_transaction"):
+            self.assertRegex(body, rf"DELETE FROM {tbl} \w+ USING trade t", tbl)
+        self.assertIn("t.t_st_id = 'CNCL' OR t.t_is_cash = 0", body)
+
+
 class Reapply(unittest.TestCase):
     """Signals re-applied on a source's rows now (after an append): fragments in the SQL files, each signal's own
     parameters from its comment, the rows each statement changed; lfc-sources --append names the sources."""

@@ -43,8 +43,7 @@ signals:
       - "the customer's tier: (c_tier - 1) * tier_step minutes"
       - "a margin trade: margin minutes more when t_is_cash is 0"
     noise: "handle_min + 0..handle_span-1 and 0..jitter-1 minutes, cancel_base per mille cancelled, from the keys (deterministic)"
-    follows: "trade_history rebuilt (SBMT, PNDG for limits, CMPT or CNCL); settlement keeps completed trades, cash type from t_is_cash, due 2 days after completion"
-    known: "holding, holding_history and cash_transaction still name cancelled trades"
+    follows: "trade_history rebuilt (SBMT, PNDG for limits, CMPT or CNCL); settlement keeps completed trades, cash type from t_is_cash, due 2 days after completion; holding and holding_history drop cancelled trades' rows; cash_transaction keeps completed cash trades"
     parameters: [promise, handle_min, handle_span, limit_wait, slow_every, slow_broker, tier_step, margin, jitter, spread, far, cancel_far, cancel_base]
     profiles:
       online: "8,0,3,3,5,4,1,2,3,50,30,60,5"
