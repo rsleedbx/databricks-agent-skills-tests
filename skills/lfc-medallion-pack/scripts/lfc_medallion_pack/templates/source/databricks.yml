@@ -40,7 +40,8 @@ resources:
     setup_source:
       name: ${var.project}_setup_source
       parameters:
-        - {name: step, default: source}       # source; drop_slots when the test is done
+        - {name: step, default: source}       # source; batch (rows changes per LOB with data); drop_slots when done
+        - {name: rows, default: "0"}
         - {name: modules, default: ""}        # empty: every module of plan.json
       tasks:
         - task_key: source
@@ -49,7 +50,8 @@ resources:
             base_parameters: {project: "${var.project}", database: "${var.database}", role: "${var.role}",
                               connection: "${var.connection}", writer: "${var.writer}",
                               jdbc_connection: "${var.jdbc_connection}", archive: "${var.archive}",
-                              modules: "{{job.parameters.modules}}", step: "{{job.parameters.step}}"}
+                              modules: "{{job.parameters.modules}}", step: "{{job.parameters.step}}",
+                              rows: "{{job.parameters.rows}}"}
 
 targets:
   dev:

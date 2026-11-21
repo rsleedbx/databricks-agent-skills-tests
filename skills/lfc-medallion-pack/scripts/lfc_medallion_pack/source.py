@@ -12,8 +12,10 @@ connections, so no password is in the code:
      numbers, or empty (data: false; the no-data test);
   4. per ingestion pipeline: its publication over its LOBs' schemas, and its slot (now, so no change is missed: a slot
      holds WAL until its gateway reads it).
-Every step is safe to rerun: a finished LOB is kept, a publication or slot that exists is kept. step="drop_slots"
-drops the plan's slots (when the test is done; a stopped gateway's slot keeps WAL).
+Every step is safe to rerun: a finished LOB is kept, a publication or slot that exists is kept. step="batch" adds
+`rows` changes to every LOB of the modules with data (lfc_source_datagen.signals.batch: new rows in the tables the
+YAML doesn't call dimensions, then the signals); a scheduled run of it is the change stream. step="drop_slots" drops
+the plan's slots (when the test is done; a stopped gateway's slot keeps WAL).
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ def slot_budget(cur, need: int) -> dict:
 
 
 def run(spark, plan: dict, project: str, database: str, role: str, connection: str, writer: str,
-        jdbc_connection: str, step: str = "source", modules=None, log=print) -> list[dict]:
+        jdbc_connection: str, step: str = "source", modules=None, rows: int = 0, log=print) -> list[dict]:
     from lfc_source_contract import cdc
     from lfc_source_contract.lakebase import setup
     from lfc_source_datagen.signals import model_sources
@@ -42,8 +44,16 @@ def run(spark, plan: dict, project: str, database: str, role: str, connection: s
     if step == "drop_slots":
         cur = connect().cursor()
         return [{"slot": g["slot"], "left": cdc.slot(cur, g["slot"], drop=True)} for m in mods for g in m["groups"]]
+    if step == "batch":   # one batch of changes per LOB of the modules with data (signals.batch: the YAML roles)
+        from lfc_source_datagen.signals import batch
+        out = []
+        for m in mods:
+            if m["data"]:
+                out += [{"module": m["module"]} | r for r in
+                        batch(connect, m["model"], [x["source_schema"] for x in m["lobs"]], rows, log=log)]
+        return out
     if step != "source":
-        raise ValueError(f"step {step}: source or drop_slots")
+        raise ValueError(f"step {step}: source, batch or drop_slots")
     log(setup(project, role=role, connection=connection, database=database, writer=writer,
               jdbc_connection=jdbc_connection))
     cur = connect().cursor()
