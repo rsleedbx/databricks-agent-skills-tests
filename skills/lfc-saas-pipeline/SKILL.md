@@ -19,7 +19,7 @@ connection page); each defaults to `lfcsaas-<connector>`.
 | Square | [notebook](notebooks/square-pipeline.py) | [bundle](bundles/square) | `lfcsaas-square` | customers, orders, payments |
 | Wiz Audit Logs | [notebook](notebooks/wiz-audit-logs-pipeline.py) | [bundle](bundles/wiz-audit-logs) | `lfcsaas-wiz` | audit_log_entries, vulnerability_findings |
 | Shopify | [notebook](notebooks/shopify-pipeline.py) | [bundle](bundles/shopify) | `lfcsaas-shopify` | customers, orders, products |
-| Zoom | [notebook](notebooks/zoom-pipeline.py) | [bundle](bundles/zoom) | `lfcsaas-zoom` | users, groups, meetings; no public docs page yet |
+| Zoom | [notebook](notebooks/zoom-pipeline.py) | [bundle](bundles/zoom) | `lfcsaas-zoom` | users, meetings; no public docs page yet |
 | Atlassian Audit Logs | [notebook](notebooks/atlassian-audit-logs-pipeline.py) | [bundle](bundles/atlassian-audit-logs) | `lfcsaas-atlassian-audit-logs` | audit_logs |
 | OpenAI | [notebook](notebooks/openai-pipeline.py) | [bundle](bundles/openai) | `lfcsaas-openai` | audit_logs, users, usage_completions |
 | Adobe Commerce | [notebook](notebooks/adobe-commerce-pipeline.py) | [bundle](bundles/adobe-commerce) | `lfcsaas-adobe-commerce` | products, customers, orders; no public docs page yet |

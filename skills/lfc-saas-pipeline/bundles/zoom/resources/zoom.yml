@@ -13,10 +13,9 @@ resources:
       ingestion_definition:
         connection_name: ${var.connection}
         objects:
-          # users, groups, meetings (source schema `default`)
+          # users, meetings (source schema `default`; groups needs the app scope group:read:list_groups:admin)
           - table: &t {source_schema: default, source_table: users,
                        destination_catalog: "${var.catalog}", destination_schema: "${resources.schemas.event_logs.name}"}
-          - table: {<<: *t, source_table: groups}
           - table: {<<: *t, source_table: meetings}
       permissions:
         - level: CAN_VIEW

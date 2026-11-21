@@ -30,7 +30,7 @@ pipeline_spec = {
         "objects": [
             {"table": {"source_schema": "default", "source_table": t,
                        "destination_catalog": catalog, "destination_schema": schema}}
-            for t in ("users", "groups", "meetings")
+            for t in ("users", "meetings")
         ],
     },
 }

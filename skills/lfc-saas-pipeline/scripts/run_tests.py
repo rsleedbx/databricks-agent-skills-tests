@@ -40,7 +40,7 @@ sys.path.insert(0, str(REPO / "bin/test_skip/scripts"))
 import test_skip
 
 RUNNER = "lfc-saas-pipeline"
-START_DAYS = 7   # start_datetime the tests pass, days back, where the bundle has that variable
+START_DAYS = 1   # start_datetime the tests pass, days back (Wiz: ~35k audit entries a day), where the bundle has that variable
 UPDATE_TIMEOUT_S = 3600   # a first update longer than this fails the connector (and is stopped)
 # Event logs keep getting entries between the two runs: their rows are compared up to the bundle run's start, by
 # the table's cursor column (from the connector's manifest; an expression for a non-timestamp one).
