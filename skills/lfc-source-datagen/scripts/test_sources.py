@@ -198,6 +198,16 @@ class Reapply(unittest.TestCase):
         self.assertEqual(got["web_ship_delay"], [7, 0])                         # the update, then the comment (none)
         self.assertTrue(any("ws.ws_quantity >= 80 THEN 2" in q for q in cur.q))  # its own parameters
 
+    def test_append_leaves_rebuilt_tables_to_the_signal(self):
+        cur = type("C", (), {"execute": lambda s, q, p=None: None, "fetchall": lambda s: [(1,)], "close": lambda s: None})()
+        con = type("K", (), {"cursor": lambda s: cur, "close": lambda s: None})()
+        with mock.patch.object(sg, "_fill") as fill, mock.patch.object(sg, "reapply", return_value={}), \
+                mock.patch.object(sg, "summary", return_value={}):
+            sg.append(lambda: con, "tpcds", ["a"], 0.01, log=lambda m: None)
+        extra = fill.call_args.args[3]
+        self.assertEqual(extra[:4], ("--mode", "append", "--grow", "0.01"))
+        self.assertEqual(extra[extra.index("--skip") + 1], "catalog_returns,store_returns,web_returns")
+
     def test_append_option_names_the_sources(self):
         with mock.patch("lfc_source_datagen.signals.append", return_value=[{"source": "a", "changed": 0}]) as ap, \
                 mock.patch.object(src, "connector", return_value=lambda: None), redirect_stderr(io.StringIO()):
@@ -355,6 +365,25 @@ class AppendSkipsFullTables(unittest.TestCase):
         self.assertEqual(next(x for x in ts if x.name == "codes").skipped, None)
         ts = tabs(); planner.plan(eng, ts, "s", planner.Opts(mode="append"))
         self.assertIn("fixed size", next(x for x in ts if x.name == "codes").skipped)
+
+    def test_grow_by_scale_factor(self):
+        planner = src._planner("planner")
+
+        class eng:
+            cast = staticmethod(lambda c, n, o: "x.n")
+            length = staticmethod(lambda c, o: None)
+            to_int = staticmethod(lambda c, q: q)
+            q = qby = staticmethod(lambda s: f'"{s}"')
+            insert = staticmethod(lambda sch, t, cols, exprs, o: f"INSERT {t.name} {o.rows}")
+        col = lambda: planner.Col("id", 1, "int4", pk=True)
+        tabs = lambda: [planner.Table("band", [col()], ["id"], tags="lfc:rows=20"),               # fixed size: no tag
+                        planner.Table("acct", [col()], ["id"], tags="lfc:rows=1000 lfc:sf_rows=100000"),
+                        planner.Table("hist", [col()], ["id"], tags="lfc:rows=1000 lfc:sf_rows=1000000"),
+                        planner.Table("rets", [col()], ["id"], tags="lfc:rows=100 lfc:sf_rows=10000")]
+        got = {n: s for _, n, s in planner.plan(eng, tabs(), "s", planner.Opts(mode="append", grow=0.01, skip=frozenset({"rets"})))}
+        self.assertEqual(got, {"acct": "INSERT acct 1000", "hist": "INSERT hist 10000"})   # each its share; rets skipped
+        with self.assertRaisesRegex(ValueError, r"grow by 0.0001 or more"):               # rets would get 0.1 of a row
+            planner.plan(eng, tabs(), "s", planner.Opts(mode="append", grow=0.00001))
 
 
 class Build(unittest.TestCase):

@@ -27,7 +27,7 @@ def fill(a, connect=None):
         connect = lambda: drivers.connect(ENGINES[a.engine]().name, a)  # noqa: E731
     eng = ENGINES[a.engine]()
     if not a.database and hasattr(eng, "default_db"): a.database = eng.default_db(a.schema)   # Informix: the schema is the database
-    o = planner.Opts(rows=a.rows or eng.rows, mode=a.mode, order=a.order, data=a.data, plain_every=a.plain_every, block=a.block, lob_len=a.lob_len, seed=a.seed)
+    o = planner.Opts(rows=a.rows or eng.rows, mode=a.mode, grow=a.grow, skip=frozenset(filter(None, (a.skip or '').split(','))), order=a.order, data=a.data, plain_every=a.plain_every, block=a.block, lob_len=a.lob_len, seed=a.seed)
     sch = eng.schema(a.schema) if hasattr(eng, "schema") else a.schema
     con = connect(); cur = con.cursor()
     if hasattr(eng, "session"): eng.session(cur)
@@ -107,6 +107,8 @@ def options(argv=None):
     ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int); ap.add_argument("--user"); ap.add_argument("--database")
     ap.add_argument("--password-file"); ap.add_argument("--server", help="Informix DBSERVERNAME (default informix)")
     ap.add_argument("--trust-server-certificate", action="store_true", help="SQL Server: accept a self-signed certificate")
+    ap.add_argument("--grow", type=float, help="with --mode append: add SF scale factors of rows, each table its lfc:sf_rows x SF");
+    ap.add_argument("--skip", help="tables to leave out, comma-separated");
     ap.add_argument("--rows", type=int, help="rows per statement (default: the engine's)"); ap.add_argument("--sessions", type=int, default=4)
     ap.add_argument("--mode", default="fill", choices=["fill", "append"]); ap.add_argument("--order", default="random", choices=["random", "asc", "desc"])
     ap.add_argument("--data", default="scramble", choices=["seq", "scramble", "random"]); ap.add_argument("--plain-every", type=int, default=4)

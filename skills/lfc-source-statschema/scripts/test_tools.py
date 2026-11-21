@@ -442,6 +442,18 @@ class CompositeKeys(unittest.TestCase):
         acct = next(c["comment"] for c in t["columns"] if c["name"] == "SK_AccountID")
         self.assertIn("lfc:v={((x.n - 1) DIV 2 + 1)}", acct)
 
+    def test_append_by_scale_factor_tags(self):
+        from statschema.tools import model, shape
+        T = {x["name"]: x for x in yaml.safe_load(shape(model("tpce"), sf=0.01)[0])["tables"]}
+        self.assertIn("lfc:sf_rows=1000000", T["customer"]["lfc_tags"].split())      # in full, not 1e+06
+        self.assertNotIn("lfc:sf_rows", T["zip_code"]["lfc_tags"])                     # fixed size: no tag
+        ctx = T["customer_taxrate"]                                                    # numbered from the customer, who grows
+        self.assertIn("lfc:by={cx_c_id}", ctx["lfc_tags"].split())
+        self.assertIn("lfc:v={((x.n - 1) DIV 3 + 1)}", next(c["comment"] for c in ctx["columns"] if c["name"] == "cx_c_id"))
+        D = {x["name"]: x for x in yaml.safe_load(shape(model("tpcds"), sf=0.02)[0])["tables"]}
+        self.assertNotIn("lfc:fixed", D["inventory"]["lfc_tags"].split())          # items and warehouses can grow
+        self.assertIn("lfc:fixed", T["status_type"]["lfc_tags"].split())
+
 
 if __name__ == "__main__":
     unittest.main()

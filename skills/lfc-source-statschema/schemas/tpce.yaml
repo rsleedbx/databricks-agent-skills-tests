@@ -52,6 +52,7 @@ signals:
     measured: "lfc-source-datagen references/tpch-sources.md: % failed by each cause, per profile"
     table: trade
     sql: tpce-trades.sql
+    rebuilds: [trade_history]
     at_least_1: [handle_span, slow_every, jitter]
     summary: "SELECT COUNT(*), ROUND(100.0 * AVG((t.t_st_id = 'CNCL' OR d.mins > :promise)::int), 1), ROUND(100.0 * AVG((t.t_st_id = 'CNCL')::int), 1), PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY d.mins) FILTER (WHERE t.t_st_id = 'CMPT') FROM {s}.trade t JOIN (SELECT th_t_id, FLOOR(EXTRACT(EPOCH FROM MAX(th_dts) - MIN(th_dts)) / 60) AS mins FROM {s}.trade_history GROUP BY th_t_id) d ON d.th_t_id = t.t_id"
     summary_columns: [trades, failed_pct, cancelled_pct, median_minutes]

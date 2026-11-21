@@ -45,6 +45,7 @@ signals:
     measured: "lfc-source-datagen references/tpch-sources.md: % returned by each cause, per profile"
     table: store_returns
     sql: tpcds-returns.sql
+    rebuilds: [store_returns, catalog_returns, web_returns]
     at_least_1: [lag_span]
     summary: "SELECT (SELECT COUNT(*) FROM {s}.store_sales), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.store_returns) / GREATEST((SELECT COUNT(*) FROM {s}.store_sales), 1), 1), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.catalog_returns) / GREATEST((SELECT COUNT(*) FROM {s}.catalog_sales), 1), 1), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.web_returns) / GREATEST((SELECT COUNT(*) FROM {s}.web_sales), 1), 1)"
     summary_columns: [store_lines, returned_pct, catalog_returned_pct, web_returned_pct]

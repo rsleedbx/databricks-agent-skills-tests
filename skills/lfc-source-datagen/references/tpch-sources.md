@@ -239,21 +239,25 @@ Measured on PostgreSQL 14 on 2026-11-20. The closing draw has its own hash, so t
 
 ## Appending to a source
 
-`lfc-sources --model <model> --append ROWS <database> <source> ...` runs the fill in append mode on existing sources:
-- it adds ROWS rows to every table, leaving out a table whose rows use every key value (`lfc:fixed`);
-- then it re-applies each source's signals with the parameters kept in their tables' comments, so the new rows follow the signals too.
+`lfc-sources --model <model> --append SF <database> <source> ...` grows existing sources by SF scale factors and re-applies their signals with the parameters kept in their tables' comments, so the new rows follow them too.
+- **Growth:** each table gets its rows per scale factor (`lfc:sf_rows`, as built) times SF, so the tables keep their ratios.
+- **Fixed tables:** a fixed-size table gets none (TPC-DS `income_band`, `reason`, `date_dim`; TPC-H `nation`, `region`), and neither does a code table whose key values are all used (`lfc:fixed`).
+- **Rebuilt tables:** a table a signal rebuilds (its YAML block's `rebuilds:`) is left to the signal.
+- **Too small an SF:** one that would give a scaling table less than one row is refused, with the smallest that works. A parent that doesn't grow would leave the children keyed under it pointing past it. TPC-B grows by whole branches (`--append 1`). TPC-C grows by whole warehouses, so a source built at 0.05 grows by 0.05.
+- **`--append 0`:** it only re-applies.
 
-`--append 0` only re-applies. Each step changes only rows whose value differs, using `IS DISTINCT FROM`, deleting unwanted rows and inserting missing ones. Run on unchanged rows it changes none, so under CDC an append shows the new rows and what they change, not a rewrite of every table. The summary row starts with the number of rows the signals changed.
+Each step changes only rows whose value differs, using `IS DISTINCT FROM`, deleting unwanted rows and inserting missing ones. On unchanged rows it changes none, so under CDC an append shows the new rows and what they change. The summary row starts with the number of rows the signals changed.
 
-Measured on PostgreSQL 14 on 2026-11-20, one source per model. Re-applying changed 0 rows, `--append 100` changed the rows below, and re-applying again changed 0. The signals' rates stayed as built.
+Measured on PostgreSQL 14 on 2026-11-20, one source per model. In each, the append ran without errors, the fixed-size tables kept their rows, the signals' rates held, and a rerun (`--append 0`) changed 0 rows.
 
-| Model | Rows changed by --append 100 |
-|---|---|
-| TPC-C | 130 |
-| TPC-DS | 222 (100 random returns the append added, deleted; 23 returns of the new sales; 99 new web lines' ship dates) |
-| TPC-E | 528 |
-| TPC-B | 504 (the new history rows and the balances they move) |
-| TPC-DI | 107 |
+| Model (built at) | --append | Grew | Fixed, unchanged |
+|---|---|---|---|
+| TPC-C (0.05) | 0.05 | every table but `item` doubled: one more warehouse, district, its customers and orders | `item` |
+| TPC-B (1) | 1 | one more branch, its 10 tellers, 100,000 accounts and 100,000 history rows (0.01 is refused) | — |
+| TPC-H (0.05) | 0.01 | supplier, part, partsupp, customer, orders, lineitem by 20% | `nation`, `region` |
+| TPC-DS (0.02) | 0.01 | the sales, returns, `inventory`, `item`, `customer` and the other scaling tables by 50% | 11 tables: `date_dim`, `time_dim`, the demographics, `income_band`, `reason`, `ship_mode`, `store`, `warehouse`, `call_center`, `web_site` |
+| TPC-E (0.01) | 0.005 | 22 tables by 50%, `trade` 33,388 → 50,082 | 9 tables: `zip_code`, `taxrate`, the code tables, `industry`, `commission_rate` |
+| TPC-DI (1) | 0.5 | 13 tables by 50% | `DimDate`, `DimTime`, `Industry`, `TaxRate`, `StatusType`, `TradeType` |
 
 ## Publication
 
