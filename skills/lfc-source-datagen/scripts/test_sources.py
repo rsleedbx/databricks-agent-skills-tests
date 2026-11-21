@@ -170,7 +170,7 @@ class Reapply(unittest.TestCase):
         with self.assertRaises(ValueError):
             sg.expand("SELECT {{nope}}")
         body = "\n".join(sg.steps("tpcds", "a", f"{TpcdsSignals.R}/"))
-        self.assertEqual(body.count("FROM (WITH r AS ("), 2)                    # the wanted returns in the delete and insert
+        self.assertEqual(body.count("FROM (WITH r AS ("), 6)                    # each channel's wanted returns, delete and insert
 
     def test_reapply_reads_each_signal_and_counts(self):
         class Cur(globals()["Cur"]):
@@ -250,7 +250,7 @@ class TpcdsSignals(unittest.TestCase):
         both = sg.steps("tpcds", "a", f"{self.R}/{self.S}")
         body = "\n".join(both)
         self.assertNotRegex(body, r"(?<![:\w]):[a-z_]+")                     # no psql variable left
-        self.assertEqual(len(both), 5)       # returns: delete, insert, comment; ship: update, comment
+        self.assertEqual(len(both), 9)       # returns: delete, insert per channel (3), comment; ship: update, comment
         self.assertIn("s.h % 1000 < 40 + s.is_fit * 80 + s.is_promo * 40 + s.tier * 15", body)
         self.assertIn("ws.ws_warehouse_sk % 5 = 0 THEN 3", body)
         self.assertIn("ws.ws_quantity >= 80 THEN 2", body)
@@ -258,14 +258,17 @@ class TpcdsSignals(unittest.TestCase):
         self.assertEqual(comments["store_returns"]["signal"], "return_propensity")
         self.assertEqual(comments["web_sales"]["parameters"]["promise"], 6)
         self.assertEqual(len(sg.steps("tpcds", "a", f"/{self.S}")), 2)
-        self.assertEqual(len(sg.steps("tpcds", "a", f"{self.R}/")), 3)
+        self.assertEqual(len(sg.steps("tpcds", "a", f"{self.R}/")), 7)
+        for tbl in ("store_returns", "catalog_returns", "web_returns"):
+            self.assertIn(f"INSERT INTO {tbl}", body)
 
     def test_summary_reads_each_signal_from_its_comment(self):
         both = Cur({"store_returns": sg.comment("tpcds", "return_propensity", self.R),
                     "web_sales": sg.comment("tpcds", "web_ship_delay", self.S)},
-                   [(57608, decimal.Decimal("9.8")), (14388, decimal.Decimal("41.0"), 6.0)])
-        self.assertEqual(sg.summary("tpcds", both, "a"), {"store_lines": 57608, "returned_pct": 9.8, "web_lines": 14388,
-                                                          "late_pct": 41.0, "median_ship_days": 6.0})
+                   [(57608, decimal.Decimal("9.8"), decimal.Decimal("9.7"), decimal.Decimal("9.9")), (14388, decimal.Decimal("41.0"), 6.0)])
+        self.assertEqual(sg.summary("tpcds", both, "a"), {"store_lines": 57608, "returned_pct": 9.8, "catalog_returned_pct": 9.7,
+                                                          "web_returned_pct": 9.9, "web_lines": 14388, "late_pct": 41.0,
+                                                          "median_ship_days": 6.0})
         self.assertTrue(any("d > 6" in q for q in both.q))
         self.assertEqual(set(sg.summary("tpcds", Cur({}), "a").values()), {None})   # a source without either signal
         wrong = Cur({"store_returns": sg.comment("tpcds", "web_ship_delay", self.S)})   # another signal's comment

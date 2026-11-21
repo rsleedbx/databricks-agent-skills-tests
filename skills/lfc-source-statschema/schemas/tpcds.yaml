@@ -28,15 +28,15 @@ version: "1.0"
 # was made so. Two in one source: a returns rate and a delivery time, as one retailer has both.
 signals:
   - name: return_propensity
-    target: "store_sales lines: returned when a store_returns row has the line's sr_item_sk, sr_ticket_number"
+    target: "sales lines, all three channels: returned when store_returns (sr_item_sk, sr_ticket_number), catalog_returns or web_returns (item, order_number) has the line"
     replaces: "the spec's returns drawn on their own: no return names a sale, so nothing predicts one"
     built_by: "lfc-source-datagen: scripts/tpc/tpcds-returns.sql (lfc_source_datagen.tpcds_sources), per source"
     causes:
       - "the item's category: fit more per mille for Clothing and Shoes (item.i_category)"
       - "the promotion: promo more per mille when the sale's promotion has p_discount_active Y"
-      - "the household's income: income_step per mille per tier, income_band 1-5, 6-10, 11-15, 16-20 (ss_hdemo_sk)"
+      - "the household's income: income_step per mille per tier, income_band 1-5, 6-10, 11-15, 16-20 (ss_hdemo_sk; catalog and web: the bill-to household)"
     noise: "a line comes back when a hash of its keys % 1000 is under the rate: a propensity, learned per group"
-    follows: "return date lag_min + 0..lag_span-1 days after the sale, part of the quantity, the reason by the cause"
+    follows: "return date lag_min + 0..lag_span-1 days after the sale, part of the quantity, the reason by the cause; catalog and web returns refunded to the bill-to customer, returned by the ship-to; each channel draws from its own hash"
     parameters: [base, fit, promo, income_step, lag_min, lag_span]
     profiles:
       mass: "40,80,40,15,1,30"
@@ -46,8 +46,8 @@ signals:
     table: store_returns
     sql: tpcds-returns.sql
     at_least_1: [lag_span]
-    summary: "SELECT (SELECT COUNT(*) FROM {s}.store_sales), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.store_returns) / GREATEST((SELECT COUNT(*) FROM {s}.store_sales), 1), 1)"
-    summary_columns: [store_lines, returned_pct]
+    summary: "SELECT (SELECT COUNT(*) FROM {s}.store_sales), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.store_returns) / GREATEST((SELECT COUNT(*) FROM {s}.store_sales), 1), 1), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.catalog_returns) / GREATEST((SELECT COUNT(*) FROM {s}.catalog_sales), 1), 1), ROUND(100.0 * (SELECT COUNT(*) FROM {s}.web_returns) / GREATEST((SELECT COUNT(*) FROM {s}.web_sales), 1), 1)"
+    summary_columns: [store_lines, returned_pct, catalog_returned_pct, web_returned_pct]
   - name: web_ship_delay
     target: "web_sales lines: late when ws_ship_date_sk - ws_sold_date_sk is more than promise days"
     replaces: "the spec's ship date drawn on its own: a line could ship before it sold"
@@ -1678,6 +1678,9 @@ tables:
       scale: 2
       generation: {min_value: -30000.00, max_value: 30000.00}
   fk_constraints:
+    - columns: [cs_promo_sk]
+      parent_table: promotion
+      parent_columns: [p_promo_sk]
     - columns: [cs_item_sk]
       parent_table: item
       parent_columns: [i_item_sk]
@@ -1947,6 +1950,9 @@ tables:
       scale: 2
       generation: {min_value: -30000.00, max_value: 30000.00}
   fk_constraints:
+    - columns: [ws_promo_sk]
+      parent_table: promotion
+      parent_columns: [p_promo_sk]
     - columns: [ws_item_sk]
       parent_table: item
       parent_columns: [i_item_sk]

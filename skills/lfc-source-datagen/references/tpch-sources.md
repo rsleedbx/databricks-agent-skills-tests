@@ -100,14 +100,14 @@ Measured on PostgreSQL 14 on 2026-11-20. These numbers needed `order_line.ol_i_i
 
 The fill draws TPC-DS's returns and ship dates on their own: no `store_returns` row names a sale, and a web line can ship before it sold. `lfc_source_datagen.tpcds_sources` gives one source two signals, as one retailer has both, in `<name>:<sf>:<returns>/<ship>` (either half empty for none). Each signal's table comment keeps its name and parameters (`lfc:signal=<JSON>`).
 
-**Returns** (`tpcds-returns.sql`, signal `return_propensity`). The step rebuilds `store_returns` from `store_sales`, one row per returned line, with the line's item and ticket, so a return joins its sale. A line comes back when a hash of its keys % 1000 is under a per-mille rate:
+**Returns** (`tpcds-returns.sql`, signal `return_propensity`). The step rebuilds the returns of all three channels from their sales: `store_returns` from `store_sales` (item and ticket), `catalog_returns` and `web_returns` from `catalog_sales` and `web_sales` (item and order number), one row per returned line, so a return joins its sale. A line comes back when a hash of its keys % 1000 is under a per-mille rate, the same in every channel, each drawing from its own hash:
 
 | Part | Per mille |
 |---|---|
 | base | `base` |
 | a fit category (`i_category` Clothing, Shoes) | `fit` |
 | an active-discount promotion (`p_discount_active` Y) | `promo` |
-| the household's income tier (`income_band` 1-5, 6-10, 11-15, 16-20: 0 … 3) | tier × `income_step` |
+| the household's income tier (`income_band` 1-5, 6-10, 11-15, 16-20: 0 … 3; catalog and web: the bill-to household) | tier × `income_step` |
 
 Whether a line comes back is a draw, so a model learns the rate per category, promotion and income, not each line.
 - The return comes `lag_min` + 0 … `lag_span` − 1 days after the sale, with part of the line's quantity.
@@ -142,7 +142,15 @@ Three sources at scale factor 0.1, each with 288,040 store lines and 71,938 web 
 | fashion (express) | `2,0,2,1,5,2,80,1,2` | 49.7 | 20.2 / 48.5 / 84.2 | 91.9 vs 39.1 | 71.0 vs 44.0 |
 | hardlines (marketplace) | `12,2,6,3,5,5,60,4,5` | 44.5 | 17.8 / 44.3 / 75.1 | 79.5 vs 35.7 | 66.1 vs 29.5 |
 
-Measured on PostgreSQL 14 on 2026-11-20. Every return names its sale, comes on or after it and is no larger; no web line ships before it sold. The other channels' returns (`catalog_returns`, `web_returns`) are still drawn on their own.
+Measured on PostgreSQL 14 on 2026-11-20. Every return names its sale, comes on or after it and is no larger; no web line ships before it sold.
+
+A catalog or web return is refunded to the sale's bill-to customer and returned by its ship-to one. `cs_promo_sk` and `ws_promo_sk` are foreign keys to `promotion`, as in the spec, so the promotion cause applies in every channel. The three channels with `mass`'s numbers at scale factor 0.1, as % of lines returned:
+
+| Channel | Lines | All | Fit vs other | Promotion vs none | Income tier 0 → 3 |
+|---|---|---|---|---|---|
+| store | 288,140 | 9.8 | 16.2 vs 8.2 | 11.6 vs 8.1 | 8.3 → 11.4 |
+| catalog | 144,255 | 9.8 | 16.2 vs 8.3 | 11.8 vs 7.8 | 7.6 → 12.1 |
+| web | 72,038 | 9.8 | 16.3 vs 8.2 | 11.8 vs 7.9 | 7.5 → 12.0 |
 
 ## TPC-E trade failures
 
