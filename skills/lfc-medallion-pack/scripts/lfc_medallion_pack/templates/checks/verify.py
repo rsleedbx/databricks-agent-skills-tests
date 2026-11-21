@@ -12,10 +12,14 @@ for name in ("module", "catalog", "prefix", "archive"):
 
 # COMMAND ----------
 
+ARCHIVE = dbutils.widgets.get("archive")
 import subprocess, sys
-a = dbutils.widgets.get("archive")
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", f"lfc-source-datagen @ {a}#subdirectory=skills/lfc-source-datagen/scripts",
-                       f"lfc-medallion-pack @ {a}#subdirectory=skills/lfc-medallion-pack/scripts"])
+PKGS = {"lfc-statschema": "lfc-source-statschema", "lfc-source-contract": "lfc-source-contract/scripts",
+        "lfc-source-datagen": "lfc-source-datagen/scripts", "lfc-medallion-pack": "lfc-medallion-pack/scripts"}
+# every tests-repo package from the one archive (--no-deps: their own pins point at main), then what they need
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps"] +
+                      [f"{n} @ {ARCHIVE}#subdirectory=skills/{d}" for n, d in PKGS.items()])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "psycopg[binary]>=3.2", "pyyaml>=6", "sqlglot>=25"])
 dbutils.library.restartPython()
 
 # COMMAND ----------
