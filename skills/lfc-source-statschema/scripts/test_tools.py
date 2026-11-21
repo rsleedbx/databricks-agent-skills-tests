@@ -433,6 +433,15 @@ class CompositeKeys(unittest.TestCase):
         my = ddl(shape({"version": "1.0", "tables": [codes(3)]})[0].replace("lfc:fixed", "lfc:fixed " + "lfc:x=" + "y" * 2000), "mysql")
         self.assertRegex(my, r"COMMENT\s*=\s*'lfc:rows=3 lfc:fixed lfc:ref'")        # kept when MySQL's comment is cut
 
+    def test_tpcdi_cash_balances_two_per_account(self):
+        # the key's numbering, not FactCashBalances' zipf foreign-key draw, sets SK_AccountID: two rows per account
+        from statschema.tools import model, shape
+        T = {x["name"]: x for x in yaml.safe_load(shape(model("tpcdi"), sf=1)[0])["tables"]}
+        t = T["FactCashBalances"]
+        self.assertEqual((t["row_count"], T["DimAccount"]["row_count"]), (3000, 1500))
+        acct = next(c["comment"] for c in t["columns"] if c["name"] == "SK_AccountID")
+        self.assertIn("lfc:v={((x.n - 1) DIV 2 + 1)}", acct)
+
 
 if __name__ == "__main__":
     unittest.main()

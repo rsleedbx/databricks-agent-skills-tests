@@ -1645,6 +1645,8 @@ tables:
   # ~2500 per SF. Composite PK.
   - name: FactCashBalances
     role: fact
+    # Two balances per account come from the key's numbering: SK_AccountID is the key's first numbered column
+    # (SK_CustomerID is a lookup), so it is (n - 1) DIV 2 + 1, not the zipf draw (that is for foreign keys off the key).
     description: "TPC-DI daily cash balance fact — 3 000 rows per SF: two balances for each of the 1 500 accounts per SF, so every account shows a trend"
     row_count_per_sf: 3000
     load_after: [DimCustomer, DimAccount, DimDate]
