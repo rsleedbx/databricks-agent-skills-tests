@@ -220,7 +220,7 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
 def run_one(a: argparse.Namespace, slug: str, fp: str) -> bool:
     """Deploy both ways, compare, record the result."""
     epoch, tables = int(time.time()), tables_of(slug)
-    cutoff = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(epoch))
+    cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))   # Z: SQL reads a zoneless literal in the session timezone
     extra = start_vars(slug, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch - START_DAYS * 86400)))
     base = f"{a.prefix}_{slug.replace('-', '_')}"
     dab_schema, dab_state = run_bundle(a.profile, slug, a.catalog, f"{base}_dab_{epoch}", epoch, extra)
@@ -230,7 +230,7 @@ def run_one(a: argparse.Namespace, slug: str, fp: str) -> bool:
     dab_n = counts(a.profile, a.catalog, dab_schema, tables, until, cutoff)
     nb_n = counts(a.profile, a.catalog, nb_schema, tables, until, cutoff)
     ok = dab_state == "COMPLETED" and nb_state == "COMPLETED" and dab_n == nb_n and None not in dab_n.values()
-    rows = ", ".join(f"{t} {dab_n[t]}/{nb_n[t]}" + (f" (before {cutoff} UTC)" if t in until else "") for t in tables)
+    rows = ", ".join(f"{t} {dab_n[t]}/{nb_n[t]}" + (f" (before {cutoff})" if t in until else "") for t in tables)
     print(f"  {'ok  ' if ok else 'FAIL'}  {slug}: bundle {dab_state}, notebook {nb_state}; rows bundle/notebook: {rows}")
     if ok and a.unpushed:
         print(f"        not recorded as a pass: the package has changes the notebook can't install ({a.unpushed})")
