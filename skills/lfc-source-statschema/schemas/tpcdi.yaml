@@ -52,7 +52,7 @@ signals:
       - "a falling balance: falling per mille when the account's cash drifts down by more than fall_at per balance (two or more FactCashBalances rows)"
     noise: "an account closes when a hash of its key % 1000 is under the rate: a propensity, learned per group"
     follows: "FactCashBalances.Cash rebuilt: a start per account plus its drift (-drift_span .. drift_span) per balance, by date"
-    known: "accounts without balances (about 1 in 6 at SF 1) can't be falling; the closing doesn't add an SCD version"
+    known: "the closing doesn't add an SCD version"
     parameters: [base, tier_step, broker_every, broker, falling, drift_span, fall_at]
     profiles:
       retail: "20,30,10,120,250,500,200"
@@ -1645,8 +1645,10 @@ tables:
   # ~2500 per SF. Composite PK.
   - name: FactCashBalances
     role: fact
-    description: "TPC-DI daily cash balance fact — ~2 500 rows per SF"
-    row_count_per_sf: 2500
+    # Two balances per account come from the key's numbering: SK_AccountID is the key's first numbered column
+    # (SK_CustomerID is a lookup), so it is (n - 1) DIV 2 + 1, not the zipf draw (that is for foreign keys off the key).
+    description: "TPC-DI daily cash balance fact — 3 000 rows per SF: two balances for each of the 1 500 accounts per SF, so every account shows a trend"
+    row_count_per_sf: 3000
     load_after: [DimCustomer, DimAccount, DimDate]
     fk_constraints:
       - columns: [SK_CustomerID]
