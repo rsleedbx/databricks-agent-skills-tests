@@ -8,7 +8,8 @@
 --   trade not paid in cash (t_is_cash 0), and 0 .. :jitter - 1.
 -- A trade fails when it's cancelled or completes more than :promise minutes after it was submitted. trade_history is
 -- made to match (rows not wanted deleted, wanted ones missing inserted, so a rerun after an append changes only those): SBMT at t_dts, PNDG a second later for a limit order, then CMPT or CNCL; settlement keeps the
--- completed trades, its cash type from t_is_cash and its due date two days after completion. lfc_source_datagen.signals
+-- completed trades, its cash type from t_is_cash and its due date two days after completion; holding and
+-- holding_history drop the cancelled trades' rows, and cash_transaction keeps the completed cash trades. lfc_source_datagen.signals
 -- adds the parameters to trade's comment, after its fill tags. Deterministic (from the keys), so a rerun gives the same
 -- values.
 -- psql variables, whole numbers: promise handle_min handle_span limit_wait slow_every slow_broker tier_step margin jitter
@@ -49,6 +50,11 @@ INSERT INTO trade_history (th_t_id, th_dts, th_st_id)
 SELECT w.th_t_id, w.th_dts, w.th_st_id FROM ({{want}}) w
 WHERE NOT EXISTS (SELECT 1 FROM trade_history h WHERE h.th_t_id = w.th_t_id AND h.th_dts = w.th_dts);
 DELETE FROM settlement s USING trade t WHERE t.t_id = s.se_t_id AND t.t_st_id = 'CNCL';
+DELETE FROM holding_history hh USING trade t        -- no history of a cancelled trade, or of a holding one opened
+WHERE t.t_st_id = 'CNCL' AND (t.t_id = hh.hh_t_id OR t.t_id = hh.hh_h_t_id);
+DELETE FROM holding h USING trade t WHERE t.t_id = h.h_t_id AND t.t_st_id = 'CNCL';
+DELETE FROM cash_transaction c USING trade t        -- a cash transaction is a completed cash trade's (settlement's type)
+WHERE t.t_id = c.ct_t_id AND (t.t_st_id = 'CNCL' OR t.t_is_cash = 0);
 UPDATE settlement s SET se_cash_type = CASE WHEN t.t_is_cash = 1 THEN 'Cash Account' ELSE 'Margin' END,
        se_cash_due_date = (h.th_dts + interval '2 days')::date
 FROM trade t JOIN trade_history h ON h.th_t_id = t.t_id AND h.th_st_id = 'CMPT'

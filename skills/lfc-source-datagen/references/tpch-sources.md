@@ -169,7 +169,7 @@ The fill gives every trade status CMPT and draws its bid and history times on it
 
 - `trade_history` is rebuilt to match: SBMT at `t_dts`, PNDG a second later for a limit order, then CMPT or CNCL.
 - `settlement` keeps the completed trades. Its cash type comes from `t_is_cash`, and its due date is two days after completion.
-- `holding`, `holding_history` and `cash_transaction` still name cancelled trades.
+- `holding` and `holding_history` drop the rows of cancelled trades (a cancelled trade opens no holding and changes none), and `cash_transaction` keeps only completed cash trades, as the settlement's cash type says.
 - The thirteen numbers, in order: `promise,handle_min,handle_span,limit_wait,slow_every,slow_broker,tier_step,margin,jitter,spread,far,cancel_far,cancel_base`.
 
 Three sources at scale factor 0.05 (166,938 trades each), `lfc-sources --model tpce`, as % of trades failed:
