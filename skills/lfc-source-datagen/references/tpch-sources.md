@@ -262,6 +262,12 @@ Measured on PostgreSQL 14 on 2026-11-20, one source per model. In each, the appe
 | TPC-E (0.01) | 0.005 | 22 tables by 50%, `trade` 33,388 → 50,082 | 9 tables: `zip_code`, `taxrate`, the code tables, `industry`, `commission_rate` |
 | TPC-DI (1) | 0.5 | 13 tables by 50% | `DimDate`, `DimTime`, `Industry`, `TaxRate`, `StatusType`, `TradeType` |
 
+**Other engines.** On 2026-11-21 the same checks ran on MySQL 8.4, SQL Server 2022, Oracle Free 23, Db2 11.5.9 and Informix 14.10, in test databases on the shared VM (MySQL in a local container):
+- **The schema:** a code table that is full (`lfc:fixed`), and a scaling table whose date formula is day 2,932,896.
+- **The Python planner:** the fill wrote 9999-12-31, an append by rows and `--grow 0.5` left the code table out and grew the other by its share, and `--grow 0.001` was refused.
+- **The SQL planners** (MySQL, SQL Server, Oracle): the append plan left the code table out and ran without errors, and the fill wrote 9999-12-31.
+- **TPC-DI on MySQL:** a fill, then `--grow 0.5`, left the six fixed tables unchanged. Every current SCD row ends on 9999-12-31, and every account has two balances with its own customer.
+
 ## Publication
 
 On PostgreSQL 15 and later, the publication is `FOR TABLES IN SCHEMA` the sources' schemas, so a table added later is in it. Before 15, that form doesn't exist, so it lists the tables there now by name. A rerun with other sources `ALTER`s the publication to the new list.
