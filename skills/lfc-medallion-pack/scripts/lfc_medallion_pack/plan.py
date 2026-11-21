@@ -18,7 +18,9 @@ model), repeated across LOBs, that becomes one n:1 bronze, silver and gold:
 
 render() writes, under the repo:
     resources/<module>.yml        the bundle resources: schemas (staging, a bronze per LOB, silver, gold), one gateway
-                                  and ingestion pipeline per group of LOBs, the transform pipeline, the verify job
+                                  and ingestion pipeline per group of LOBs, the transform pipeline, and the refresh
+                                  job: ingest, merge (the YAML's dimensions, lfc-medallion's merge route), transform,
+                                  verify
     marts/<pack>/*.sql            the pack's silver and gold, once (yours to change; kept on a rerun)
     source/plan.json              every module's LOBs, tiers, groups and names, for the source and verify jobs (in
                                   source/, which both bundles sync)
@@ -134,6 +136,7 @@ def resources(m: dict, archive: str) -> dict:
                     "slot_config": {"slot_name": g["slot"], "publication_name": g["publication"]}}}}],
                 "objects": objects}}
     conf = {"catalog": "${var.catalog}", "bronze_prefix": f"${{var.prefix}}_{n}_bronze_", "source_column": col,
+            "silver_schema": f"${{resources.schemas.{n}_silver.name}}",
             "gold_schema": f"${{resources.schemas.{n}_gold.name}}"} | {k: str(v) for k, v in m["configuration"].items()}
     pipelines[f"{n}_transform"] = {
         "name": f"${{var.prefix}}_{n}_transform", "catalog": "${var.catalog}",
@@ -144,10 +147,22 @@ def resources(m: dict, archive: str) -> dict:
                      [{"file": {"path": f"../marts/{m['pack']}/{f}"}} for f in m["marts"]]}
     ingest_tasks = [{"task_key": f"ingest_{g['k']}", "pipeline_task": {
         "pipeline_id": f"${{resources.pipelines.{n}_ingest_{g['k']}.id}}"}} for g in m["groups"]]
+    # the merge route (lfc-medallion): each table's role from the schema YAML as a hint, so dimensions, lookups and
+    # bridges are kept by MERGE from their sources' change feeds and facts, logs and queues by the pipeline
+    hints = json.dumps({t: r for t, r in (m.get("roles") or {}).items() if r}, sort_keys=True)
+    merge_task = {"task_key": "merge", "depends_on": [{"task_key": t["task_key"]} for t in ingest_tasks],
+                  "environment_key": "medallion",
+                  "python_wheel_task": {"package_name": "lfc-medallion", "entry_point": "lfc-medallion-merge",
+                                        "named_parameters": {
+                                            "catalog": "${var.catalog}", "prefix": f"${{var.prefix}}_{n}_bronze_",
+                                            "target": f"${{resources.schemas.{n}_silver.name}}",
+                                            "source-column": col, "hints": hints}}}
     jobs = {f"{n}_refresh": {
         "name": f"${{var.prefix}}_{n}_refresh",
-        "tasks": ingest_tasks + [
-            {"task_key": "transform", "depends_on": [{"task_key": t["task_key"]} for t in ingest_tasks],
+        "environments": [{"environment_key": "medallion", "spec": {
+            "client": "2", "dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]}}],
+        "tasks": ingest_tasks + [merge_task,
+            {"task_key": "transform", "depends_on": [{"task_key": "merge"}],
              "pipeline_task": {"pipeline_id": f"${{resources.pipelines.{n}_transform.id}}"}},
             {"task_key": "verify", "depends_on": [{"task_key": "transform"}],
              "notebook_task": {"notebook_path": "../checks/verify.py", "base_parameters": {

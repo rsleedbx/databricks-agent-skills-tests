@@ -4,6 +4,7 @@ render's files, the TPC-B pack's marts against its model, and the mistakes check
     PYTHONPATH=skills/lfc-medallion-pack/scripts:skills/lfc-source-datagen/scripts:skills/lfc-source-statschema/scripts:\
 skills/lfc-source-contract/scripts python3 -m unittest skills/lfc-medallion-pack/tests/test_pack.py
 """
+import json
 import os
 import shutil
 import sys
@@ -93,6 +94,14 @@ class Plan(unittest.TestCase):
         self.assertEqual([x["file"]["path"] for x in t["libraries"]],
                          ["../transform/n1.py", "../marts/tpcb/silver.sql", "../marts/tpcb/gold.sql"])
         self.assertTrue(os.path.isfile(os.path.join(self.d, "marts", "tpcb", "gold.sql")))
+        job = r["jobs"]["bank_refresh"]
+        keys = [t["task_key"] for t in job["tasks"]]
+        self.assertEqual(keys, ["ingest_1", "ingest_2", "merge", "transform", "verify"])
+        merge = job["tasks"][2]
+        self.assertEqual(merge["python_wheel_task"]["entry_point"], "lfc-medallion-merge")
+        self.assertEqual(json.loads(merge["python_wheel_task"]["named_parameters"]["hints"]),
+                         {"account": "dimension", "branch": "dimension", "history": "log", "teller": "dimension"})
+        self.assertEqual(t["configuration"]["silver_schema"], "${resources.schemas.bank_silver.name}")
         open(os.path.join(self.d, "marts", "tpcb", "gold.sql"), "a").write("-- mine\n")
         plan.render(f, "https://example.invalid/a.zip")
         self.assertTrue(open(os.path.join(self.d, "marts", "tpcb", "gold.sql")).read().endswith("-- mine\n"))
