@@ -4,8 +4,9 @@
 -- LIBRARY 2, times :mode_step days), a slow warehouse (one in :slow_every, :slow_wh days more) and a bulk line (a
 -- quantity of :bulk_qty or more, :bulk days more), plus a jitter:
 --   ship = sold + :handle_min + 0 .. :handle_span - 1 + tier + slow + bulk + 0 .. :jitter - 1   (date keys: days)
--- A line is late when ship - sold > :promise days (the comment on web_sales keeps the parameters, so a summary or a
--- report reads the promise from the data). Deterministic (from the keys), so a rerun gives the same dates.
+-- A line is late when ship - sold > :promise days (lfc_source_datagen.signals adds the parameters to web_sales's
+-- comment, after its fill tags, so a summary or a report reads the promise from the data). Deterministic (from the
+-- keys), so a rerun gives the same dates.
 -- psql variables, whole numbers: promise handle_min handle_span mode_step slow_every slow_wh bulk_qty bulk jitter
 -- (days but slow_every and bulk_qty). handle_span, slow_every and jitter at least 1.
 WITH last_day AS (SELECT MAX(d_date_sk) AS sk FROM date_dim),
@@ -22,4 +23,3 @@ w AS (
 )
 UPDATE web_sales ws SET ws_ship_date_sk = LEAST(ws.ws_sold_date_sk + w.days, last_day.sk)
 FROM w CROSS JOIN last_day WHERE ws.ws_item_sk = w.item AND ws.ws_order_number = w.ord;
-COMMENT ON TABLE web_sales IS :'signal';

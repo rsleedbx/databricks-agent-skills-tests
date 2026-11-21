@@ -8,8 +8,9 @@
 --   trade not paid in cash (t_is_cash 0), and 0 .. :jitter - 1.
 -- A trade fails when it's cancelled or completes more than :promise minutes after it was submitted. trade_history is
 -- rebuilt to match: SBMT at t_dts, PNDG a second later for a limit order, then CMPT or CNCL; settlement keeps the
--- completed trades, its cash type from t_is_cash and its due date two days after completion. The comment on trade keeps
--- the parameters. Deterministic (from the keys), so a rerun gives the same values.
+-- completed trades, its cash type from t_is_cash and its due date two days after completion. lfc_source_datagen.signals
+-- adds the parameters to trade's comment, after its fill tags. Deterministic (from the keys), so a rerun gives the same
+-- values.
 -- psql variables, whole numbers: promise handle_min handle_span limit_wait slow_every slow_broker tier_step margin jitter
 -- spread far cancel_far cancel_base; handle_span, slow_every, jitter at least 1.
 WITH t AS (
@@ -43,4 +44,3 @@ UPDATE settlement s SET se_cash_type = CASE WHEN t.t_is_cash = 1 THEN 'Cash Acco
        se_cash_due_date = (h.th_dts + interval '2 days')::date
 FROM trade t JOIN trade_history h ON h.th_t_id = t.t_id AND h.th_st_id = 'CMPT'
 WHERE t.t_id = s.se_t_id;
-COMMENT ON TABLE trade IS :'signal';
