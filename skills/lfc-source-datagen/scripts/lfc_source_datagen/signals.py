@@ -17,6 +17,7 @@ A source's numbers are its signals' parameters in the block's order, one signal'
   parameters       the numbers' names, in order; at_least_1: those that must be 1 or more
   summary          one row about a source: {s} is its schema, :<parameter> a parameter's value
   summary_columns  the row's names
+  rebuilds         tables the step rebuilds from others (an append leaves them to it)
 
   lfc-sources --model <model> [--lakebase P | --host H --password-file F ...] <database> <name>:<sf>[:<numbers>] ...
 """
@@ -189,10 +190,10 @@ def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
     return out
 
 
-def append(connect, model: str, names, rows: int, sessions: int = 4, log=print) -> list[dict]:
-    """Add `rows` rows to every table of each existing source (python/fill.py --mode append; a table whose rows use
-    every key value is left out), then re-apply its signals (reapply), so the new rows follow them too. rows 0: only
-    re-apply. One summary row per source."""
+def append(connect, model: str, names, grow: float, sessions: int = 4, log=print) -> list[dict]:
+    """Grow each existing source by `grow` scale factors (python/fill.py --mode append --grow: each table its rows per
+    scale factor times grow, so the tables keep their ratios; a fixed-size table gets none), then re-apply its signals
+    (reapply), so the new rows follow them too. grow 0: only re-apply. One summary row per source."""
     out = []
     for name in names:
         check_name(name, "source")
@@ -201,9 +202,10 @@ def append(connect, model: str, names, rows: int, sessions: int = 4, log=print) 
         cur.execute("SELECT 1 FROM pg_namespace WHERE nspname = %s", (name,))
         if not cur.fetchall():
             raise ValueError(f"source {name} doesn't exist: build it first")
-        if rows > 0:
-            log(f"signals: {name}: appending {rows} rows to every table")
-            _fill(connect, name, sessions, ("--mode", "append", "--rows", str(rows)))
+        if grow > 0:
+            log(f"signals: {name}: growing by {grow:g} scale factors")
+            rebuilt = sorted({tb for s in spec(model) for tb in s.get("rebuilds") or []})   # the signals rebuild these
+            _fill(connect, name, sessions, ("--mode", "append", "--grow", repr(float(grow)), "--skip", ",".join(rebuilt)))
         changed = reapply(cur, model, name, log)
         out.append({"source": name, "changed": sum(sum(v) for v in changed.values())} | summary(model, cur, name))
         con.close()

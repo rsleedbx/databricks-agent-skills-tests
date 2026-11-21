@@ -6,11 +6,12 @@
 # formula columns keep their own value, the rest are plain n, or scrambled per column (data=scramble | random) except
 # in every plain_every-th block of `block` keys. A table qualifies with a one-column primary key that maps back to n,
 # or with lfc:n={n from a row}; lfc:by={column} names the column n rises with; lfc:rows=N is its target; an append
-# skips a table tagged lfc:fixed (every key value used).
+# skips a table tagged lfc:fixed (every key value used); --grow SF appends to each table lfc:sf_rows x SF rows, so the
+# tables keep their ratios and a fixed-size one (no lfc:sf_rows) gets none.
 # The scramble's constants (a, b per column) come from a hash of the table and column (and --seed), so every plan of
 # the same schema writes the same rows.
 import re, zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 P = 2147483647                        # the scramble's modulus, 2^31 - 1
 
@@ -45,12 +46,16 @@ class Table:
     has_n: bool = False
     target: int | None = None
     skipped: str | None = None        # why the planner leaves it out
+    grow_rows: int | None = None      # an append by scale factor: this table's rows
 
 
 @dataclass
 class Opts:
     rows: int = 1000000               # at most this many rows per statement
     mode: str = "fill"                # fill: up to lfc:rows; append: rows more
+    grow: float | None = None         # append by scale factor: each table lfc:sf_rows x grow rows (none without the tag)
+    skip: frozenset = frozenset()     # tables to leave out (an append: the ones a signal rebuilds)
+    targets: dict | None = None       # a table's target instead of its lfc:rows (an append by scale factor, as fill rounds)
     order: str = "random"             # random | asc | desc
     data: str = "scramble"            # seq | scramble | random
     plain_every: int = 4
@@ -96,7 +101,7 @@ def plan(eng, tabs, sch, o):
             e, v = tag(c.tags, "e"), tag(c.tags, "v")
             c.expr = e if e is not None else base.replace("x.n", f"({v})") if v is not None and base else base
             c.formula = e is not None or v is not None
-        t.target = rows_tag(t.tags)
+        t.target = (o.targets or {}).get(t.name, rows_tag(t.tags))
         nkey, cols = tag(t.tags, "n"), {c.name: c for c in t.cols}
         k1 = cols.get(t.pk[0]) if len(t.pk) == 1 else None
         t.has_n = nkey is not None
@@ -109,6 +114,25 @@ def plan(eng, tabs, sch, o):
             t.skipped = "no lfc:rows target"
         elif o.mode == "append" and re.search(r"(^|\s)lfc:fixed(\s|$)", t.tags or ""):
             t.skipped = "fixed size: every key value used"
+        elif t.name in o.skip:
+            t.skipped = "left out (rebuilt by a signal)"
+        elif o.mode == "append" and o.grow is not None:
+            m = re.search(r"lfc:sf_rows=([0-9.]+)", t.tags or "")
+            t.grow_rows = round(float(m.group(1)) * o.grow) if m else 0
+            if not m:
+                t.skipped = "fixed size: no lfc:sf_rows (it doesn't scale)"
+            elif float(m.group(1)) * o.grow < 1:         # a parent that grows by no row breaks the children keyed under it
+                raise ValueError(f"--grow {o.grow:g} gives {t.name} under one row ({m.group(1)} per scale factor): grow "
+                                 f"by {1 / float(m.group(1)):g} or more, in whole steps of it")
+    if o.mode == "append" and o.grow is not None:   # whole steps of the smallest scaling table, so no child outgrows
+        sfs = [(float(m.group(1)), t.name) for t in tabs if not t.skipped   # its parent by rounding on its own
+               for m in [re.search(r"lfc:sf_rows=([0-9.]+)", t.tags or "")] if m]
+        if sfs:
+            low, name = min(sfs)
+            k = o.grow * low
+            if abs(k - round(k)) > 1e-6 * max(1.0, k):
+                raise ValueError(f"--grow {o.grow:g} isn't a whole number of steps of {1 / low:g} ({name}, the smallest "
+                                 f"scaling table, has {low:g} rows per scale factor): a child could outgrow its parent")
     out = []
     for t in sorted(tabs, key=lambda t: (t.level, t.name)):
         if t.skipped:
@@ -130,7 +154,8 @@ def plan(eng, tabs, sch, o):
                 s = x.replace("x.n", eng.scr1("x.r" if o.data == "random" else "x.n", a, bb))
                 x = eng.plain(o.block, o.plain_every, x, s) if o.plain_every > 0 else s
             exprs.append(x if x is not None else "NULL")
-        out.append((t.level, t.name, eng.insert(sch, t, [c for c in t.cols], exprs, o)))
+        ot = replace(o, rows=t.grow_rows) if o.mode == "append" and o.grow is not None else o   # its share of the growth
+        out.append((t.level, t.name, eng.insert(sch, t, [c for c in t.cols], exprs, ot)))
     return out
 
 

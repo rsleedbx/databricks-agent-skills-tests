@@ -233,7 +233,8 @@ def arguments(prog: str, extra_help: str = "") -> argparse.ArgumentParser:
     a.add_argument("--login", help="the reading login (the connection's): SELECT on each source")
     a.add_argument("--publication"); a.add_argument("--sessions", type=int, default=4)
     a.add_argument("--slot", help="create this replication slot (with --drop: drop it) instead of building sources")
-    a.add_argument("--append", type=int, metavar="ROWS", help="add ROWS rows to every table of the named sources, then "
+    a.add_argument("--append", type=float, metavar="SF", help="grow the named sources by SF scale factors (each table its "
+                   "rows per SF, so the ratios hold; fixed-size tables none; TPC-C by whole warehouses, SF 1, 2 ...), then "
                    "re-apply their signals from their comments (0: only re-apply); the sources must exist")
     a.add_argument("--drop", action="store_true")
     a.add_argument("database"); a.add_argument("sources", nargs="*", help=f"<name>:<sf>{extra_help}")

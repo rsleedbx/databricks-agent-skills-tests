@@ -288,13 +288,24 @@ for tn in order:
             pr = R[fkcol[k][0]["parent_table"]]; log(f"{tn}: {rows} rows but its key {k} is unique and points at {pr} parents; {pr} rows")
             rows = R[tn] = pr; tags[0] = f"lfc:rows={rows}"
         if cd[1] != k: tags.append(f"lfc:n={{{cd[1]}}}")
-        if cd[3] is not None and rows >= cd[3]: tags.append("lfc:fixed")   # every key value used: an append can't add
+        if cd[3] is not None and rows >= cd[3] and (k not in fkcol or not T[fkcol[k][0]["parent_table"]].get("row_count_per_sf")):
+            tags.append("lfc:fixed")              # every key value used, and none can be added: an append leaves it out
         put(k, (cd[0], cd[2]("x.n"))); keyf[tn] = {k: (cd[0], cd[2]("x.n"))}; nback[tn] = (cd[1], k)
     elif len(pk) > 1:   # k1 = (n - 1) DIV f + 1; the other key columns share (n - 1) % f, as one mixed-radix number when
         #                    their values are countable (each its own digit), else the second alone and the rest their first
         def kcodec(col):                         # a foreign key's parent codec, an integer range or list, or the column's codec
             return pcodec(col) or icodec(cols[col]) or codec(cols[col], rows)
-        k1, rest = pk[0], pk[1:]
+        # numbered from a column that grows: a first column pointing at a table that doesn't scale (TPC-E
+        # customer_taxrate's tax rate) gives way to a later one pointing at one that does (the customer), so an append by
+        # scale factor adds rows under the existing tax rates instead of past them
+        grows = lambda k: k in fkcol and bool(T[fkcol[k][0]["parent_table"]].get("row_count_per_sf"))
+        order_ = pk
+        if pk[0] in fkcol and not grows(pk[0]):
+            first = next((k for k in pk[1:] if grows(k)), None)
+            if first:
+                order_ = [first] + [k for k in pk if k != first]
+                log(f"{tn}: key numbered from {first} (it grows), then {', '.join(k for k in order_[1:])}")
+        k1, rest = order_[0], order_[1:]
         c1 = kcodec(k1); cr = [kcodec(k) for k in rest]
         nd = (cs.get(k1) or {}).get("n_distinct") or 0
         cap = lambda k, cd: min(x for x in (cd[3], R.get(fkcol[k][0]["parent_table"]) if k in fkcol else None, 10 ** 18) if x)
@@ -312,7 +323,9 @@ for tn in order:
                 rows = R[tn] = c1n * f; tags[0] = f"lfc:rows={rows}"
         step = max(1, c2n // f) if c2n < 10 ** 18 else 1
         c1n = cap(k1, c1)
-        if c1n < 10 ** 18 and c2n < 10 ** 18 and rows >= c1n * c2n and (radix or len(pk) == 2):
+        # full only if no key column's count can grow: its own range or list, or a parent that doesn't scale
+        stays = lambda k: k not in fkcol or not T[fkcol[k][0]["parent_table"]].get("row_count_per_sf")
+        if c1n < 10 ** 18 and c2n < 10 ** 18 and rows >= c1n * c2n and (radix or len(pk) == 2) and all(map(stays, [k1, *rest])):
             tags.append("lfc:fixed")              # every key combination used (TPC-E charge: 5 trade types x 3 tiers)
         if radix:                               # a step sharing a factor with the fastest column's count would hold it
             while step > 1 and math.gcd(step, caps[-1]) > 1: step -= 1   # to a few values (one, if a multiple)
@@ -327,7 +340,7 @@ for tn in order:
             if rot: idx = f"(({idx} + (x.n - 1) DIV {f} + 1) % {c2n})"   # by k1 (1-based), so a row's first partner
             unrot = lambda inner: f"(({inner} - ({c1[1]})) % {c2n} + {c2n}) % {c2n}" if rot else inner   # isn't k1 itself
             put(rest[0], (cr[0][0], cr[0][2](f"({idx} + 1)")))
-            for k in pk[2:]:
+            for k in order_[2:]:
                 ck = kcodec(k); put(k, (ck[0], ck[2]("1")))
             tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + {unrot(f'({cr[0][1]} - 1)')} DIV {step} + 1}}")
         else:                                   # the last column is the fastest digit; each pointing digit is rotated
@@ -341,6 +354,8 @@ for tn in order:
             inner = " + ".join(f"{undo(k, c, m)} * {s}" for k, c, m, s in zip(rest, cr, caps, strides))
             tags.append(f"lfc:n={{({c1[1]} - 1) * {f} + ({inner}) DIV {step} + 1}}")
         keyf[tn] = {k: ("v" if k in v else "e", v.get(k, e.get(k))) for k in pk}
+        if k1 != pkall[0] and not any(x.startswith("lfc:by=") for x in tags):
+            tags.append(f"lfc:by={{{k1}}}")       # the planner resumes from the column n rises with, not the key's first
     else:                                       # no key: a timestamp (one second per row) or an integer column numbers the rows
         free = [c for c in t["columns"] if c["name"] not in fkcol]
         ts = next((c["name"] for c in free if kind(c) == "ts"), None)
@@ -492,6 +507,9 @@ for tn in order:
 
     # the shaped table: statschema's format, tags in the column comments and in lfc_tags (ddl.py writes the table comment)
     colf[tn] = {**{c: ("v", x) for c, x in v.items()}, **{c: ("e", x) for c, x in e.items()}}
+    if t.get("row_count_per_sf") and "lfc:fixed" not in tags:   # rows per scale factor as built: an append by scale
+        per = round(R[tn] / a.sf, 6)                               # factor grows each table by its share (none if fixed size)
+        tags.append(f"lfc:sf_rows={int(per) if per == int(per) else per}")   # written in full: 1000000, not 1e+06
     nt = {k: x for k, x in t.items() if k not in ("row_count_per_sf", "formulas")}   # formulas: now in the tags
     nt["row_count"] = rows; nt["lfc_tags"] = " ".join(tags)
     nt["columns"] = []

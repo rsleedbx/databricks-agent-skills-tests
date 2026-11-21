@@ -13,6 +13,7 @@
 # e.g. FREEPDB1), --password-file (or LFC_PASSWORD_FILE); Informix also --server (the DBSERVERNAME). Run it with the
 # engine's driver installed, e.g.  uv run --with 'psycopg[binary]' fill.py pg tpch --host db --user postgres --password-file pg.pw
 import argparse, os, sys, threading, time
+from dataclasses import replace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import planner, drivers
 from engines import ENGINES
@@ -27,7 +28,7 @@ def fill(a, connect=None):
         connect = lambda: drivers.connect(ENGINES[a.engine]().name, a)  # noqa: E731
     eng = ENGINES[a.engine]()
     if not a.database and hasattr(eng, "default_db"): a.database = eng.default_db(a.schema)   # Informix: the schema is the database
-    o = planner.Opts(rows=a.rows or eng.rows, mode=a.mode, order=a.order, data=a.data, plain_every=a.plain_every, block=a.block, lob_len=a.lob_len, seed=a.seed)
+    o = planner.Opts(rows=a.rows or eng.rows, mode=a.mode, grow=a.grow, skip=frozenset(filter(None, (a.skip or '').split(','))), order=a.order, data=a.data, plain_every=a.plain_every, block=a.block, lob_len=a.lob_len, seed=a.seed)
     sch = eng.schema(a.schema) if hasattr(eng, "schema") else a.schema
     con = connect(); cur = con.cursor()
     if hasattr(eng, "session"): eng.session(cur)
@@ -52,6 +53,15 @@ def fill(a, connect=None):
             print(f"{t.name}|{'' if lo is None else int(lo)}|{'' if hi is None else int(hi)}|{0 if lo is None else int(hi) - int(lo) + 1}|{t.target or ''}")
 
 
+    if a.mode == "append" and a.grow:              # an append by scale factor runs as fill rounds to the rows at the start
+        cnt = status(planned)                      # plus growth, so --rows still caps a statement (a second run grows again)
+        now = lambda n: 0 if cnt.get(n, (None,))[0] is None else int(cnt[n][1]) - int(cnt[n][0]) + 1
+        targets = {t.name: now(t.name) + t.grow_rows for t in planned}
+        o = replace(o, mode="fill", grow=None, targets=targets, skip=o.skip | {t.name for t in tabs if t.skipped})
+        a.mode = "fill"
+        tabs = eng.catalog(cur, sch)
+        stmts = planner.plan(eng, tabs, sch, o)
+        planned = [t for t in tabs if not t.skipped]
     if a.action == "plan":
         for _, _, s in stmts: print(s + ";")
         return 0
@@ -107,6 +117,8 @@ def options(argv=None):
     ap.add_argument("--host", default="127.0.0.1"); ap.add_argument("--port", type=int); ap.add_argument("--user"); ap.add_argument("--database")
     ap.add_argument("--password-file"); ap.add_argument("--server", help="Informix DBSERVERNAME (default informix)")
     ap.add_argument("--trust-server-certificate", action="store_true", help="SQL Server: accept a self-signed certificate")
+    ap.add_argument("--grow", type=float, help="with --mode append: add SF scale factors of rows, each table its lfc:sf_rows x SF");
+    ap.add_argument("--skip", help="tables to leave out, comma-separated");
     ap.add_argument("--rows", type=int, help="rows per statement (default: the engine's)"); ap.add_argument("--sessions", type=int, default=4)
     ap.add_argument("--mode", default="fill", choices=["fill", "append"]); ap.add_argument("--order", default="random", choices=["random", "asc", "desc"])
     ap.add_argument("--data", default="scramble", choices=["seq", "scramble", "random"]); ap.add_argument("--plain-every", type=int, default=4)
