@@ -3,7 +3,7 @@
 runs only when what it depends on changed since it last passed.
 
   uv run --with databricks-sdk --with pyyaml skills/lfc-saas-pipeline/scripts/run_tests.py --profile <p>
-      [--only marketo,netsuite] [--again] [--ref <branch>] [--catalog main] [--prefix <name>]
+      [--only marketo,netsuite] [--again] [--ref <branch>] [--catalog main] [--prefix <name>] [--var KEY=VALUE ...]
 
 Per connector (a notebooks/<slug>-pipeline.py with its bundles/<slug>/), one at a time:
   1. skip it when its notebook, its bundle folder, the package (scripts/lfc_saas_pipeline), its UC connection's
@@ -129,10 +129,14 @@ def counts(profile: str, catalog: str, schema: str, tables: list[str], until: di
     return out
 
 
-def start_vars(slug: str, start: str) -> dict[str, str]:
-    """{start_datetime: start} when the bundle has that variable (connectors that backfill a year by default)."""
-    return {"start_datetime": start} if "\n  start_datetime:" in (SKILL / "bundles" / slug / "databricks.yml").read_text() \
-        else {}
+def bundle_vars(slug: str, start: str, given: list[str]) -> dict[str, str]:
+    """Values for the variables the bundle declares: start_datetime (connectors that backfill a year by default) and
+    each --var KEY=VALUE; both go to the bundle (--var) and the notebook (job parameters)."""
+    text = (SKILL / "bundles" / slug / "databricks.yml").read_text()
+    out = {k: v for k, _, v in (g.partition("=") for g in given) if f"\n  {k}:" in text}
+    if "\n  start_datetime:" in text:
+        out.setdefault("start_datetime", start)
+    return out
 
 
 def run_bundle(profile: str, slug: str, catalog: str, schema: str, epoch: int,
@@ -201,7 +205,7 @@ def test_one(a: argparse.Namespace, slug: str, host: str) -> bool | None:
     updated = json.loads(cli(a.profile, "connections", "get", conn, "-o", "json", check=False) or "{}").get("updated_at")
     fp = test_skip.fingerprint([SKILL / "notebooks" / f"{slug}-pipeline.py", SKILL / "bundles" / slug,
                                 SKILL / "scripts/lfc_saas_pipeline", Path(__file__)],
-                               [host, f"{conn}@{updated}", f"package {a.ref_sha}", a.catalog, a.prefix])
+                               [host, f"{conn}@{updated}", f"package {a.ref_sha}", a.catalog, a.prefix, *sorted(a.var)])
     skip, last = test_skip.should_skip(RUNNER, slug, fp, a.again)
     if skip:
         print(f"  skip  {slug}: passed {last['when']}, unchanged since")
@@ -221,7 +225,7 @@ def run_one(a: argparse.Namespace, slug: str, fp: str) -> bool:
     """Deploy both ways, compare, record the result."""
     epoch, tables = int(time.time()), tables_of(slug)
     cutoff = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))   # Z: SQL reads a zoneless literal in the session timezone
-    extra = start_vars(slug, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch - START_DAYS * 86400)))
+    extra = bundle_vars(slug, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch - START_DAYS * 86400)), a.var)
     base = f"{a.prefix}_{slug.replace('-', '_')}"
     dab_schema, dab_state = run_bundle(a.profile, slug, a.catalog, f"{base}_dab_{epoch}", epoch, extra)
     nb_schema = f"{base}_nb_{epoch}"
@@ -247,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ref", default="", help="the branch or tag the notebooks pip-install from (default: this one)")
     ap.add_argument("--catalog", default="main")
     ap.add_argument("--prefix", default="lfc_saas_pipeline_test")
+    ap.add_argument("--var", action="append", default=[], metavar="KEY=VALUE",
+                    help="a value for connectors whose bundle has that variable, e.g. account_id=act_<id> for Meta Ads")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(line_buffering=True)   # each result shows as it comes, also when redirected to a file
     a.ref = a.ref or current_ref()

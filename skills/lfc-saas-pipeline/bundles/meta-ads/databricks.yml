@@ -1,0 +1,30 @@
+# Meta Ads into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/meta-ads-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy --var
+# account_id=act_<id>) or from the workspace (open this file, set account_id, Deployments, Deploy).
+bundle:
+  name: meta_ads
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The Meta Ads UC connection (made in Catalog Explorer by signing in with a Meta user)
+    default: lfcsaas-metaads
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: meta_ads
+  account_id:
+    description: The ad account id with its act_ prefix (one the connection's Meta user can see); required
+  insights_start_date:
+    description: ad_insights from this day (YYYY-MM-DD, within the last 36 months); the connector's default is 36 months back
+    default: "2026-10-01"
+
+targets:
+  dev:
+    default: true
+    mode: development

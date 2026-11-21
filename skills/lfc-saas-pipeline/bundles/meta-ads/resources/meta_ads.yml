@@ -1,0 +1,40 @@
+resources:
+  schemas:
+    meta_ads_data:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: Meta Ads as Lakeflow Connect lands it
+
+  pipelines:
+    meta_ads:
+      name: ${var.schema}
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.meta_ads_data.name}
+      ingestion_definition:
+        connection_name: ${var.connection}
+        objects:
+          # campaigns, ad_sets, ads, ad_insights (source schema: the ad account id)
+          - table: &t {source_schema: "${var.account_id}", source_table: campaigns,
+                       destination_catalog: "${var.catalog}", destination_schema: "${resources.schemas.meta_ads_data.name}"}
+          - table: {<<: *t, source_table: ad_sets}
+          - table: {<<: *t, source_table: ads}
+          - table: {<<: *t, source_table: ad_insights,
+                    connector_options: {meta_ads_options: {start_date: "${var.insights_start_date}"}}}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+
+  jobs:
+    meta_ads_refresh:
+      name: ${var.schema}_refresh
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: refresh
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.meta_ads.id}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
