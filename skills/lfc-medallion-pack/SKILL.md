@@ -112,7 +112,28 @@ sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
 An ingestion pipeline's time grows with its tables even when they're empty: about 2.6 s per table per update at 248.
 Plan the refresh interval from it: a 248-table pipeline can't refresh more often than about every 11 minutes.
 
-## Ramping up data and changes (the batch is built; the ramp job isn't yet)
+## A full refresh from Lakeflow Connect (measured 2026-11-21, TPC-B, 10 LOBs with data)
+
+A selective full refresh of one LOB's fact (`history`) and dimension (`account`) on its ingestion pipeline
+(`start-update --json '{"full_refresh_selection": ["<catalog>.<schema>.<table>", ...]}'`, about 2 minutes):
+
+- **Bronze:** the table is replaced (a `DLT REFRESH` commit), then reloaded by MERGEs; only the selected tables
+  change. Its change data feed, deletion vectors and row tracking stay on (row tracking under new column names: a new
+  generation of the table), so no table property needs setting.
+- **n:1:** the two `all_<table>` views recomputed in full across every LOB (`DATA_SCHEMA_CHANGED`); the other two
+  did nothing. **Silver and gold** refreshed row-based, as on any change. The next ordinary change was incremental
+  everywhere again (`all_history` append-only, `all_account` row-based).
+- **Correct:** the LOB's rows in n:1 equal bronze exactly (`EXCEPT ALL`: 0), gold's rows and every balance unchanged.
+
+Materialized views are what makes this safe: a streaming table reading bronze (as the Zerobus and Debezium tests do,
+on append-only bronze) would stop at the replaced table. The cost is the recompute: one LOB's refresh recomputes its
+table's n:1 view over every LOB, which at hundreds of LOBs is the whole table. Where refreshes are expected, the
+`merge` route (lfc-medallion `merge_all`) copies only the refreshed source; not tried here yet.
+
+A keyless table (TPC-B's history) is merged on every column (`<=>` on all of them): identical duplicate rows in the
+source would land as one.
+
+ (the batch is built; the ramp job isn't yet)
 
 Objects first, then data, then change rate, each step only after verify passes on the one before, with its
 timings recorded, so a slow snapshot never hides an object problem:
@@ -137,7 +158,10 @@ modules:
   `connect()` gives: psycopg, or the UC JDBC connection (`lfc_source_contract.jdbc.dbapi`). Measured 2026-11-21 on a
   local PostgreSQL 14, TPC-B at SF 1: 500 history rows a batch in 0.6 s through both, the dimension tables' counts
   unchanged, every account and teller balance still the sum of its history. Through UC JDBC the rows changed come back
-  as unknown (`None`): Spark's `sessionInitStatement` returns no count. Not yet run from a workspace job.
+  as unknown (`None`): Spark's `sessionInitStatement` returns no count. From the workspace (`setup_source` with
+  `step=batch`, the UC JDBC connection to Lakebase): 500 rows on each of 10 LOBs in 170 s, most of it installing; the
+  rows and balance updates reached gold through Lakeflow Connect CDC, every balance gap 0. A failed or retried run
+  appends again: the data stays consistent, the rows are more than asked (seen: one LOB with 1,000 extra).
 - `append` (whole scale factors of every table) is not the batch: TPC-B's branch is one row per scale factor, so its
   smallest step is 100,000 accounts.
 - The ingestion pipelines are triggered; their steady time per update (above) sets how far behind bronze runs at a

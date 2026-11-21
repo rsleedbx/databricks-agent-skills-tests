@@ -1,0 +1,167 @@
+{
+ "sf": 0.01,
+ "scale": 1.0,
+ "keep_small": 1000,
+ "tables": [
+  {
+   "name": "exchange",
+   "row_count": 4,
+   "columns": []
+  },
+  {
+   "name": "sector",
+   "row_count": 12,
+   "columns": []
+  },
+  {
+   "name": "industry",
+   "row_count": 102,
+   "columns": []
+  },
+  {
+   "name": "status_type",
+   "row_count": 5,
+   "columns": []
+  },
+  {
+   "name": "trade_type",
+   "row_count": 5,
+   "columns": []
+  },
+  {
+   "name": "taxrate",
+   "row_count": 320,
+   "columns": []
+  },
+  {
+   "name": "charge",
+   "row_count": 15,
+   "columns": []
+  },
+  {
+   "name": "commission_rate",
+   "row_count": 240,
+   "columns": []
+  },
+  {
+   "name": "zip_code",
+   "row_count": 14741,
+   "columns": []
+  },
+  {
+   "name": "address",
+   "row_count": 13333,
+   "columns": []
+  },
+  {
+   "name": "customer",
+   "row_count": 10000,
+   "columns": []
+  },
+  {
+   "name": "customer_taxrate",
+   "row_count": 30000,
+   "columns": []
+  },
+  {
+   "name": "broker",
+   "row_count": 10,
+   "columns": []
+  },
+  {
+   "name": "customer_account",
+   "row_count": 50000,
+   "columns": []
+  },
+  {
+   "name": "account_permission",
+   "row_count": 75000,
+   "columns": []
+  },
+  {
+   "name": "watch_list",
+   "row_count": 10000,
+   "columns": []
+  },
+  {
+   "name": "company",
+   "row_count": 50,
+   "columns": []
+  },
+  {
+   "name": "security",
+   "row_count": 68,
+   "columns": []
+  },
+  {
+   "name": "watch_item",
+   "row_count": 150000,
+   "columns": []
+  },
+  {
+   "name": "company_competitor",
+   "row_count": 150,
+   "columns": []
+  },
+  {
+   "name": "financial",
+   "row_count": 1000,
+   "columns": []
+  },
+  {
+   "name": "news_item",
+   "row_count": 200,
+   "columns": []
+  },
+  {
+   "name": "news_xref",
+   "row_count": 600,
+   "columns": []
+  },
+  {
+   "name": "daily_market",
+   "row_count": 125028,
+   "columns": []
+  },
+  {
+   "name": "last_trade",
+   "row_count": 68,
+   "columns": []
+  },
+  {
+   "name": "trade",
+   "row_count": 33388,
+   "columns": []
+  },
+  {
+   "name": "trade_history",
+   "row_count": 100000,
+   "columns": []
+  },
+  {
+   "name": "trade_request",
+   "row_count": 1000,
+   "columns": []
+  },
+  {
+   "name": "holding",
+   "row_count": 33388,
+   "columns": []
+  },
+  {
+   "name": "holding_history",
+   "row_count": 100000,
+   "columns": []
+  },
+  {
+   "name": "holding_summary",
+   "row_count": 38000,
+   "columns": []
+  },
+  {
+   "name": "cash_transaction",
+   "row_count": 33388,
+   "columns": []
+  }
+ ]
+}
