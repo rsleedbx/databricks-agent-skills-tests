@@ -65,3 +65,11 @@ def held_tables(spark, catalog: str, prefix: str, names: list[str]) -> tuple[dic
     missed = [x for x in names if x not in (cols or {})]
     held = {x: set(cols[x]) for x in names if x not in missed}
     return held | (tables(spark, catalog, prefix, missed) if missed else {}), cols
+
+
+def tables_or_none(spark, catalog: str, prefix: str, source: str) -> set[str]:
+    """One source's tables by SHOW TABLES; none when its schema is gone: before anything is deleted as gone."""
+    try:
+        return tables(spark, catalog, prefix, [source])[source]
+    except Exception:  # noqa: BLE001  the schema dropped
+        return set()

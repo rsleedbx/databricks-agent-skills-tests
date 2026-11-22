@@ -129,19 +129,22 @@ def _state_full(spark, catalog, target) -> dict:
     return out
 
 
-def _save_states(spark, catalog, target, target_table, saves: list[tuple]) -> None:
-    """Every source's new version of one table in one MERGE: saves [(source, version, table id[, key columns])]."""
+def _save_states(spark, catalog, target, target_table, saves: list[tuple], read_at: float | None = None) -> None:
+    """Every source's new version of one table in one MERGE: saves [(source, version, table id[, key columns])].
+    read_at: when those versions were read (epoch seconds), saved as updated_at: changed_since compares the event
+    log's times with it, so rows landing while the MERGEs ran aren't taken as merged."""
     if not saves:
         return
+    at = "current_timestamp()" if read_at is None else f"timestamp_millis({int(read_at * 1000)})"
     vals = ", ".join(f"({spark_string(target_table)}, {spark_string(x[0])}, {int(x[1])}, {spark_string(x[2])}, "
                      f"{spark_string(json.dumps(x[3])) if len(x) > 3 and x[3] else 'NULL'})" for x in saves)
     sql = (f"MERGE INTO {_fq(catalog, target, STATE)} s USING (SELECT * FROM VALUES {vals} "
            "AS n(target_table, source, version, table_id, key_columns)) n "
            "ON s.target_table = n.target_table AND s.source = n.source "
            "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
-           "s.key_columns = coalesce(n.key_columns, s.key_columns), s.updated_at = current_timestamp() "
+           f"s.key_columns = coalesce(n.key_columns, s.key_columns), s.updated_at = {at} "
            "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, key_columns, updated_at) "
-           "VALUES (n.target_table, n.source, n.version, n.table_id, n.key_columns, current_timestamp())")
+           f"VALUES (n.target_table, n.source, n.version, n.table_id, n.key_columns, {at})")
     _shared(spark, sql)
 
 
@@ -366,6 +369,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     for x in quiet:
         report[out_name][x] = {"done": "unchanged", "version": state[(out_name, x)][0]}
     look = [x for x in srcs if x not in quiet]
+    read_at = time.time()   # before any version is read: the watermark (_save_states)
     with ThreadPoolExecutor(max_workers=max(1, min(16, len(look)))) as ex:
         info = list(ex.map(lambda s: _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
                                               fresh, (cols_known or {}).get(s, {}).get(table)), look))
@@ -375,47 +379,51 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
         _ensure_target(spark, tgt, out_name in existing, source_column, i["cols"], have)
         existing.add(out_name)
     saves, feed = [], []
-    for i in info:
-        if i["last"] is not None and i["now"] == i["last"]:
-            report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
-        elif not i["whole"] and not i["changed"]:   # new versions, no rows written: nothing to MERGE
-            saves.append((i["s"], i["now"], i["tid"], i["key"]))
-            report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
-        elif i["whole"]:
-            _copy(spark, tgt, i, source_column, logged, run_id, out_name, report, "copied")
-            saves.append((i["s"], i["now"], i["tid"], i["key"]))
-        else:
-            feed.append(i)
-    groups: dict[tuple, list] = {}   # sources with the same key and columns share one MERGE
-    for i in feed:
-        groups.setdefault((tuple(i["key"]), tuple(c for c, _ in i["cols"])), []).append(i)
-    for (key, cols), part in groups.items():
-        rows = " UNION ALL ".join(changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"],
-                                              i["now"]) for i in part)
-        try:
-            t0 = time.time()
-            n = _counts(spark, rows, source_column)
-            spark.sql(merge_into(tgt, rows, source_column, list(key), list(cols)))
-        # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
-        except Exception:  # noqa: BLE001
-            for i in part:
-                try:
-                    t1 = time.time()
-                    one = changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"])
-                    c = _counts(spark, one, source_column).get(i["s"], (0, 0, 0))
-                    spark.sql(merge_into(tgt, one, source_column, list(key), list(cols)))
-                    _done(logged, report, run_id, out_name, i, "merged", c, t1)
-                except Exception as e:  # noqa: BLE001
-                    _copy(spark, tgt, i, source_column, logged, run_id, out_name, report,
-                          f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})")
+    try:   # what finished is saved even when a later copy or MERGE fails: the next run doesn't redo it
+        for i in info:
+            if i["last"] is not None and i["now"] == i["last"]:
+                report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
+            elif not i["whole"] and not i["changed"]:   # new versions, no rows written: nothing to MERGE
                 saves.append((i["s"], i["now"], i["tid"], i["key"]))
-            continue
-        for i in part:   # seconds: the shared MERGE's, for every source in it
-            _done(logged, report, run_id, out_name, i, "merged", n.get(i["s"], (0, 0, 0)), t0)
-            saves.append((i["s"], i["now"], i["tid"], i["key"]))
-    _save_states(spark, catalog, target, out_name, saves)
+                report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
+            elif i["whole"]:
+                _copy(spark, tgt, i, source_column, logged, run_id, out_name, report, "copied")
+                saves.append((i["s"], i["now"], i["tid"], i["key"]))
+            else:
+                feed.append(i)
+        groups: dict[tuple, list] = {}   # sources with the same key and columns share one MERGE
+        for i in feed:
+            groups.setdefault((tuple(i["key"]), tuple(c for c, _ in i["cols"])), []).append(i)
+        for (key, cols), part in groups.items():
+            rows = " UNION ALL ".join(changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"],
+                                                  i["now"]) for i in part)
+            try:
+                t0 = time.time()
+                n = _counts(spark, rows, source_column)
+                spark.sql(merge_into(tgt, rows, source_column, list(key), list(cols)))
+            # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
+            except Exception:  # noqa: BLE001
+                for i in part:
+                    try:
+                        t1 = time.time()
+                        one = changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"])
+                        c = _counts(spark, one, source_column).get(i["s"], (0, 0, 0))
+                        spark.sql(merge_into(tgt, one, source_column, list(key), list(cols)))
+                        _done(logged, report, run_id, out_name, i, "merged", c, t1)
+                    except Exception as e:  # noqa: BLE001
+                        _copy(spark, tgt, i, source_column, logged, run_id, out_name, report,
+                              f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})")
+                    saves.append((i["s"], i["now"], i["tid"], i["key"]))
+                continue
+            for i in part:   # seconds: the shared MERGE's, for every source in it
+                _done(logged, report, run_id, out_name, i, "merged", n.get(i["s"], (0, 0, 0)), t0)
+                saves.append((i["s"], i["now"], i["tid"], i["key"]))
+    finally:
+        _save_states(spark, catalog, target, out_name, saves, read_at)
     # sources gone (schema dropped, table removed, left out by `only`): their rows and state go too
-    gone = sorted({src for (t, src) in state if t == out_name} - set(srcs))
+    gone = [g for g in sorted({src for (t, src) in state if t == out_name} - set(srcs))
+            if g not in names or table not in discover.tables_or_none(spark, catalog, prefix, g)]   # a listed source:
+    # the catalog query can lag a table just made, so SHOW TABLES confirms it's gone
     if gone and out_name in existing:
         listed = ", ".join(spark_string(g) for g in gone)
         spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} IN ({listed})")

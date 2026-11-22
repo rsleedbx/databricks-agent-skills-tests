@@ -40,6 +40,7 @@ class Spark:
         self.target_cols = {"all_nation": [("division", "string")] + COLS}
         self.done = []   # the statements that change something
         self.seen = ()   # the sources information_schema.columns returns (none: SHOW TABLES for every source)
+        self.lag = set()   # (source, table) information_schema doesn't show yet
 
     def sql(self, q):
         rows = []
@@ -51,7 +52,8 @@ class Spark:
             rows = [R(tableName=t) for t in self.tables.get(source, ["nation"])]
         elif "information_schema.columns" in q:   # catalog_columns: only the sources it can see
             rows = [R(table_schema=f"shop_bronze_{src}", table_name=t, column_name=c, full_data_type=ty)
-                    for src in self.seen for t in self.tables.get(src, ["nation"]) for c, ty in self.cols[src]]
+                    for src in self.seen for t in self.tables.get(src, ["nation"]) if (src, t) not in self.lag
+                    for c, ty in self.cols[src]]
         elif "information_schema.tables" in q:   # the target schema's tables and their kinds
             rows = [R(table_name=t, table_type="MANAGED") for t in self.targets] + \
                    [R(table_name=v, table_type="MATERIALIZED_VIEW") for v in self.views]
@@ -387,11 +389,32 @@ class Removed(unittest.TestCase):
         self.assertEqual(self.deletes(spark), [])
         self.assertEqual(report["all_nation"]["west"], {"done": "unchanged", "version": 7})
 
+    def test_a_table_the_catalog_query_lags_is_not_gone(self):   # its source is listed, the table not yet
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"},
+                      tables={"west": ["nation", "orders"]})
+        spark.seen, spark.lag = ("east", "west"), {("west", "nation")}
+        run(spark)
+        self.assertEqual(self.deletes(spark), [])
+
     def test_nothing_deleted_without_a_target(self):   # no source has the table, and its target was dropped by hand
         spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       tables={"east": ["orders"], "west": ["orders"]})
         run(spark)
         self.assertEqual(self.deletes(spark), [])
+
+
+class PartWay(unittest.TestCase):
+    def test_a_failed_copy_keeps_the_state_of_what_finished(self):   # the next run doesn't copy east again
+        class Fails(Spark):
+            def sql(self, q):
+                if q.startswith("MERGE INTO `main`.`shop_silver`.`all_nation`") and "'west'" in q:
+                    raise RuntimeError("boom")
+                return super().sql(q)
+        spark = Fails()
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            run(spark)
+        self.assertIn(("all_nation", "east"), spark.state)
+        self.assertNotIn(("all_nation", "west"), spark.state)
 
 
 class Shapes(unittest.TestCase):

@@ -97,7 +97,8 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         for r in spark.sql(f"SELECT source, table_name, role, planned, decided_by, why "
                            f"FROM `{catalog}`.`{target}`.{PLAN}").collect():
             kept.setdefault(r.source, []).append((r.source, r.table_name, r.role, r.planned, r.decided_by, r.why))
-    new = [x for x in sources if x not in kept or {t for _, t, *_ in kept[x]} != set(held[x])]
+    new = [x for x in sources if x not in kept or {t for _, t, *_ in kept[x]} != set(held[x])
+           or _hints_changed(kept[x], hints)]
 
     def plan_one(source):
         return [(source, table, t["role"], t["route"], t["decided_by"], t["why"]) for table, t in
@@ -181,9 +182,22 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             "proposed": proposed, "done": done}
 
 
+def _hints_changed(rows: list, hints: dict | None) -> bool:
+    """A kept plan made under other hints: a hinted table planned otherwise, or a table planned by a hint since
+    dropped. Its source is planned again, so a role changed in the schema YAML (rendered into --hints) takes effect."""
+    hints = hints or {}
+    for _, table, role, _, decided_by, _ in rows:
+        h = hints.get(table)
+        want = h.get("role") if isinstance(h, dict) else h
+        if (want is not None and (role != want or decided_by != "hint")) or (want is None and decided_by == "hint"):
+            return True
+    return False
+
+
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",
                   margin_s: int = 120) -> set | None:
-    """The (table, source) pairs whose bronze table got rows (upserted or deleted, a snapshot too: a full refresh)
+    """The (table, source) pairs whose bronze table got rows (upserted or deleted), or any completed snapshot (a full
+    refresh, even of an empty table; snapshots run only in the first update and a refresh: 3 of 17 updates measured),
     after its state was saved, from ONE query over the ingestion pipelines' event logs (flow_progress per flow: a
     destination table's flow is named <catalog>_<prefix><source>_<table>_<cdc|snapshot>_flow); a pair with no state
     is changed. None when the logs can't be read: then every source is read."""
@@ -196,14 +210,16 @@ def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str]
     if not times:
         return None
     union = " UNION ALL ".join(
-        f"SELECT origin.flow_name AS f, timestamp, details:flow_progress.metrics AS m FROM {e} "
+        f"SELECT origin.flow_name AS f, timestamp, details:flow_progress.metrics AS m, "
+        f"details:flow_progress.status AS status FROM {e} "
         f"WHERE event_type = 'flow_progress'" for e in events)
     oldest = min(times)
     try:
         got = spark.sql(f"SELECT element_at(split(f, '\\\\.'), -1) AS flow, MAX(timestamp) AS at FROM ({union}) "
                         f"WHERE timestamp > timestamp'{oldest}' - INTERVAL {int(margin_s)} SECONDS "
                         "AND (COALESCE(CAST(m:num_upserted_rows AS BIGINT), 0) > 0 "
-                        "OR COALESCE(CAST(m:num_deleted_rows AS BIGINT), 0) > 0) GROUP BY 1").collect()
+                        "OR COALESCE(CAST(m:num_deleted_rows AS BIGINT), 0) > 0 "
+                        "OR (endswith(f, '_snapshot_flow') AND status = 'COMPLETED')) GROUP BY 1").collect()
     except Exception:  # noqa: BLE001  an event log not there yet, no access: read every source
         return None
     out = set()

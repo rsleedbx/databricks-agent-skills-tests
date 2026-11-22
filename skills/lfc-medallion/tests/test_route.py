@@ -125,6 +125,17 @@ class MergeRoute(unittest.TestCase):
         out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept), replan=True)
         self.assertEqual(out["planned_sources"], ["east", "west"])
 
+    def test_a_kept_plan_made_under_other_hints_is_planned_again(self):   # a role changed in the schema YAML
+        kept = [("east", t, "dimension", r, "relations", "") for t, r in PLANS["east"].items()]
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept), hints={"nation": "fact"})
+        self.assertEqual(out["planned_sources"], ["east", "west"])
+        hinted = [("east", t, "fact" if t == "nation" else "dimension", r, "hint" if t == "nation" else "relations",
+                   "") for t, r in PLANS["east"].items()]
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=hinted), hints={"nation": "fact"})
+        self.assertEqual(out["planned_sources"], ["west"])   # the same hints: kept
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=hinted))
+        self.assertEqual(out["planned_sources"], ["east", "west"])   # the hint dropped
+
     def test_merge_only_when_every_source_agrees(self):
         out, calls = self.run_route(Spark())
         self.assertEqual(calls["planned"], {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
@@ -277,6 +288,7 @@ class ChangedSince(unittest.TestCase):
         got = route.changed_since(S(), "main", "shop_bronze_", ctx, ["main.ctl.events_ingest_1"])
         self.assertEqual(got, {("nation", "east"), ("part", "east")})   # west's change is older than its state
         self.assertEqual(len(seen), 1)   # one query over the logs
+        self.assertIn("endswith(f, '_snapshot_flow') AND status = 'COMPLETED'", seen[0])   # a refresh of no rows
         ctx["state"].pop(("all_nation", "west"))
         self.assertIn(("nation", "west"), route.changed_since(S(), "main", "shop_bronze_", ctx, ["e"]))   # never merged
 

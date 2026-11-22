@@ -94,7 +94,19 @@ def _q(s: str) -> str:
 def run(spark, plan: dict, module: str, catalog: str, prefix: str, connection: str, database: str,
         lobs: list[str] | None = None) -> list[dict]:
     """Per table per LOB: rows and digest in the source (through the connection's remote_query, so the source
-    computes them), in bronze, and in n:1; status `match` when all three agree, else which layers differ."""
+    computes them), in bronze, and in n:1; status `match` when all three agree, else which layers differ. The
+    Spark session runs in UTC meanwhile: a wall time (TIMESTAMP_NTZ) cast to TIMESTAMP reads as UTC, as
+    PostgreSQL's EXTRACT(EPOCH) takes a timestamp without time zone; the session's own zone is put back after."""
+    key = "spark.sql.session.timeZone"
+    was = spark.conf.get(key)
+    spark.conf.set(key, "UTC")
+    try:
+        return _run(spark, plan, module, catalog, prefix, connection, database, lobs)
+    finally:
+        spark.conf.set(key, was)
+
+
+def _run(spark, plan, module, catalog, prefix, connection, database, lobs) -> list[dict]:
     m = next(x for x in plan["modules"] if x["module"] == module)
     cols = model_columns(m["model"])
     col, silver = m["source_column"], f"`{catalog}`.`{prefix}_{module}_silver`"
