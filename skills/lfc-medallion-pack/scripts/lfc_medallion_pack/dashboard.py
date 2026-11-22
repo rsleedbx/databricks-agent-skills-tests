@@ -45,6 +45,7 @@ DATASETS = {
     "ds_checksums": [
         "SELECT module, lob, `table` AS table_name, COALESCE(route, 'pipeline') AS route, status, ",
         "CASE WHEN status = 'match' THEN 1 ELSE 0 END AS matched, ",
+        "CASE WHEN status = 'match' THEN 0 ELSE 1 END AS mismatched, ",
         "source_rows, bronze_rows, n1_rows, source_digest, bronze_digest, n1_digest, checked_at ",
         "FROM v_checksums ORDER BY status DESC, module, lob, table_name"],
     "ds_cdc": [
@@ -97,9 +98,16 @@ def _filter(name: str, ds: str, col: str, title: str, pos: tuple, kind: str = "f
         "position": {"x": x, "y": y, "width": w, "height": h}}
 
 
-def _table(name: str, ds: str, cols: list[tuple], title: str, pos: tuple, aggregate: dict | None = None) -> dict:
-    """A table of `cols` [(column, title)]; aggregate {column: SUM|MAX|MIN} groups by the others."""
-    aggregate = aggregate or {}
+RED = {"themeColorType": "visualizationColors", "position": 4}   # the palette's vermillion: something is wrong
+ABOVE_ZERO_RED = {"type": "basic", "rules": [{"condition": {"operand": {"type": "data-value", "value": "0"},
+                                                            "operator": ">"}, "backgroundColor": RED}]}
+
+
+def _table(name: str, ds: str, cols: list[tuple], title: str, pos: tuple, aggregate: dict | None = None,
+           styles: dict | None = None) -> dict:
+    """A table of `cols` [(column, title)]; aggregate {column: SUM|MAX|MIN} groups by the others; styles {column:
+    a cell style} (ABOVE_ZERO_RED: the cell red when its value is above 0)."""
+    aggregate, styles = aggregate or {}, styles or {}
     fields, enc = [], []
     for c, t in cols:
         if c in aggregate:
@@ -108,7 +116,7 @@ def _table(name: str, ds: str, cols: list[tuple], title: str, pos: tuple, aggreg
         else:
             fn = c
             fields.append(_f(c, f"`{c}`"))
-        enc.append({"fieldName": fn, "displayName": t})
+        enc.append({"fieldName": fn, "displayName": t} | ({"style": styles[c]} if c in styles else {}))
     return _widget(name, ds, fields, {"version": 2, "widgetType": "table", "encodings": {"columns": enc},
                                       "frame": {"showTitle": True, "title": title}}, pos,
                    disaggregated=not aggregate)
@@ -226,15 +234,19 @@ def build(project: str) -> dict:
         _filter("f_ck_module", "ds_checksums", "module", "Module", (0, 2, 4, 2)),
         _filter("f_ck_status", "ds_checksums", "status", "Status", (4, 2, 4, 2)),
         _filter("f_ck_table", "ds_checksums", "table_name", "Table", (8, 2, 4, 2)),
-        _counter("k_ck_matched", "ds_checksums", "matched", "Tables matching", (0, 4, 4, 3), None),
-        _counter("k_ck_rows", "ds_checksums", "source_rows", "Source rows checked", (4, 4, 4, 3)),
-        _counter("k_ck_n1", "ds_checksums", "n1_rows", "n:1 rows checked", (8, 4, 4, 3)),
+        _table("t_ck_mismatched", "ds_checksums", [("mismatched", "Tables not matching")],
+               "Tables not matching (red when any)", (0, 4, 3, 3), aggregate={"mismatched": "SUM"},
+               styles={"mismatched": ABOVE_ZERO_RED}),
+        _counter("k_ck_matched", "ds_checksums", "matched", "Tables matching", (3, 4, 3, 3), None),
+        _counter("k_ck_rows", "ds_checksums", "source_rows", "Source rows checked", (6, 4, 3, 3)),
+        _counter("k_ck_n1", "ds_checksums", "n1_rows", "n:1 rows checked", (9, 4, 3, 3)),
         _table("t_checksums", "ds_checksums",
                [("module", "Module"), ("lob", "LOB"), ("table_name", "Table"), ("route", "n:1 route"),
-                ("status", "Status"),
+                ("mismatched", "Not matching"), ("status", "Status"),
                 ("source_rows", "Source rows"), ("bronze_rows", "Bronze rows"), ("n1_rows", "n:1 rows"),
                 ("source_digest", "Source digest"), ("bronze_digest", "Bronze digest"), ("n1_digest", "n:1 digest"),
-                ("checked_at", "Checked")], "Every table of every LOB", (0, 7, 12, 9)),
+                ("checked_at", "Checked")], "Every table of every LOB", (0, 7, 12, 9),
+               styles={"mismatched": ABOVE_ZERO_RED}),
     ])
     cdc = _page("cdc", "CDC position", [
         _text("cdc_title", ["## Where change capture stands: source, target, delta\n", "\n",
