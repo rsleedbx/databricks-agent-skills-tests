@@ -64,7 +64,7 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False,
-                parallel: int = 8) -> dict:
+                parallel: int = 8, events: list[str] | None = None) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
@@ -74,12 +74,15 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     log: the merge log's table (merge_all), e.g. a control schema's; each run's rows carry one run id.
     The last plan is kept for the sources it has (a table's route changes only by a tag, routes_to_apply): only new
     sources are planned, in parallel; replan=True plans every source again (its evidence: keys, rows, history).
-    Keys are read at once, and up to `parallel` tables are merged at once (merge_all, each on its own thread)."""
+    Keys are read at once, and up to `parallel` tables are merged at once (merge_all, each on its own thread).
+    events: the ingestion pipelines' event logs (tables): one query over them says which sources' tables got rows
+    or a snapshot since their state, and only those are read (changed_since); without it, every source is read."""
     import uuid
     run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
-    sources = discover.sources(spark, catalog, prefix)
-    held = discover.tables(spark, catalog, prefix, sources)
+    ctx = merge.load_context(spark, catalog, prefix, target)   # read once, for every table
+    sources, held = ctx["names"], ctx["held"]
+    changed = changed_since(spark, catalog, prefix, ctx, events, name) if events else None
     rows, planned = [], {}
     kept: dict[str, list] = {}   # the last plan's rows, per source
     if not replan and _has(spark, catalog, target, PLAN):
@@ -106,8 +109,11 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     established = {t for t in planned if name.format(table=t) in merge.merged_targets(spark, catalog, target)}
     skip = set()
 
-    def key_missing(pair):   # merge_all needs every source's key: read them all at once (threads)
+    def key_missing(pair):   # merge_all needs every source's key: kept in the state, else read (threads)
         table, s = pair
+        saved = ctx["state"].get((name.format(table=table), s))
+        if saved and saved[2]:
+            return None
         try:
             return None if evidence.recorded_keys(spark, f"`{catalog}`.`{prefix}{s}`.`{table}`",
                                                   f"{catalog}.{prefix}{s}.{table}", workspace) else s
@@ -136,7 +142,8 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     def merge_one(table):   # each table's merge_all on its own thread: (table, report, error)
         try:
             return table, merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column,
-                                          name=name, workspace=workspace, take_over=True, run_id=run_id, log=log), None
+                                          name=name, workspace=workspace, take_over=True, run_id=run_id, log=log,
+                                          changed=changed, context=ctx), None
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
             return table, None, e
     todo = sorted(t for t, r in apply.items() if r == "merge" and t not in skip)
@@ -160,9 +167,49 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             released += merge.release(spark, catalog, target, [table], name=name)   # its state, if any was saved
             proposed[table] = {**proposed.get(table, {}), "failed": error}
     write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
-    return {"run_id": run_id, "planned_sources": sorted(new), "merge": sorted(t for t, r in apply.items() if r == "merge"),
+    return {"run_id": run_id, "planned_sources": sorted(new),
+            "changed": None if changed is None else len(changed), "merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
+
+
+def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",
+                  margin_s: int = 120) -> set | None:
+    """The (table, source) pairs whose bronze table got rows (upserted or deleted, a snapshot too: a full refresh)
+    after its state was saved, from ONE query over the ingestion pipelines' event logs (flow_progress per flow: a
+    destination table's flow is named <catalog>_<prefix><source>_<table>_<cdc|snapshot>_flow); a pair with no state
+    is changed. None when the logs can't be read: then every source is read."""
+    flows = {}
+    for x, tabs in ctx["held"].items():
+        for t in tabs:
+            for kind in ("cdc", "snapshot"):
+                flows[f"{catalog}_{prefix}{x}_{t}_{kind}_flow"] = (t, x)
+    times = [v[3] for v in ctx["state"].values() if len(v) > 3 and v[3] is not None]
+    if not times:
+        return None
+    union = " UNION ALL ".join(
+        f"SELECT origin.flow_name AS f, timestamp, details:flow_progress.metrics AS m FROM {e} "
+        f"WHERE event_type = 'flow_progress'" for e in events)
+    oldest = min(times)
+    try:
+        got = spark.sql(f"SELECT element_at(split(f, '\\\\.'), -1) AS flow, MAX(timestamp) AS at FROM ({union}) "
+                        f"WHERE timestamp > timestamp'{oldest}' - INTERVAL {int(margin_s)} SECONDS "
+                        "AND (COALESCE(CAST(m:num_upserted_rows AS BIGINT), 0) > 0 "
+                        "OR COALESCE(CAST(m:num_deleted_rows AS BIGINT), 0) > 0) GROUP BY 1").collect()
+    except Exception:  # noqa: BLE001  an event log not there yet, no access: read every source
+        return None
+    out = set()
+    for r in got:
+        pair = flows.get(r.flow)
+        if not pair:
+            continue
+        saved = ctx["state"].get((name.format(table=pair[0]), pair[1]))
+        at = saved[3] if saved and len(saved) > 3 else None
+        if at is None or (r.at.timestamp() if hasattr(r.at, "timestamp") else 0) > at.timestamp() - margin_s:
+            out.add(pair)
+    for x, tabs in ctx["held"].items():   # never merged: read it
+        out |= {(t, x) for t in tabs if (name.format(table=t), x) not in ctx["state"]}
+    return out
 
 
 def main(argv=None) -> None:
@@ -175,9 +222,11 @@ def main(argv=None) -> None:
     ap.add_argument("--hints", default="", help='JSON: {"table": "role"}')
     ap.add_argument("--log", default="", help="the merge log's table, catalog.schema.table (default in --target)")
     ap.add_argument("--replan", action="store_true", help="plan every source again, not only new ones")
+    ap.add_argument("--events", default="", help="the ingestion pipelines' event log tables, comma-separated: only the "
+                                                  "sources whose bronze got rows since their state are read")
     a = ap.parse_args(argv)
     from pyspark.sql import SparkSession
     spark = SparkSession.builder.getOrCreate()
     print(json.dumps(merge_route(spark, a.catalog, a.prefix, a.target, a.source_column,
                                  json.loads(a.hints) if a.hints else None, log=a.log or None,
-                                 replan=a.replan)))
+                                 replan=a.replan, events=[e for e in a.events.split(",") if e] or None)))

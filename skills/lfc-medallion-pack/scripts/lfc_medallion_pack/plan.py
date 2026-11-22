@@ -164,7 +164,10 @@ def resources(m: dict, archive: str) -> dict:
                                             "catalog": "${var.catalog}", "prefix": f"${{var.prefix}}_{n}_bronze_",
                                             "target": f"${{resources.schemas.{n}_silver.name}}",
                                             "source-column": col, "hints": hints,
-                                            "log": f"${{var.catalog}}.{ctl}.merge_log_{n}"}}}
+                                            "log": f"${{var.catalog}}.{ctl}.merge_log_{n}",
+                                            # only the sources whose bronze got rows since their state are read
+                                            "events": ",".join(f"${{var.catalog}}.{ctl}.events_{n}_ingest_{g['k']}"
+                                                               for g in m["groups"])}}}
     jobs = {f"{n}_refresh": {
         "name": f"${{var.prefix}}_{n}_refresh",
         "environments": [{"environment_key": "medallion", "spec": {

@@ -99,7 +99,10 @@ class MergeRoute(unittest.TestCase):
             if isinstance(k, Exception):
                 raise k
             return ["k"] if k else []
-        with mock.patch.object(route.discover, "sources", lambda *a: ["east", "west"]), \
+        ctx = {"names": ["east", "west"], "held": {x: set(PLANS[x]) for x in ("east", "west")}, "cols": None,
+               "state": {}, "kinds": dict(spark.kinds)}
+        with mock.patch.object(route.merge, "load_context", lambda *a, **k: ctx), \
+                mock.patch.object(route.discover, "sources", lambda *a: ["east", "west"]), \
                 mock.patch.object(route.discover, "tables", lambda spark, c, p, names: {
                     s: set(PLANS[s]) for s in names}), \
                 mock.patch.object(route.evidence, "recorded_keys", recorded_keys), \
@@ -255,6 +258,29 @@ class Pipeline(unittest.TestCase):
                          ["nation"])
 
 
+class ChangedSince(unittest.TestCase):
+    def test_flows_with_rows_after_the_state_and_sources_never_merged(self):
+        import datetime as dt
+        t0 = dt.datetime(2026, 11, 22, 3, 0, tzinfo=dt.timezone.utc)
+        ctx = {"held": {"east": {"nation", "part"}, "west": {"nation"}}, "state": {
+            ("all_nation", "east"): (5, "i", ["k"], t0), ("all_nation", "west"): (7, "i", ["k"], t0),
+            ("all_part", "east"): (3, "i", ["k"], t0)}}
+        seen = []
+
+        class S:
+            def sql(self, q):
+                seen.append(q)
+                rows = [R(flow="main_shop_bronze_east_nation_cdc_flow", at=t0 + dt.timedelta(minutes=5)),
+                        R(flow="main_shop_bronze_west_nation_cdc_flow", at=t0 - dt.timedelta(minutes=30)),
+                        R(flow="main_shop_bronze_east_part_snapshot_flow", at=t0 + dt.timedelta(minutes=1))]
+                return R(collect=lambda: rows)
+        got = route.changed_since(S(), "main", "shop_bronze_", ctx, ["main.ctl.events_ingest_1"])
+        self.assertEqual(got, {("nation", "east"), ("part", "east")})   # west's change is older than its state
+        self.assertEqual(len(seen), 1)   # one query over the logs
+        ctx["state"].pop(("all_nation", "west"))
+        self.assertIn(("nation", "west"), route.changed_since(S(), "main", "shop_bronze_", ctx, ["e"]))   # never merged
+
+
 class EntryPoint(unittest.TestCase):
     def test_arguments(self):
         seen = {}
@@ -267,7 +293,7 @@ class EntryPoint(unittest.TestCase):
                         "--log", "main.shop_control.merge_log"])
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
-        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False})
+        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):

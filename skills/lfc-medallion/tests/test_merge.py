@@ -63,7 +63,7 @@ class Spark:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(id=self.ids.get(source, f"id-{source}"))]
         elif q.startswith("DESCRIBE TABLE") and STATE in q:
-            names = ("target_table", "source", "version", "table_id", "updated_at")
+            names = ("target_table", "source", "version", "table_id", "updated_at", "key_columns")
             rows = [R(col_name=c, data_type="") for c in names]
         elif q.startswith("DESCRIBE TABLE"):
             schema, table = quoted[1], quoted[2]
@@ -93,7 +93,7 @@ class Spark:
                 t, c, ty = altered.groups()
                 self.target_cols[t] = [(n, ty.lower() if n == c else x) for n, x in self.target_cols[t]]
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
-                for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)'\)", q):   # one per source
+                for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)', (?:'[^']*'|NULL)\)", q):
                     self.state[(t, s)] = (int(v), i)
         return R(collect=lambda: rows)
 
@@ -111,9 +111,10 @@ class FirstAndLater(unittest.TestCase):
         report = run(spark)
         self.assertEqual(report, {"all_nation": {"east": {"done": "copied", "version": 5},
                                                  "west": {"done": "copied", "version": 7}}})
-        self.assertTrue(spark.done[0].startswith("CREATE TABLE `main`.`shop_silver`.`all_nation` (`division` STRING, "
-                                                 "`n_nationkey` int, `n_name` string) TBLPROPERTIES"))
-        self.assertIn("'delta.enableChangeDataFeed' = 'true'", spark.done[0])
+        created = next(q for q in spark.done if q.startswith("CREATE TABLE"))   # after the one catalog query
+        self.assertTrue(created.startswith("CREATE TABLE `main`.`shop_silver`.`all_nation` (`division` STRING, "
+                                           "`n_nationkey` int, `n_name` string) TBLPROPERTIES"))
+        self.assertIn("'delta.enableChangeDataFeed' = 'true'", created)
         m = spark.merges()
         self.assertEqual(len(m), 2)
         self.assertIn("FROM `main`.`shop_bronze_east`.`nation` VERSION AS OF 5", m[0])   # the version saved
@@ -151,6 +152,15 @@ class FirstAndLater(unittest.TestCase):
         saves = [q for q in spark.done if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`")]
         self.assertEqual(len(saves), 1)
         self.assertEqual({k: v for k, (v, _) in spark.state.items()}, {("all_nation", "east"): 9, ("all_nation", "west"): 8})
+
+    def test_only_the_changed_sources_are_read(self):   # merge_route found west quiet in the event logs
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]},
+                      targets={"all_nation"})
+        report = run(spark, changed={("nation", "east")})
+        self.assertEqual(report["all_nation"]["west"], {"done": "unchanged", "version": 7})
+        self.assertEqual(report["all_nation"]["east"]["done"], "merged")
+        self.assertFalse([q for q in spark.done if "shop_bronze_west" in q])   # no read of west at all
 
     def test_new_versions_without_rows_written_are_unchanged(self):   # an ingestion update touches every table
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},

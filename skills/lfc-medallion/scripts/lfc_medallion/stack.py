@@ -96,11 +96,11 @@ def stack_all(dp, spark, catalog: str, prefix: str, source_column: str = "_sourc
     The sources' tables and column types come from one information_schema query and each view is one statement
     (stack_sql); where that query can't run, a SHOW TABLES per source and a DataFrame per source (stacked)."""
     names = discover.sources(spark, catalog, prefix, only)
-    try:
-        cols = discover.catalog_columns(spark, catalog, prefix, names)
-        held = {s: set(cols.get(s, {})) for s in names}
-    except Exception:  # noqa: BLE001  an older runtime, or no access to information_schema: the per-source way
-        cols, held = None, discover.tables(spark, catalog, prefix, names)
+    try:   # none at all (an older runtime, no access to information_schema, schemas just made): the per-source way
+        cols = discover.catalog_columns(spark, catalog, prefix, names) or None
+    except Exception:  # noqa: BLE001
+        cols = None
+    held = {s: set(cols.get(s, {})) for s in names} if cols else discover.tables(spark, catalog, prefix, names)
     defined = {}
     for table in sorted(set().union(*held.values()) - set(skip)):
         having = [s for s in names if table in held[s]]
