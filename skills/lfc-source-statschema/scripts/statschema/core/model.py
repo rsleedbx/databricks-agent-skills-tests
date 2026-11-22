@@ -468,7 +468,9 @@ class CanonicalForeignKey:
 #   fact       an event with measurements (orders, lineitem, trade)
 #   log        appended only, no key of its own (TPC-B history)
 #   queue      rows inserted, then deleted (TPC-C new_order)
-# KIND groups them for "which are the fact tables": dimension and lookup are dimensions; the others carry the events.
+# KIND groups them for "which are the fact tables" when describing a model: dimension and lookup are dimensions; the
+# others carry the events. It is not how tables are routed by how they change (bridges change rarely): that rule is
+# lfc_medallion.split_tables, for the merge route, ingestion pipelines split by role, and a batch's tables.
 ROLES = ("dimension", "lookup", "bridge", "fact", "log", "queue")
 KIND = {"dimension": "dimension", "lookup": "dimension",
         "bridge": "fact", "fact": "fact", "log": "fact", "queue": "fact"}

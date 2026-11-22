@@ -17,7 +17,7 @@ Two more scripts use the same drivers (`drivers.py`), for engines whose CLI can'
 - [`scripts/python/sq.py`](scripts/python/sq.py) `<engine>`: SQL on stdin, tab-separated rows out, for Db2 and Informix, whose CLIs pad columns (Db2's CLP) or print no column layout at all (Informix's `dbaccess`). A line `@` ends a statement that can't end at `;` (a trigger body).
 - **Informix:** fill with `--sessions 1`. Each connection sets `SET LOCK MODE TO WAIT 30`, since the default lock mode fails a concurrent writer at once (`-425` / ISAM `-107`), and several sessions still collided.
 
-**A few rows from Databricks** (a test's inserts from a notebook or job, serverless included): Spark `mode("append")` through a TYPE JDBC Unity Catalog connection; a federation connection (`POSTGRESQL`, `MYSQL`, `SQLSERVER`) refuses Spark writes. [references/append-through-connection.md](references/append-through-connection.md). **Changes at a fixed rate** (say 10 rows a minute) from several uncoordinated notebooks, jobs and retries: statements that cap themselves, a lock for overlapping runs, and Postgres slot and publication setup, all through `sessionInitStatement`: [references/capped-dml-through-jdbc-connection.md](references/capped-dml-through-jdbc-connection.md).
+**A few rows from Databricks** (a test's inserts from a notebook or job, serverless included): Spark `mode("append")` through a TYPE JDBC Unity Catalog connection; a federation connection (`POSTGRESQL`, `MYSQL`, `SQLSERVER`) refuses Spark writes. [references/append-through-connection.md](references/append-through-connection.md). **A batch of a model's changes** (N rows into every table its YAML doesn't call a dimension, then its signals): `lfc_source_datagen.signals.batch`, on psycopg or a UC JDBC connection alike. **Changes at a fixed rate** (say 10 rows a minute) from several uncoordinated notebooks, jobs and retries: statements that cap themselves, a lock for overlapping runs, and Postgres slot and publication setup, all through `sessionInitStatement`: [references/capped-dml-through-jdbc-connection.md](references/capped-dml-through-jdbc-connection.md).
 
 How the planner works (every row from one integer, resuming, keys only at the ends, scrambled and random columns, the audit, foreign keys and the tags), and why generated values instead of realistic fake data: [references/how-it-works.md](references/how-it-works.md).
 
@@ -84,14 +84,7 @@ ORACLE=./sq DIR=scripts/oracle bash scripts/fill.sh ora tpch                    
 
 ## Random values per row
 
-A random function in an `INSERT ... SELECT` isn't always evaluated once per row, and the planner needs **one** random value per row: a cast can use its input twice (a range needs `v` and `v + 1`, a string pads and hashes `n`), and two different random values there would break it. So `data=random` draws the value once in a subquery the optimizer can't merge away (`OFFSET 0` on Postgres, `NO_MERGE` on MySQL), and every column scrambles that value.
-
-| Engine | Per-row random | Notes |
-|---|---|---|
-| PostgreSQL | `random()` | Per row ✓ |
-| MySQL | `RAND()` | Per row ✓. `RAND(<constant>)` repeats the same sequence |
-| SQL Server | `ABS(CHECKSUM(NEWID()))` (or `RAND(CHECKSUM(NEWID()))` for a float in 0 … 1) | `RAND()` is evaluated **once per statement**, so every row gets the same value (from the docs, not tested yet) |
-| Oracle | `DBMS_RANDOM.VALUE` | Per row (from the docs, not tested yet) |
+`data=random` draws one random value per row in a subquery the optimizer can't merge away (`OFFSET 0` on Postgres, `NO_MERGE` on MySQL); every column scrambles that value. Per-engine functions: [references/how-it-works.md](references/how-it-works.md#random-values-per-row).
 
 ## Schema changes during a load
 

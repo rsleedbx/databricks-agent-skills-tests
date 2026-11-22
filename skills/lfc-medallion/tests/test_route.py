@@ -19,8 +19,9 @@ R = types.SimpleNamespace
 class Spark:
     """The plan table: present or not, its routes; createDataFrame and the write are recorded."""
 
-    def __init__(self, plan=None, kinds=None):
+    def __init__(self, plan=None, kinds=None, plan_rows=None):
         self.plan = plan   # {table: route} or None (no plan table yet)
+        self.plan_rows = plan_rows or []   # the last plan's rows (source, table, role, planned, decided_by, why)
         self.kinds = dict(kinds or {})   # the target's objects: {name: table_type}; a merge may add to it
         self.dropped = []
         self.written = None
@@ -31,6 +32,9 @@ class Spark:
             rows = [R(tableName=route.PLAN)] if self.plan is not None else []
         elif "WHERE route = 'merge'" in q:
             rows = [R(table_name=t) for t, r in (self.plan or {}).items() if r == "merge"]
+        elif q.startswith("SELECT source, table_name, role, planned"):
+            rows = [R(source=a, table_name=b, role=c, planned=d, decided_by=e, why=f) for a, b, c, d, e, f in
+                    self.plan_rows]
         elif q.startswith("SELECT DISTINCT table_name, route"):
             rows = [R(table_name=t, route=r) for t, r in (self.plan or {}).items()]
         elif "information_schema.tables" in q:
@@ -95,7 +99,10 @@ class MergeRoute(unittest.TestCase):
             if isinstance(k, Exception):
                 raise k
             return ["k"] if k else []
-        with mock.patch.object(route.discover, "sources", lambda *a: ["east", "west"]), \
+        ctx = {"names": ["east", "west"], "held": {x: set(PLANS[x]) for x in ("east", "west")}, "cols": None,
+               "state": {}, "kinds": dict(spark.kinds)}
+        with mock.patch.object(route.merge, "load_context", lambda *a, **k: ctx), \
+                mock.patch.object(route.discover, "sources", lambda *a: ["east", "west"]), \
                 mock.patch.object(route.discover, "tables", lambda spark, c, p, names: {
                     s: set(PLANS[s]) for s in names}), \
                 mock.patch.object(route.evidence, "recorded_keys", recorded_keys), \
@@ -106,6 +113,28 @@ class MergeRoute(unittest.TestCase):
                 mock.patch.object(route.merge, "merge_all", merge_all):
             out = route.merge_route(spark, "main", "shop_bronze_", "shop_silver", source_column="division", **kw)
         return out, calls
+
+    def test_the_last_plan_is_kept_for_its_sources(self):   # only a new source (or one with new tables) is planned
+        kept = [("east", t, "dimension", r, "relations", "") for t, r in PLANS["east"].items()]
+        planned = []
+        with mock.patch.object(route.evidence, "table_plan", lambda spark, c, schema, **k: planned.append(schema) or
+                               table_plan(spark, c, schema, **k)):
+            out, calls = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept))
+        self.assertEqual(out["planned_sources"], ["west"])
+        self.assertEqual(calls["planned"], {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept), replan=True)
+        self.assertEqual(out["planned_sources"], ["east", "west"])
+
+    def test_a_kept_plan_made_under_other_hints_is_planned_again(self):   # a role changed in the schema YAML
+        kept = [("east", t, "dimension", r, "relations", "") for t, r in PLANS["east"].items()]
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept), hints={"nation": "fact"})
+        self.assertEqual(out["planned_sources"], ["east", "west"])
+        hinted = [("east", t, "fact" if t == "nation" else "dimension", r, "hint" if t == "nation" else "relations",
+                   "") for t, r in PLANS["east"].items()]
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=hinted), hints={"nation": "fact"})
+        self.assertEqual(out["planned_sources"], ["west"])   # the same hints: kept
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=hinted))
+        self.assertEqual(out["planned_sources"], ["east", "west"])   # the hint dropped
 
     def test_merge_only_when_every_source_agrees(self):
         out, calls = self.run_route(Spark())
@@ -240,17 +269,43 @@ class Pipeline(unittest.TestCase):
                          ["nation"])
 
 
+class ChangedSince(unittest.TestCase):
+    def test_flows_with_rows_after_the_state_and_sources_never_merged(self):
+        import datetime as dt
+        t0 = dt.datetime(2026, 11, 22, 3, 0, tzinfo=dt.timezone.utc)
+        ctx = {"held": {"east": {"nation", "part"}, "west": {"nation"}}, "state": {
+            ("all_nation", "east"): (5, "i", ["k"], t0), ("all_nation", "west"): (7, "i", ["k"], t0),
+            ("all_part", "east"): (3, "i", ["k"], t0)}}
+        seen = []
+
+        class S:
+            def sql(self, q):
+                seen.append(q)
+                rows = [R(flow="main_shop_bronze_east_nation_cdc_flow", at=t0 + dt.timedelta(minutes=5)),
+                        R(flow="main_shop_bronze_west_nation_cdc_flow", at=t0 - dt.timedelta(minutes=30)),
+                        R(flow="main_shop_bronze_east_part_snapshot_flow", at=t0 + dt.timedelta(minutes=1))]
+                return R(collect=lambda: rows)
+        got = route.changed_since(S(), "main", "shop_bronze_", ctx, ["main.ctl.events_ingest_1"])
+        self.assertEqual(got, {("nation", "east"), ("part", "east")})   # west's change is older than its state
+        self.assertEqual(len(seen), 1)   # one query over the logs
+        self.assertIn("endswith(f, '_snapshot_flow') AND status = 'COMPLETED'", seen[0])   # a refresh of no rows
+        ctx["state"].pop(("all_nation", "west"))
+        self.assertIn(("nation", "west"), route.changed_since(S(), "main", "shop_bronze_", ctx, ["e"]))   # never merged
+
+
 class EntryPoint(unittest.TestCase):
     def test_arguments(self):
         seen = {}
         fake = types.ModuleType("pyspark.sql")
         fake.SparkSession = R(builder=R(getOrCreate=lambda: "spark"))
         with mock.patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": fake}), \
-                mock.patch.object(route, "merge_route", lambda *a: seen.setdefault("args", a) and {}):
+                mock.patch.object(route, "merge_route", lambda *a, **k: seen.update(args=a, kw=k) or {}):
             route.main(["--catalog", "main", "--prefix", "shop_bronze_", "--target", "shop_silver",
-                        "--source-column", "division", "--hints", '{"nation": "lookup"}'])
+                        "--source-column", "division", "--hints", '{"nation": "lookup"}',
+                        "--log", "main.shop_control.merge_log"])
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
+        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
@@ -259,3 +314,24 @@ class EntryPoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkspaceOnce(unittest.TestCase):
+    def test_one_client_for_many_threads(self):
+        import threading
+        made = []
+
+        class W:
+            def __init__(self):
+                made.append(1)
+                import time
+                time.sleep(0.01)
+                self.tables = "tables"
+        fake = types.ModuleType("databricks.sdk")
+        fake.WorkspaceClient = W
+        ws = route._Workspace()
+        with mock.patch.dict(sys.modules, {"databricks": types.ModuleType("databricks"), "databricks.sdk": fake}):
+            ts = [threading.Thread(target=lambda: ws.tables) for _ in range(8)]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+        self.assertEqual(len(made), 1)

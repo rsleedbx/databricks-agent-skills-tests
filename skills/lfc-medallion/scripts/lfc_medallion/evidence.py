@@ -31,6 +31,16 @@ from .stack import spark_string
 
 ROUTE = {"fact": "pipeline", "log": "pipeline", "queue": "pipeline",
          "dimension": "merge", "lookup": "merge", "bridge": "merge"}
+
+
+def split_tables(roles: dict[str, str], routes: dict | None = None) -> tuple[list[str], list[str]]:
+    """A model's tables by how they change, from their roles (the schema YAML's, or table_plan's): (the busy ones:
+    facts, logs, queues, kept by the pipeline; the quiet ones: dimensions, lookups, bridges, kept by MERGE). The one
+    rule for every decision that splits them: the merge route, ingestion pipelines split by role, which tables a batch
+    of changes adds rows to. A table with no role is busy."""
+    route = {**ROUTE, **(routes or {})}
+    busy = [t for t, r in roles.items() if route.get(r, "pipeline") == "pipeline"]
+    return busy, [t for t in roles if t not in busy]
 TYPES = {"decimal": "decimal", "double": "double", "float": "float", "real": "real", "numeric": "numeric",
          "timestamp": "timestamp", "timestamp_ntz": "timestamp", "timestamp with time zone": "timestamptz",
          "timestamp without time zone": "timestamp", "date": "date", "datetime": "datetime"}

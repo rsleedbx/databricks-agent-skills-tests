@@ -184,7 +184,7 @@ Measured on PostgreSQL 14 on 2026-11-20. In each source no history row comes bef
 
 ## TPC-B unusual withdrawals
 
-The fill's `h_delta` is the row number divided by 100, so no amount means anything. `tpcb-withdrawals.sql` (signal `unusual_withdrawal`, from `tpcb.yaml`'s `signals:`) gives each source one bank's history. A row is a large withdrawal at a per-mille rate:
+The fill's `h_delta` is the row number, so no amount means anything. The signal `unusual_withdrawal`, a rule in `tpcb.yaml`'s `signals:` (no SQL file: `lfc_source_datagen.signals.rule_sql` writes the statements from it, for any table), gives each source one bank's history. A row is a large withdrawal at a per-mille rate:
 
 | Part | Per mille |
 |---|---|

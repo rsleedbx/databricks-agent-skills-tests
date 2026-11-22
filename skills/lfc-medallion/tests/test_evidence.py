@@ -407,3 +407,13 @@ class Busy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SplitTables(unittest.TestCase):
+    def test_one_rule_for_every_split(self):
+        from lfc_medallion import split_tables
+        roles = {"history": "log", "account": "dimension", "partsupp": "bridge", "nation": "lookup", "x": "",
+                 "orders": "fact", "new_order": "queue"}
+        self.assertEqual(split_tables(roles), (["history", "x", "orders", "new_order"],
+                                               ["account", "partsupp", "nation"]))   # a role-less table is busy
+        self.assertEqual(split_tables({"partsupp": "bridge"}, routes={"bridge": "pipeline"}), (["partsupp"], []))

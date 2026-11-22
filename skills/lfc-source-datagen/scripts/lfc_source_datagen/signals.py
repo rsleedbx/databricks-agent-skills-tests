@@ -27,6 +27,7 @@ import decimal
 import functools
 import json
 import re
+import time
 
 from lfc_source_contract.jdbc import ident, literal
 
@@ -35,11 +36,71 @@ from .sources import _fill, build, check_name, parse, psql_vars, read_sql, state
 
 @functools.lru_cache(maxsize=None)
 def spec(model: str) -> tuple[dict, ...]:
-    """The model's signals that have a SQL step (TPC-H's lead times are built by tpch_sources)."""
+    """The model's signals that have a step: a rule (rule_sql) or a SQL file (TPC-H's lead times are built by
+    tpch_sources)."""
     import yaml
     from statschema.tools import model as model_path
     with open(model_path(model)) as f:
-        return tuple(s for s in (yaml.safe_load(f) or {}).get("signals") or [] if s.get("sql"))
+        return tuple(s for s in (yaml.safe_load(f) or {}).get("signals") or [] if s.get("sql") or s.get("rule"))
+
+
+def _formulas(text: str, f: dict) -> str:
+    """{name} -> (the rule's formulas: entry), formulas using each other."""
+    for _ in range(20):
+        new = re.sub(r"\{(\w+)\}", lambda m: f"({f[m.group(1)]})" if m.group(1) in f else m.group(0), text)
+        if new == text:
+            return text
+        text = new
+    raise ValueError("rule formulas refer to each other in a loop")
+
+
+def rule_sql(sig: dict) -> str:
+    """A signal's rule (the schema's signals: block) as its SQL step, psql variables (:<parameter>) left in. Nothing
+    here names a model, table or column: the rule says them all.
+
+      table      the table whose rows the rule marks (signals: table)
+      rule:
+        formulas   names for expressions over the table's columns, used as {name}
+        row        the row's scramble, a whole number that is the same on every rerun: row % 1000 decides the mark
+        per_mille  the base rate, and causes: [{when: <predicate>, add: <per mille>}], each added when it holds
+        marked     {column: expression} for a marked row; unmarked: {column: expression} for the others
+        totals     [{table, column, key, sum, by}]: a parent's column set to the sum of the marked table's `sum` over
+                   its rows (by = key), so balances stay the sum of their history
+    Each statement updates only the rows whose value changes, so a rerun changes nothing."""
+    r, t = sig["rule"], sig["table"]
+    f = r.get("formulas") or {}
+    x = lambda e: _formulas(str(e), f)   # noqa: E731
+    row = f"({x(r['row'])})"
+    rate = " + ".join([f"({x(r['per_mille'])})"] +
+                      [f"CASE WHEN ({x(c['when'])}) THEN ({x(c['add'])}) ELSE 0 END" for c in r.get("causes") or []])
+    marked, unmarked = r["marked"], r.get("unmarked") or {}
+    cols = list(dict.fromkeys(list(marked) + list(unmarked)))
+    v = {c: ident(f"v_{c}") for c in cols}
+    val = [f"CASE WHEN {row} % 1000 < {rate} THEN ({x(marked.get(c, c))}) ELSE ({x(unmarked.get(c, c))}) END AS {v[c]}"
+           for c in cols]
+    out = [f"WITH v AS (SELECT ctid AS rid, {', '.join(val)} FROM {ident(t)})\n"
+           f"UPDATE {ident(t)} x SET {', '.join(f'{ident(c)} = v.{v[c]}' for c in cols)} FROM v WHERE x.ctid = v.rid "
+           f"AND (" + " OR ".join(f"x.{ident(c)} IS DISTINCT FROM v.{v[c]}" for c in cols) + ");"]
+    for g in r.get("totals") or []:
+        p, k, c = ident(g["table"]), ident(g["key"]), ident(g["column"])
+        out.append(f"WITH s AS (SELECT p.{k} AS id, COALESCE(SUM(h.{ident(g['sum'])}), 0) AS v FROM {p} p "
+                   f"LEFT JOIN {ident(t)} h ON h.{ident(g['by'])} = p.{k} GROUP BY 1)\n"
+                   f"UPDATE {p} p SET {c} = s.v FROM s WHERE p.{k} = s.id AND p.{c} IS DISTINCT FROM s.v;")
+    return "\n".join(out) + "\n"
+
+
+def expected_rate(sig: dict, columns: dict[str, str] | None = None, formulas: dict[str, str] | None = None) -> str:
+    """The rate a row of the marked table is marked at (0 .. 1), as SQL over its columns, :<parameter> left in:
+    per_mille plus each cause that holds, / 1000. columns renames them ({h_t_id: teller_id}: a gold table's names),
+    so a readout of the signal comes from the same rule as the data; formulas replaces some of the rule's ({hr: hour}:
+    a column the gold table already has)."""
+    r = sig["rule"]
+    f = (r.get("formulas") or {}) | (formulas or {})
+    e = _formulas(" + ".join([f"({r['per_mille']})"] + [f"CASE WHEN ({c['when']}) THEN ({c['add']}) ELSE 0 END"
+                                                        for c in r.get("causes") or []]), f)
+    for a, b in (columns or {}).items():
+        e = re.sub(rf"\b{re.escape(a)}\b", b, e)
+    return f"(({e}) / 1000.0)"
 
 
 def split(model: str, extra: str) -> dict[str, str]:
@@ -108,7 +169,8 @@ def steps(model: str, name: str, extra: str) -> list[str]:
     sigs = {s["name"]: s for s in spec(model)}
     out = []
     for sig, nums in split(model, extra).items():
-        out += statements(psql_vars(expand(read_sql(sigs[sig]["sql"])), dict(zip(sigs[sig]["parameters"], nums.split(",")))))
+        text = rule_sql(sigs[sig]) if sigs[sig].get("rule") else expand(read_sql(sigs[sig]["sql"]))
+        out += statements(psql_vars(text, dict(zip(sigs[sig]["parameters"], nums.split(",")))))
         out.append(tag(sigs[sig]["table"], comment(model, sig, nums)))
     return out
 
@@ -153,9 +215,12 @@ def summary(model: str, cur, name: str) -> dict:
 
 
 def model_sources(connect, model: str, sources, login: str | None = None, publication: str | None = None,
-                  sessions: int = 4, log=print) -> list[dict]:
-    """The model's sources with their signals (the module's docstring); see sources.build."""
+                  sessions: int = 4, log=print, fill: bool = True) -> list[dict]:
+    """The model's sources with their signals (the module's docstring); see sources.build (fill=False: empty
+    tables, no signals and no summary)."""
     srcs = parse(sources)
+    if not fill:
+        return build(connect, model, srcs, login, publication, sessions, log=log, fill=False)
     check(model, srcs)
     return build(connect, model, srcs, login, publication, sessions, *bound(model)[1:3], log=log)
 
@@ -171,7 +236,8 @@ def bound(model: str):
 def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
     """Each signal the source has (its table's comment), run again with its own parameters on the rows there now:
     {signal: rows each statement changed}. The steps change only rows whose values differ, so on unchanged rows every
-    count is 0 (the last statement, the comment, counts none)."""
+    count is 0 (the last statement, the comment, counts none). A count is None where the connection doesn't report one
+    (a UC JDBC connection's writes run as Spark's sessionInitStatement, which returns no count)."""
     s = ident(name)
     cur.execute(f"SET search_path = {s}")
     out = {}
@@ -184,10 +250,26 @@ def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
         counts = []
         for st in steps(model, name, "/".join(nums if x["name"] == sig["name"] else "" for x in spec(model))):
             cur.execute(st)
-            counts.append(max(cur.rowcount, 0) if not st.startswith("DO ") else 0)
+            rc = getattr(cur, "rowcount", -1)
+            counts.append((None if rc is None or rc < 0 else rc) if _dml(st) else 0)   # UC JDBC: -1 for DML too
         out[sig["name"]] = counts
         log(f"signals: {name}: {sig['name']} re-applied, rows changed per statement {counts}")
     return out
+
+
+DML = ("INSERT", "UPDATE", "DELETE", "MERGE", "WITH")
+
+
+def _dml(statement: str) -> bool:
+    """A statement that changes rows and reports how many; DO, DDL, ANALYZE, SET change none (-1 on psycopg too)."""
+    return statement.lstrip().split(None, 1)[0].upper() in DML if statement.strip() else False
+
+
+def changed_rows(changed: dict[str, list]) -> int | None:
+    """The rows reapply's statements changed; None when a statement that changes rows gave no count (a UC JDBC
+    connection)."""
+    n = [c for v in changed.values() for c in v]
+    return None if None in n else sum(n)
 
 
 def append(connect, model: str, names, grow: float, sessions: int = 4, log=print) -> list[dict]:
@@ -206,7 +288,26 @@ def append(connect, model: str, names, grow: float, sessions: int = 4, log=print
             log(f"signals: {name}: growing by {grow:g} scale factors")
             rebuilt = sorted({tb for s in spec(model) for tb in s.get("rebuilds") or []})   # the signals rebuild these
             _fill(connect, name, sessions, ("--mode", "append", "--grow", repr(float(grow)), "--skip", ",".join(rebuilt)))
-        changed = reapply(cur, model, name, log)
-        out.append({"source": name, "changed": sum(sum(v) for v in changed.values())} | summary(model, cur, name))
+        out.append({"source": name, "changed": changed_rows(reapply(cur, model, name, log))} | summary(model, cur, name))
+        con.close()
+    return out
+
+
+def batch(connect, model: str, names, rows: int, quiet: list[str] = (), log=print) -> list[dict]:
+    """One batch of changes per source: `rows` new rows in every table of the model but the `quiet` ones (its
+    dimensions: the caller decides them, by the one rule lfc_medallion.split_tables applies to the schema YAML's
+    roles), by python/fill.py --mode append, continuing each table's row numbers by its generation rules, then its
+    signals re-applied (their totals: the parents' sums). A rerun, or a retried task, appends another batch: the data
+    stays consistent (the signal covers every row, the totals are recomputed), the rows are more than asked. Works on
+    any DB-API connection connect() returns: psycopg, or a UC JDBC connection (lfc_source_contract.jdbc.dbapi)."""
+    out = []
+    for name in names:
+        check_name(name, "source")
+        _fill(connect, name, 1, ("--mode", "append", "--rows", str(int(rows))) + (("--skip", ",".join(quiet))
+                                                                                   if quiet else ()))
+        con = connect()
+        cur = con.cursor()
+        out.append({"source": name, "rows": int(rows), "changed": changed_rows(reapply(cur, model, name, log)),
+                    "at": time.time()})   # when this source's batch committed: a latency starts here, per source
         con.close()
     return out

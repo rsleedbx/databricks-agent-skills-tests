@@ -1,0 +1,17 @@
+# @@NAME@@: the modules of this repo, each one of your schemas (or a TPC model) repeated across LOBs, built n:1 into one
+# bronze, silver and gold. After a change: lfc-medallion-pack render @@NAME@@.yaml, then deploy both bundles.
+archive: @@ARCHIVE@@       # where the pipelines and notebooks install the tests repo's packages from
+
+source:
+  slot_prefix: @@NAME@@     # replication slots and publications: <slot_prefix>_<module>_<k>
+  max_slots: 8              # the source's replication slots: Lakebase allows 10 and keeps 2 of its own
+
+limits:
+  tables_per_pipeline: 250  # Lakeflow Connect: at most 999 source tables per ingestion pipeline, 250 recommended
+
+modules:
+  example:
+    pack: tpcb              # a builtin pack (tpcb), or the folder of your own: packs/<name>
+    lobs: 3                 # how many LOBs (lob_001 ..), or a list of names
+    seed: 1                 # the 20-70-10 draw: the same LOBs and tiers on every render
+    data: false             # false: empty tables (the no-data test); true: filled, with the pack's signal per tier

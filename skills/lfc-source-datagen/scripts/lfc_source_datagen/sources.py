@@ -41,7 +41,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.dirname(HERE)          # a checkout's scripts/; an installed package has the same files under _tpc, _planner
 TPC = os.path.join(HERE, "_tpc") if os.path.isdir(os.path.join(HERE, "_tpc")) else os.path.join(SCRIPTS, "tpc")
 PLANNER = os.path.join(HERE, "_planner") if os.path.isdir(os.path.join(HERE, "_planner")) else os.path.join(SCRIPTS, "python")
-SPEC = ("tpch", "tpcb")                  # the models tpc_schema writes from the spec (keys, prices, dates across tables)
+SPEC = ("tpch",)                         # the models still written from tpc_schema.py (TPC-B: its YAML; TPC-H: next)
 NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 CHECKED = "lfc:spec-checked"             # a copy's schema comment once its spec checks passed
 
@@ -130,13 +130,30 @@ def read_sql(name: str) -> str:
         return f.read()
 
 
+def model_schema(model: str, sf: float, use_spec: bool | None = None) -> str:
+    """The model's schema at scale factor sf, in statschema's format (YAML text): the spec's own for tpch and tpcb
+    (tpc_schema), statschema's model shaped for the others."""
+    from statschema.tools import ddl_to_schema, shape
+    from statschema.tools import model as model_path
+    spec = model in SPEC if use_spec is None else use_spec
+    return ddl_to_schema(tpc_schema(model, sf), "mysql") if spec else shape(model_path(model), sf=sf)[0]
+
+
+def model_roles(model: str) -> dict[str, str]:
+    """The model's tables, in build order, and each one's role (dimension, lookup, bridge, fact, log, queue) as its
+    schema YAML declares it ('' where it doesn't)."""
+    import yaml
+    from statschema.tools import model as model_path
+    with open(model_path(model)) as fh:
+        declared = {t["name"]: t.get("role", "") for t in (yaml.safe_load(fh) or {}).get("tables", [])}
+    return {t["name"]: declared.get(t["name"], "") for t in yaml.safe_load(model_schema(model, 1))["tables"]}
+
+
 def model_ddl(model: str, sf: float, use_spec: bool | None = None) -> tuple[str, list[str]]:
     """The model's PostgreSQL DDL at scale factor sf, and its table names."""
     import yaml
-    from statschema.tools import ddl, ddl_to_schema, shape
-    from statschema.tools import model as model_path
-    spec = model in SPEC if use_spec is None else use_spec
-    schema = ddl_to_schema(tpc_schema(model, sf), "mysql") if spec else shape(model_path(model), sf=sf)[0]
+    from statschema.tools import ddl
+    schema = model_schema(model, sf, use_spec)
     return ddl(schema, "postgres"), [t["name"] for t in yaml.safe_load(schema)["tables"]]
 
 
@@ -167,9 +184,12 @@ def _verify(cur, model: str, copy: str, tables: list[str]) -> int:
 
 
 def build(connect, model: str, sources, login: str | None = None, publication: str | None = None,
-          sessions: int = 4, steps=None, summary=None, use_spec: bool | None = None, log=print) -> list[dict]:
+          sessions: int = 4, steps=None, summary=None, use_spec: bool | None = None, log=print,
+          fill: bool = True) -> list[dict]:
     """Build the sources in connect()'s database (the module's docstring). steps(name, extra) -> SQL statements run
-    in the copy (search_path set) before its rename; summary(cur, name) -> a dict for the result rows."""
+    in the copy (search_path set) before its rename; summary(cur, name) -> a dict for the result rows. fill=False
+    builds the tables empty (no fill, checks or steps): the objects alone, to test what many sources do downstream
+    before any data moves."""
     srcs = parse(sources)
     if login is not None:
         check_name(login, "login")
@@ -192,14 +212,15 @@ def build(connect, model: str, sources, login: str | None = None, publication: s
                         f"{literal(login)}); END $g$")
             cur.execute(f"GRANT USAGE ON SCHEMA {ident(cp)} TO {ident(login)}")
             cur.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA {ident(cp)} TO {ident(login)}")
-        log(f"sources: {name}: {model} at {sf:g} in {database}.{cp}, filling")
-        _fill(connect, cp, sessions)
-        if _all(cur, "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = %s", (cp,))[0][0] != CHECKED:
+        log(f"sources: {name}: {model} at {sf:g} in {database}.{cp}, " + ("filling" if fill else "empty"))
+        if fill:
+            _fill(connect, cp, sessions)
+        if fill and _all(cur, "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = %s", (cp,))[0][0] != CHECKED:
             bad = _verify(cur, model, cp, tables)
             if bad:
                 raise RuntimeError(f"{bad} {model} spec rules broken in {database}.{cp}")
             cur.execute(f"COMMENT ON SCHEMA {ident(cp)} IS {literal(CHECKED)}")
-        if steps:
+        if steps and fill:
             scon = connect()
             scur = scon.cursor()
             scur.execute(f"SET search_path = {ident(cp)}")

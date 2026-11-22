@@ -58,20 +58,65 @@ def stacked(spark, catalog: str, prefix: str, table: str, names: list[str], sour
     return out
 
 
+def stack_sql(catalog: str, prefix: str, table: str, cols: dict[str, list[tuple]], source_column: str = "_source") -> str:
+    """One table of every source in ONE statement: SELECT each source's rows, its name in the source column, UNION
+    ALL, by column name (a column a source lacks is a typed NULL there; a column whose type differs between sources
+    is cast to the widest, coltypes.widest, where it's narrower): the same rows as stacked(), with no schema read per
+    source. cols: {source: [(column, type)]} for this table (discover.catalog_columns)."""
+    order: list[str] = []
+    types: dict[str, list[str]] = {}
+    for s in cols:
+        for c, t in cols[s]:
+            if c not in types:
+                order.append(c)
+                types[c] = []
+            types[c].append(t)
+    wide = {c: coltypes.widest(sorted(set(ts))) if len(set(ts)) > 1 else ts[0] for c, ts in types.items()}
+    parts = []
+    for s in sorted(cols):
+        have = dict(cols[s])
+        sel = []
+        for c in order:
+            q = f"`{c.replace('`', '``')}`"
+            if c not in have:
+                sel.append(f"CAST(NULL AS {wide[c]}) AS {q}")
+            elif coltypes.from_spark(have[c]) != coltypes.from_spark(wide[c]):
+                sel.append(f"CAST({q} AS {wide[c]}) AS {q}")
+            else:
+                sel.append(q)
+        parts.append(f"SELECT {spark_string(s)} AS `{source_column}`, {', '.join(sel)} "
+                     f"FROM `{catalog}`.`{prefix}{s}`.`{table}`")
+    return "\nUNION ALL\n".join(parts)
+
+
 def stack_all(dp, spark, catalog: str, prefix: str, source_column: str = "_source", only=None,
               name: str = "all_{table}", skip=()) -> dict[str, list[str]]:
     """Define one materialized view per table found in any source (named by `name`), stacked from the sources that
-    have it, except the tables in `skip` (those merge_all keeps, the `merge` route). Returns {view name: [sources]}."""
+    have it, except the tables in `skip` (those merge_all keeps, the `merge` route). Returns {view name: [sources]}.
+    The sources' tables and column types come from one information_schema query and each view is one statement
+    (stack_sql); where that query can't run, a SHOW TABLES per source and a DataFrame per source (stacked)."""
     names = discover.sources(spark, catalog, prefix, only)
-    held = discover.tables(spark, catalog, prefix, names)
+    held, cols = discover.held_tables(spark, catalog, prefix, names)   # a source it misses: the per-source way
     defined = {}
     for table in sorted(set().union(*held.values()) - set(skip)):
         having = [s for s in names if table in held[s]]
         view = name.format(table=table)
-        dp.materialized_view(name=view, comment=f"{table} of every source in one table, with its source in "
-                             f"{source_column} (n:1)")(_reader(spark, catalog, prefix, table, having, source_column))
+        comment = f"{table} of every source in one table, with its source in {source_column} (n:1)"
+        if cols is not None and all(s in cols for s in having):
+            sql = stack_sql(catalog, prefix, table, {s: cols[s][table] for s in having}, source_column)
+            dp.materialized_view(name=view, comment=comment)(_sql_reader(spark, sql))
+        else:
+            dp.materialized_view(name=view, comment=comment)(_reader(spark, catalog, prefix, table, having,
+                                                                      source_column))
         defined[view] = having
     return defined
+
+
+def _sql_reader(spark, sql: str):
+    """The view's function, bound to its own statement."""
+    def build():
+        return spark.sql(sql)
+    return build
 
 
 def _reader(spark, *args):

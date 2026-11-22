@@ -1,0 +1,63 @@
+# The source bundle: a Lakebase project whose one database holds every module's LOBs, a schema each, built by the
+# setup_source job from plan.json (lfc-medallion-pack render). Deploy and run it before the lakehouse bundle.
+#   databricks bundle deploy && databricks bundle run setup_source       (here, in source/)
+bundle:
+  name: @@NAME@@_source
+
+variables:
+  project:
+    description: Lakebase project id
+    default: @@NAME@@
+  database:
+    description: The source database (setup_source creates it)
+    default: @@NAME@@
+  role:
+    description: PostgreSQL login Lakeflow Connect reads with (setup_source creates it, LOGIN REPLICATION)
+    default: @@NAME@@_cdc
+  connection:
+    description: UC POSTGRESQL connection the gateways use (setup_source makes it)
+    default: @@NAME@@_pg
+  writer:
+    description: PostgreSQL login that writes the LOBs' data (its own JDBC connection holds it)
+    default: @@NAME@@_writer
+  jdbc_connection:
+    description: UC JDBC connection holding the writer (no password in the notebook)
+    default: @@NAME@@_jdbc
+  control:
+    description: The lakehouse's control schema, catalog.schema (the batches the dashboard's latency starts from)
+    default: main.@@NAME@@_control
+  archive:
+    description: The tests repo archive the notebook installs the packages from (a branch or tag pins a version)
+    default: @@ARCHIVE@@
+
+resources:
+  postgres_projects:
+    source_project:
+      project_id: ${var.project}
+      display_name: "@@NAME@@ source: every module's LOBs"
+      pg_version: 17
+      enable_pg_native_login: true      # Lakeflow Connect's connection logs in with a PostgreSQL password
+      purge_on_delete: true
+
+  jobs:
+    setup_source:
+      name: ${var.project}_setup_source
+      parameters:
+        - {name: step, default: source}       # source; batch (rows changes per LOB with data); drop_slots when done
+        - {name: rows, default: "0"}
+        - {name: modules, default: ""}        # empty: every module of plan.json
+      tasks:
+        - task_key: source
+          notebook_task:
+            notebook_path: ./setup_source.py
+            base_parameters: {project: "${var.project}", database: "${var.database}", role: "${var.role}",
+                              connection: "${var.connection}", writer: "${var.writer}",
+                              jdbc_connection: "${var.jdbc_connection}", archive: "${var.archive}",
+                              modules: "{{job.parameters.modules}}", step: "{{job.parameters.step}}",
+                              rows: "{{job.parameters.rows}}", control: "${var.control}"}
+
+targets:
+  dev:
+    default: true
+    workspace:
+      root_path: ~/.bundle/${bundle.name}/${bundle.target}

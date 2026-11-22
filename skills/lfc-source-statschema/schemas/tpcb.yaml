@@ -8,9 +8,11 @@
 #   renamed = rename_tables(tables, TABLE_NAME_PRESETS["pgbench"])
 #   # → pgbench_branches, pgbench_tellers, pgbench_accounts, pgbench_history
 #
-# Column names match both TPC-B spec and pgbench source exactly:
-#   bid/bbalance/filler, tid/tbalance/filler, aid/abalance/filler,
-#   tid/bid/aid/delta/mtime/filler — so only table names need renaming.
+# Column names are the TPC-B spec's (clause 1.2: b_id, t_b_id, a_balance, h_delta, h_time, ...); pgbench names its
+# columns differently (bid, abalance, delta, mtime), so a pgbench copy renames columns too.
+# Every column's value is a rule here (generation:), so lfc-source-datagen builds TPC-B from this file alone: the keys
+# in order, each teller's and account's branch from its number (clause 4.2), history's teller and account a scramble of
+# its row number (h_b_id the teller's branch), h_time one second per row, which numbers the keyless history.
 #
 # Scale factor (SF) determines the number of branches:
 #   branch   —      1 row / SF
@@ -32,7 +34,7 @@ signals:
   - name: unusual_withdrawal
     target: "history: unusual when h_delta <= -big_min dollars (a large withdrawal)"
     replaces: "the fill's h_delta, the row number / 100: no amount means anything"
-    built_by: "lfc-source-datagen: scripts/tpc/tpcb-withdrawals.sql (lfc_source_datagen.signals), per source"
+    built_by: "lfc-source-datagen: the rule below (lfc_source_datagen.signals.rule_sql), per source"
     causes:
       - "a risky teller: teller more per mille when h_t_id is a multiple of teller_every"
       - "a watch-listed account: account more per mille when h_a_id is a multiple of account_every"
@@ -47,168 +49,118 @@ signals:
       online: "2,5,10,100,300,0,5,30,300,3000,10000"
     measured: "lfc-source-datagen references/tpch-sources.md: % unusual by each cause, per profile"
     table: history
-    sql: tpcb-withdrawals.sql
+    # the rule (lfc_source_datagen.signals.rule_sql): a row is marked when its scramble % 1000 is under the per-mille
+    # rate, the base plus each cause that holds; marked rows withdraw big_min or more, the others move +-1..normal_max;
+    # then every account's, teller's and branch's balance is the sum of its history, as in the spec
+    rule:
+      formulas:
+        n: "EXTRACT(EPOCH FROM h_time)::bigint - 1700000000"       # the row number (h_time is one second per row)
+        hr: "EXTRACT(HOUR FROM h_time)::int"
+      row: "{n} * 2654435761 % 1000003"
+      per_mille: ":base"
+      causes:
+        - {when: "h_t_id % :teller_every = 0", add: ":teller"}
+        - {when: "h_a_id % :account_every = 0", add: ":account"}
+        - when: "(:night_from <= :night_to AND {hr} >= :night_from AND {hr} < :night_to) OR (:night_from > :night_to AND ({hr} >= :night_from OR {hr} < :night_to))"
+          add: ":night"
+      marked: {h_delta: "-(:big_min + ({n} * 2654435761 % 1000003 / 7) % :big_span)"}
+      unmarked: {h_delta: "CASE WHEN ({n} * 2654435761 % 1000003 / 11) % 2 = 0 THEN 1 ELSE -1 END * (1 + ({n} * 2654435761 % 1000003 / 13) % :normal_max)"}
+      totals:
+        - {table: account, column: a_balance, key: a_id, sum: h_delta, by: h_a_id}
+        - {table: teller, column: t_balance, key: t_id, sum: h_delta, by: h_t_id}
+        - {table: branch, column: b_balance, key: b_id, sum: h_delta, by: h_b_id}
     at_least_1: [teller_every, account_every, normal_max, big_span]
     summary: "SELECT COUNT(*), ROUND(100.0 * AVG((h_delta <= -:big_min)::int), 1), (SELECT SUM(a_balance) FROM {s}.account) - SUM(h_delta) FROM {s}.history"
     summary_columns: [history_rows, unusual_pct, balance_gap]
 
+
 tables:
 
   # ── branch ────────────────────────────────────────────────────────────────
-  # 1 row per SF; pgbench checks COUNT(*) on its renamed version to detect SF.
   - name: branch
     role: dimension
-    description: "TPC-B branch — 1 row per SF unit"
+    description: "TPC-B branch: 1 row per SF unit"
     row_count_per_sf: 1
     columns:
-      - name: bid
-        type: integer
-        not_null: true
-        primary_key: true
-        description: "Branch identifier"
-        generation:
-          distribution: sequential
-          min_value: 1
-          unique: true
-      - name: bbalance
-        type: integer
-        not_null: true
-        description: "Branch balance (updated by transactions)"
-        generation:
-          distribution: constant
-          min_value: 0
-      - name: filler
-        type: string
-        length: 88
-        description: "Padding to 100-byte row (TPC-B / pgbench spec)"
-        generation:
-          distribution: uniform
+      - {name: b_id, type: integer, not_null: true, primary_key: true, description: "Branch identifier"}
+      - {name: b_balance, type: decimal, precision: 12, scale: 2, not_null: true,
+         description: "Branch balance: the sum of its history (the signal sets it)"}
+      - {name: b_filler, type: char, length: 88, description: "Padding to the spec's 100-byte record (clause 3.2)"}
 
   # ── teller ────────────────────────────────────────────────────────────────
-  # 10 rows per SF; each teller belongs to a branch.
   - name: teller
     role: dimension
-    description: "TPC-B teller — 10 rows per SF unit"
+    description: "TPC-B teller: 10 per branch"
     row_count_per_sf: 10
     load_after: [branch]
+    fk_constraints:
+      - {columns: [t_b_id], parent_table: branch, parent_columns: [b_id]}
     columns:
-      - name: tid
+      - {name: t_id, type: integer, not_null: true, primary_key: true, description: "Teller identifier"}
+      - name: t_b_id
         type: integer
         not_null: true
-        primary_key: true
-        description: "Teller identifier"
-        generation:
-          distribution: sequential
-          min_value: 1
-          unique: true
-      - name: bid
-        type: integer
-        not_null: true
-        description: "Branch this teller belongs to"
-        references: [branch, bid]
-        generation:
-          distribution: uniform
-      - name: tbalance
-        type: integer
-        not_null: true
-        description: "Teller balance (updated by transactions)"
-        generation:
-          distribution: constant
-          min_value: 0
-      - name: filler
-        type: string
-        length: 84
-        description: "Padding to 100-byte row (TPC-B / pgbench spec)"
-        generation:
-          distribution: uniform
+        description: "The teller's branch: tellers 1-10 are branch 1's"
+        generation: {expression: "(x.n - 1) DIV 10 + 1"}
+      - {name: t_balance, type: decimal, precision: 12, scale: 2, not_null: true,
+         description: "Teller balance: the sum of its history (the signal sets it)"}
+      - {name: t_filler, type: char, length: 84, description: "Padding to the spec's 100-byte record"}
 
   # ── account ───────────────────────────────────────────────────────────────
-  # 100,000 rows per SF; the hot table in TPC-B (every transaction touches it).
   - name: account
     role: dimension
-    description: "TPC-B account — 100 000 rows per SF unit"
+    description: "TPC-B account: 100,000 per branch"
     row_count_per_sf: 100000
     load_after: [branch]
+    fk_constraints:
+      - {columns: [a_b_id], parent_table: branch, parent_columns: [b_id]}
     columns:
-      - name: aid
+      - {name: a_id, type: integer, not_null: true, primary_key: true, description: "Account identifier"}
+      - name: a_b_id
         type: integer
         not_null: true
-        primary_key: true
-        description: "Account identifier"
-        generation:
-          distribution: sequential
-          min_value: 1
-          unique: true
-      - name: bid
-        type: integer
-        not_null: true
-        description: "Home branch for this account"
-        references: [branch, bid]
-        generation:
-          distribution: uniform
-      - name: abalance
-        type: integer
-        not_null: true
-        description: "Account balance (updated by transactions)"
-        generation:
-          distribution: constant
-          min_value: 0
-      - name: filler
-        type: string
-        length: 84
-        description: "Padding to 100-byte row (TPC-B / pgbench spec)"
-        generation:
-          distribution: uniform
+        description: "The account's branch: accounts 1-100,000 are branch 1's"
+        generation: {expression: "(x.n - 1) DIV 100000 + 1"}
+      - {name: a_balance, type: decimal, precision: 12, scale: 2, not_null: true,
+         description: "Account balance: the sum of its history (the signal sets it)"}
+      - {name: a_filler, type: char, length: 84, description: "Padding to the spec's 100-byte record"}
 
   # ── history ───────────────────────────────────────────────────────────────
-  # No surrogate PK — append-only audit log, matches TPC-B spec.
-  # pgbench inserts one row per transaction: (tid, bid, aid, delta, mtime).
+  # No key: an append-only log, as the spec has it. h_time is one second per row from 2023-11-14 22:13:20 UTC
+  # (1,700,000,000), which numbers the rows for the planner and the signal. t and a scramble the row number (the
+  # same on every engine) into a teller and an account.
   - name: history
     role: log
-    description: "TPC-B history — 100 000 rows per SF unit (initial population)"
+    description: "TPC-B history: 100,000 per branch (the initial population; transactions add to it)"
     row_count_per_sf: 100000
     load_after: [account, teller, branch]
+    formulas:
+      t: "1 + (((x.n) % 2147483647) * (((x.n) % 2147483647 + 101) % 2147483647) % 2147483647) % {rows:teller}"
+      a: "1 + (((x.n) % 2147483647) * (((x.n) % 2147483647 + 103) % 2147483647) % 2147483647) % {rows:account}"
+    fk_constraints:
+      - {columns: [h_t_id], parent_table: teller, parent_columns: [t_id]}
+      - {columns: [h_b_id], parent_table: branch, parent_columns: [b_id]}
+      - {columns: [h_a_id], parent_table: account, parent_columns: [a_id]}
     columns:
-      - name: tid
+      - name: h_t_id
         type: integer
         not_null: true
-        description: "Teller involved in this transaction"
-        references: [teller, tid]
-        generation:
-          distribution: uniform
-      - name: bid
+        generation: {expression: "{t}"}
+      - name: h_b_id
         type: integer
         not_null: true
-        description: "Branch involved in this transaction"
-        references: [branch, bid]
-        generation:
-          distribution: uniform
-      - name: aid
+        description: "The teller's branch"
+        generation: {expression: "({t} - 1) DIV 10 + 1"}
+      - name: h_a_id
         type: integer
         not_null: true
-        description: "Account affected by this transaction"
-        references: [account, aid]
-        generation:
-          distribution: uniform
-      - name: delta
-        type: integer
+        generation: {expression: "{a}"}
+      - name: h_delta
+        type: decimal
+        precision: 12
+        scale: 2
         not_null: true
-        description: "Balance change applied this transaction"
-        generation:
-          distribution: uniform
-          min_value: -999999
-          max_value: 999999
-      - name: mtime
-        type: timestamp
-        not_null: true
-        description: "Transaction wall-clock time"
-        generation:
-          distribution: uniform
-          min_value: "2020-01-01"
-          max_value: "2025-12-31"
-      - name: filler
-        type: string
-        length: 22
-        description: "Padding to 50-byte row (TPC-B / pgbench spec)"
-        generation:
-          distribution: uniform
+        description: "The amount: the row number until a signal gives it a meaning"
+        generation: {expression: "x.n"}
+      - {name: h_time, type: timestamp, not_null: true, description: "When: one second per row"}
+      - {name: h_filler, type: char, length: 22, description: "Padding to the spec's 50-byte record"}

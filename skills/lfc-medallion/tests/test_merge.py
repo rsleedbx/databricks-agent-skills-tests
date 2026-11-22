@@ -39,6 +39,8 @@ class Spark:
         self.targets = set(targets)
         self.target_cols = {"all_nation": [("division", "string")] + COLS}
         self.done = []   # the statements that change something
+        self.seen = ()   # the sources information_schema.columns returns (none: SHOW TABLES for every source)
+        self.lag = set()   # (source, table) information_schema doesn't show yet
 
     def sql(self, q):
         rows = []
@@ -48,6 +50,10 @@ class Spark:
         elif q.startswith("SHOW TABLES IN") and "shop_bronze_" in q:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(tableName=t) for t in self.tables.get(source, ["nation"])]
+        elif "information_schema.columns" in q:   # catalog_columns: only the sources it can see
+            rows = [R(table_schema=f"shop_bronze_{src}", table_name=t, column_name=c, full_data_type=ty)
+                    for src in self.seen for t in self.tables.get(src, ["nation"]) if (src, t) not in self.lag
+                    for c, ty in self.cols[src]]
         elif "information_schema.tables" in q:   # the target schema's tables and their kinds
             rows = [R(table_name=t, table_type="MANAGED") for t in self.targets] + \
                    [R(table_name=v, table_type="MATERIALIZED_VIEW") for v in self.views]
@@ -63,7 +69,7 @@ class Spark:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(id=self.ids.get(source, f"id-{source}"))]
         elif q.startswith("DESCRIBE TABLE") and STATE in q:
-            names = ("target_table", "source", "version", "table_id", "updated_at")
+            names = ("target_table", "source", "version", "table_id", "updated_at", "key_columns")
             rows = [R(col_name=c, data_type="") for c in names]
         elif q.startswith("DESCRIBE TABLE"):
             schema, table = quoted[1], quoted[2]
@@ -93,10 +99,8 @@ class Spark:
                 t, c, ty = altered.groups()
                 self.target_cols[t] = [(n, ty.lower() if n == c else x) for n, x in self.target_cols[t]]
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
-                saved = (r"SELECT '([^']+)' AS target_table, '([^']+)' AS source, (\d+) AS version, "
-                         r"'([^']+)' AS table_id")
-                t, s, v, i = re.search(saved, q).groups()
-                self.state[(t, s)] = (int(v), i)
+                for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)', (?:'[^']*'|NULL)\)", q):
+                    self.state[(t, s)] = (int(v), i)
         return R(collect=lambda: rows)
 
     def merges(self):
@@ -113,9 +117,10 @@ class FirstAndLater(unittest.TestCase):
         report = run(spark)
         self.assertEqual(report, {"all_nation": {"east": {"done": "copied", "version": 5},
                                                  "west": {"done": "copied", "version": 7}}})
-        self.assertTrue(spark.done[0].startswith("CREATE TABLE `main`.`shop_silver`.`all_nation` (`division` STRING, "
-                                                 "`n_nationkey` int, `n_name` string) TBLPROPERTIES"))
-        self.assertIn("'delta.enableChangeDataFeed' = 'true'", spark.done[0])
+        created = next(q for q in spark.done if q.startswith("CREATE TABLE"))   # after the one catalog query
+        self.assertTrue(created.startswith("CREATE TABLE `main`.`shop_silver`.`all_nation` (`division` STRING, "
+                                           "`n_nationkey` int, `n_name` string) TBLPROPERTIES"))
+        self.assertIn("'delta.enableChangeDataFeed' = 'true'", created)
         m = spark.merges()
         self.assertEqual(len(m), 2)
         self.assertIn("FROM `main`.`shop_bronze_east`.`nation` VERSION AS OF 5", m[0])   # the version saved
@@ -138,6 +143,30 @@ class FirstAndLater(unittest.TestCase):
         self.assertIn("WHEN MATCHED THEN UPDATE SET t.`n_name` = c.`n_name`", m)
         self.assertNotIn("CREATE TABLE `main`", " ".join(spark.done))   # the target exists
         self.assertEqual(spark.state[("all_nation", "east")][0], 9)
+
+    def test_changed_sources_share_one_merge_and_one_state_write(self):   # a few statements per table, not per source
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        report = run(spark)
+        self.assertEqual({s: r["done"] for s, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
+        (m,) = spark.merges()
+        self.assertIn("table_changes('main.shop_bronze_east.nation', 6, 9)", m)
+        self.assertIn(" UNION ALL ", m)
+        self.assertIn("table_changes('main.shop_bronze_west.nation', 8, 8)", m)
+        saves = [q for q in spark.done if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`")]
+        self.assertEqual(len(saves), 1)
+        self.assertEqual({k: v for k, (v, _) in spark.state.items()}, {("all_nation", "east"): 9, ("all_nation", "west"): 8})
+
+    def test_only_the_changed_sources_are_read(self):   # merge_route found west quiet in the event logs
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]},
+                      targets={"all_nation"})
+        report = run(spark, changed={("nation", "east")})
+        self.assertEqual(report["all_nation"]["west"], {"done": "unchanged", "version": 7})
+        self.assertEqual(report["all_nation"]["east"]["done"], "merged")
+        self.assertFalse([q for q in spark.done if "shop_bronze_west" in q])   # no read of west at all
 
     def test_new_versions_without_rows_written_are_unchanged(self):   # an ingestion update touches every table
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
@@ -353,11 +382,52 @@ class Removed(unittest.TestCase):
         self.assertEqual(report["all_nation"]["west"], {"done": "removed"})
         self.assertNotIn("east", " ".join(self.deletes(spark)))
 
+    def test_a_source_the_catalog_query_misses_is_not_gone(self):   # information_schema lags a new schema
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"})
+        spark.seen = ("east",)
+        report = run(spark)
+        self.assertEqual(self.deletes(spark), [])
+        self.assertEqual(report["all_nation"]["west"], {"done": "unchanged", "version": 7})
+
+    def test_a_table_the_catalog_query_lags_is_not_gone(self):   # its source is listed, the table not yet
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"},
+                      tables={"west": ["nation", "orders"]})
+        spark.seen, spark.lag = ("east", "west"), {("west", "nation")}
+        run(spark)
+        self.assertEqual(self.deletes(spark), [])
+
+    def test_a_failed_check_deletes_nothing(self):   # SHOW TABLES failing for another reason than a dropped schema
+        class Denied(Spark):
+            def sql(self, q):
+                if q.startswith("SHOW TABLES IN `main`.`shop_bronze_west`"):
+                    raise RuntimeError("PERMISSION_DENIED")
+                return super().sql(q)
+        spark = Denied(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"},
+                       tables={"west": ["nation"]})
+        spark.seen, spark.lag = ("east", "west"), {("west", "nation")}
+        with self.assertRaisesRegex(RuntimeError, "PERMISSION_DENIED"):
+            run(spark)
+        self.assertEqual(self.deletes(spark), [])
+
     def test_nothing_deleted_without_a_target(self):   # no source has the table, and its target was dropped by hand
         spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       tables={"east": ["orders"], "west": ["orders"]})
         run(spark)
         self.assertEqual(self.deletes(spark), [])
+
+
+class PartWay(unittest.TestCase):
+    def test_a_failed_copy_keeps_the_state_of_what_finished(self):   # the next run doesn't copy east again
+        class Fails(Spark):
+            def sql(self, q):
+                if q.startswith("MERGE INTO `main`.`shop_silver`.`all_nation`") and "'west'" in q:
+                    raise RuntimeError("boom")
+                return super().sql(q)
+        spark = Fails()
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            run(spark)
+        self.assertIn(("all_nation", "east"), spark.state)
+        self.assertNotIn(("all_nation", "west"), spark.state)
 
 
 class Shapes(unittest.TestCase):
@@ -385,6 +455,16 @@ class Shapes(unittest.TestCase):
         self.assertEqual(self.widened("smallint", "int")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE INT")
         self.assertEqual(self.widened("decimal(10,2)", "decimal(12,4)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(12,4)")
         self.assertEqual(self.widened("decimal(10,2)", "decimal(12,1)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(13,2)")  # 11 integer digits, scale 2
+
+    def test_a_wider_type_in_another_source_widens_the_target(self):   # same names, another type
+        spark = Spark(versions={"east": 9, "west": 9}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      cols={"east": [("n_nationkey", "int"), ("n_name", "int")],
+                            "west": [("n_nationkey", "int"), ("n_name", "bigint")]},
+                      history={s: [(8, "MERGE", {}, {"numTargetRowsInserted": "1"})] for s in ("east", "west")},
+                      targets={"all_nation"})
+        spark.target_cols["all_nation"] = [("division", "string"), ("n_nationkey", "int"), ("n_name", "int")]
+        run(spark)
+        self.assertIn("ALTER TABLE `main`.`shop_silver`.`all_nation` ALTER COLUMN `n_name` TYPE BIGINT", spark.done)
 
     def test_date_into_timestamp_ntz_turns_its_feature_on(self):
         tgt = "ALTER TABLE `main`.`shop_silver`.`all_nation`"

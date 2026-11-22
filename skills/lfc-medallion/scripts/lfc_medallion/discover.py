@@ -34,3 +34,45 @@ def tables(spark, catalog: str, prefix: str, names: list[str]) -> dict[str, set[
     has is fine (see stack)."""
     return {s: {r.tableName for r in spark.sql(f"SHOW TABLES IN `{catalog}`.`{prefix}{s}`").collect()
                 if not is_pipeline_table(r.tableName)} for s in names}
+
+
+def catalog_columns(spark, catalog: str, prefix: str, names: list[str]) -> dict[str, dict[str, list[tuple]]]:
+    """Every source's tables and their columns with types, {source: {table: [(column, type), ...]}}, in ONE query
+    (information_schema.columns), not a SHOW TABLES and a schema read per source and table: at hundreds of sources
+    those round trips are most of a pipeline update's start. Pipelines' own tables are left out."""
+    want = {f"{prefix}{n}": n for n in names}
+    esc = prefix.replace("\\", "\\\\").replace("'", "\\'")
+    rows = spark.sql(f"SELECT table_schema, table_name, column_name, full_data_type FROM "
+                     f"`{catalog}`.information_schema.columns WHERE startswith(table_schema, '{esc}') "
+                     f"ORDER BY table_schema, table_name, ordinal_position").collect()
+    out: dict[str, dict[str, list[tuple]]] = {}
+    for r in rows:
+        s = want.get(r.table_schema)
+        if s is None or is_pipeline_table(r.table_name):
+            continue
+        out.setdefault(s, {}).setdefault(r.table_name, []).append((r.column_name, r.full_data_type))
+    return out
+
+
+def held_tables(spark, catalog: str, prefix: str, names: list[str]) -> tuple[dict[str, set[str]], dict | None]:
+    """({source: {table, ...}}, catalog_columns or None): one information_schema query, and SHOW TABLES for a source
+    it doesn't return (it lags a schema just made, or can't see one), so a source is never taken as having no tables
+    (merge_all would delete its rows, stack_all drop it from the views)."""
+    try:
+        cols = catalog_columns(spark, catalog, prefix, names) or None
+    except Exception:  # noqa: BLE001
+        cols = None
+    missed = [x for x in names if x not in (cols or {})]
+    held = {x: set(cols[x]) for x in names if x not in missed}
+    return held | (tables(spark, catalog, prefix, missed) if missed else {}), cols
+
+
+def tables_or_none(spark, catalog: str, prefix: str, source: str) -> set[str]:
+    """One source's tables by SHOW TABLES; none when its schema is gone: before anything is deleted as gone. Any
+    other error (permissions, the network) is raised, so nothing is deleted on it."""
+    try:
+        return tables(spark, catalog, prefix, [source])[source]
+    except Exception as e:  # noqa: BLE001
+        if "SCHEMA_NOT_FOUND" in str(e) or "NO_SUCH_NAMESPACE" in str(e):
+            return set()
+        raise
