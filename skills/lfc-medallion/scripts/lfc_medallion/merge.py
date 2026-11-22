@@ -209,7 +209,7 @@ def refresh_plan(rows, last: int, now: int, now_s: float | None = None) -> dict 
     resets.sort()
     newest = next(r for r in rows if int(r.version) == resets[-1])
     waiting = newest.operation == "DLT REFRESH" and \
-        not any(int(r.version) > resets[-1] and r.operation in RELOAD_OPS for r in rows) and \
+        not any(resets[-1] < int(r.version) <= int(now) and r.operation in RELOAD_OPS for r in rows) and \
         not _older(newest.timestamp, WAIT_MAX_S, now_s)
     steps = []
     if int(last) >= 0 and resets[0] - 1 > int(last):
@@ -718,9 +718,23 @@ def _catch_up(spark, tgt, i, source_column, logged, run_id, out_name, report) ->
     deletes; the versions in between are then lost, and the merge log says so."""
     try:
         _steps(spark, tgt, i, source_column, logged, run_id, out_name, report)
-    except Exception as e:  # noqa: BLE001  the error class varies (vacuumed files, expired change data)
+    except Exception as e:   # only data that is gone falls back; anything else is retried next run
+        if not data_gone(e):
+            raise
         _copy(spark, tgt, i, source_column, logged, run_id, out_name, report,
               f"refreshed (catch-up failed, versions since the last read lost: {str(e).splitlines()[0][:100]})")
+
+
+# what an error says when the versions a catch-up reads are gone for good (vacuumed files, expired change data, a
+# version no longer in the log); a conflict, throttling or a network error isn't, and is retried
+GONE = ("FILE_NOT_FOUND", "FILENOTFOUND", "VACUUM", "DELTA_CHANGE_DATA_FEED", "CHANGE_DATA_FEED_RANGE",
+        "VERSION_NOT_FOUND", "VERSIONS_NOT_CONTIGUOUS", "TIME_TRAVEL", "CANNOT TIME TRAVEL", "INVALID STREAMING TABLE CDF")
+
+
+def data_gone(e: Exception) -> bool:
+    """Whether an error means the data a catch-up reads is gone (GONE), not a failure worth retrying."""
+    msg = str(e).upper()
+    return any(g in msg for g in GONE)
 
 
 def _steps(spark, tgt, i, source_column, logged, run_id, out_name, report) -> None:

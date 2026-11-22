@@ -140,8 +140,9 @@ across a refresh therefore shows as two versions with the same values: the one b
 the reload's. A reader wanting state intervals joins them on equal values.
 
 Also: a source whose newest `DLT REFRESH` has no write after it yet (still reloading) is left for the next run, for up
-to an hour (after that, an empty reload); a catch-up that fails (its change data or files vacuumed) falls back to a
-copy that closes, the versions in between lost and the merge log saying so; a copy for
+to an hour (after that, an empty reload); a catch-up whose data is gone (its change data or files vacuumed) falls
+back to a copy that closes, the versions in between lost and the merge log saying so, while any other error is
+raised and the next run retries; a copy for
 another reason (a recreated table, versions log retention dropped) of a source the target already has also closes
 rather than deletes; a column added since an older version copied is NULL in that copy. The history before a refresh
 is read from Delta's log and files, so a run must come before they are vacuumed (7 days by default; Lakeflow

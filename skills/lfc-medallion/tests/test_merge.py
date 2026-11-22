@@ -590,7 +590,7 @@ class Scd2AcrossRefresh(unittest.TestCase):
         self.assertIsNone(merge.refresh_plan(TWO_REFRESHES, last=9, now=14))
 
     def test_waiting_while_the_reload_has_no_write(self):
-        self.assertTrue(merge.refresh_plan(TWO_REFRESHES[:11], last=2, now=10)["waiting"])
+        self.assertTrue(merge.refresh_plan(TWO_REFRESHES[:11], last=2, now=10, now_s=1795366800.0 + 60)["waiting"])
 
     def test_snapshot_start_filled_cdc_start_kept(self):
         sql = merge.start_sql("cdc", "T9")
@@ -660,6 +660,30 @@ class Scd2Review(unittest.TestCase):
         t = 1795366800.0   # 2026-11-22T17:00:00Z
         self.assertTrue(merge.refresh_plan(rows, 2, 6, now_s=t + 60)["waiting"])
         self.assertFalse(merge.refresh_plan(rows, 2, 6, now_s=t + merge.WAIT_MAX_S + 60)["waiting"])
+
+    def test_a_reload_after_now_doesnt_end_the_wait(self):   # read after `now` was fixed: not counted
+        rows = TWO_REFRESHES[:11] + [_h(11, "DLT SETUP"), _h(12, "MERGE")]
+        self.assertTrue(merge.refresh_plan(rows, last=2, now=10, now_s=1795366800.0 + 60)["waiting"])
+        self.assertFalse(merge.refresh_plan(rows, last=2, now=12, now_s=1795366800.0 + 60)["waiting"])
+
+    def test_only_data_gone_falls_back(self):
+        self.assertTrue(merge.data_gone(RuntimeError("[DELTA_CHANGE_DATA_FEED_RANGE] out of range")))
+        self.assertTrue(merge.data_gone(RuntimeError("java.io.FileNotFoundException: part-0001")))
+        self.assertFalse(merge.data_gone(RuntimeError("[DELTA_CONCURRENT_APPEND] ConcurrentAppendException")))
+        self.assertFalse(merge.data_gone(RuntimeError("503 Service Unavailable")))
+
+    def test_a_transient_catch_up_error_is_raised_for_a_retry(self):
+        class S:
+            def sql(self, q):
+                if "table_changes(" in q:
+                    raise RuntimeError("[DELTA_CONCURRENT_APPEND] retry")
+                return R(collect=list, columns=["id", "v", "__START_AT", "__END_AT"])
+        i = {"s": "east", "src": "`c`.`b`.`t`", "cols": [("id", "int"), ("v", "string"), ("__START_AT", "x"),
+             ("__END_AT", "x")], "key": ["id", "__START_AT"], "now": 18, "last": 2, "tid": "x",
+             "gens": merge.generations(TWO_REFRESHES), "times": {}, "start_kind": "cdc", "end_kind": "cdc",
+             "plan": merge.refresh_plan(TWO_REFRESHES, 2, 18)}
+        with self.assertRaises(RuntimeError):
+            merge._catch_up(S(), "`c`.`s`.`all_t`", i, "division", [], "r", "all_t", {"all_t": {}})
 
     def test_a_failed_catch_up_falls_back_to_a_copy_that_closes(self):
         done = []
