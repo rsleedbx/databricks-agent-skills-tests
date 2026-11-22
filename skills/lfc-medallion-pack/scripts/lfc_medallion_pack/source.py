@@ -54,9 +54,10 @@ def run(spark, plan: dict, project: str, database: str, role: str, connection: s
                 done = batch(connect, m["model"], list(lob), rows, quiet=m.get("dimension_tables") or [], log=log)
                 out += [{"module": m["module"]} | r for r in done]
                 if control:   # catalog.schema: the batches the dashboard's latency starts from
-                    spark.createDataFrame([(m["module"], lob[r["source"]], int(rows)) for r in done],
-                                          "module string, lob string, rows bigint").selectExpr(
-                        "*", "current_timestamp() AS at").write.mode("append").saveAsTable(f"{control}.batches")
+                    spark.createDataFrame([(m["module"], lob[r["source"]], int(rows), float(r["at"])) for r in done],
+                                          "module string, lob string, rows bigint, at_s double").selectExpr(
+                        "module", "lob", "rows", "timestamp_seconds(at_s) AS at").write.mode("append").saveAsTable(
+                        f"{control}.batches")   # each LOB's own commit time
         return out
     if step != "source":
         raise ValueError(f"step {step}: source, batch or drop_slots")

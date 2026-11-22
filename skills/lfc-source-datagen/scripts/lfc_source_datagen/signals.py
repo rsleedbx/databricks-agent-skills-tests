@@ -27,6 +27,7 @@ import decimal
 import functools
 import json
 import re
+import time
 
 from lfc_source_contract.jdbc import ident, literal
 
@@ -295,6 +296,7 @@ def batch(connect, model: str, names, rows: int, quiet: list[str] = (), log=prin
         cur = con.cursor()
         changed = reapply(cur, model, name, log)
         n = [c for v in changed.values() for c in v]
-        out.append({"source": name, "rows": int(rows), "changed": None if None in n else sum(n)})
+        out.append({"source": name, "rows": int(rows), "changed": None if None in n else sum(n),
+                    "at": time.time()})   # when this source's batch committed: a latency starts here, per source
         con.close()
     return out
