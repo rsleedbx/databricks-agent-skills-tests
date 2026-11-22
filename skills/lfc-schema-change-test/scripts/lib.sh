@@ -140,7 +140,8 @@ track() {
 # fill <table> <n> [first id]: n rows (id, v='before')
 fill() {
   [ "$ENGINE" = postgres ] && { printf "INSERT INTO $SRC_SCHEMA.%s (id, v) SELECT g, 'before' FROM generate_series(%s, %s) g;\n" "$1" "${3:-1}" "$(( ${3:-1} + $2 - 1 ))" | src >/dev/null; return; }
-  printf "INSERT INTO lfcddemo.%s (id, v) SELECT TOP %s %s + ROW_NUMBER() OVER (ORDER BY (SELECT 1)) - 1, 'before' FROM sys.all_objects;\n" "$1" "$2" "${3:-1}" | src >/dev/null; }
+  # a cross join: sys.all_objects alone has about 2,000 rows
+  printf "INSERT INTO lfcddemo.%s (id, v) SELECT TOP %s %s + ROW_NUMBER() OVER (ORDER BY (SELECT 1)) - 1, 'before' FROM sys.all_objects a CROSS JOIN sys.all_objects b;\n" "$1" "$2" "${3:-1}" | src >/dev/null; }
 
 # --- pipelines ------------------------------------------------------------------------------------------------------
 obj() { echo "{\"table\":{\"source_catalog\":\"$DB\",\"source_schema\":\"$SRC_SCHEMA\",\"source_table\":\"$1\",\"destination_catalog\":\"$CATALOG\",\"destination_schema\":\"$S\",\"table_configuration\":{\"scd_type\":\"${SCD:-SCD_TYPE_1}\"${2:+,$2}}}}"; }
@@ -169,8 +170,10 @@ pipelines_create() {
   # CREATE_SOFT=1: a refused create returns 1 with the error in CREATE_ERR (a test whose question is "is it refused?")
   # PIPELINE_CONF='{"pipelines.<key>":"<value>"}': pipeline settings (a knob under test), on the gateway too; recorded with the run
   [ -n "${PIPELINE_CONF:-}" ] && conf pipeline_conf "$PIPELINE_CONF"
-  local pc=${PIPELINE_CONF:-'{}'}
-  dbx pipelines create -o json --json "{\"name\":\"$APN\",\"catalog\":\"$CATALOG\",\"schema\":\"$S\",\"serverless\":true,\"configuration\":$pc,
+  local pc=${PIPELINE_CONF:-'{}'} cont=""
+  # PIPELINE_CONTINUOUS=1: the ingestion pipeline runs continuously (it starts on create; update() doesn't apply)
+  [ "${PIPELINE_CONTINUOUS:-0}" = 1 ] && cont='"continuous":true,'
+  dbx pipelines create -o json --json "{\"name\":\"$APN\",\"catalog\":\"$CATALOG\",\"schema\":\"$S\",\"serverless\":true,$cont\"configuration\":$pc,
     \"ingestion_definition\":{$SRCDEF,\"objects\":[$1]}}" > "$W/create.out" 2>&1
   AP=$(yq '.pipeline_id' "$W/create.out" 2>/dev/null)
   if [ -z "$AP" ] || [ "$AP" = null ]; then

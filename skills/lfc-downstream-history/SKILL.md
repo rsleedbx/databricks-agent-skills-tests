@@ -104,6 +104,54 @@ flowchart LR
   F --> G[("audit_scd2 in B<br/>complete history")]
 ```
 
+### 4b. What a batch reader can still read after a full refresh
+
+A streaming reader of the change feed stops at a full refresh (above). A batch reader, a job that remembers the version it last read, can catch up instead, because these still read after the refresh of an SCD type 2 destination:
+
+| Read, after the refresh at version R | Result |
+|---|---|
+| `table_changes(t, last + 1, R - 1)`: a range that ends before the refresh | the same rows as before the refresh |
+| `t VERSION AS OF R - 1` | every version the table had before the refresh |
+| `table_changes(t, last + 1)`: a range across the refresh | fails: `DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA`, or `..._INCOMPATIBLE_SCHEMA_CHANGE` |
+| `table_changes(t, R, L)`: the reload's own versions (`DLT REFRESH` to its last write) | fails: `Invalid Streaming Table CDF` |
+| `table_changes(t, L + 1)`: after the reload | reads; the next change comes through |
+
+So a reader catches up in three steps:
+1. Read the change feed up to the version before the refresh.
+2. Copy the table now, closing the versions it no longer has.
+3. Carry on from the next version.
+
+lfc-medallion's `merge_all` does this for SCD type 2 bronze ([its SKILL.md](../lfc-medallion/SKILL.md)).
+
+Also seen in every run:
+- **A source delete arrives as a close** (`update_preimage`/`update_postimage` setting `__END_AT`), never as a delete row; only a reset removes rows.
+- **The table keeps its Unity Catalog id** across the refresh, and one continuous Delta log.
+- **A snapshot row's start** (the first load and every reload) is `{__cdc_internal_value: "", __cdc_timestamp_value: null}`.
+- **`__cdc_timestamp_value` is a `TIMESTAMP`.**
+
+- Harness: [scripts/sqlserver-scd2-refresh-probe.sh](scripts/sqlserver-scd2-refresh-probe.sh). Its settings: `MODE`, `GAP=long`, `DDL=add-column|drop-column|int-to-bigint|int-to-string`, `REFRESHES=2`, `BULK_ROWS=<n>`, `CONT=1`.
+- Results: SQL Server 2022 CDC, one AWS workspace (us-west-2), DBR 18.3 (dp-20261106), 2026-11-22. All 11 runs passed (85 claims).
+
+| Run | Claims | What it adds |
+|---|---|---|
+| standard CDC, base | 7/7 | the reads above |
+| long gap | 7/7 | 19 versions over 14 commits; inserts and deletes of keys; a deleted key inserted again |
+| `ADD COLUMN` in the gap (standard; integrated) | 8/8; 8/8 | a change-feed range across the schema change reads, before and after the refresh |
+| `DROP COLUMN` in the gap | 8/8 | the same |
+| `INT` to `NVARCHAR` in the gap | 9/9 | the table stops (`UNSUPPORTED_DATA_TYPE_CHANGE`); the refresh fixes it; the reload brings the stopped change |
+| `INT` to `BIGINT` in the gap | 8/8 | on this SCD type 2 destination it **stopped** the table too (`UNSUPPORTED_DATA_TYPE_CHANGE`); lfc-schema-change-test's DDL matrix saw it applied (dp-20261015) |
+| two refreshes, a change between | 10/10 | the range before each refresh, and between the reloads, reads after the second |
+| 1,000,000 more rows, 100,000 updated in the gap | 7/7 | 1,100,006 versions read the same before and after |
+| integrated CDC | 7/7 | the same reads; a `CLUSTER BY` commit comes just before `DLT REFRESH` |
+| continuous ingestion pipeline | 7/7 | the same reads. A refresh of one table is refused ("Refresh selection is not supported for the continuous mode"): a full refresh is of the whole pipeline, every table's history in bronze. |
+
+A column rename and a primary key drop can't happen in a gap: SQL Server refuses both on a CDC table (DDL matrix).
+
+What the probe can't cover:
+- **Vacuum.** The reads before the refresh need Delta's old files, kept 7 days by default, and Lakeflow Connect's tables don't take property changes. A reader has to catch up within that time.
+- **`DLT REFRESH` and the reload are internal** and could change. Rerun the probe after a runtime release.
+- **Changes that never reached the destination** can't be recovered. For example, a gateway down longer than the source's CDC retention (3 days by default on SQL Server).
+
 ## 5. MERGE
 
 **zerobus-debezium-test** builds silver with AUTO CDC and, as an alternative, with MERGE (`scripts/merge-silver.py`): what MERGE has to carry by hand (tombstones, sequence and idempotency columns, replay handling) is in its `references/trade-offs.md`, and `scripts/scd2-history-check.py` checks every SCD type 2 version against the source. Reach for MERGE only when routes 3 and 4 can't express the rule.
