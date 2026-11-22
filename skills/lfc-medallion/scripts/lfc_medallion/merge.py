@@ -627,7 +627,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
             if g:
                 spark.sql(f"UPDATE {tgt} SET {_q(START)} = {start_expr(i['start_kind'], g[1])} "
                           f"WHERE {_q(source_column)} = {spark_string(i['s'])} AND {unfilled_sql(i['start_kind'])}")
-    saves, feed = [], []
+    saves, feed, failed = [], [], []
     try:   # what finished is saved even when a later copy or MERGE fails: the next run doesn't redo it
         for i in info:
             if i["last"] is not None and i["now"] == i["last"]:
@@ -635,8 +635,12 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
             elif i.get("plan") and i["plan"]["waiting"]:   # a full refresh not reloaded yet: the next run
                 report[out_name][i["s"]] = {"done": "waiting (full refresh reloading)", "version": i["last"]}
             elif i.get("plan"):   # SCD type 2 across a full refresh: the versions before it, then a copy that closes
-                _catch_up(spark, tgt, i, source_column, logged, run_id, out_name, report)
-                saves.append(_saved(i))
+                try:   # one source's failure doesn't stop the others; its state stays, the next run retries it
+                    _catch_up(spark, tgt, i, source_column, logged, run_id, out_name, report)
+                    saves.append(_saved(i))
+                except Exception as e:  # noqa: BLE001
+                    failed.append((i["s"], e))
+                    report[out_name][i["s"]] = {"done": f"failed: {str(e).splitlines()[0][:150]}", "version": i["last"]}
             elif not i["whole"] and not i["changed"]:   # new versions, no rows written: nothing to MERGE
                 saves.append(_saved(i))
                 report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
@@ -688,6 +692,9 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
                        f"AND source IN ({listed})")
         for g in gone:
             report[out_name][g] = {"done": "removed"}
+    if failed:   # after every other source's work and state: the table counts as failed (merge_route keeps it)
+        raise RuntimeError(f"{out_name}: {len(failed)} source(s) failed, first {failed[0][0]}: "
+                           f"{str(failed[0][1]).splitlines()[0][:200]}") from failed[0][1]
 
 
 def _done(logged, report, run_id, out_name, i, done, counts, started) -> None:
@@ -703,7 +710,7 @@ def _copy(spark, tgt, i, source_column, logged, run_id, out_name, report, done, 
     t0 = time.time()
     v = i["now"] if at is None else at
     cols = [c for c, _ in i["cols"]]
-    keep = bool(i.get("gens")) and i["last"] is not None
+    keep = bool(i.get("gens"))   # SCD type 2, even on a first read: a target holding rows (a lost state) keeps them
     close = _close(i, v) if keep else None
     spark.sql(merge_into(tgt, changes_sql(i["src"], i["s"], source_column, i["key"], cols, None, v, _start(i, v),
                                           absent_at(spark, i, v)),
@@ -728,11 +735,14 @@ def _catch_up(spark, tgt, i, source_column, logged, run_id, out_name, report) ->
 
 
 # the errors that say the versions a catch-up reads are gone for good: the change data vacuumed or never recorded
-# (DELTA_MISSING_CHANGE_DATA), a data file vacuumed (DELTA_FILE_NOT_FOUND..., FileNotFoundException), a version no
-# longer in the log (VersionNotFoundException, DELTA_VERSIONS_NOT_CONTIGUOUS, "Cannot time travel ... to version").
+# (DELTA_MISSING_CHANGE_DATA), a data or change-data file vacuumed (DELTA_FILE_NOT_FOUND...,
+# DELTA_CHANGE_DATA_FILE_NOT_FOUND, FileNotFoundException), a version no longer in the log (DELTA_LOG_FILE_NOT_FOUND,
+# DELTA_TRUNCATED_TRANSACTION_LOG, VersionNotFoundException, DELTA_VERSIONS_NOT_CONTIGUOUS, "Cannot time travel ...
+# to version").
 # Nothing else: a schema change in the range or a wrong range (Invalid Streaming Table CDF) is a bug to see, and a
 # conflict, throttling or a network error is retried. One not listed is raised every run until someone looks.
-GONE = ("DELTA_MISSING_CHANGE_DATA", "DELTA_FILE_NOT_FOUND", "FILENOTFOUNDEXCEPTION", "VERSIONNOTFOUNDEXCEPTION",
+GONE = ("DELTA_MISSING_CHANGE_DATA", "DELTA_FILE_NOT_FOUND", "DELTA_CHANGE_DATA_FILE_NOT_FOUND", "DELTA_LOG_FILE_NOT_FOUND",
+        "DELTA_TRUNCATED_TRANSACTION_LOG", "FILENOTFOUNDEXCEPTION", "VERSIONNOTFOUNDEXCEPTION",
         "DELTA_VERSIONS_NOT_CONTIGUOUS", "CANNOT TIME TRAVEL DELTA TABLE TO VERSION")
 
 

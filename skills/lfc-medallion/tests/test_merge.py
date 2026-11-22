@@ -676,6 +676,8 @@ class Scd2Review(unittest.TestCase):
         self.assertTrue(merge.data_gone(RuntimeError("java.io.FileNotFoundException: part-0001")))
         self.assertTrue(merge.data_gone(RuntimeError("io.delta.VersionNotFoundException: version 3")))
         self.assertTrue(merge.data_gone(RuntimeError("Cannot time travel Delta table to version 3. Available: [9]")))
+        for c in ("DELTA_CHANGE_DATA_FILE_NOT_FOUND", "DELTA_LOG_FILE_NOT_FOUND", "DELTA_TRUNCATED_TRANSACTION_LOG"):
+            self.assertTrue(merge.data_gone(RuntimeError(f"[{c}] ...")), c)
         # a schema change in the range, a wrong range: bugs to see, not data gone
         self.assertFalse(merge.data_gone(RuntimeError("[DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA] ...")))
         self.assertFalse(merge.data_gone(RuntimeError("[USER_RAISED_EXCEPTION] Invalid Streaming Table CDF")))
@@ -717,6 +719,21 @@ class Scd2Review(unittest.TestCase):
         self.assertIn("VERSION AS OF 18", copy[0])
         self.assertIn("AND t.`__END_AT` IS NULL THEN UPDATE SET", copy[0])   # closes, never deletes
         self.assertNotIn("THEN DELETE", copy[0].split("WHEN NOT MATCHED BY SOURCE")[1])
+
+    def test_a_first_read_of_scd2_closes_rather_than_deletes(self):   # a lost state, a target holding rows
+        done = []
+
+        class S:
+            def sql(self, q):
+                done.append(q)
+                return R(collect=list, columns=[])
+        i = {"s": "east", "src": "`c`.`b`.`t`", "cols": [("id", "int"), ("v", "string"), ("__START_AT", "x"),
+             ("__END_AT", "x")], "key": ["id", "__START_AT"], "now": 18, "last": None, "tid": "x",
+             "gens": merge.generations(TWO_REFRESHES), "times": {h.version: h.timestamp for h in TWO_REFRESHES},
+             "start_kind": "cdc", "end_kind": "cdc"}
+        merge._copy(S(), "`c`.`s`.`all_t`", i, "division", [], "r", "all_t", {"all_t": {}}, "copied")
+        self.assertIn("AND t.`__END_AT` IS NULL THEN UPDATE SET", done[0])
+        self.assertNotIn("THEN DELETE", done[0].split("WHEN NOT MATCHED BY SOURCE")[1])
 
     def test_an_old_target_s_unfilled_starts_are_found(self):
         self.assertEqual(merge.unfilled_sql("cdc"), "(`__START_AT` IS NULL OR `__START_AT`.__cdc_timestamp_value IS NULL)")
