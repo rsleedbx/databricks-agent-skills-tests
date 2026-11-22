@@ -14,6 +14,7 @@ rows.
 """
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from . import discover, evidence, merge
 from .stack import spark_string
@@ -62,7 +63,8 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 
 
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
-                name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False) -> dict:
+                name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False,
+                parallel: int = 8) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
@@ -71,7 +73,8 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     still on the pipeline (a table isn't skipped before it arrives), and again at the end, from what was done.
     log: the merge log's table (merge_all), e.g. a control schema's; each run's rows carry one run id.
     The last plan is kept for the sources it has (a table's route changes only by a tag, routes_to_apply): only new
-    sources are planned, in parallel; replan=True plans every source again (its evidence: keys, rows, history)."""
+    sources are planned, in parallel; replan=True plans every source again (its evidence: keys, rows, history).
+    Keys are read at once, and up to `parallel` tables are merged at once (merge_all, each on its own thread)."""
     import uuid
     run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
@@ -88,7 +91,6 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     def plan_one(source):
         return [(source, table, t["role"], t["route"], t["decided_by"], t["why"]) for table, t in
                 evidence.table_plan(spark, catalog, prefix + source, hints=hints, workspace=workspace)["tables"].items()]
-    from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=max(1, min(16, len(new)))) as ex:
         fresh = dict(zip(new, ex.map(plan_one, new)))
     for source in sources:
@@ -103,15 +105,19 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     # merged before: merge_all's state has the table (a merge finished), not just a plan that said so
     established = {t for t in planned if name.format(table=t) in merge.merged_targets(spark, catalog, target)}
     skip = set()
-    for table in [t for t, r in apply.items() if r == "merge"]:   # merge_all needs every source's key
-        keyless = []
-        for s in [x for x in sources if table in held[x]]:
-            try:
-                if not evidence.recorded_keys(spark, f"`{catalog}`.`{prefix}{s}`.`{table}`",
-                                              f"{catalog}.{prefix}{s}.{table}", workspace):
-                    keyless.append(s)
-            except Exception as e:  # noqa: BLE001  a key that can't be read counts as missing, this run only
-                keyless.append(f"{s} ({str(e).splitlines()[0][:80]})")
+
+    def key_missing(pair):   # merge_all needs every source's key: read them all at once (threads)
+        table, s = pair
+        try:
+            return None if evidence.recorded_keys(spark, f"`{catalog}`.`{prefix}{s}`.`{table}`",
+                                                  f"{catalog}.{prefix}{s}.{table}", workspace) else s
+        except Exception as e:  # noqa: BLE001  a key that can't be read counts as missing, this run only
+            return f"{s} ({str(e).splitlines()[0][:80]})"
+    pairs = [(t, x) for t, r in apply.items() if r == "merge" for x in sources if t in held[x]]
+    with ThreadPoolExecutor(max_workers=max(1, min(16, len(pairs)))) as ex:
+        missing = list(ex.map(key_missing, pairs))
+    for table in [t for t, r in apply.items() if r == "merge"]:
+        keyless = [m for (t, _), m in zip(pairs, missing) if t == table and m]
         if keyless and table in established:   # keep the table and route; no merge this run
             skip.add(table)
             proposed[table] = {**proposed.get(table, {}), "refused": f"no primary key in {', '.join(keyless)}",
@@ -126,12 +132,20 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     released = merge.release(spark, catalog, target, sorted(t for t, r in apply.items() if r == "pipeline"), name=name)
     before = _kinds(spark, catalog, target)
     done = {}
-    for table in sorted(t for t, r in apply.items() if r == "merge" and t not in skip):
+
+    def merge_one(table):   # each table's merge_all on its own thread: (table, report, error)
         try:
-            report = merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column, name=name,
-                                     workspace=workspace, take_over=True, run_id=run_id, log=log)
-            done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
+            return table, merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column,
+                                          name=name, workspace=workspace, take_over=True, run_id=run_id, log=log), None
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
+            return table, None, e
+    todo = sorted(t for t, r in apply.items() if r == "merge" and t not in skip)
+    with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(todo)))) as ex:
+        results = list(ex.map(merge_one, todo))
+    for table, report, e in results:   # what each did, one at a time, in table order
+        if e is None:
+            done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
+        else:
             error = str(e).splitlines()[0][:200]
             if table in established:   # merged before: keep the table and its route, retry next run
                 proposed[table] = {**proposed.get(table, {}), "failed": error, "kept": "merge, retried next run"}

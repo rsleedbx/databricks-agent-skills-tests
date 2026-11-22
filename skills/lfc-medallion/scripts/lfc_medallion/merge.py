@@ -111,9 +111,9 @@ def _state(spark, catalog, target) -> dict:
 def _save_state(spark, catalog, target, target_table, source, version, tid):
     spark.sql(f"MERGE INTO {_fq(catalog, target, STATE)} s USING (SELECT {spark_string(target_table)} AS target_table, "
               f"{spark_string(source)} AS source, {int(version)} AS version, {spark_string(tid)} AS table_id) n "
-              "ON s.target_table = n.target_table AND s.source = n.source "
-              "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
-              "s.updated_at = current_timestamp() "
+           "ON s.target_table = n.target_table AND s.source = n.source "
+           "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
+           "s.updated_at = current_timestamp() "
               "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, updated_at) "
               "VALUES (n.target_table, n.source, n.version, n.table_id, current_timestamp())")
 
@@ -124,13 +124,21 @@ def _save_states(spark, catalog, target, target_table, saves: list[tuple]) -> No
         return
     vals = ", ".join(f"({spark_string(target_table)}, {spark_string(s)}, {int(v)}, {spark_string(t)})"
                      for s, v, t in saves)
-    spark.sql(f"MERGE INTO {_fq(catalog, target, STATE)} s USING (SELECT * FROM VALUES {vals} "
-              "AS n(target_table, source, version, table_id)) n "
-              "ON s.target_table = n.target_table AND s.source = n.source "
-              "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
-              "s.updated_at = current_timestamp() "
-              "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, updated_at) "
-              "VALUES (n.target_table, n.source, n.version, n.table_id, current_timestamp())")
+    sql = (f"MERGE INTO {_fq(catalog, target, STATE)} s USING (SELECT * FROM VALUES {vals} "
+           "AS n(target_table, source, version, table_id)) n "
+           "ON s.target_table = n.target_table AND s.source = n.source "
+           "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
+           "s.updated_at = current_timestamp() "
+           "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, updated_at) "
+           "VALUES (n.target_table, n.source, n.version, n.table_id, current_timestamp())")
+    for attempt in range(6):   # tables merged at once write the one state table: a conflict is retried
+        try:
+            spark.sql(sql)
+            return
+        except Exception as e:  # noqa: BLE001
+            if attempt == 5 or "CONCURRENT" not in str(e).upper():
+                raise
+            time.sleep(0.5 * 2 ** attempt)
 
 
 def _ensure_target(spark, tgt: str, exists: bool, source_column: str, cols, have: dict) -> None:
