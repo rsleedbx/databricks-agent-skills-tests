@@ -4,15 +4,17 @@
 # bash32: exempt (runs on the Linux VM)
 #   masters                                   the masters a database can start from ($ROOT/masters)
 #   ls [--all]                                your databases (--all: everyone's): engine, state, port, created, last up
-#   up <engine> <name> [--from <master> | --empty] [--park] [--edition <edition>]
+#   up <engine> <name> [--from <master> | --empty] [--park | --over-limit] [--edition <edition>]
 #      --edition (SQL Server only, a new database): Developer (default), Express, Standard, Enterprise, Evaluation or
 #      EnterpriseCore, the container's MSSQL_PID; kept in the record, so a parked database starts as the same edition.
 #      Express has no SQL Server Agent: CDC's capture jobs don't run there (no changes, no error); change tracking works
 #                                             start <name>: resume it if it exists, else clone a master (fs_clone:
 #                                             juicefs clone or an XFS reflink) or start empty. Engines: postgres, mysql,
 #                                             sqlserver, oracle, mariadb, db2, informix, cockroachdb, yugabytedb.
-#                                             At your limit of running databases (limits), it stops and names them;
-#                                             --park parks the ones that started first, to make room.
+#                                             At your limit of running databases (limits), a soft limit: it stops
+#                                             with exit 3 and names them, so the client asks you; --over-limit
+#                                             starts another anyway (with a warning), --park parks the ones that
+#                                             started first, to make room. The VM's limit (MAX_RUNNING) stays hard.
 #                                             Prints one JSON line: name, engine, host, port, user, password, container,
 #                                             state, and service (oracle: the PDB lfc_user lives in) and database (the
 #                                             database a test uses, where the engine has one)
@@ -364,8 +366,9 @@ case $CMD in
 
   up)
     E=${1:-}; N=${2:-}; shift 2 || usage; name_ok "$N"; engine "$E"
-    FROM="" EMPTY=0 PARK=0 EDITION=""
+    FROM="" EMPTY=0 PARK=0 OVER=0 EDITION=""
     while [ $# -gt 0 ]; do case $1 in --from) FROM=${2:-}; shift 2 ;; --empty) EMPTY=1; shift ;; --park) PARK=1; shift ;;
+                                      --over-limit) OVER=1; shift ;;
                                       --edition) EDITION=${2:-}; shift 2 ;; *) usage ;; esac; done
     if [ -n "$EDITION" ]; then
       [ "$E" = sqlserver ] || die "--edition is for sqlserver only"
@@ -388,8 +391,15 @@ case $CMD in
         mine=$(for m in $(all_metas); do o=$(basename "$(dirname "$m")"); n=$(basename "$m" .json); [ "$o" = "$OWNER" ] && [ "$n" != "$N" ] && running "$o" "$n" && echo "$(podman inspect -f '{{.State.StartedAt}}' "$(cname "$o" "$n")" 2>/dev/null) $n"; done | sort | awk '{print $NF}' || true)
         cnt=$(grep -c . <<<"$mine" || true)
         if [ "$cnt" -ge "$PER" ]; then
-          [ $PARK = 1 ] || die "you have $cnt of $PER running databases on this VM ($(tr '\n' ' ' <<<"$mine" | sed 's/ $//')): park one first (park <name>), or up again with --park to park the one that started first"
-          for n in $(head -n $(( cnt - PER + 1 )) <<<"$mine"); do echo "slot: parking your running database $n first ($PER at a time for you on this VM)" >&2; park_one "$OWNER" "$n"; done
+          list=$(tr '\n' ' ' <<<"$mine" | sed 's/ $//')
+          if [ $PARK = 1 ]; then
+            for n in $(head -n $(( cnt - PER + 1 )) <<<"$mine"); do echo "slot: parking your running database $n first ($PER at a time for you on this VM)" >&2; park_one "$OWNER" "$n"; done
+          elif [ $OVER = 1 ]; then
+            echo "slot: you have $cnt of $PER running databases on this VM ($list): starting $N as well (--over-limit)" >&2
+          else   # a soft limit: exit 3, so the client asks the person (lfc db up asks; an agent asks before --over-limit)
+            echo "slot: you have $cnt of $PER running databases on this VM ($list): start $N as well (up again with --over-limit), park one first (park <name>), or up again with --park to park the one that started first" >&2
+            exit 3
+          fi
         fi
       fi
       run_now=$(podman ps --format '{{.Names}}' | grep -c '^lfc-slot-' || true)
