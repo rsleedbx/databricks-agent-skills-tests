@@ -477,6 +477,7 @@ class Batch(unittest.TestCase):
             got = sg.batch(Db().connect, "tpcb", ["a"], 500, quiet=["branch", "teller", "account"], log=lambda m: None)
         self.assertEqual(fill.call_args.args[1:], ("a", 1, ("--mode", "append", "--rows", "500", "--skip",
                                                             "branch,teller,account")))
+        self.assertIsInstance(got[0].pop("at"), float)                             # the LOB's own commit time
         self.assertEqual(got, [{"source": "a", "rows": 500, "changed": None}])   # a count the connection didn't give
 
 

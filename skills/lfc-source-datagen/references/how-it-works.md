@@ -22,3 +22,14 @@ Tools like Faker make rows that **look** real (names, addresses, sentences), but
 - **Generated in the database.** Only SQL text crosses the network, and each type's whole valid range can be exercised on purpose (wrapping, 9999-12-31, `bit(64)`, full-length `varchar`), which realistic samples rarely reach.
 
 Where realism matters (non-sequential keys, values with no visible pattern), use `order=random` and `data=scramble` or `random`, and keep `plain_every` blocks so part of every table stays auditable.
+
+## Random values per row
+
+A random function in an `INSERT ... SELECT` isn't always evaluated once per row, and the planner needs **one** random value per row: a cast can use its input twice (a range needs `v` and `v + 1`, a string pads and hashes `n`), and two different random values there would break it. So `data=random` draws the value once in a subquery the optimizer can't merge away (`OFFSET 0` on Postgres, `NO_MERGE` on MySQL), and every column scrambles that value.
+
+| Engine | Per-row random | Notes |
+|---|---|---|
+| PostgreSQL | `random()` | Per row ✓ |
+| MySQL | `RAND()` | Per row ✓. `RAND(<constant>)` repeats the same sequence |
+| SQL Server | `ABS(CHECKSUM(NEWID()))` (or `RAND(CHECKSUM(NEWID()))` for a float in 0 … 1) | `RAND()` is evaluated **once per statement**, so every row gets the same value (from the docs, not tested yet) |
+| Oracle | `DBMS_RANDOM.VALUE` | Per row (from the docs, not tested yet) |

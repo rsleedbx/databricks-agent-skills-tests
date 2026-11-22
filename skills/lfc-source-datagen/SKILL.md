@@ -84,14 +84,7 @@ ORACLE=./sq DIR=scripts/oracle bash scripts/fill.sh ora tpch                    
 
 ## Random values per row
 
-A random function in an `INSERT ... SELECT` isn't always evaluated once per row, and the planner needs **one** random value per row: a cast can use its input twice (a range needs `v` and `v + 1`, a string pads and hashes `n`), and two different random values there would break it. So `data=random` draws the value once in a subquery the optimizer can't merge away (`OFFSET 0` on Postgres, `NO_MERGE` on MySQL), and every column scrambles that value.
-
-| Engine | Per-row random | Notes |
-|---|---|---|
-| PostgreSQL | `random()` | Per row ✓ |
-| MySQL | `RAND()` | Per row ✓. `RAND(<constant>)` repeats the same sequence |
-| SQL Server | `ABS(CHECKSUM(NEWID()))` (or `RAND(CHECKSUM(NEWID()))` for a float in 0 … 1) | `RAND()` is evaluated **once per statement**, so every row gets the same value (from the docs, not tested yet) |
-| Oracle | `DBMS_RANDOM.VALUE` | Per row (from the docs, not tested yet) |
+`data=random` draws one random value per row in a subquery the optimizer can't merge away (`OFFSET 0` on Postgres, `NO_MERGE` on MySQL); every column scrambles that value. Per-engine functions: [references/how-it-works.md](references/how-it-works.md#random-values-per-row).
 
 ## Schema changes during a load
 
