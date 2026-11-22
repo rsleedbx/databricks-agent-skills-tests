@@ -39,6 +39,7 @@ class Spark:
         self.targets = set(targets)
         self.target_cols = {"all_nation": [("division", "string")] + COLS}
         self.done = []   # the statements that change something
+        self.seen = ()   # the sources information_schema.columns returns (none: SHOW TABLES for every source)
 
     def sql(self, q):
         rows = []
@@ -48,6 +49,9 @@ class Spark:
         elif q.startswith("SHOW TABLES IN") and "shop_bronze_" in q:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(tableName=t) for t in self.tables.get(source, ["nation"])]
+        elif "information_schema.columns" in q:   # catalog_columns: only the sources it can see
+            rows = [R(table_schema=f"shop_bronze_{src}", table_name=t, column_name=c, full_data_type=ty)
+                    for src in self.seen for t in self.tables.get(src, ["nation"]) for c, ty in self.cols[src]]
         elif "information_schema.tables" in q:   # the target schema's tables and their kinds
             rows = [R(table_name=t, table_type="MANAGED") for t in self.targets] + \
                    [R(table_name=v, table_type="MATERIALIZED_VIEW") for v in self.views]
@@ -376,6 +380,13 @@ class Removed(unittest.TestCase):
         self.assertEqual(report["all_nation"]["west"], {"done": "removed"})
         self.assertNotIn("east", " ".join(self.deletes(spark)))
 
+    def test_a_source_the_catalog_query_misses_is_not_gone(self):   # information_schema lags a new schema
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"})
+        spark.seen = ("east",)
+        report = run(spark)
+        self.assertEqual(self.deletes(spark), [])
+        self.assertEqual(report["all_nation"]["west"], {"done": "unchanged", "version": 7})
+
     def test_nothing_deleted_without_a_target(self):   # no source has the table, and its target was dropped by hand
         spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       tables={"east": ["orders"], "west": ["orders"]})
@@ -408,6 +419,16 @@ class Shapes(unittest.TestCase):
         self.assertEqual(self.widened("smallint", "int")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE INT")
         self.assertEqual(self.widened("decimal(10,2)", "decimal(12,4)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(12,4)")
         self.assertEqual(self.widened("decimal(10,2)", "decimal(12,1)")[-1], f"{tgt} ALTER COLUMN `n_name` TYPE DECIMAL(13,2)")  # 11 integer digits, scale 2
+
+    def test_a_wider_type_in_another_source_widens_the_target(self):   # same names, another type
+        spark = Spark(versions={"east": 9, "west": 9}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      cols={"east": [("n_nationkey", "int"), ("n_name", "int")],
+                            "west": [("n_nationkey", "int"), ("n_name", "bigint")]},
+                      history={s: [(8, "MERGE", {}, {"numTargetRowsInserted": "1"})] for s in ("east", "west")},
+                      targets={"all_nation"})
+        spark.target_cols["all_nation"] = [("division", "string"), ("n_nationkey", "int"), ("n_name", "int")]
+        run(spark)
+        self.assertIn("ALTER TABLE `main`.`shop_silver`.`all_nation` ALTER COLUMN `n_name` TYPE BIGINT", spark.done)
 
     def test_date_into_timestamp_ntz_turns_its_feature_on(self):
         tgt = "ALTER TABLE `main`.`shop_silver`.`all_nation`"

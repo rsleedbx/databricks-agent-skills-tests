@@ -86,6 +86,8 @@ class Plan(unittest.TestCase):
             "${var.catalog}.${resources.schemas.bank_gold.name}.transactions",
             "${var.catalog}.${resources.schemas.bank_gold.name}.unusual_by_hour",
             "${var.catalog}.${resources.schemas.bank_gold.name}.lob_summary"])
+        self.assertEqual(timings.scale(pl, "bank")["group_tables"], [70, 210])   # the plan's own pipelines
+        self.assertEqual(timings.scale(pl, "bank", lobs=100)["group_tables"], [100, 249, 51])   # per class
         mixed = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 70}))["modules"][0]["groups"]
         self.assertEqual([(x["class"], x["table_names"]) for x in mixed], [("all", None), ("all", None)])   # the default
 
@@ -166,6 +168,14 @@ class Verify(unittest.TestCase):
         sql = open(os.path.join(pack.load("tpcb")["dir"], "gold.sql")).read()
         self.assertEqual(verify.mart_names(sql), ["transactions", "unusual_by_hour", "lob_summary"])
         self.assertEqual(verify.bind("(:base + :teller) / 1000.0", {"base": 5, "teller": 60}), "(5 + 60) / 1000.0")
+
+
+class Checksum(unittest.TestCase):
+    def test_an_instant_and_a_wall_time(self):   # timestamptz: its own epoch, not through the session's time zone
+        from lfc_medallion_pack import checksum
+        pg = checksum.row_text([{"name": "a", "type": "timestamptz"}, {"name": "b", "type": "timestamp"}], "postgres")
+        self.assertIn('EXTRACT(EPOCH FROM ("a")::timestamptz)', pg)
+        self.assertIn('EXTRACT(EPOCH FROM ("b")::timestamp)', pg)
 
 
 class Dashboard(unittest.TestCase):

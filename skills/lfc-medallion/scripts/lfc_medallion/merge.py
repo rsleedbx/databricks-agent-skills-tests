@@ -85,9 +85,7 @@ def since(spark, fq: str, version: int) -> tuple[bool, bool]:
     versions to every table, changed or not (an empty MERGE, housekeeping DELETEs: seen on Lakeflow Connect's
     destination tables 2026-11-15), so a new version alone isn't a change; but only known operations reporting zero
     rows, or known to touch no data, count as no change: anything else (an unknown operation, missing metrics) does."""
-    rows = _rows(spark, f"SELECT version, operation, operationParameters, operationMetrics "
-                        f"FROM (DESCRIBE HISTORY {fq}) WHERE version > {int(version)}")
-    return _judge(rows, version)
+    return history_since(spark, fq, version)[1:]
 
 
 def _judge(rows, version: int) -> tuple[bool, bool]:
@@ -112,11 +110,6 @@ def _judge(rows, version: int) -> tuple[bool, bool]:
     return refreshed, changed
 
 
-def _state(spark, catalog, target) -> dict:
-    """{(target table, source): (version, table id)}; the keys and times are in _state_extra."""
-    return {k: v[:2] for k, v in _state_full(spark, catalog, target).items()}
-
-
 def _state_full(spark, catalog, target) -> dict:
     """{(target table, source): (version, table id, key columns or None, updated_at)}: the state, its key columns kept
     so a source's key is read once, not every run."""
@@ -136,16 +129,6 @@ def _state_full(spark, catalog, target) -> dict:
     return out
 
 
-def _save_state(spark, catalog, target, target_table, source, version, tid):
-    spark.sql(f"MERGE INTO {_fq(catalog, target, STATE)} s USING (SELECT {spark_string(target_table)} AS target_table, "
-              f"{spark_string(source)} AS source, {int(version)} AS version, {spark_string(tid)} AS table_id) n "
-           "ON s.target_table = n.target_table AND s.source = n.source "
-           "WHEN MATCHED THEN UPDATE SET s.version = n.version, s.table_id = n.table_id, "
-           "s.updated_at = current_timestamp() "
-              "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, updated_at) "
-              "VALUES (n.target_table, n.source, n.version, n.table_id, current_timestamp())")
-
-
 def _save_states(spark, catalog, target, target_table, saves: list[tuple]) -> None:
     """Every source's new version of one table in one MERGE: saves [(source, version, table id[, key columns])]."""
     if not saves:
@@ -159,12 +142,19 @@ def _save_states(spark, catalog, target, target_table, saves: list[tuple]) -> No
            "s.key_columns = coalesce(n.key_columns, s.key_columns), s.updated_at = current_timestamp() "
            "WHEN NOT MATCHED THEN INSERT (target_table, source, version, table_id, key_columns, updated_at) "
            "VALUES (n.target_table, n.source, n.version, n.table_id, n.key_columns, current_timestamp())")
-    for attempt in range(6):   # tables merged at once write the one state table: a conflict is retried
+    _shared(spark, sql)
+
+
+def _shared(spark, sql: str, tries: int = 6) -> None:
+    """A write to a table every table's merge writes at once (the state, the merge log): a concurrent-write conflict,
+    or a CREATE ... IF NOT EXISTS racing another, is retried."""
+    for attempt in range(tries):
         try:
             spark.sql(sql)
             return
         except Exception as e:  # noqa: BLE001
-            if attempt == 5 or "CONCURRENT" not in str(e).upper():
+            msg = str(e).upper()
+            if attempt == tries - 1 or not ("CONCURRENT" in msg or "ALREADY_EXISTS" in msg or "ALREADY EXISTS" in msg):
                 raise
             time.sleep(0.5 * 2 ** attempt)
 
@@ -253,12 +243,12 @@ def _log_rows(spark, fq_log: str, rows: list[tuple]) -> None:
     """Append what merge_all did to the merge log: one row per table and source it copied or merged."""
     if not rows:
         return
-    spark.sql(f"CREATE TABLE IF NOT EXISTS {fq_log} (run_id STRING, target_table STRING, source STRING, done STRING, "
+    _shared(spark, f"CREATE TABLE IF NOT EXISTS {fq_log} (run_id STRING, target_table STRING, source STRING, done STRING, "
               "version_from BIGINT, version_to BIGINT, inserted BIGINT, updated BIGINT, deleted BIGINT, "
               "seconds DOUBLE, at TIMESTAMP) COMMENT 'lfc_medallion merge_all: each copy or merge, per table and source'")
     lit = lambda v: "NULL" if v is None else str(v) if isinstance(v, (int, float)) else spark_string(str(v))  # noqa: E731
     values = ", ".join("(" + ", ".join(lit(v) for v in r[:-1]) + ", current_timestamp())" for r in rows)
-    spark.sql(f"INSERT INTO {fq_log} VALUES {values}")
+    _shared(spark, f"INSERT INTO {fq_log} VALUES {values}")
 
 
 def _last_metrics(spark, fq: str) -> tuple:
@@ -266,8 +256,8 @@ def _last_metrics(spark, fq: str) -> tuple:
     r = _rows(spark, f"SELECT operationMetrics AS m FROM (DESCRIBE HISTORY {fq} LIMIT 1)")
     m = (r[0].m or {}) if r else {}
     g = lambda k: int(m.get(k) or 0)   # noqa: E731
-    return g("numTargetRowsInserted"), g("numTargetRowsUpdated") + g("numTargetRowsMatchedUpdated"), \
-        g("numTargetRowsDeleted") + g("numTargetRowsMatchedDeleted")
+    return g("numTargetRowsInserted"), g("numTargetRowsUpdated"), g("numTargetRowsDeleted")   # totals: they include
+    # the Matched (and NotMatchedBySource) counts
 
 
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
@@ -309,11 +299,7 @@ def load_context(spark, catalog: str, prefix: str, target: str, only=None) -> di
     """What every table's merge needs, read once: the sources, their tables and columns (one information_schema
     query; a SHOW TABLES per source where it can't run), the state with its keys and times, the target's objects."""
     names = discover.sources(spark, catalog, prefix, only)
-    try:
-        cols = discover.catalog_columns(spark, catalog, prefix, names) or None   # none at all: ask each source
-    except Exception:  # noqa: BLE001
-        cols = None
-    held = {x: set(cols.get(x, {})) for x in names} if cols else discover.tables(spark, catalog, prefix, names)
+    held, cols = discover.held_tables(spark, catalog, prefix, names)
     kinds = {r.table_name: r.table_type for r in _rows(
         spark, f"SELECT table_name, table_type FROM {_q(catalog)}.information_schema.tables "
                f"WHERE table_schema = {spark_string(target)}")}
@@ -383,7 +369,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     with ThreadPoolExecutor(max_workers=max(1, min(16, len(look)))) as ex:
         info = list(ex.map(lambda s: _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
                                               fresh, (cols_known or {}).get(s, {}).get(table)), look))
-    shapes = {tuple(c for c, _ in i["cols"]) for i in info}
+    shapes = {tuple(i["cols"]) for i in info}   # names and types: a source holding a column wider widens the target
     for i in (info if len(shapes) > 1 or created else info[:1]) if info else []:   # every source's columns in the target
         have = {} if out_name not in existing else dict(columns(spark, tgt))
         _ensure_target(spark, tgt, out_name in existing, source_column, i["cols"], have)
@@ -433,8 +419,8 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     if gone and out_name in existing:
         listed = ", ".join(spark_string(g) for g in gone)
         spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} IN ({listed})")
-        spark.sql(f"DELETE FROM {_fq(catalog, target, STATE)} WHERE target_table = {spark_string(out_name)} "
-                  f"AND source IN ({listed})")
+        _shared(spark, f"DELETE FROM {_fq(catalog, target, STATE)} WHERE target_table = {spark_string(out_name)} "
+                       f"AND source IN ({listed})")
         for g in gone:
             report[out_name][g] = {"done": "removed"}
 

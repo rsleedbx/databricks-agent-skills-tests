@@ -20,12 +20,12 @@ import math
 import os
 import re
 
-MART = re.compile(r"CREATE\s+OR\s+REFRESH\s+(?:MATERIALIZED\s+VIEW|STREAMING\s+TABLE)\s+([\w.${}]+)", re.I)
+from .check import STMT
 
 
 def mart_names(sql: str) -> list[str]:
     """The views a marts file creates, by their last name part (${catalog}.${gold_schema}.x -> x)."""
-    return [n.split(".")[-1] for n in MART.findall(sql)]
+    return [n.split(".")[-1] for n in STMT.findall(sql)]
 
 
 def _one(spark, q: str):

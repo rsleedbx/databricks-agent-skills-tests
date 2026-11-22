@@ -24,10 +24,17 @@ def busy() -> bool:
     return bool(ups) and str(ups[0].state).split(".")[-1] not in ("COMPLETED", "FAILED", "CANCELED")
 
 
-while busy():   # the dimension cycle's update, or a facts cycle still running
-    time.sleep(5)
-update = (w.pipelines.start_update(pid, refresh_selection=selection) if selection   # empty: every dataset
-          else w.pipelines.start_update(pid)).update_id
+update = None
+while update is None:
+    while busy():   # the dimension cycle's update, or a facts cycle still running
+        time.sleep(5)
+    try:
+        update = (w.pipelines.start_update(pid, refresh_selection=selection) if selection   # empty: every dataset
+                  else w.pipelines.start_update(pid)).update_id
+    except Exception as e:  # noqa: BLE001
+        if "active update" not in str(e).lower() and "already" not in str(e).lower():
+            raise
+        time.sleep(5)   # the other cycle started between busy() and start_update: wait for it, then try again
 while True:
     state = str(w.pipelines.get_update(pid, update).update.state).split(".")[-1]
     if state in ("COMPLETED", "FAILED", "CANCELED"):
@@ -35,4 +42,4 @@ while True:
     time.sleep(5)
 print(f"{name}: {state}, {len(selection)} datasets: {', '.join(selection)}")
 if state != "COMPLETED":
-    raise RuntimeError(f"the facts cycle's update {update} ended {state}")
+    raise RuntimeError(f"{name}: the {'facts cycle' if selection else 'full refresh'}'s update {update} ended {state}")

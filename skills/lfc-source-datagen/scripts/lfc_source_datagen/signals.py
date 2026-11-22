@@ -251,10 +251,25 @@ def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
         for st in steps(model, name, "/".join(nums if x["name"] == sig["name"] else "" for x in spec(model))):
             cur.execute(st)
             rc = getattr(cur, "rowcount", -1)
-            counts.append(0 if st.startswith("DO ") else None if rc is None or rc < 0 else rc)   # UC JDBC: -1
+            counts.append((None if rc is None or rc < 0 else rc) if _dml(st) else 0)   # UC JDBC: -1 for DML too
         out[sig["name"]] = counts
         log(f"signals: {name}: {sig['name']} re-applied, rows changed per statement {counts}")
     return out
+
+
+DML = ("INSERT", "UPDATE", "DELETE", "MERGE", "WITH")
+
+
+def _dml(statement: str) -> bool:
+    """A statement that changes rows and reports how many; DO, DDL, ANALYZE, SET change none (-1 on psycopg too)."""
+    return statement.lstrip().split(None, 1)[0].upper() in DML if statement.strip() else False
+
+
+def changed_rows(changed: dict[str, list]) -> int | None:
+    """The rows reapply's statements changed; None when a statement that changes rows gave no count (a UC JDBC
+    connection)."""
+    n = [c for v in changed.values() for c in v]
+    return None if None in n else sum(n)
 
 
 def append(connect, model: str, names, grow: float, sessions: int = 4, log=print) -> list[dict]:
@@ -273,9 +288,7 @@ def append(connect, model: str, names, grow: float, sessions: int = 4, log=print
             log(f"signals: {name}: growing by {grow:g} scale factors")
             rebuilt = sorted({tb for s in spec(model) for tb in s.get("rebuilds") or []})   # the signals rebuild these
             _fill(connect, name, sessions, ("--mode", "append", "--grow", repr(float(grow)), "--skip", ",".join(rebuilt)))
-        changed = reapply(cur, model, name, log)
-        n = [c for v in changed.values() for c in v]
-        out.append({"source": name, "changed": None if None in n else sum(n)} | summary(model, cur, name))
+        out.append({"source": name, "changed": changed_rows(reapply(cur, model, name, log))} | summary(model, cur, name))
         con.close()
     return out
 
@@ -294,9 +307,7 @@ def batch(connect, model: str, names, rows: int, quiet: list[str] = (), log=prin
                                                                                    if quiet else ()))
         con = connect()
         cur = con.cursor()
-        changed = reapply(cur, model, name, log)
-        n = [c for v in changed.values() for c in v]
-        out.append({"source": name, "rows": int(rows), "changed": None if None in n else sum(n),
+        out.append({"source": name, "rows": int(rows), "changed": changed_rows(reapply(cur, model, name, log)),
                     "at": time.time()})   # when this source's batch committed: a latency starts here, per source
         con.close()
     return out

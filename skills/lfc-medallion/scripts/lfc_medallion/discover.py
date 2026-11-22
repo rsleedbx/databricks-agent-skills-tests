@@ -52,3 +52,16 @@ def catalog_columns(spark, catalog: str, prefix: str, names: list[str]) -> dict[
             continue
         out.setdefault(s, {}).setdefault(r.table_name, []).append((r.column_name, r.full_data_type))
     return out
+
+
+def held_tables(spark, catalog: str, prefix: str, names: list[str]) -> tuple[dict[str, set[str]], dict | None]:
+    """({source: {table, ...}}, catalog_columns or None): one information_schema query, and SHOW TABLES for a source
+    it doesn't return (it lags a schema just made, or can't see one), so a source is never taken as having no tables
+    (merge_all would delete its rows, stack_all drop it from the views)."""
+    try:
+        cols = catalog_columns(spark, catalog, prefix, names) or None
+    except Exception:  # noqa: BLE001
+        cols = None
+    missed = [x for x in names if x not in (cols or {})]
+    held = {x: set(cols[x]) for x in names if x not in missed}
+    return held | (tables(spark, catalog, prefix, missed) if missed else {}), cols

@@ -30,13 +30,15 @@ def _ts(s: str) -> float:
 
 def scale(plan: dict, module: str, lobs: int | None = None) -> dict:
     """The module's size: LOBs, tables, pipelines; lobs: the size a past run had (the plan grew since), its
-    pipelines as plan.py would have grouped them."""
-    import math
+    pipelines as plan.py would have grouped them (lob_groups, per class: all, or facts and dimensions)."""
+    from .plan import lob_groups
     m = next(x for x in plan["modules"] if x["module"] == module)
-    n, per_lob = lobs or len(m["lobs"]), len(m["tables"])
-    per = max(1, int(m.get("tables_per_pipeline") or plan["limits"]["tables_per_pipeline"]) // per_lob)
-    groups = [min(per, n - k * per) * per_lob for k in range(math.ceil(n / per))]
-    return {"module": module, "pack": m["pack"], "data": m["data"], "lobs": n, "tables": n * per_lob,
+    n = lobs or len(m["lobs"])
+    limit = int(m.get("tables_per_pipeline") or plan["limits"]["tables_per_pipeline"])
+    classes = list(dict.fromkeys((g.get("class", "all"), len(g.get("table_names") or m["tables"]))
+                                 for g in m["groups"]))
+    groups = [(e - b) * t for _, t in classes for b, e in lob_groups(n, t, limit)]
+    return {"module": module, "pack": m["pack"], "data": m["data"], "lobs": n, "tables": n * len(m["tables"]),
             "pipelines": len(groups), "tables_per_pipeline": groups[0], "group_tables": groups}
 
 

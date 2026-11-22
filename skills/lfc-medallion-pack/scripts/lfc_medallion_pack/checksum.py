@@ -29,7 +29,9 @@ def _kind(c: dict) -> tuple[str, int]:
         return "char", 0
     if t == "date":
         return "date", 0
-    if t in ("timestamp", "datetime", "timestamptz"):
+    if t in ("timestamptz", "timestamp with time zone", "datetimeoffset"):
+        return "tstz", 0   # an instant: its own epoch, not through the session's time zone
+    if t in ("timestamp", "datetime", "timestamp without time zone"):
         return "ts", 0
     if t in ("boolean", "bool", "bit"):
         return "bool", 0
@@ -41,7 +43,8 @@ RENDER = {
     "postgres": {
         "int": "({c})::text", "dec": "CAST({c} AS numeric(38,{s}))::text", "char": "rtrim(({c})::text)",
         "date": "(({c}) - DATE '1970-01-01')::text",
-        "ts": "(EXTRACT(EPOCH FROM ({c})::timestamp) * 1000000)::bigint::text",
+        "ts": "(EXTRACT(EPOCH FROM ({c})::timestamp) * 1000000)::bigint::text",   # a wall time, taken as UTC
+        "tstz": "(EXTRACT(EPOCH FROM ({c})::timestamptz) * 1000000)::bigint::text",   # an instant
         "bool": "CASE WHEN {c} THEN '1' ELSE '0' END", "text": "({c})::text",
         "null": "COALESCE({x}, chr(1))", "join": " || '|' || ",
         "digest": "('x' || substr(md5({t}), 1, 8))::bit(32)::bigint", "q": '"{n}"',
@@ -50,6 +53,7 @@ RENDER = {
         "int": "CAST({c} AS STRING)", "dec": "CAST(CAST({c} AS DECIMAL(38,{s})) AS STRING)",
         "char": "rtrim(CAST({c} AS STRING))", "date": "CAST(unix_date(CAST({c} AS DATE)) AS STRING)",
         "ts": "CAST(unix_micros(CAST({c} AS TIMESTAMP)) AS STRING)",
+        "tstz": "CAST(unix_micros(CAST({c} AS TIMESTAMP)) AS STRING)",
         "bool": "CASE WHEN {c} THEN '1' ELSE '0' END", "text": "CAST({c} AS STRING)",
         "null": "COALESCE({x}, chr(1))", "join": " || '|' || ",
         "digest": "CAST(conv(substr(md5({t}), 1, 8), 16, 10) AS BIGINT)", "q": "`{n}`",

@@ -45,6 +45,12 @@ TABLES_PER_PIPELINE = 250      # recommended; a pipeline takes at most 999 sourc
 HARD_TABLES = 999
 
 
+def lob_groups(lobs: int, tables: int, limit: int) -> list[tuple[int, int]]:
+    """The LOBs [first, end) of each ingestion pipeline of one class (`tables` per LOB, at most `limit` a pipeline)."""
+    per = max(1, limit // tables)
+    return [(k * per, min(lobs, (k + 1) * per)) for k in range(math.ceil(lobs / per))]
+
+
 def load_project(path: str) -> dict:
     with open(path) as fh:
         p = yaml.safe_load(fh) or {}
@@ -82,9 +88,8 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     for cls, tabs, mode in classes:
         if mode not in ("triggered", "continuous"):
             raise ValueError(f"module {name}: mode {mode}: triggered or continuous")
-        per = max(1, limit // len(tabs))
-        for k in range(math.ceil(len(items) / per)):
-            part = items[k * per:(k + 1) * per]
+        for b, e in lob_groups(len(items), len(tabs), limit):
+            part = items[b:e]
             n = len(groups) + 1
             slot = f"{sp}_{name}_{n}"
             groups.append({"k": n, "lobs": [x["name"] for x in part], "tables": len(part) * len(tabs),
