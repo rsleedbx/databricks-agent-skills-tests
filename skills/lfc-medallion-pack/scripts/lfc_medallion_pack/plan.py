@@ -68,9 +68,12 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     p = pack_mod.load(m["pack"], base)
     items = lobs_mod.lobs(m.get("lobs") if isinstance(m.get("lobs"), int) else None, m.get("seed", 1),
                           m.get("lobs") if isinstance(m.get("lobs"), list) else m.get("names"))
+    sf = m.get("sf")   # every LOB at this scale factor (a scale test's small data); else each tier's own
+    if sf is not None and not (isinstance(sf, (int, float)) and sf > 0):
+        raise ValueError(f"module {name}: sf {sf!r}: a number above 0")
     for x in items:
         t = p["tiers"][x["tier"]]
-        x |= {"sf": t.get("sf", 1), "signals": pack_mod.signals(p, x["tier"]), "source_schema": f"{name}_{x['name']}"}
+        x |= {"sf": sf if sf is not None else t.get("sf", 1), "signals": pack_mod.signals(p, x["tier"]), "source_schema": f"{name}_{x['name']}"}
     limit = int(m.get("tables_per_pipeline") or project["limits"]["tables_per_pipeline"])
     if limit > HARD_TABLES:
         raise ValueError(f"tables_per_pipeline {limit}: an ingestion pipeline takes at most {HARD_TABLES} source tables")

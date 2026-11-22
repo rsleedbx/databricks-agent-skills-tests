@@ -91,6 +91,13 @@ class Plan(unittest.TestCase):
         mixed = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 70}))["modules"][0]["groups"]
         self.assertEqual([(x["class"], x["table_names"]) for x in mixed], [("all", None), ("all", None)])   # the default
 
+    def test_module_sf_sets_every_lob(self):   # a scale test's small data; the tiers keep their signals
+        m = plan.plan(project(self.d, scale={"pack": "tpcb", "lobs": 10, "sf": 0.01}))["modules"][0]
+        self.assertEqual({x["sf"] for x in m["lobs"]}, {0.01})
+        self.assertEqual({x["tier"] for x in m["lobs"]}, {"high", "core", "low"})
+        with self.assertRaisesRegex(ValueError, "sf 0: a number above 0"):
+            plan.plan(project(self.d, scale={"pack": "tpcb", "lobs": 10, "sf": 0}))
+
     def test_limits_refused(self):
         f = project(self.d, bank={"pack": "tpcb", "lobs": 3})
         p = yaml.safe_load(open(f))

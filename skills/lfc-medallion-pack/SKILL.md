@@ -67,7 +67,9 @@ and stops when the pipelines need more replication slots than `max_slots`. The s
 2. **Data** (`data: true`): each LOB filled at its tier's scale with its tier's signal numbers (20-70-10: lobs.py),
    then `verify` reads the signal back from gold per LOB, against the rate its numbers give each row, and checks the
    tiers come out in order. A customer's schema gets this test once they give canonical statistics and the
-   generator's rules (lfc-source-statschema, lfc-source-datagen).
+   generator's rules (lfc-source-statschema, lfc-source-datagen). `sf: 0.01` on the module fills every LOB at that scale factor
+   instead of its tier's (a scale test's small data; the tiers keep their signal numbers). Growing a module re-ranks
+   its tiers: a few LOBs built before land in another tier, so the readout is informational in a grown scale module.
 
 ## Writing a pack for a new schema
 
