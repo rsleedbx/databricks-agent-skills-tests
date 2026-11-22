@@ -33,6 +33,15 @@ DATASETS = {
         "ROUND((unix_millis(merge_at) - unix_millis(batch_at)) / 1000.0, 1) AS to_merge_s, ",
         "ROUND((unix_millis(gold_at) - unix_millis(batch_at)) / 1000.0, 1) AS to_gold_s ",
         "FROM v_latency ORDER BY batch_at DESC"],
+    "ds_refresh": [
+        "SELECT module, update_id, at, layer, view_name, technique, not_chosen_because, 1 AS refreshes ",
+        "FROM v_refresh ORDER BY at DESC"],
+    "ds_quality": [
+        "SELECT module, update_id, at, layer, view_name, expectation, passed, failed, ",
+        "CASE WHEN failed > 0 THEN 'failing' ELSE 'passing' END AS status FROM v_quality ORDER BY at DESC"],
+    "ds_latency_table": [
+        "SELECT module, lob, batch_at, stage, table_name, reached_at, seconds FROM v_latency_table ",
+        "ORDER BY batch_at DESC, stage, table_name"],
     "ds_checksums": [
         "SELECT module, lob, `table` AS table_name, status, CASE WHEN status = 'match' THEN 1 ELSE 0 END AS matched, ",
         "source_rows, bronze_rows, n1_rows, source_digest, bronze_digest, n1_digest, checked_at ",
@@ -101,16 +110,18 @@ def _table(name: str, ds: str, cols: list[tuple], title: str, pos: tuple, aggreg
 
 
 def _chart(name: str, kind: str, ds: str, x: tuple, ys: list[tuple], title: str, pos: tuple,
-           color: str | None = None) -> dict:
-    """A line or bar chart: x (column, scale type), ys [(column, title)] summed, split by color (a column)."""
+           color: str | None = None, agg: str = "SUM") -> dict:
+    """A line or bar chart: x (column, scale type), ys [(column, title)] aggregated by agg (SUM, AVG, MAX), split by
+    color (a column)."""
     xc, xt = x
-    fields = [_f(xc, f"`{xc}`")] + [_f(f"sum({c})", f"SUM(`{c}`)") for c, _ in ys]
+    a = agg.lower()
+    fields = [_f(xc, f"`{xc}`")] + [_f(f"{a}({c})", f"{agg}(`{c}`)") for c, _ in ys]
     enc = {"x": {"fieldName": xc, "scale": {"type": xt}, "displayName": xc}}
     if len(ys) == 1:
-        enc["y"] = {"fieldName": f"sum({ys[0][0]})", "scale": {"type": "quantitative"}, "displayName": ys[0][1]}
+        enc["y"] = {"fieldName": f"{a}({ys[0][0]})", "scale": {"type": "quantitative"}, "displayName": ys[0][1]}
     else:
         enc["y"] = {"scale": {"type": "quantitative"},
-                    "fields": [{"fieldName": f"sum({c})", "displayName": t} for c, t in ys]}
+                    "fields": [{"fieldName": f"{a}({c})", "displayName": t} for c, t in ys]}
     if color:
         fields.append(_f(color, f"`{color}`"))
         enc["color"] = {"fieldName": color, "scale": {"type": "categorical"}, "displayName": color}
@@ -124,7 +135,7 @@ def _page(name: str, title: str, layout: list[dict]) -> dict:
 
 
 def build(project: str) -> dict:
-    """The dashboard (serialized_dashboard's JSON) for a project: four pages over the control views."""
+    """The dashboard (serialized_dashboard's JSON) for a project: five pages over the control views."""
     changes = _page("changes", "Changes", [
         _text("changes_title", [f"## {project}: rows through each stage\n", "\n",
                                 "Source capture (the gateway), bronze (ingestion), n:1 (the merge route or the "
@@ -164,6 +175,14 @@ def build(project: str) -> dict:
                [("pipeline", "Pipeline"), ("started", "Started"), ("state", "State"), ("seconds", "Seconds"),
                 ("waiting_s", "Waiting"), ("initializing_s", "Initializing"), ("setting_up_s", "Setting up"),
                 ("running_s", "Running")], "Updates", (0, 10, 12, 8)),
+        _text("refresh_title", ["### How each view refreshed\n", "\n",
+                                "Incremental (row-based, append-only, an aggregate, no-op) or a complete recompute, "
+                                "per layer, and why a cheaper technique wasn't used."], 18),
+        _chart("c_techniques", "bar", "ds_refresh", ("layer", "categorical"), [("refreshes", "Refreshes")],
+               "Refresh techniques by layer", (0, 20, 6, 6), color="technique"),
+        _table("t_refresh", "ds_refresh",
+               [("at", "When"), ("layer", "Layer"), ("view_name", "View"), ("technique", "Technique"),
+                ("not_chosen_because", "Not cheaper because")], "Each view's refresh", (6, 20, 6, 6)),
     ])
     latency = _page("latency", "Latency", [
         _text("latency_title", ["## Latency from a batch of changes\n", "\n",
@@ -178,6 +197,23 @@ def build(project: str) -> dict:
                [("module", "Module"), ("lob", "LOB"), ("batch_at", "Batch"), ("rows", "Rows"),
                 ("to_bronze_s", "To bronze (s)"), ("to_merge_s", "To merge (s)"), ("to_gold_s", "To gold (s)")],
                "Batches", (0, 10, 12, 8)),
+        _chart("c_latency_table", "bar", "ds_latency_table", ("table_name", "categorical"), [("seconds", "Seconds")],
+               "Average seconds from a batch to each table or view, by stage", (0, 18, 12, 6), color="stage",
+               agg="AVG"),
+        _table("t_latency_table", "ds_latency_table",
+               [("lob", "LOB"), ("batch_at", "Batch"), ("stage", "Stage"), ("table_name", "Table or view"),
+                ("reached_at", "Reached"), ("seconds", "Seconds")], "Per batch, stage and table", (0, 24, 12, 8)),
+    ])
+    quality = _page("quality", "Quality", [
+        _text("quality_title", ["## Expectations in silver and gold\n", "\n",
+                                "Rows passed and failed per expectation, per view and update (the pack's "
+                                "CONSTRAINT ... EXPECT rules)."], 0),
+        _counter("k_q_failed", "ds_quality", "failed", "Rows failing an expectation", (0, 2, 6, 3)),
+        _counter("k_q_passed", "ds_quality", "passed", "Rows passing", (6, 2, 6, 3)),
+        _table("t_quality", "ds_quality",
+               [("at", "When"), ("layer", "Layer"), ("view_name", "View"), ("expectation", "Expectation"),
+                ("passed", "Passed"), ("failed", "Failed"), ("status", "Status")], "Every expectation",
+               (0, 5, 12, 8)),
     ])
     checks = _page("checksums", "Checksums", [
         _text("checks_title", ["## Checksums: source, bronze and n:1\n", "\n",
@@ -195,4 +231,4 @@ def build(project: str) -> dict:
                 ("checked_at", "Checked")], "Every table of every LOB", (0, 7, 12, 9)),
     ])
     return {"datasets": [{"name": n, "displayName": n[3:], "queryLines": q} for n, q in DATASETS.items()],
-            "pages": [changes, pipelines, latency, checks], "uiSettings": {"theme": THEME}}
+            "pages": [changes, pipelines, latency, quality, checks], "uiSettings": {"theme": THEME}}

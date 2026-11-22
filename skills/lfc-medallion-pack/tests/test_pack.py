@@ -15,7 +15,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
-from lfc_medallion_pack import check, cli, lobs, pack, plan, timings, verify  # noqa: E402
+from lfc_medallion_pack import check, cli, dashboard, lobs, pack, plan, timings, verify  # noqa: E402
 
 COLS = {"branch": ["b_id", "b_balance", "b_filler"], "teller": ["t_id", "t_b_id", "t_balance", "t_filler"],
         "account": ["a_id", "a_b_id", "a_balance", "a_filler"],
@@ -140,6 +140,27 @@ class Verify(unittest.TestCase):
         sql = open(os.path.join(pack.load("tpcb")["dir"], "gold.sql")).read()
         self.assertEqual(verify.mart_names(sql), ["transactions", "unusual_by_hour", "lob_summary"])
         self.assertEqual(verify.bind("(:base + :teller) / 1000.0", {"base": 5, "teller": 60}), "(5 + 60) / 1000.0")
+
+
+class Dashboard(unittest.TestCase):
+    def test_every_widget_binds_its_fields_and_rows_fill_the_grid(self):
+        d = dashboard.build("p")
+        names = {x["name"] for x in d["datasets"]}
+        for page in d["pages"]:
+            self.assertEqual(page["layoutVersion"], "GRID_V1")
+            rows: dict[int, int] = {}
+            for item in page["layout"]:
+                w, pos = item["widget"], item["position"]
+                rows[pos["y"]] = rows.get(pos["y"], 0) + pos["width"]
+                for q in w.get("queries", []):
+                    self.assertIn(q["query"]["datasetName"], names)
+                    fields = {f["name"] for f in q["query"]["fields"]}
+                    enc = w["spec"]["encodings"]
+                    bound = [c["fieldName"] for c in enc.get("columns", enc.get("fields", []))] + \
+                        [v["fieldName"] for k, v in enc.items() if isinstance(v, dict) and "fieldName" in v] + \
+                        [f["fieldName"] for v in enc.values() if isinstance(v, dict) for f in v.get("fields", [])]
+                    self.assertTrue(set(bound) <= fields, (w["name"], set(bound) - fields))
+            self.assertTrue(all(v == 12 for v in rows.values()), (page["name"], rows))
 
 
 class Timings(unittest.TestCase):

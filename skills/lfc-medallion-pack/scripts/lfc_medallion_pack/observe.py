@@ -14,6 +14,11 @@ for a dashboard (and Genie). Nothing names a model: the modules, LOBs, tables an
   v_latency     each batch of changes (the source job's batch step), and when its LOB's rows next reached bronze, the
                 n:1 merge, and gold (the transform's next completed update): seconds after the batch
   v_checksums   the latest checksum of each table of each LOB: rows and digest in the source, bronze and n:1
+  v_refresh     each view of each transform update: its layer, the refresh technique chosen (row-based, no-op,
+                append-only, an aggregate, complete recompute) and why the cheaper ones weren't
+  v_quality     each expectation of each view of each transform update: rows passed and failed
+  v_latency_table  each batch, and when its changes first reached each table or view of each stage after it: bronze
+                and the n:1 merge for the batch's LOB, the n:1 pipeline, silver and gold views (every LOB's): seconds
 """
 from __future__ import annotations
 
@@ -125,17 +130,69 @@ def table_sql(plan: dict, catalog: str, control: str) -> list[str]:
     return out
 
 
+def _layer(module: str, prefix: str) -> str:
+    gold = f"{prefix}_{module}_gold"
+    ds = "element_at(split(origin.flow_name, '\\\\.'), -1)"
+    return (f"CASE WHEN {ds} LIKE 'all\\\\_%' THEN '3 n1 pipeline' WHEN origin.flow_name LIKE {_s(f'%.{gold}.%')} "
+            f"THEN '5 gold' ELSE '4 silver' END")
+
+
+def refresh_sql(plan: dict, catalog: str, prefix: str, control: str) -> str:
+    ctl = f"`{catalog}`.`{control}`"
+    one = []
+    for m in plan["modules"]:
+        n = m["module"]
+        one.append(
+            f"SELECT {_s(n)} AS module, origin.update_id, timestamp AS at, {_layer(n, prefix)} AS layer, "
+            f"element_at(split(origin.flow_name, '\\\\.'), -1) AS view_name, "
+            f"from_json(details:planning_information.technique_information, "
+            f"'array<struct<maintenance_type:string,is_chosen:boolean,"
+            f"incrementalization_issues:array<struct<issue_type:string>>>>') AS t "
+            f"FROM {ctl}.`events_{n}_transform` WHERE event_type = 'planning_information'")
+    return (f"CREATE OR REPLACE VIEW {ctl}.v_refresh AS\nWITH p AS ({' UNION ALL '.join(one)})\n"
+            "SELECT module, update_id, at, layer, view_name, "
+            "regexp_replace(element_at(filter(t, x -> x.is_chosen), 1).maintenance_type, '^MAINTENANCE_TYPE_', '') "
+            "AS technique, array_join(array_distinct(flatten(transform(filter(t, x -> NOT coalesce(x.is_chosen, "
+            "false)), x -> transform(coalesce(x.incrementalization_issues, array()), i -> i.issue_type)))), ', ') "
+            "AS not_chosen_because FROM p")
+
+
+def quality_sql(plan: dict, catalog: str, prefix: str, control: str) -> str:
+    ctl = f"`{catalog}`.`{control}`"
+    one = []
+    for m in plan["modules"]:
+        n = m["module"]
+        one.append(
+            f"SELECT {_s(n)} AS module, origin.update_id, timestamp AS at, {_layer(n, prefix)} AS layer, "
+            f"element_at(split(origin.flow_name, '\\\\.'), -1) AS view_name, explode(from_json("
+            f"details:flow_progress.data_quality:expectations, "
+            f"'array<struct<name:string,passed_records:bigint,failed_records:bigint>>')) AS e "
+            f"FROM {ctl}.`events_{n}_transform` WHERE event_type = 'flow_progress' "
+            f"AND details:flow_progress.data_quality:expectations IS NOT NULL")
+    return (f"CREATE OR REPLACE VIEW {ctl}.v_quality AS SELECT module, update_id, at, layer, view_name, "
+            f"e.name AS expectation, e.passed_records AS passed, e.failed_records AS failed FROM "
+            f"({' UNION ALL '.join(one)})")
+
+
+def latency_table_sql(catalog: str, control: str) -> str:
+    ctl = f"`{catalog}`.`{control}`"
+    return (f"CREATE OR REPLACE VIEW {ctl}.v_latency_table AS\n"
+            f"SELECT b.module, b.lob, b.at AS batch_at, c.stage, c.table_name, MIN(c.at) AS reached_at, "
+            f"ROUND((unix_millis(MIN(c.at)) - unix_millis(b.at)) / 1000.0, 1) AS seconds\n"
+            f"FROM {ctl}.batches b JOIN {ctl}.v_changes c ON c.module = b.module AND c.at > b.at "
+            f"AND (c.lob = b.lob OR c.lob IS NULL) AND c.stage <> '1 source capture' "
+            f"AND (c.stage NOT IN ('2 bronze') OR c.kind = 'cdc')\n"
+            f"GROUP BY b.module, b.lob, b.at, c.stage, c.table_name")
+
+
 def view_sql(plan: dict, catalog: str, prefix: str, control: str) -> list[str]:
     return [change_sql(plan, catalog, prefix, control), update_sql(plan, catalog, control),
-            latency_sql(catalog, control), checksum_sql(catalog, control)]
+            latency_sql(catalog, control), checksum_sql(catalog, control), refresh_sql(plan, catalog, prefix, control),
+            quality_sql(plan, catalog, prefix, control), latency_table_sql(catalog, control)]
 
 
 def create_views(spark, plan: dict, catalog: str, prefix: str, control: str) -> list[str]:
     ensure_tables(spark, plan, catalog, control)
-    out = []
-    for name, sql in (("v_changes", change_sql(plan, catalog, prefix, control)),
-                      ("v_updates", update_sql(plan, catalog, control)),
-                      ("v_latency", latency_sql(catalog, control)), ("v_checksums", checksum_sql(catalog, control))):
+    for sql in view_sql(plan, catalog, prefix, control):
         spark.sql(sql)
-        out.append(name)
-    return out
+    return ["v_changes", "v_updates", "v_latency", "v_checksums", "v_refresh", "v_quality", "v_latency_table"]
