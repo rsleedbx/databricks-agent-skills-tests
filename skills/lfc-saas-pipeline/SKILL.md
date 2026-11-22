@@ -27,7 +27,7 @@ connection page); each defaults to `lfcsaas-<connector>`.
 
 | Way | Files | When |
 |---|---|---|
-| Bundle | [bundles/](bundles) (one folder per connector) | a repeatable deployment: the schema, the pipeline, a job (paused) that runs it daily, CAN_VIEW for `users` |
+| Bundle | [bundles/](bundles) (one folder per connector) | a repeatable deployment: the schema and the pipeline, CAN_VIEW for `users`; `-t scheduled` adds a job (paused) that runs it daily |
 | Notebook | [notebooks/](notebooks) (one per connector) | the docs' notebook, short: run all, or run it as a job with parameters |
 | Python (REST API) | `lfc_saas_pipeline` | tests from a notebook or a laptop: validate-only updates, `refresh_selection`, waiting for an update, editing or deleting a pipeline |
 
@@ -42,8 +42,10 @@ databricks bundle run onepassword_event_logs --profile <p>
 ```
 
 From the workspace: put the folder in a Git folder, open `databricks.yml`, click the deployments icon, **Deploy**,
-then run the pipeline from the **Bundle resources** pane. The `dev` target is in development mode, so resource names
-get a `dev_<user>_` prefix; add a target without `mode: development` for shared names.
+then run the pipeline from the **Bundle resources** pane. The default `dev` target (for tests) is the schema and the
+pipeline, in development mode, so resource names get a `dev_<user>_` prefix. The `scheduled` target
+(`databricks bundle deploy -t scheduled`) adds a daily job (paused until you unpause it), with shared names; it's
+left out of the default because every job counts toward the workspace's job quota.
 
 ## Run the notebook
 

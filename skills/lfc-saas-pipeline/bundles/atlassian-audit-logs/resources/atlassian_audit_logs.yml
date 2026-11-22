@@ -19,18 +19,3 @@ resources:
       permissions:
         - level: CAN_VIEW
           group_name: users
-
-  jobs:
-    atlassian_audit_logs_refresh:
-      name: ${var.schema}_refresh
-      schedule:
-        quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
-        timezone_id: UTC
-        pause_status: PAUSED
-      tasks:
-        - task_key: refresh
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.atlassian_audit_logs.id}
-      permissions:
-        - level: CAN_VIEW
-          group_name: users
