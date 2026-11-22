@@ -41,6 +41,7 @@ import yaml
 from . import lobs as lobs_mod
 from . import pack as pack_mod
 
+DIMENSION_ROLES = ("dimension", "lookup", "bridge")
 TABLES_PER_PIPELINE = 250      # recommended; a pipeline takes at most 999 source tables (1,000 with its staging table)
 HARD_TABLES = 999
 
@@ -68,14 +69,28 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     limit = int(m.get("tables_per_pipeline") or project["limits"]["tables_per_pipeline"])
     if limit > HARD_TABLES:
         raise ValueError(f"tables_per_pipeline {limit}: an ingestion pipeline takes at most {HARD_TABLES} source tables")
-    per = max(1, limit // len(p["tables"]))
     sp = project["source"]["slot_prefix"]
+    roles = p.get("roles") or {}
+    dims = [t for t in p["tables"] if roles.get(t) in DIMENSION_ROLES]
+    if m.get("split_by_role") and dims and len(dims) < len(p["tables"]):
+        # facts (fact, log, queue) and dimensions (dimension, lookup, bridge) in pipelines of their own: a busy fact
+        # doesn't wait on many idle dimensions; each class takes its own mode
+        classes = [("facts", [t for t in p["tables"] if t not in dims], m.get("fact_mode", "continuous")),
+                   ("dimensions", dims, m.get("dimension_mode", "triggered"))]
+    else:
+        classes = [("all", list(p["tables"]), m.get("mode", "triggered"))]
     groups = []
-    for k in range(math.ceil(len(items) / per)):
-        part = items[k * per:(k + 1) * per]
-        slot = f"{sp}_{name}_{k + 1}"
-        groups.append({"k": k + 1, "lobs": [x["name"] for x in part], "tables": len(part) * len(p["tables"]),
-                       "slot": slot, "publication": f"{slot}_pub"})
+    for cls, tabs, mode in classes:
+        if mode not in ("triggered", "continuous"):
+            raise ValueError(f"module {name}: mode {mode}: triggered or continuous")
+        per = max(1, limit // len(tabs))
+        for k in range(math.ceil(len(items) / per)):
+            part = items[k * per:(k + 1) * per]
+            n = len(groups) + 1
+            slot = f"{sp}_{name}_{n}"
+            groups.append({"k": n, "lobs": [x["name"] for x in part], "tables": len(part) * len(tabs),
+                           "table_names": tabs if cls != "all" else None, "class": cls, "mode": mode,
+                           "slot": slot, "publication": f"{slot}_pub"})
     return {"module": name, "pack": p["name"], "pack_dir": p["dir"], "model": p["model"],
             "source_column": p["source_column"], "tables": p["tables"], "roles": p.get("roles", {}),
             "data": bool(m.get("data", False)),
@@ -127,14 +142,18 @@ def resources(m: dict, archive: str) -> dict:
             "continuous": True, "event_log": log(gw),
             "gateway_definition": {"connection_name": "${var.connection}", "gateway_storage_catalog": "${var.catalog}",
                                    "gateway_storage_schema": ctl, "gateway_storage_name": f"${{var.prefix}}_{gw}"}}
-        objects = [{"schema": {"source_catalog": "${var.source_database}", "destination_catalog": "${var.catalog}",
-                               "source_schema": f"{n}_{lob}",
-                               "destination_schema": f"${{resources.schemas.{n}_bronze_{lob}.name}}",
-                               "table_configuration": {"scd_type": "SCD_TYPE_1"}}} for lob in g["lobs"]]
+        base = lambda lob: {"source_catalog": "${var.source_database}", "destination_catalog": "${var.catalog}",  # noqa: E731
+                            "source_schema": f"{n}_{lob}",
+                            "destination_schema": f"${{resources.schemas.{n}_bronze_{lob}.name}}",
+                            "table_configuration": {"scd_type": "SCD_TYPE_1"}}
+        if g.get("table_names"):   # this pipeline's share of each LOB's tables (split by role)
+            objects = [{"table": base(lob) | {"source_table": t}} for lob in g["lobs"] for t in g["table_names"]]
+        else:
+            objects = [{"schema": base(lob)} for lob in g["lobs"]]
         pipelines[ing] = {
             "name": f"${{var.prefix}}_{ing}", "catalog": "${var.catalog}",
             "schema": f"${{resources.schemas.{n}_bronze_{g['lobs'][0]}.name}}", "serverless": True,
-            "event_log": log(ing),
+            "event_log": log(ing), "continuous": g.get("mode") == "continuous",
             "ingestion_definition": {
                 "ingestion_gateway_id": f"${{resources.pipelines.{gw}.id}}", "source_type": "POSTGRESQL",
                 "source_configurations": [{"catalog": {"source_catalog": "${var.source_database}", "postgres": {
@@ -151,8 +170,9 @@ def resources(m: dict, archive: str) -> dict:
         "configuration": conf,
         "libraries": [{"file": {"path": "../transform/n1.py"}}] +
                      [{"file": {"path": f"../marts/{m['pack']}/{f}"}} for f in m["marts"]]}
-    ingest_tasks = [{"task_key": f"ingest_{g['k']}", "pipeline_task": {
-        "pipeline_id": f"${{resources.pipelines.{n}_ingest_{g['k']}.id}}"}} for g in m["groups"]]
+    ingest_tasks = [{"task_key": f"ingest_{g['k']}", "pipeline_task": {   # a continuous pipeline just runs
+        "pipeline_id": f"${{resources.pipelines.{n}_ingest_{g['k']}.id}}"}} for g in m["groups"]
+        if g.get("mode", "triggered") == "triggered"]
     # the merge route (lfc-medallion): merge_route classifies each table from evidence (keys, foreign keys, change
     # counters) and keeps dimensions, lookups and bridges by MERGE, facts, logs and queues in the pipeline; a module's
     # own hints (febar.yaml) override a table's role only where the evidence can't tell
@@ -168,6 +188,8 @@ def resources(m: dict, archive: str) -> dict:
                                             # only the sources whose bronze got rows since their state are read
                                             "events": ",".join(f"${{var.catalog}}.{ctl}.events_{n}_ingest_{g['k']}"
                                                                for g in m["groups"])}}}
+    if not merge_task["depends_on"]:   # every pipeline continuous: nothing to wait for
+        merge_task.pop("depends_on")
     jobs = {f"{n}_refresh": {
         "name": f"${{var.prefix}}_{n}_refresh",
         "environments": [{"environment_key": "medallion", "spec": {

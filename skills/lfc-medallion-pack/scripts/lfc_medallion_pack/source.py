@@ -82,6 +82,7 @@ def run(spark, plan: dict, project: str, database: str, role: str, connection: s
         rows += [{"module": m["module"], "tier": tier.get(r["source"])} | r for r in got]
         for g in m["groups"]:
             schemas = [f"{m['module']}_{lob}" for lob in g["lobs"]]
-            log(f"source: {g['publication']}: {cdc.publication(cur, g['publication'], schemas, log=log)}")
+            log(f"source: {g['publication']}: "
+                f"{cdc.publication(cur, g['publication'], schemas, log=log, only=g.get('table_names'))}")
             log(f"source: slot {cdc.slot(cur, g['slot'])}")
     return rows

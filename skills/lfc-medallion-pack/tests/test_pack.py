@@ -66,6 +66,21 @@ class Plan(unittest.TestCase):
         self.assertEqual(low["signals"], pack.signals(pack.load("tpcb"), "low"))
         self.assertEqual(low["source_schema"], f"bank_{low['name']}")
 
+    def test_split_by_role_puts_facts_and_dimensions_in_pipelines_of_their_own(self):
+        f = project(self.d, bank={"pack": "tpcb", "lobs": 70, "split_by_role": True})
+        pl = plan.plan(f)
+        g = [(x["class"], x["mode"], x["table_names"], x["tables"]) for x in pl["modules"][0]["groups"]]
+        self.assertEqual(g, [("facts", "continuous", ["history"], 70),
+                             ("dimensions", "triggered", ["branch", "teller", "account"], 210)])   # 250 // 3 = 83 LOBs
+        r = plan.resources(pl["modules"][0], "https://example.invalid/a.zip")["resources"]
+        facts, dims = r["pipelines"]["bank_ingest_1"], r["pipelines"]["bank_ingest_2"]
+        self.assertTrue(facts["continuous"])
+        self.assertFalse(dims["continuous"])
+        self.assertEqual(facts["ingestion_definition"]["objects"][0]["table"]["source_table"], "history")
+        self.assertEqual([t["task_key"] for t in r["jobs"]["bank_refresh"]["tasks"]], ["ingest_2", "merge", "transform"])
+        mixed = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 70}))["modules"][0]["groups"]
+        self.assertEqual([(x["class"], x["table_names"]) for x in mixed], [("all", None), ("all", None)])   # the default
+
     def test_limits_refused(self):
         f = project(self.d, bank={"pack": "tpcb", "lobs": 3})
         p = yaml.safe_load(open(f))

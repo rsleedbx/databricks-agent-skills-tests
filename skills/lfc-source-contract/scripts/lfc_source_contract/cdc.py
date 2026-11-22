@@ -66,12 +66,14 @@ def _tables(cur, schemas: list[str]) -> list[str]:
                                               "AND n.nspname = ANY(%s::text[]) ORDER BY 1, 2", ("{" + ",".join(schemas) + "}",))]
 
 
-def publication(cur, name: str, schemas: list[str], log=print) -> str:
-    """Every table in the schemas in publication `name`; returns what it did: created, added N, or kept."""
+def publication(cur, name: str, schemas: list[str], log=print, only=None) -> str:
+    """Every table in the schemas in publication `name` (only: just the tables of these names, in each schema: one
+    pipeline's share when a schema's tables are split between pipelines); returns what it did: created, added N, or
+    kept."""
     if not schemas:
         raise ValueError("publication: no schemas")
     _autocommit(cur)
-    tables = _tables(cur, schemas)
+    tables = [t for t in _tables(cur, schemas) if not only or t.split(".", 1)[1] in set(only)]
     if not tables:
         raise ValueError(f"publication: no tables in {', '.join(schemas)}")
     have = _members(cur, name)
