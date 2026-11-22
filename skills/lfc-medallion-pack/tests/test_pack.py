@@ -79,6 +79,8 @@ class Plan(unittest.TestCase):
         self.assertFalse(dims["continuous"])
         self.assertEqual(facts["ingestion_definition"]["objects"][0]["table"]["source_table"], "history")
         self.assertEqual([t["task_key"] for t in r["jobs"]["bank_refresh"]["tasks"]], ["ingest_2", "merge", "transform"])
+        facts_job = r["jobs"]["bank_facts"]["tasks"][0]["notebook_task"]["base_parameters"]
+        self.assertEqual(facts_job["selection"], "all_history,silver_transactions,transactions,unusual_by_hour,lob_summary")
         mixed = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 70}))["modules"][0]["groups"]
         self.assertEqual([(x["class"], x["table_names"]) for x in mixed], [("all", None), ("all", None)])   # the default
 

@@ -26,6 +26,24 @@ def columns(model: str) -> dict[str, list[str]]:
     return {t["name"]: [c["name"] for c in t["columns"]] for t in yaml.safe_load(model_schema(model, 1))["tables"]}
 
 
+def _split(sql: str) -> list[str]:
+    """The statements of a SQL text, split at the `;` outside quoted strings (a COMMENT 'a; b' is one statement)."""
+    out, cur, quote = [], [], None
+    for ch in sql:
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'`\"":
+            quote = ch
+        elif ch == ";":
+            out.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    out.append("".join(cur))
+    return out
+
+
 def statements(sql: str) -> list[tuple[str, str]]:
     """(view name, its SELECT) per statement, -- comments dropped and ${x} settings as placeholders."""
     sql = "\n".join(ln.split("--")[0] if not ln.lstrip().startswith("--") else "" for ln in sql.splitlines())
@@ -33,11 +51,36 @@ def statements(sql: str) -> list[tuple[str, str]]:
     sql = re.sub(r"\$\{[\w]+\}\.\$\{[\w]+\}\.", "", sql)
     sql = re.sub(r"\$\{([\w]+)\}", r"\1", sql)
     out = []
-    for part in [p for p in sql.split(";") if p.strip()]:
+    for part in [p for p in _split(sql) if p.strip()]:
         m, b = STMT.search(part), BODY.search(part)
         if m and b:
             out.append((m.group(1).split(".")[-1], part[b.start() + 3:].strip()))
     return out
+
+
+def reads(p: dict) -> dict[str, set[str]]:
+    """Each marts view and the tables and views it reads (by their last name part: all_history, silver_accounts)."""
+    import sqlglot
+    from sqlglot import exp
+
+    from .pack import mart_sql
+    out = {}
+    for sql in mart_sql(p).values():
+        for view, body in statements(sql):
+            tree = sqlglot.parse_one(body, read="databricks")
+            out[view] = {t.name for t in tree.find_all(exp.Table)}
+    return out
+
+
+def downstream(p: dict, start: set[str]) -> list[str]:
+    """The marts views that read any of `start`, directly or through another view, in the marts' order: what a
+    refresh of those tables must refresh too."""
+    r, got = reads(p), set()
+    while True:
+        more = {v for v, ins in r.items() if ins & (set(start) | got)} - got
+        if not more:
+            return [v for v in r if v in got]
+        got |= more
 
 
 def check(p: dict, cols: dict[str, list[str]] | None = None) -> list[str]:

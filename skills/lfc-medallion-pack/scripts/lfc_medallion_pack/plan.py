@@ -95,7 +95,16 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
             "data": bool(m.get("data", False)),
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
             "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit,
-            "hints": m.get("hints") or {}, "dimension_tables": dims}
+            "hints": m.get("hints") or {}, "dimension_tables": dims,
+            "fact_chain": _fact_chain(p, facts) if m.get("split_by_role") and dims and facts else []}
+
+
+def _fact_chain(p: dict, facts: list[str]) -> list[str]:
+    """The transform's datasets a fact-only refresh must update: the facts' n:1 views, then every marts view that reads
+    them (check.downstream: from the marts' SQL)."""
+    from .check import downstream
+    n1 = [f"all_{t}" for t in facts]
+    return n1 + downstream(p, set(n1))
 
 
 def plan(project_path: str) -> dict:
@@ -199,6 +208,13 @@ def resources(m: dict, archive: str) -> dict:
         "tasks": ingest_tasks + [merge_task,
             {"task_key": "transform", "depends_on": [{"task_key": "merge"}],
              "pipeline_task": {"pipeline_id": f"${{resources.pipelines.{n}_transform.id}}"}}]},
+        # the facts cycle (a split module): the fact chain of the transform alone, as often as its schedule says
+        **({f"{n}_facts": {"name": f"${{var.prefix}}_{n}_facts", "max_concurrent_runs": 1, "tasks": [
+            {"task_key": "refresh_facts", "notebook_task": {"notebook_path": "../transform/refresh_facts.py",
+                                                            "base_parameters": {
+                                                                "pipeline": f"${{var.prefix}}_{n}_transform",
+                                                                "selection": ",".join(m["fact_chain"])}}}]}}
+           if m.get("fact_chain") else {}),
         # verify on its own: the checksums, the CDC positions and the views, off the refresh's critical path
         f"{n}_verify": {"name": f"${{var.prefix}}_{n}_verify", "tasks": [
             {"task_key": "verify",
