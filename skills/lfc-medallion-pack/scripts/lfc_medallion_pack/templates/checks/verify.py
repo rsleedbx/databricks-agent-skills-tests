@@ -34,6 +34,8 @@ plan = read_plan("../source/plan.json")
 c = {k: dbutils.widgets.get(k) for k in ("connection", "database", "control")}
 sums = checksum.run(spark, plan, w["module"], w["catalog"], w["prefix"], c["connection"], c["database"])
 checksum.save(spark, sums, w["catalog"], c["control"])   # the dashboard reads <control>.checksums
+from lfc_medallion_pack import cdc
+cdc.save(spark, cdc.run(spark, plan, w["prefix"], c["connection"], c["database"]), w["catalog"], c["control"])
 from lfc_medallion_pack import observe
 observe.create_views(spark, plan, w["catalog"], w["prefix"], c["control"])   # v_changes, v_updates, v_latency, ...
 off = [x for x in sums if x["status"] != "match"]

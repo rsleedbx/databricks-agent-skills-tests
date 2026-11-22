@@ -43,9 +43,14 @@ DATASETS = {
         "SELECT module, lob, batch_at, stage, table_name, reached_at, seconds FROM v_latency_table ",
         "ORDER BY batch_at DESC, stage, table_name"],
     "ds_checksums": [
-        "SELECT module, lob, `table` AS table_name, status, CASE WHEN status = 'match' THEN 1 ELSE 0 END AS matched, ",
+        "SELECT module, lob, `table` AS table_name, COALESCE(route, 'pipeline') AS route, status, ",
+        "CASE WHEN status = 'match' THEN 1 ELSE 0 END AS matched, ",
         "source_rows, bronze_rows, n1_rows, source_digest, bronze_digest, n1_digest, checked_at ",
         "FROM v_checksums ORDER BY status DESC, module, lob, table_name"],
+    "ds_cdc": [
+        "SELECT module, gateway, scope, COALESCE(lob, '(the slot)') AS lob, table_name, source_lsn, target_lsn, ",
+        "slot_confirmed_lsn, delta_bytes, CASE WHEN scope = 'slot' THEN delta_bytes ELSE 0 END AS slot_delta_bytes, ",
+        "state, last_change_time, checked_at FROM v_cdc ORDER BY scope, delta_bytes DESC"],
 }
 
 THEME = {"canvasBackgroundColor": {"light": "#FCFCFC", "dark": "#1F272D"},
@@ -225,10 +230,26 @@ def build(project: str) -> dict:
         _counter("k_ck_rows", "ds_checksums", "source_rows", "Source rows checked", (4, 4, 4, 3)),
         _counter("k_ck_n1", "ds_checksums", "n1_rows", "n:1 rows checked", (8, 4, 4, 3)),
         _table("t_checksums", "ds_checksums",
-               [("module", "Module"), ("lob", "LOB"), ("table_name", "Table"), ("status", "Status"),
+               [("module", "Module"), ("lob", "LOB"), ("table_name", "Table"), ("route", "n:1 route"),
+                ("status", "Status"),
                 ("source_rows", "Source rows"), ("bronze_rows", "Bronze rows"), ("n1_rows", "n:1 rows"),
                 ("source_digest", "Source digest"), ("bronze_digest", "Bronze digest"), ("n1_digest", "n:1 digest"),
                 ("checked_at", "Checked")], "Every table of every LOB", (0, 7, 12, 9)),
     ])
+    cdc = _page("cdc", "CDC position", [
+        _text("cdc_title", ["## Where change capture stands: source, target, delta\n", "\n",
+                            "Per gateway (its replication slot): the source's newest WAL position, the gateway's "
+                            "committed position (its state) and the bytes between them, the capture lag. Per table: "
+                            "the LSN of the last change the gateway published; its delta is the WAL written since, "
+                            "which grows on a quiet table though nothing is pending."], 0, 3),
+        _filter("f_cdc_module", "ds_cdc", "module", "Module", (0, 3, 6, 2)),
+        _filter("f_cdc_lob", "ds_cdc", "lob", "LOB", (6, 3, 6, 2)),
+        _counter("k_cdc_lag", "ds_cdc", "slot_delta_bytes", "Capture lag (bytes of WAL, all slots)", (0, 5, 12, 3)),
+        _table("t_cdc", "ds_cdc",
+               [("scope", "Scope"), ("gateway", "Gateway"), ("lob", "LOB"), ("table_name", "Slot or table"),
+                ("source_lsn", "Source LSN"), ("target_lsn", "Target LSN"), ("delta_bytes", "Delta (bytes)"),
+                ("slot_confirmed_lsn", "Slot confirmed"), ("state", "State"), ("last_change_time", "Last change"),
+                ("checked_at", "Checked")], "Source, target and delta", (0, 8, 12, 9)),
+    ])
     return {"datasets": [{"name": n, "displayName": n[3:], "queryLines": q} for n, q in DATASETS.items()],
-            "pages": [changes, pipelines, latency, quality, checks], "uiSettings": {"theme": THEME}}
+            "pages": [changes, pipelines, latency, quality, checks, cdc], "uiSettings": {"theme": THEME}}

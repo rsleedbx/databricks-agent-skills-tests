@@ -94,6 +94,10 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, connection: s
     m = next(x for x in plan["modules"] if x["module"] == module)
     cols = model_columns(m["model"])
     col, silver = m["source_column"], f"`{catalog}`.`{prefix}_{module}_silver`"
+    route = {}   # each table's route, from the merge task's plan (lfc-medallion): merge or pipeline
+    if spark.sql(f"SHOW TABLES IN {silver} LIKE '_lfc_medallion_plan'").collect():
+        route = {r.table_name: r.route for r in spark.sql(
+            f"SELECT DISTINCT table_name, route FROM {silver}._lfc_medallion_plan").collect()}
     out = []
     for x in m["lobs"]:
         if lobs and x["name"] not in lobs:
@@ -109,7 +113,8 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, connection: s
             got = {"source": (int(s.n_rows), int(s.digest)), "bronze": (int(b.n_rows), int(b.digest)),
                    "n1": (int(n.n_rows), int(n.digest))}
             off = [k for k in ("bronze", "n1") if got[k] != got["source"]]
-            out.append({"module": module, "lob": x["name"], "table": t, "source_rows": got["source"][0],
+            out.append({"module": module, "lob": x["name"], "table": t, "route": route.get(t, "pipeline"),
+                        "source_rows": got["source"][0],
                         "bronze_rows": got["bronze"][0], "n1_rows": got["n1"][0], "source_digest": got["source"][1],
                         "bronze_digest": got["bronze"][1], "n1_digest": got["n1"][1],
                         "status": "match" if not off else "differs: " + ", ".join(

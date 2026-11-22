@@ -17,6 +17,7 @@ for a dashboard (and Genie). Nothing names a model: the modules, LOBs, tables an
   v_refresh     each view of each transform update: its layer, the refresh technique chosen (row-based, no-op,
                 append-only, an aggregate, complete recompute) and why the cheaper ones weren't
   v_quality     each expectation of each view of each transform update: rows passed and failed
+  v_cdc         the latest CDC position per gateway (its slot) and per table: source, target and delta (cdc.py)
   v_latency_table  each batch, and when its changes first reached each table or view of each stage after it: bronze
                 and the n:1 merge for the batch's LOB, the n:1 pipeline, silver and gold views (every LOB's): seconds
 """
@@ -124,8 +125,11 @@ def table_sql(plan: dict, catalog: str, control: str) -> list[str]:
               "done STRING, version_from BIGINT, version_to BIGINT, inserted BIGINT, updated BIGINT, deleted BIGINT, "
               "seconds DOUBLE, at TIMESTAMP)" for m in plan["modules"]]
     out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.batches (module STRING, lob STRING, rows BIGINT, at TIMESTAMP)")
+    out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.cdc_positions (checked_at TIMESTAMP, module STRING, "
+               "gateway STRING, scope STRING, lob STRING, table_name STRING, source_lsn STRING, target_lsn STRING, "
+               "slot_confirmed_lsn STRING, delta_bytes BIGINT, state STRING, last_change_time TIMESTAMP)")
     out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.checksums (checked_at TIMESTAMP, module STRING, lob STRING, "
-               "`table` STRING, source_rows BIGINT, bronze_rows BIGINT, n1_rows BIGINT, source_digest BIGINT, "
+               "`table` STRING, route STRING, source_rows BIGINT, bronze_rows BIGINT, n1_rows BIGINT, source_digest BIGINT, "
                "bronze_digest BIGINT, n1_digest BIGINT, status STRING)")
     return out
 
@@ -185,14 +189,22 @@ def latency_table_sql(catalog: str, control: str) -> str:
             f"GROUP BY b.module, b.lob, b.at, c.stage, c.table_name")
 
 
+def cdc_sql(catalog: str, control: str) -> str:
+    ctl = f"`{catalog}`.`{control}`"
+    return (f"CREATE OR REPLACE VIEW {ctl}.v_cdc AS SELECT * EXCEPT (rn) FROM (SELECT *, ROW_NUMBER() OVER "
+            f"(PARTITION BY module, gateway, scope, lob, table_name ORDER BY checked_at DESC) AS rn "
+            f"FROM {ctl}.cdc_positions) WHERE rn = 1")
+
+
 def view_sql(plan: dict, catalog: str, prefix: str, control: str) -> list[str]:
     return [change_sql(plan, catalog, prefix, control), update_sql(plan, catalog, control),
             latency_sql(catalog, control), checksum_sql(catalog, control), refresh_sql(plan, catalog, prefix, control),
-            quality_sql(plan, catalog, prefix, control), latency_table_sql(catalog, control)]
+            quality_sql(plan, catalog, prefix, control), latency_table_sql(catalog, control), cdc_sql(catalog, control)]
 
 
 def create_views(spark, plan: dict, catalog: str, prefix: str, control: str) -> list[str]:
     ensure_tables(spark, plan, catalog, control)
     for sql in view_sql(plan, catalog, prefix, control):
         spark.sql(sql)
-    return ["v_changes", "v_updates", "v_latency", "v_checksums", "v_refresh", "v_quality", "v_latency_table"]
+    return ["v_changes", "v_updates", "v_latency", "v_checksums", "v_refresh", "v_quality", "v_latency_table",
+            "v_cdc"]
