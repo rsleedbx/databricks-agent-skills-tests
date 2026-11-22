@@ -79,7 +79,7 @@ def run(spark, plan: dict, prefix: str, connection: str, database: str, workspac
                         "delta_bytes": None if not (now and tgt) else lsn_bytes(now) - lsn_bytes(tgt),
                         "last_change_at": None, "state": "no slot" if s is None else
                         "active" if s.active else "inactive"})
-            if not found:
+            if not found or not os.path.isdir(f"{found[1]}/cdc"):   # no change published yet: no positions per table
                 continue
             lob = {f"{m['module']}_{x}": x for x in g["lobs"]}
             for r in spark.sql(
