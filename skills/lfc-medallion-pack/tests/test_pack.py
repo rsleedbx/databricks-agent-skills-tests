@@ -133,6 +133,7 @@ class Plan(unittest.TestCase):
         plan.render(f, "https://example.invalid/a.zip")
         self.assertTrue(open(os.path.join(self.d, "marts", "tpcb", "gold.sql")).read().endswith("-- mine\n"))
         pl = plan.read_plan(os.path.join(self.d, "source", "plan.json"))
+        self.assertEqual(pl["archive"], "https://example.invalid/a.zip")   # setup_source installs from it
         self.assertEqual([m["module"] for m in pl["modules"]], ["bank", "scale"])
 
     def test_init_fills_the_templates_once(self):

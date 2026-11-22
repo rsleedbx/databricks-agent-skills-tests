@@ -27,8 +27,9 @@ variables:
     description: The lakehouse's control schema, catalog.schema (the batches the dashboard's latency starts from)
     default: main.@@NAME@@_control
   archive:
-    description: The tests repo archive the notebook installs the packages from (a branch or tag pins a version)
-    default: @@ARCHIVE@@
+    description: The tests repo archive the notebook installs the packages from; empty, the plan's (the project file's
+      archive, written into plan.json by render)
+    default: ""
 
 resources:
   postgres_projects:
@@ -46,6 +47,7 @@ resources:
         - {name: step, default: source}       # source; batch (rows changes per LOB with data); drop_slots when done
         - {name: rows, default: "0"}
         - {name: modules, default: ""}        # empty: every module of plan.json
+        - {name: tables, default: facts}      # a batch's tables: facts (not the dimensions), or all
       tasks:
         - task_key: source
           notebook_task:
@@ -54,7 +56,8 @@ resources:
                               connection: "${var.connection}", writer: "${var.writer}",
                               jdbc_connection: "${var.jdbc_connection}", archive: "${var.archive}",
                               modules: "{{job.parameters.modules}}", step: "{{job.parameters.step}}",
-                              rows: "{{job.parameters.rows}}", control: "${var.control}"}
+                              rows: "{{job.parameters.rows}}", control: "${var.control}",
+                              tables: "{{job.parameters.tables}}"}
 
 targets:
   dev:

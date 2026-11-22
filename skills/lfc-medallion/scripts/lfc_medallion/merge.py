@@ -338,13 +338,46 @@ def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
             "whole": last is None or last < 0 or refreshed, "changed": changed}
 
 
-def _counts(spark, rows: str, source_column: str) -> dict:
-    """{source: (inserted, updated, deleted)} of the change rows about to be merged."""
-    got = _rows(spark, f"SELECT {_q(source_column)} AS s, SUM(CASE WHEN `__lfc_change` = 'insert' THEN 1 ELSE 0 END) "
-                       "AS i, SUM(CASE WHEN `__lfc_change` = 'update_postimage' THEN 1 ELSE 0 END) AS u, "
-                       "SUM(CASE WHEN `__lfc_change` = 'delete' THEN 1 ELSE 0 END) AS d "
-                       f"FROM ({rows}) GROUP BY 1")
+def _head(spark, tgt: str) -> int:
+    """The table's latest version (one history row: metadata)."""
+    return int(_rows(spark, f"SELECT version FROM (DESCRIBE HISTORY {tgt} LIMIT 1)")[0].version)
+
+
+def _merged_counts(spark, tgt: str, source_column: str, before: int | None) -> dict | None:
+    """{source: (inserted, updated, deleted)} of the MERGE just run on `tgt` (its version was `before`), from the
+    target's own change feed for the versions after `before` (TARGET_PROPERTIES turns it on): only the files the MERGE
+    wrote, where counting the change rows first would read every source's change feed a second time. Only this
+    table's thread writes `tgt`. {} when the MERGE committed nothing; None when the feed can't be read (unknown)."""
+    if before is None:
+        return None
+    try:
+        v = _head(spark, tgt)
+        if v <= before:
+            return {}
+        got = _rows(spark, f"SELECT {_q(source_column)} AS s, "
+                           "SUM(CASE WHEN _change_type = 'insert' THEN 1 ELSE 0 END) AS i, "
+                           "SUM(CASE WHEN _change_type = 'update_postimage' THEN 1 ELSE 0 END) AS u, "
+                           "SUM(CASE WHEN _change_type = 'delete' THEN 1 ELSE 0 END) AS d "
+                           f"FROM table_changes({spark_string(tgt.replace('`', ''))}, "
+                           f"{before + 1}, {v}) GROUP BY 1")
+    except Exception:  # noqa: BLE001  a target from before, without the feed
+        return None
     return {r.s: (int(r.i or 0), int(r.u or 0), int(r.d or 0)) for r in got}
+
+
+UNKNOWN = (None, None, None)   # a source's counts when the target's feed couldn't say
+
+
+def _of(counts: dict | None, source: str) -> tuple:
+    return UNKNOWN if counts is None else counts.get(source, (0, 0, 0))
+
+
+def _before(spark, tgt: str) -> int | None:
+    """The target's version before a MERGE; None when its history can't be read (the counts are then unknown)."""
+    try:
+        return _head(spark, tgt)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
@@ -399,24 +432,26 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
                                                   i["now"]) for i in part)
             try:
                 t0 = time.time()
-                n = _counts(spark, rows, source_column)
+                before = _before(spark, tgt)
                 spark.sql(merge_into(tgt, rows, source_column, list(key), list(cols)))
+                n = _merged_counts(spark, tgt, source_column, before)
             # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
             except Exception:  # noqa: BLE001
                 for i in part:
                     try:
                         t1 = time.time()
                         one = changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"])
-                        c = _counts(spark, one, source_column).get(i["s"], (0, 0, 0))
+                        before = _before(spark, tgt)
                         spark.sql(merge_into(tgt, one, source_column, list(key), list(cols)))
-                        _done(logged, report, run_id, out_name, i, "merged", c, t1)
+                        _done(logged, report, run_id, out_name, i, "merged",
+                              _of(_merged_counts(spark, tgt, source_column, before), i["s"]), t1)
                     except Exception as e:  # noqa: BLE001
                         _copy(spark, tgt, i, source_column, logged, run_id, out_name, report,
                               f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})")
                     saves.append((i["s"], i["now"], i["tid"], i["key"]))
                 continue
             for i in part:   # seconds: the shared MERGE's, for every source in it
-                _done(logged, report, run_id, out_name, i, "merged", n.get(i["s"], (0, 0, 0)), t0)
+                _done(logged, report, run_id, out_name, i, "merged", _of(n, i["s"]), t0)
                 saves.append((i["s"], i["now"], i["tid"], i["key"]))
     finally:
         _save_states(spark, catalog, target, out_name, saves, read_at)

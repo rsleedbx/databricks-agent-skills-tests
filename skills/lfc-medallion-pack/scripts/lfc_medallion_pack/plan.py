@@ -281,6 +281,7 @@ def render(project_path: str, archive: str, out: str | None = None) -> dict:
     written.append(f)
     keep = dict(pl)
     keep["modules"] = [{k: v for k, v in m.items() if k != "pack_dir"} for m in pl["modules"]]
+    keep["archive"] = archive   # the source job installs from it too (setup_source), so the project file names it once
     os.makedirs(os.path.join(out, "source"), exist_ok=True)
     with open(os.path.join(out, "source", "plan.json"), "w") as fh:
         json.dump(keep, fh, indent=1)
