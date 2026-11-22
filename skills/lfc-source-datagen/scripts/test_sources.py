@@ -99,6 +99,21 @@ class SqlFiles(unittest.TestCase):
             text = src.read_sql(f"{m}-verify.sql")
             self.assertEqual(len(src.statements(text)), len(re.findall(r"^SELECT '", text, re.MULTILINE)), m)
 
+    def test_scaling_rules_only_at_a_whole_scale_factor(self):   # SF 0.01: one branch, one teller
+        class Cur:
+            def __init__(self):
+                self.ran = []
+
+            def execute(self, q, *a):
+                self.ran.append(q)
+
+            def fetchall(self):
+                return [("bad x", 1)] if src.WHOLE_SF in self.ran[-1] else [("bad y", 0)]
+        for sf, want in ((0.01, 0), (1, 2), (2, 2), (1.5, 0)):
+            cur = Cur()
+            self.assertEqual(src._verify(cur, "tpcb", "c", ["branch", "teller", "account", "history"], sf), want, sf)
+        self.assertTrue(any("branch is not its teller" in q for q in cur.ran))   # relationships: at any SF
+
     def test_lead_times_and_labels(self):
         steps = tp.steps("anonymous")("a", "1,2,3,4,5,6,7,8,9")
         body = "\n".join(steps)
