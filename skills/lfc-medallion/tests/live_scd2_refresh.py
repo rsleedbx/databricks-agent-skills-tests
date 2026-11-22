@@ -10,7 +10,10 @@ across the refreshes, and the target must:
   4. have no two rows with one key (source, id, start);
   5. not change on a second run.
 Prints one line per check and source, PASS or FAIL; exit 1 on a FAIL. The target schema is created and left in place.
+LEGACY=1: seed as merge_all did before it filled snapshot starts and kept snapshot times (starts unfilled, no
+snapshots in the state), so the run migrates the target first.
 """
+import os
 import sys
 
 sys.path.insert(0, __file__.rsplit("/tests/", 1)[0] + "/scripts")
@@ -45,9 +48,14 @@ def main(profile, catalog, prefix, target, sources):
         r1 = min(int(r.version) for r in hist if r.operation == "DLT REFRESH")
         # seed: the target and the state as of A, as a run of merge_all at A would have left them
         i = merge._inspect(spark, catalog, prefix, table, out, s, {table: ["id"]}, None, {}, True)
+        legacy = os.environ.get("LEGACY") == "1"
         merge._ensure_target(spark, tgt, False, SC, i["cols"], {})
-        merge._copy(spark, tgt, i, SC, [], "seed", out, {out: {}}, "seeded", at=a)
-        merge._save_states(spark, catalog, target, out, [(s, a, i["tid"], i["key"])])
+        merge._copy(spark, tgt, {**i, "gens": None} if legacy else i, SC, [], "seed", out, {out: {}}, "seeded", at=a)
+        merge._save_states(spark, catalog, target, out, [(s, a, i["tid"], i["key"])] if legacy
+                           else [merge._saved({**i, "now": a})])
+        if legacy:
+            print(f"OBSERVED legacy-seed [{s}]: {rows(spark, f'SELECT COUNT(*) FROM {tgt} WHERE ' + merge.unfilled_sql('cdc'))[0][0]}"
+                  " rows with an unfilled start")
         report = merge.merge_all(spark, catalog, prefix, target, [table], source_column=SC, only=[s],
                                  name="all_{table}", keys={table: ["id"]})
         print(f"merge_all [{s}]: {report}")

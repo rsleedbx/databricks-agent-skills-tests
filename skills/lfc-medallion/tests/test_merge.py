@@ -77,7 +77,7 @@ class Spark:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(id=self.ids.get(source, f"id-{source}"))]
         elif q.startswith("DESCRIBE TABLE") and STATE in q:
-            names = ("target_table", "source", "version", "table_id", "updated_at", "key_columns")
+            names = ("target_table", "source", "version", "table_id", "updated_at", "key_columns", "snapshots")
             rows = [R(col_name=c, data_type="") for c in names]
         elif q.startswith("DESCRIBE TABLE"):
             schema, table = quoted[1], quoted[2]
@@ -109,7 +109,7 @@ class Spark:
             if q.startswith("MERGE INTO `main`.`shop_silver`.`all_"):
                 self.target_version += 1
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
-                for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)', (?:'[^']*'|NULL)\)", q):
+                for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)', (?:'[^']*'|NULL), (?:'[^']*'|NULL)\)", q):
                     self.state[(t, s)] = (int(v), i)
         return R(collect=lambda: rows)
 
@@ -406,6 +406,12 @@ class Removed(unittest.TestCase):
     def deletes(self, spark):
         return [q for q in spark.done if q.startswith("DELETE FROM `main`.`shop_silver`.`all_nation`")]
 
+    def test_keep_gone_keeps_a_gone_sources_rows(self):   # a history schema keeps what it has
+        spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"})
+        report = run(spark, only="east", keep_gone=True)
+        self.assertEqual(self.deletes(spark), [])
+        self.assertNotIn("west", report["all_nation"])
+
     def test_left_out_by_only(self):
         spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"})
         report = run(spark, only="east")
@@ -633,6 +639,56 @@ class Scd2AcrossRefresh(unittest.TestCase):
         self.assertIn("closed by full refresh at version 9', '__cdc_timestamp_value', TIMESTAMP 'T9'", merge._close(i, 14))
         first = {**i, "last": None}   # a first read: not a refresh
         self.assertIn("not in a whole copy at version 8", merge._close(first, 8))
+
+
+class Scd2Review(unittest.TestCase):
+    """The review's cases (2026-11-22): snapshot times kept, no endless wait, a catch-up that fails, old targets."""
+
+    def test_stored_generations_win_over_a_trimmed_history(self):
+        stored = [[0, "T0"], [9, "T9"]]
+        trimmed = [(5, "T5"), (9, "T9"), (15, "T15")]   # retention dropped 0-4: version 5 looks like the first
+        self.assertEqual(merge.keep_generations(stored, trimmed), [(0, "T0"), (9, "T9"), (15, "T15")])
+        self.assertEqual(merge.keep_generations(None, trimmed), trimmed)   # nothing stored: the history's
+
+    def test_no_wait_after_a_reset_that_writes_its_rows(self):
+        rows = [_h(0, "CREATE TABLE"), _h(2, "MERGE"), _h(5, "CREATE OR REPLACE TABLE AS SELECT")]
+        self.assertFalse(merge.refresh_plan(rows, last=2, now=5)["waiting"])
+
+    def test_an_old_refresh_with_no_write_is_an_empty_reload(self):
+        rows = [_h(0, "CREATE TABLE"), _h(2, "MERGE"), _h(5, "DLT REFRESH", "2026-11-22T17:00:00.000Z"),
+                _h(6, "DLT SETUP", "2026-11-22T17:00:05.000Z")]
+        t = 1795366800.0   # 2026-11-22T17:00:00Z
+        self.assertTrue(merge.refresh_plan(rows, 2, 6, now_s=t + 60)["waiting"])
+        self.assertFalse(merge.refresh_plan(rows, 2, 6, now_s=t + merge.WAIT_MAX_S + 60)["waiting"])
+
+    def test_a_failed_catch_up_falls_back_to_a_copy_that_closes(self):
+        done = []
+
+        class S:
+            def sql(self, q):
+                if "table_changes(" in q:
+                    raise RuntimeError("[DELTA_CHANGE_DATA_FEED_RANGE] vacuumed\nmore")
+                done.append(q)
+                return R(collect=list, columns=["id", "v", "__START_AT", "__END_AT"])   # absent_at's read
+        i = {"s": "east", "src": "`c`.`b`.`t`", "cols": [("id", "int"), ("v", "string"), ("__START_AT", "x"),
+             ("__END_AT", "x")], "key": ["id", "__START_AT"], "now": 18, "last": 2, "tid": "x",
+             "gens": merge.generations(TWO_REFRESHES), "times": {h.version: h.timestamp for h in TWO_REFRESHES},
+             "start_kind": "cdc", "end_kind": "cdc", "plan": merge.refresh_plan(TWO_REFRESHES, 2, 18)}
+        report, logged = {"all_t": {}}, []
+        merge._catch_up(S(), "`c`.`s`.`all_t`", i, "division", logged, "r", "all_t", report)
+        self.assertIn("catch-up failed, versions since the last read lost: [DELTA_CHANGE_DATA_FEED_RANGE] vacuumed",
+                      report["all_t"]["east"]["done"])
+        copy = [q for q in done if q.startswith("MERGE INTO `c`.`s`.`all_t`")]
+        self.assertEqual(len(copy), 1)
+        self.assertIn("VERSION AS OF 18", copy[0])
+        self.assertIn("AND t.`__END_AT` IS NULL THEN UPDATE SET", copy[0])   # closes, never deletes
+        self.assertNotIn("THEN DELETE", copy[0].split("WHEN NOT MATCHED BY SOURCE")[1])
+
+    def test_an_old_target_s_unfilled_starts_are_found(self):
+        self.assertEqual(merge.unfilled_sql("cdc"), "(`__START_AT` IS NULL OR `__START_AT`.__cdc_timestamp_value IS NULL)")
+        self.assertEqual(merge.unfilled_sql("timestamp"), "`__START_AT` IS NULL")
+        self.assertIsNone(merge.unfilled_sql(None))
+        self.assertEqual(merge.start_sql("cdc", "T0"), merge.start_expr("cdc", "T0") + " AS `__START_AT`")
 
 
 class StackSkips(unittest.TestCase):

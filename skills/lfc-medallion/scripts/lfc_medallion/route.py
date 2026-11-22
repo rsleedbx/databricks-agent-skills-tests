@@ -217,7 +217,7 @@ def keep_history(spark, catalog: str, prefix: str, history_target: str, ctx: dic
         try:
             report = merge.merge_all(spark, catalog, prefix, history_target, [table], source_column=source_column,
                                      name=name, workspace=workspace, run_id=run_id, log=log, changed=changed,
-                                     context=hctx)
+                                     context=hctx, keep_gone=True)   # a source gone keeps its history
             return {t: {s: x["done"] for s, x in v.items()} for t, v in report.items()}
         except Exception as e:  # noqa: BLE001
             return {name.format(table=table): {"error": str(e).splitlines()[0][:200]}}

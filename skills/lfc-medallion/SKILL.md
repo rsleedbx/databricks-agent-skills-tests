@@ -133,11 +133,15 @@ older versions are gone from bronze. `merge_all` keeps them in the target:
 
 A snapshot row (the first load, a reload) has an empty start (`__START_AT.__cdc_timestamp_value` null), so a reload's
 row would match the first load's row of its key. `merge_all` fills that time with its snapshot's: the latest refresh
-at or before the version read, else the table's first version. The internal value stays empty. A key unchanged
+at or before the version read, else the table's first version. The internal value stays empty. Those times are kept in
+the state (`snapshots`), since log retention trims the history they come from; a target merged before they were kept
+has its unfilled starts filled once. A key unchanged
 across a refresh therefore shows as two versions with the same values: the one before (closed by the refresh) and
 the reload's. A reader wanting state intervals joins them on equal values.
 
-Also: a source whose newest refresh has no write after it yet (still reloading) is left for the next run; a copy for
+Also: a source whose newest `DLT REFRESH` has no write after it yet (still reloading) is left for the next run, for up
+to an hour (after that, an empty reload); a catch-up that fails (its change data or files vacuumed) falls back to a
+copy that closes, the versions in between lost and the merge log saying so; a copy for
 another reason (a recreated table, versions log retention dropped) of a source the target already has also closes
 rather than deletes; a column added since an older version copied is NULL in that copy. The history before a refresh
 is read from Delta's log and files, so a run must come before they are vacuumed (7 days by default; Lakeflow
@@ -149,7 +153,8 @@ current behavior (internal, undocumented): lfc-downstream-history's `sqlserver-s
 A fact that changes all the time stays on the pipeline (its current rows are the pipeline's view, fast). With
 `merge_route(..., history_target="sales_history")` (or `--history-target`), every table left on the pipeline whose
 bronze is SCD type 2 is also kept by `merge_all` in that schema: `sales_history.all_<table>`, every version, across
-full refreshes as above. Route switches never release it.
+full refreshes as above. Route switches never release it, and a source that goes away keeps its rows there
+(`merge_all(keep_gone=True)`).
 
 ## The whole merge route as one job task: `merge_route`
 
@@ -234,7 +239,9 @@ second run changed nothing (15 of 15). Found on the way, all fixed: `DLT REFRESH
 came only through the change feed's failure, and deleted the history); Lakeflow Connect's struct time is a
 TIMESTAMP, not a string; a copy at an older version asked for a column added since.
 `history_target` (`keep_history`) on two of those tables, live: both found SCD type 2 from the catalog's columns and
-copied into the history schema, rows and open versions equal to bronze's; a second run left both unchanged.
+copied into the history schema, rows and open versions equal to bronze's; a second run left both unchanged. The 15
+checks again with the target and state seeded as before snapshot times were kept (`LEGACY=1`: 3 unfilled starts per
+table): 15 of 15.
 Not run yet: more than three sources; bronze of an append-only destination; `merge_route` end to end with
 `history_target` in a job (its parts only).
 
