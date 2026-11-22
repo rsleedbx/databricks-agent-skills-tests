@@ -7,7 +7,7 @@
 
 # COMMAND ----------
 
-for name in ("module", "catalog", "prefix", "archive"):
+for name in ("module", "catalog", "prefix", "archive", "connection", "database", "control"):
     dbutils.widgets.text(name, "")
 
 # COMMAND ----------
@@ -29,6 +29,15 @@ from lfc_medallion_pack.verify import run
 w = {k: dbutils.widgets.get(k) for k in ("module", "catalog", "prefix")}
 rows = run(spark, read_plan("../source/plan.json"), w["module"], catalog=w["catalog"], prefix=w["prefix"],
            marts_dir="../marts")
+from lfc_medallion_pack import checksum
+plan = read_plan("../source/plan.json")
+c = {k: dbutils.widgets.get(k) for k in ("connection", "database", "control")}
+sums = checksum.run(spark, plan, w["module"], w["catalog"], w["prefix"], c["connection"], c["database"])
+checksum.save(spark, sums, w["catalog"], c["control"])   # the dashboard reads <control>.checksums
+off = [x for x in sums if x["status"] != "match"]
+rows.append({"check": "checksums (rows and contents: source, bronze, n:1)", "want": f"{len(sums)} match",
+             "got": f"{len(sums) - len(off)} match", "ok": not off,
+             "detail": "; ".join(f"{x['lob']}.{x['table']}: {x['status']}" for x in off[:5])})
 display(spark.createDataFrame(rows))
 bad = [r for r in rows if not r["ok"]]
 if bad:

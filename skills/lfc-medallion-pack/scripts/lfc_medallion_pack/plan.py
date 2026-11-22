@@ -17,7 +17,9 @@ model), repeated across LOBs, that becomes one n:1 bronze, silver and gold:
         tables_per_pipeline: 999  # optional: this module's own limit (the project's otherwise)
 
 render() writes, under the repo:
-    resources/<module>.yml        the bundle resources: schemas (staging, a bronze per LOB, silver, gold), one gateway
+    resources/_control.yml        the control schema: every pipeline's event log (events_<pipeline>), every gateway's
+                                  staging volume, the checksums and merge watermarks: what the dashboard reads
+    resources/<module>.yml        the bundle resources: schemas (a bronze per LOB, silver, gold), one gateway
                                   and ingestion pipeline per group of LOBs, the transform pipeline, and the refresh
                                   job: ingest, merge (the YAML's dimensions, lfc-medallion's merge route), transform,
                                   verify
@@ -107,8 +109,9 @@ def _schema(name: str, comment: str) -> dict:
 def resources(m: dict, archive: str) -> dict:
     """The bundle resources of one module (the file resources/<module>.yml)."""
     n, col = m["module"], m["source_column"]
-    schemas = {f"{n}_staging": _schema(f"{n}_staging", f"Lakeflow Connect gateway staging of module {n}"),
-               f"{n}_silver": _schema(f"{n}_silver", f"Module {n}: n:1 (all_<table>: every LOB's table, with {col}) "
+    ctl = "${resources.schemas.control.name}"
+    log = lambda key: {"catalog": "${var.catalog}", "schema": ctl, "name": f"events_{key}"}   # noqa: E731
+    schemas = {f"{n}_silver": _schema(f"{n}_silver", f"Module {n}: n:1 (all_<table>: every LOB's table, with {col}) "
                                                      "and silver"),
                f"{n}_gold": _schema(f"{n}_gold", f"Module {n}: gold, across every LOB")}
     for x in m["lobs"]:
@@ -118,12 +121,11 @@ def resources(m: dict, archive: str) -> dict:
     pipelines = {}
     for g in m["groups"]:
         gw, ing = f"{n}_gw_{g['k']}", f"{n}_ingest_{g['k']}"
-        pipelines[gw] = {
-            "name": f"${{var.prefix}}_{gw}", "catalog": "${var.catalog}",
-            "schema": f"${{resources.schemas.{n}_staging.name}}", "serverless": True, "continuous": True,
+        pipelines[gw] = {   # its staging volume and event log in the control schema
+            "name": f"${{var.prefix}}_{gw}", "catalog": "${var.catalog}", "schema": ctl, "serverless": True,
+            "continuous": True, "event_log": log(gw),
             "gateway_definition": {"connection_name": "${var.connection}", "gateway_storage_catalog": "${var.catalog}",
-                                   "gateway_storage_schema": f"${{resources.schemas.{n}_staging.name}}",
-                                   "gateway_storage_name": f"${{var.prefix}}_{gw}"}}
+                                   "gateway_storage_schema": ctl, "gateway_storage_name": f"${{var.prefix}}_{gw}"}}
         objects = [{"schema": {"source_catalog": "${var.source_database}", "destination_catalog": "${var.catalog}",
                                "source_schema": f"{n}_{lob}",
                                "destination_schema": f"${{resources.schemas.{n}_bronze_{lob}.name}}",
@@ -131,6 +133,7 @@ def resources(m: dict, archive: str) -> dict:
         pipelines[ing] = {
             "name": f"${{var.prefix}}_{ing}", "catalog": "${var.catalog}",
             "schema": f"${{resources.schemas.{n}_bronze_{g['lobs'][0]}.name}}", "serverless": True,
+            "event_log": log(ing),
             "ingestion_definition": {
                 "ingestion_gateway_id": f"${{resources.pipelines.{gw}.id}}", "source_type": "POSTGRESQL",
                 "source_configurations": [{"catalog": {"source_catalog": "${var.source_database}", "postgres": {
@@ -142,6 +145,7 @@ def resources(m: dict, archive: str) -> dict:
     pipelines[f"{n}_transform"] = {
         "name": f"${{var.prefix}}_{n}_transform", "catalog": "${var.catalog}",
         "schema": f"${{resources.schemas.{n}_silver.name}}", "serverless": True, "photon": True,
+        "event_log": log(f"{n}_transform"),
         "environment": {"dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]},
         "configuration": conf,
         "libraries": [{"file": {"path": "../transform/n1.py"}}] +
@@ -168,7 +172,8 @@ def resources(m: dict, archive: str) -> dict:
              "pipeline_task": {"pipeline_id": f"${{resources.pipelines.{n}_transform.id}}"}},
             {"task_key": "verify", "depends_on": [{"task_key": "transform"}],
              "notebook_task": {"notebook_path": "../checks/verify.py", "base_parameters": {
-                 "module": n, "catalog": "${var.catalog}", "prefix": "${var.prefix}", "archive": archive}}}]}}
+                 "module": n, "catalog": "${var.catalog}", "prefix": "${var.prefix}", "archive": archive,
+                 "connection": "${var.connection}", "database": "${var.source_database}", "control": ctl}}}]}}
     return {"resources": {"schemas": schemas, "pipelines": pipelines, "jobs": jobs}}
 
 
@@ -194,6 +199,14 @@ def render(project_path: str, archive: str, out: str | None = None) -> dict:
             if not os.path.exists(dst):
                 shutil.copyfile(os.path.join(m["pack_dir"], name), dst)
                 written.append(dst)
+    f = os.path.join(out, "resources", "_control.yml")
+    with open(f, "w") as fh:
+        fh.write("# The control schema: every pipeline's event log, every gateway's staging volume, the checksums and the\n"
+                 "# merge watermarks, for the dashboard. Written by lfc-medallion-pack render.\n" + yaml.safe_dump(
+                     {"resources": {"schemas": {"control": _schema("control", "The lakehouse's control schema: event "
+                                                                  "logs, gateway staging, checksums, watermarks")}}},
+                     sort_keys=False, width=120))
+    written.append(f)
     keep = dict(pl)
     keep["modules"] = [{k: v for k, v in m.items() if k != "pack_dir"} for m in pl["modules"]]
     os.makedirs(os.path.join(out, "source"), exist_ok=True)
