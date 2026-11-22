@@ -9,7 +9,7 @@ Per connector (a notebooks/<slug>-pipeline.py with its bundles/<slug>/), one at 
   1. skip it when its notebook, its bundle folder, the package (scripts/lfc_saas_pipeline), its UC connection's
      updated_at and the workspace are what they were at its last pass (bin/test_skip, runner lfc-saas-pipeline);
   2. the bundle: `databricks bundle deploy` and `bundle run` from a copy named <bundle>_<epoch> (its own deployment,
-     so nothing deployed earlier is replaced; without its schedule job, which counts toward the workspace's job quota) into <catalog>.<prefix>_<slug>_dab_<epoch> (development mode prefixes
+     so nothing deployed earlier is replaced; the default target: no schedule job, which counts toward the job quota) into <catalog>.<prefix>_<slug>_dab_<epoch> (development mode prefixes
      it with dev_<user>_);
   3. the notebook: imported to your workspace folder lfc-saas-pipeline/, its %pip line pointed at --ref (default: the
      current branch, pushed, so a package change is what's tested), run as a one-time job into
@@ -146,8 +146,6 @@ def run_bundle(profile: str, slug: str, catalog: str, schema: str, epoch: int,
     with tempfile.TemporaryDirectory() as d:
         b = Path(d) / slug
         shutil.copytree(SKILL / "bundles" / slug, b, ignore=shutil.ignore_patterns(".databricks"))
-        for r in (b / "resources").glob("*.yml"):   # no schedule job per test run: job quota
-            r.write_text(re.sub(r"\n  jobs:\n.*", "\n", r.read_text(), flags=re.DOTALL))
         yml = b / "databricks.yml"
         yml.write_text(re.sub(r"(\nbundle:\n  name: )(\S+)", rf"\g<1>\g<2>_{epoch}", yml.read_text(), count=1))
         v = ["--var", f"schema={schema}", "--var", f"catalog={catalog}"]

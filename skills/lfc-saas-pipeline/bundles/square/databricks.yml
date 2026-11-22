@@ -1,6 +1,6 @@
 # Square into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
-# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/square-pipeline), its schema, and a job that
-# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/square-pipeline), and its schema; target scheduled
+# adds a job that runs it daily (paused until you unpause it). Deploy from the CLI (databricks bundle deploy) or from the
 # workspace (open this file, Deployments, Deploy).
 bundle:
   name: square
@@ -23,3 +23,20 @@ targets:
   dev:
     default: true
     mode: development
+  # the pipeline on a daily schedule (paused until you unpause it): databricks bundle deploy -t scheduled
+  scheduled:
+    resources:
+      jobs:
+        square_refresh:
+          name: ${var.schema}_refresh
+          schedule:
+            quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
+            timezone_id: UTC
+            pause_status: PAUSED
+          tasks:
+            - task_key: refresh
+              pipeline_task:
+                pipeline_id: ${resources.pipelines.square.id}
+          permissions:
+            - level: CAN_VIEW
+              group_name: users
