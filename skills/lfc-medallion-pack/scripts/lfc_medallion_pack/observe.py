@@ -33,24 +33,26 @@ def change_sql(plan: dict, catalog: str, prefix: str, control: str) -> str:
         n, tables = m["module"], "|".join(m["tables"])
         for g in m["groups"]:
             gw, ing = f"{n}_gw_{g['k']}", f"{n}_ingest_{g['k']}"
-            flow = "origin.flow_name"
+            flow = "element_at(split(origin.flow_name, '\\\\.'), -1)"   # the flow's own name, not its schema
+            moved = ("(" + " OR ".join(f"COALESCE({_metric(k)}, 0) > 0" for k in
+                                       ("num_upserted_rows", "num_deleted_rows", "num_output_rows")) + ")")
             parts.append(
                 f"SELECT '1 source capture' AS stage, {_s(n)} AS module, {_s(gw)} AS pipeline, origin.update_id, "
-                f"timestamp AS at, regexp_extract({flow}, '\\\\.{n}_(.+)\\\\.({tables})_(cdc|snapshot)_flow$', 1) AS lob, "
-                f"regexp_extract({flow}, '\\\\.({tables})_(cdc|snapshot)_flow$', 1) AS table_name, "
+                f"timestamp AS at, regexp_extract(origin.flow_name, '\\\\.{n}_(.+)\\\\.({tables})_(cdc|snapshot)_flow$', 1) "
+                f"AS lob, "
+                f"regexp_extract({flow}, '^({tables})_(cdc|snapshot)_flow$', 1) AS table_name, "
                 f"regexp_extract({flow}, '_(cdc|snapshot)_flow$', 1) AS kind, CAST(NULL AS BIGINT) AS inserted, "
                 f"CAST(NULL AS BIGINT) AS updated, {_metric('num_upserted_rows')} AS upserted, "
                 f"{_metric('num_deleted_rows')} AS deleted, {_metric('num_output_rows')} AS output_rows "
-                f"FROM {ctl}.`events_{gw}` WHERE event_type = 'flow_progress' "
-                f"AND details:flow_progress.metrics:num_output_rows IS NOT NULL")
+                f"FROM {ctl}.`events_{gw}` WHERE event_type = 'flow_progress' AND {moved}")
             parts.append(
                 f"SELECT '2 bronze' AS stage, {_s(n)}, {_s(ing)}, origin.update_id, timestamp, "
                 f"regexp_extract({flow}, '_{n}_bronze_(.+)_({tables})_(cdc|snapshot)_flow$', 1), "
                 f"regexp_extract({flow}, '_({tables})_(cdc|snapshot)_flow$', 1), "
                 f"regexp_extract({flow}, '_(cdc|snapshot)_flow$', 1), NULL, NULL, {_metric('num_upserted_rows')}, "
                 f"{_metric('num_deleted_rows')}, NULL "
-                f"FROM {ctl}.`events_{ing}` WHERE event_type = 'flow_progress' "
-                f"AND details:flow_progress.metrics:num_upserted_rows IS NOT NULL")
+                f"FROM {ctl}.`events_{ing}` WHERE event_type = 'flow_progress' AND {moved} "
+                f"AND {flow} RLIKE '_({tables})_(cdc|snapshot)_flow$'")   # not the pipeline's own staging flow
         tr = f"{n}_transform"
         silver, gold = f"{prefix}_{n}_silver", f"{prefix}_{n}_gold"
         ds = "element_at(split(origin.flow_name, '\\\\.'), -1)"
