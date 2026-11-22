@@ -11,9 +11,11 @@ import re
 import sys
 import types
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 from lfc_medallion import evidence, merge_all, stack_all
+from lfc_medallion import merge as merge_mod
 from lfc_medallion.merge import STATE, merge_sql
 
 R = types.SimpleNamespace
@@ -41,6 +43,7 @@ class Spark:
         self.done = []   # the statements that change something
         self.seen = ()   # the sources information_schema.columns returns (none: SHOW TABLES for every source)
         self.lag = set()   # (source, table) information_schema doesn't show yet
+        self.target_version, self.target_changes, self.reads = 3, {}, []   # the target's head, its feed's rows
 
     def sql(self, q):
         rows = []
@@ -50,6 +53,11 @@ class Spark:
         elif q.startswith("SHOW TABLES IN") and "shop_bronze_" in q:
             source = quoted[1][len("shop_bronze_"):]
             rows = [R(tableName=t) for t in self.tables.get(source, ["nation"])]
+        elif q.startswith("SELECT version FROM (DESCRIBE HISTORY `main`.`shop_silver`."):   # a target's head
+            rows = [R(version=self.target_version)]
+        elif "FROM table_changes('main.shop_silver." in q:   # the target's feed after its MERGE
+            self.reads.append(q)
+            rows = [R(s=s, i=i, u=u, d=d) for s, (i, u, d) in self.target_changes.items()]
         elif "information_schema.columns" in q:   # catalog_columns: only the sources it can see
             rows = [R(table_schema=f"shop_bronze_{src}", table_name=t, column_name=c, full_data_type=ty)
                     for src in self.seen for t in self.tables.get(src, ["nation"]) if (src, t) not in self.lag
@@ -98,6 +106,8 @@ class Spark:
             if altered:   # as the table would: the next DESCRIBE shows the new type
                 t, c, ty = altered.groups()
                 self.target_cols[t] = [(n, ty.lower() if n == c else x) for n, x in self.target_cols[t]]
+            if q.startswith("MERGE INTO `main`.`shop_silver`.`all_"):
+                self.target_version += 1
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
                 for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)', (?:'[^']*'|NULL)\)", q):
                     self.state[(t, s)] = (int(v), i)
@@ -158,6 +168,34 @@ class FirstAndLater(unittest.TestCase):
         saves = [q for q in spark.done if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`")]
         self.assertEqual(len(saves), 1)
         self.assertEqual({k: v for k, (v, _) in spark.state.items()}, {("all_nation", "east"): 9, ("all_nation", "west"): 8})
+
+    def test_counts_come_from_the_targets_feed_not_a_second_read_of_the_sources(self):
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        spark.target_changes = {"east": (0, 1, 0), "west": (2, 0, 0)}
+        logged = []
+        with mock.patch.object(merge_mod, "_log_rows", lambda spark, fq, rows: logged.extend(rows)):
+            run(spark)
+        self.assertEqual(spark.reads, ["SELECT `division` AS s, SUM(CASE WHEN _change_type = 'insert' THEN 1 ELSE 0 END)"
+                                       " AS i, SUM(CASE WHEN _change_type = 'update_postimage' THEN 1 ELSE 0 END) AS u, "
+                                       "SUM(CASE WHEN _change_type = 'delete' THEN 1 ELSE 0 END) AS d FROM "
+                                       "table_changes('main.shop_silver.all_nation', 4, 4) GROUP BY 1"])   # its version
+        sources_read = [q for q in spark.done if "table_changes('main.shop_bronze_" in q]
+        self.assertEqual(len(sources_read), 1)   # each source's feed only inside the one MERGE
+        self.assertEqual({r[2]: r[6:9] for r in logged}, {"east": (0, 1, 0), "west": (2, 0, 0)})
+
+    def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
+        spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})
+        real = spark.sql
+        spark.sql = lambda q: R(collect=lambda: []) if q.startswith("MERGE INTO `main`.`shop_silver`.`all_") else real(q)
+        logged = []
+        with mock.patch.object(merge_mod, "_log_rows", lambda spark, fq, rows: logged.extend(rows)):
+            run(spark)
+        self.assertEqual(spark.reads, [])
+        self.assertEqual([r[6:9] for r in logged], [(0, 0, 0)])
 
     def test_only_the_changed_sources_are_read(self):   # merge_route found west quiet in the event logs
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},

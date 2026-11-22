@@ -97,8 +97,9 @@ lfc-medallion's merge task (`merge_route`) reads only what changed, and each thi
 - which LOBs' tables got rows or a snapshot since their state: one query over the ingestion pipelines' event logs
   (`--events`, rendered from the module's pipelines); a table no row reached isn't read at all;
 - per changed source: one history read (the latest version and what changed), the key from the state;
-- per table: one MERGE for all its changed LOBs (their change feeds unioned), one state write; tables at once
-  (`parallel`, 8), metadata reads on threads (16): all on the task's one compute.
+- per table: one MERGE for all its changed LOBs (their change feeds unioned, read once), then the rows per LOB for
+  the merge log from the target's own change feed for that commit (only the files the MERGE wrote), one state write;
+  tables at once (`parallel`, 8), metadata reads on threads (16): all on the task's one compute.
 
 Measured on TPC-B, 10 LOBs, 3 merge-route tables (2026-11-22): the task 516 s before, 85 s after a batch, 64 s with
 nothing to merge (its start: installing and reading the catalog); a batch to gold 875 s before, about 370 s after.
