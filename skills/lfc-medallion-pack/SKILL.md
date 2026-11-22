@@ -112,7 +112,39 @@ sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
 An ingestion pipeline's time grows with its tables even when they're empty: about 2.6 s per table per update at 248.
 Plan the refresh interval from it: a 248-table pipeline can't refresh more often than about every 11 minutes.
 
-## A full refresh from Lakeflow Connect (measured 2026-11-21, TPC-B, 10 LOBs with data)
+## The control schema and the dashboard
+
+`render` writes `resources/_control.yml`, `<prefix>_control`, and puts in it what a deployment needs to be watched and
+restarted, from its first deploy (adding an event log to an ingestion pipeline later recreates it, and every table
+of it is snapshotted again: measured 2026-11-21):
+
+| In the control schema | Written by |
+|---|---|
+| `events_<pipeline>`: every gateway's, ingestion pipeline's and transform pipeline's event log | the pipelines (`event_log:`) |
+| the gateways' staging volumes | the gateways (`gateway_storage_schema`) |
+| `merge_log_<module>`: each copy or merge per table and LOB: versions read, inserted, updated, deleted, seconds, run id | lfc-medallion's merge task (`--log`) |
+| `batches`: each batch of changes per LOB, and when | the source job's `batch` step |
+| `checksums`: rows and an MD5 digest per table per LOB in the source, bronze and n:1 (`checksum.py`) | verify |
+| views `v_changes`, `v_updates`, `v_latency`, `v_latency_table`, `v_refresh`, `v_quality`, `v_checksums` (`observe.py`) | verify, on every refresh |
+
+The merge route's watermark is lfc-medallion's own state (`_lfc_medallion_merge_state`, in the silver schema): saved
+after each table and LOB, so a run that fails part way restarts from there.
+
+`dashboards/lakehouse.lvdash.json` (`dashboard.py`, a bundle resource) reads only those views, so it is the same for
+any model. Its pages:
+- **Changes:** rows through each stage (source capture, bronze, n:1 by merge or pipeline, silver, gold) by table, LOB,
+  pipeline and update, with inserts, updates, upserts, deletes and snapshot rows apart.
+- **Pipelines:** each update's state and phases, and each view's refresh technique and why not a cheaper one.
+- **Latency:** from each batch to bronze, the n:1 merge and gold, per LOB and per table or view.
+- **Quality:** each expectation's rows passed and failed.
+- **Checksums:** every table of every LOB, matched or not.
+
+The checksum: each row's columns as canonical text by their YAML type (decimals at their scale, timestamps as epoch
+microseconds, chars trimmed, NULL as `chr(1)`), MD5, the first 8 hex digits as a number, summed with `COUNT(*)`: the
+same on every engine with MD5 (an XOR aggregate isn't on all), computed where the rows are (the source through
+`remote_query`). Measured: 40 of 40 match on 10 TPC-B LOBs, 2,011,110 rows, through both routes.
+
+ (measured 2026-11-21, TPC-B, 10 LOBs with data)
 
 A selective full refresh of one LOB's fact (`history`) and dimension (`account`) on its ingestion pipeline
 (`start-update --json '{"full_refresh_selection": ["<catalog>.<schema>.<table>", ...]}'`, about 2 minutes):
