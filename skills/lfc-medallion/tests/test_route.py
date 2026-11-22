@@ -19,8 +19,9 @@ R = types.SimpleNamespace
 class Spark:
     """The plan table: present or not, its routes; createDataFrame and the write are recorded."""
 
-    def __init__(self, plan=None, kinds=None):
+    def __init__(self, plan=None, kinds=None, plan_rows=None):
         self.plan = plan   # {table: route} or None (no plan table yet)
+        self.plan_rows = plan_rows or []   # the last plan's rows (source, table, role, planned, decided_by, why)
         self.kinds = dict(kinds or {})   # the target's objects: {name: table_type}; a merge may add to it
         self.dropped = []
         self.written = None
@@ -31,6 +32,9 @@ class Spark:
             rows = [R(tableName=route.PLAN)] if self.plan is not None else []
         elif "WHERE route = 'merge'" in q:
             rows = [R(table_name=t) for t, r in (self.plan or {}).items() if r == "merge"]
+        elif q.startswith("SELECT source, table_name, role, planned"):
+            rows = [R(source=a, table_name=b, role=c, planned=d, decided_by=e, why=f) for a, b, c, d, e, f in
+                    self.plan_rows]
         elif q.startswith("SELECT DISTINCT table_name, route"):
             rows = [R(table_name=t, route=r) for t, r in (self.plan or {}).items()]
         elif "information_schema.tables" in q:
@@ -106,6 +110,17 @@ class MergeRoute(unittest.TestCase):
                 mock.patch.object(route.merge, "merge_all", merge_all):
             out = route.merge_route(spark, "main", "shop_bronze_", "shop_silver", source_column="division", **kw)
         return out, calls
+
+    def test_the_last_plan_is_kept_for_its_sources(self):   # only a new source (or one with new tables) is planned
+        kept = [("east", t, "dimension", r, "relations", "") for t, r in PLANS["east"].items()]
+        planned = []
+        with mock.patch.object(route.evidence, "table_plan", lambda spark, c, schema, **k: planned.append(schema) or
+                               table_plan(spark, c, schema, **k)):
+            out, calls = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept))
+        self.assertEqual(out["planned_sources"], ["west"])
+        self.assertEqual(calls["planned"], {"lines": "pipeline", "nation": "merge", "part": "pipeline"})
+        out, _ = self.run_route(Spark(plan={"nation": "merge"}, plan_rows=kept), replan=True)
+        self.assertEqual(out["planned_sources"], ["east", "west"])
 
     def test_merge_only_when_every_source_agrees(self):
         out, calls = self.run_route(Spark())
@@ -252,7 +267,7 @@ class EntryPoint(unittest.TestCase):
                         "--log", "main.shop_control.merge_log"])
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
-        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log"})
+        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):

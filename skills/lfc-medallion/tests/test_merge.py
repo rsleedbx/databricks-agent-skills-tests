@@ -93,10 +93,8 @@ class Spark:
                 t, c, ty = altered.groups()
                 self.target_cols[t] = [(n, ty.lower() if n == c else x) for n, x in self.target_cols[t]]
             if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`"):
-                saved = (r"SELECT '([^']+)' AS target_table, '([^']+)' AS source, (\d+) AS version, "
-                         r"'([^']+)' AS table_id")
-                t, s, v, i = re.search(saved, q).groups()
-                self.state[(t, s)] = (int(v), i)
+                for t, s, v, i in re.findall(r"\('([^']+)', '([^']+)', (\d+), '([^']+)'\)", q):   # one per source
+                    self.state[(t, s)] = (int(v), i)
         return R(collect=lambda: rows)
 
     def merges(self):
@@ -138,6 +136,21 @@ class FirstAndLater(unittest.TestCase):
         self.assertIn("WHEN MATCHED THEN UPDATE SET t.`n_name` = c.`n_name`", m)
         self.assertNotIn("CREATE TABLE `main`", " ".join(spark.done))   # the target exists
         self.assertEqual(spark.state[("all_nation", "east")][0], 9)
+
+    def test_changed_sources_share_one_merge_and_one_state_write(self):   # a few statements per table, not per source
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        report = run(spark)
+        self.assertEqual({s: r["done"] for s, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
+        (m,) = spark.merges()
+        self.assertIn("table_changes('main.shop_bronze_east.nation', 6, 9)", m)
+        self.assertIn(" UNION ALL ", m)
+        self.assertIn("table_changes('main.shop_bronze_west.nation', 8, 8)", m)
+        saves = [q for q in spark.done if q.startswith(f"MERGE INTO `main`.`shop_silver`.`{STATE}`")]
+        self.assertEqual(len(saves), 1)
+        self.assertEqual({k: v for k, (v, _) in spark.state.items()}, {("all_nation", "east"): 9, ("all_nation", "west"): 8})
 
     def test_new_versions_without_rows_written_are_unchanged(self):   # an ingestion update touches every table
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},

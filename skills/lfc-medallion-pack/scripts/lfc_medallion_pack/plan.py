@@ -171,8 +171,10 @@ def resources(m: dict, archive: str) -> dict:
             "client": "2", "dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]}}],
         "tasks": ingest_tasks + [merge_task,
             {"task_key": "transform", "depends_on": [{"task_key": "merge"}],
-             "pipeline_task": {"pipeline_id": f"${{resources.pipelines.{n}_transform.id}}"}},
-            {"task_key": "verify", "depends_on": [{"task_key": "transform"}],
+             "pipeline_task": {"pipeline_id": f"${{resources.pipelines.{n}_transform.id}}"}}]},
+        # verify on its own: the checksums, the CDC positions and the views, off the refresh's critical path
+        f"{n}_verify": {"name": f"${{var.prefix}}_{n}_verify", "tasks": [
+            {"task_key": "verify",
              "notebook_task": {"notebook_path": "../checks/verify.py", "base_parameters": {
                  "module": n, "catalog": "${var.catalog}", "prefix": "${var.prefix}", "archive": archive,
                  "connection": "${var.connection}", "database": "${var.source_database}", "control": ctl}}}]}}

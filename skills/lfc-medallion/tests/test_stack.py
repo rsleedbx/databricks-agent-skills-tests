@@ -121,3 +121,47 @@ class Stack(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class R(types.SimpleNamespace):
+    pass
+
+
+class OneStatement(unittest.TestCase):
+    """stack_sql: every source's rows in one statement, by name, NULL where a source lacks a column, a cast to the
+    widest type where a source's is narrower; stack_all through one information_schema query."""
+
+    def test_union_by_name_with_casts_and_nulls(self):
+        from lfc_medallion.stack import stack_sql
+        sql = stack_sql("main", "shop_bronze_", "nation", {
+            "east": [("n_key", "int"), ("n_name", "string")],
+            "west": [("n_key", "bigint"), ("n_name", "string"), ("n_new", "decimal(12,2)")]}, "division")
+        east, west = sql.split("\nUNION ALL\n")
+        self.assertEqual(east, "SELECT 'east' AS `division`, CAST(`n_key` AS BIGINT) AS `n_key`, `n_name`, "
+                               "CAST(NULL AS decimal(12,2)) AS `n_new` FROM `main`.`shop_bronze_east`.`nation`")
+        self.assertEqual(west, "SELECT 'west' AS `division`, `n_key`, `n_name`, `n_new` "
+                               "FROM `main`.`shop_bronze_west`.`nation`")
+
+    def test_stack_all_reads_the_catalog_once(self):
+        from lfc_medallion import stack as st
+        queries, views = [], {}
+
+        class Cat:
+            def sql(self, q):
+                queries.append(q)
+                if q.startswith("SHOW SCHEMAS"):
+                    rows = [R(databaseName=f"shop_bronze_{s}") for s in ("east", "west")]
+                elif "information_schema.columns" in q:
+                    rows = [R(table_schema=f"shop_bronze_{s}", table_name=t, column_name="k", full_data_type="int")
+                            for s in ("east", "west") for t in ("orders", "__materialization_mat_x")]
+                else:
+                    rows = []
+                return R(collect=lambda: rows)
+
+        class DP:
+            def materialized_view(self, name, comment):
+                return lambda fn: views.setdefault(name, fn)
+        got = st.stack_all(DP(), Cat(), "main", "shop_bronze_", "division")
+        self.assertEqual(got, {"all_orders": ["east", "west"]})
+        self.assertFalse([q for q in queries if q.startswith("SHOW TABLES")])   # one catalog query, not one per source
+        self.assertEqual(sum("information_schema.columns" in q for q in queries), 1)

@@ -96,7 +96,8 @@ class Plan(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.d, "marts", "tpcb", "gold.sql")))
         job = r["jobs"]["bank_refresh"]
         keys = [t["task_key"] for t in job["tasks"]]
-        self.assertEqual(keys, ["ingest_1", "ingest_2", "merge", "transform", "verify"])
+        self.assertEqual(keys, ["ingest_1", "ingest_2", "merge", "transform"])
+        self.assertEqual([t["task_key"] for t in r["jobs"]["bank_verify"]["tasks"]], ["verify"])   # off the path
         merge = job["tasks"][2]
         self.assertEqual(merge["python_wheel_task"]["entry_point"], "lfc-medallion-merge")
         self.assertEqual(json.loads(merge["python_wheel_task"]["named_parameters"]["hints"]), {})   # evidence decides

@@ -62,25 +62,40 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 
 
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
-                name: str = "all_{table}", workspace=None, log: str | None = None) -> dict:
+                name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
     before (retried next run) and sends a first take-over back to the pipeline (dropping only the table this run
     created); all are noted in `proposed`. The plan is written before any release or merge, with first take-overs
     still on the pipeline (a table isn't skipped before it arrives), and again at the end, from what was done.
-    log: the merge log's table (merge_all), e.g. a control schema's; each run's rows carry one run id."""
+    log: the merge log's table (merge_all), e.g. a control schema's; each run's rows carry one run id.
+    The last plan is kept for the sources it has (a table's route changes only by a tag, routes_to_apply): only new
+    sources are planned, in parallel; replan=True plans every source again (its evidence: keys, rows, history)."""
     import uuid
     run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
     sources = discover.sources(spark, catalog, prefix)
     held = discover.tables(spark, catalog, prefix, sources)
     rows, planned = [], {}
+    kept: dict[str, list] = {}   # the last plan's rows, per source
+    if not replan and _has(spark, catalog, target, PLAN):
+        for r in spark.sql(f"SELECT source, table_name, role, planned, decided_by, why "
+                           f"FROM `{catalog}`.`{target}`.{PLAN}").collect():
+            kept.setdefault(r.source, []).append((r.source, r.table_name, r.role, r.planned, r.decided_by, r.why))
+    new = [x for x in sources if x not in kept or {t for _, t, *_ in kept[x]} != set(held[x])]
+
+    def plan_one(source):
+        return [(source, table, t["role"], t["route"], t["decided_by"], t["why"]) for table, t in
+                evidence.table_plan(spark, catalog, prefix + source, hints=hints, workspace=workspace)["tables"].items()]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max(1, min(16, len(new)))) as ex:
+        fresh = dict(zip(new, ex.map(plan_one, new)))
     for source in sources:
-        for table, t in evidence.table_plan(spark, catalog, prefix + source, hints=hints,
-                                            workspace=workspace)["tables"].items():
-            planned[table] = "merge" if t["route"] == "merge" and planned.get(table, "merge") == "merge" else "pipeline"
-            rows.append((source, table, t["role"], t["route"], t["decided_by"], t["why"]))
+        for row in fresh.get(source) or kept.get(source, []):
+            table, route = row[1], row[3]
+            planned[table] = "merge" if route == "merge" and planned.get(table, "merge") == "merge" else "pipeline"
+            rows.append(row)
     previous = {r.table_name: r.route for r in spark.sql(
         f"SELECT DISTINCT table_name, route FROM `{catalog}`.`{target}`.{PLAN}").collect()} \
         if _has(spark, catalog, target, PLAN) else {}
@@ -131,7 +146,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             released += merge.release(spark, catalog, target, [table], name=name)   # its state, if any was saved
             proposed[table] = {**proposed.get(table, {}), "failed": error}
     write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
-    return {"run_id": run_id, "merge": sorted(t for t, r in apply.items() if r == "merge"),
+    return {"run_id": run_id, "planned_sources": sorted(new), "merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
 
@@ -145,8 +160,10 @@ def main(argv=None) -> None:
     ap.add_argument("--source-column", default="_source")
     ap.add_argument("--hints", default="", help='JSON: {"table": "role"}')
     ap.add_argument("--log", default="", help="the merge log's table, catalog.schema.table (default in --target)")
+    ap.add_argument("--replan", action="store_true", help="plan every source again, not only new ones")
     a = ap.parse_args(argv)
     from pyspark.sql import SparkSession
     spark = SparkSession.builder.getOrCreate()
     print(json.dumps(merge_route(spark, a.catalog, a.prefix, a.target, a.source_column,
-                                 json.loads(a.hints) if a.hints else None, log=a.log or None)))
+                                 json.loads(a.hints) if a.hints else None, log=a.log or None,
+                                 replan=a.replan)))

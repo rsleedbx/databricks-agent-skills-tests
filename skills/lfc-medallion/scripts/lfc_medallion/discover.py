@@ -34,3 +34,21 @@ def tables(spark, catalog: str, prefix: str, names: list[str]) -> dict[str, set[
     has is fine (see stack)."""
     return {s: {r.tableName for r in spark.sql(f"SHOW TABLES IN `{catalog}`.`{prefix}{s}`").collect()
                 if not is_pipeline_table(r.tableName)} for s in names}
+
+
+def catalog_columns(spark, catalog: str, prefix: str, names: list[str]) -> dict[str, dict[str, list[tuple]]]:
+    """Every source's tables and their columns with types, {source: {table: [(column, type), ...]}}, in ONE query
+    (information_schema.columns), not a SHOW TABLES and a schema read per source and table: at hundreds of sources
+    those round trips are most of a pipeline update's start. Pipelines' own tables are left out."""
+    want = {f"{prefix}{n}": n for n in names}
+    esc = prefix.replace("\\", "\\\\").replace("'", "\\'")
+    rows = spark.sql(f"SELECT table_schema, table_name, column_name, full_data_type FROM "
+                     f"`{catalog}`.information_schema.columns WHERE startswith(table_schema, '{esc}') "
+                     f"ORDER BY table_schema, table_name, ordinal_position").collect()
+    out: dict[str, dict[str, list[tuple]]] = {}
+    for r in rows:
+        s = want.get(r.table_schema)
+        if s is None or is_pipeline_table(r.table_name):
+            continue
+        out.setdefault(s, {}).setdefault(r.table_name, []).append((r.column_name, r.full_data_type))
+    return out
