@@ -62,13 +62,16 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 
 
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
-                name: str = "all_{table}", workspace=None) -> dict:
+                name: str = "all_{table}", workspace=None, log: str | None = None) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
     before (retried next run) and sends a first take-over back to the pipeline (dropping only the table this run
     created); all are noted in `proposed`. The plan is written before any release or merge, with first take-overs
-    still on the pipeline (a table isn't skipped before it arrives), and again at the end, from what was done."""
+    still on the pipeline (a table isn't skipped before it arrives), and again at the end, from what was done.
+    log: the merge log's table (merge_all), e.g. a control schema's; each run's rows carry one run id."""
+    import uuid
+    run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
     sources = discover.sources(spark, catalog, prefix)
     held = discover.tables(spark, catalog, prefix, sources)
@@ -111,7 +114,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     for table in sorted(t for t, r in apply.items() if r == "merge" and t not in skip):
         try:
             report = merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column, name=name,
-                                     workspace=workspace, take_over=True)
+                                     workspace=workspace, take_over=True, run_id=run_id, log=log)
             done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
             error = str(e).splitlines()[0][:200]
@@ -128,7 +131,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             released += merge.release(spark, catalog, target, [table], name=name)   # its state, if any was saved
             proposed[table] = {**proposed.get(table, {}), "failed": error}
     write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
-    return {"merge": sorted(t for t, r in apply.items() if r == "merge"),
+    return {"run_id": run_id, "merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
 
@@ -141,8 +144,9 @@ def main(argv=None) -> None:
     ap.add_argument("--target", required=True, help="the schema of the n:1 tables (the pipeline's)")
     ap.add_argument("--source-column", default="_source")
     ap.add_argument("--hints", default="", help='JSON: {"table": "role"}')
+    ap.add_argument("--log", default="", help="the merge log's table, catalog.schema.table (default in --target)")
     a = ap.parse_args(argv)
     from pyspark.sql import SparkSession
     spark = SparkSession.builder.getOrCreate()
     print(json.dumps(merge_route(spark, a.catalog, a.prefix, a.target, a.source_column,
-                                 json.loads(a.hints) if a.hints else None)))
+                                 json.loads(a.hints) if a.hints else None, log=a.log or None)))

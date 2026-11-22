@@ -23,6 +23,9 @@ variables:
   jdbc_connection:
     description: UC JDBC connection holding the writer (no password in the notebook)
     default: @@NAME@@_jdbc
+  control:
+    description: The lakehouse's control schema, catalog.schema (the batches the dashboard's latency starts from)
+    default: main.@@NAME@@_control
   archive:
     description: The tests repo archive the notebook installs the packages from (a branch or tag pins a version)
     default: @@ARCHIVE@@
@@ -51,7 +54,7 @@ resources:
                               connection: "${var.connection}", writer: "${var.writer}",
                               jdbc_connection: "${var.jdbc_connection}", archive: "${var.archive}",
                               modules: "{{job.parameters.modules}}", step: "{{job.parameters.step}}",
-                              rows: "{{job.parameters.rows}}"}
+                              rows: "{{job.parameters.rows}}", control: "${var.control}"}
 
 targets:
   dev:

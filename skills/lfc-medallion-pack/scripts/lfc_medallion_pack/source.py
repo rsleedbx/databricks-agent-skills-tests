@@ -35,7 +35,8 @@ def slot_budget(cur, need: int) -> dict:
 
 
 def run(spark, plan: dict, project: str, database: str, role: str, connection: str, writer: str,
-        jdbc_connection: str, step: str = "source", modules=None, rows: int = 0, log=print) -> list[dict]:
+        jdbc_connection: str, step: str = "source", modules=None, rows: int = 0, control: str = "",
+        log=print) -> list[dict]:
     from lfc_source_contract import cdc
     from lfc_source_contract.lakebase import setup
     from lfc_source_datagen.signals import model_sources
@@ -49,8 +50,13 @@ def run(spark, plan: dict, project: str, database: str, role: str, connection: s
         out = []
         for m in mods:
             if m["data"]:
-                out += [{"module": m["module"]} | r for r in
-                        batch(connect, m["model"], [x["source_schema"] for x in m["lobs"]], rows, log=log)]
+                lob = {x["source_schema"]: x["name"] for x in m["lobs"]}
+                done = batch(connect, m["model"], list(lob), rows, log=log)
+                out += [{"module": m["module"]} | r for r in done]
+                if control:   # catalog.schema: the batches the dashboard's latency starts from
+                    spark.createDataFrame([(m["module"], lob[r["source"]], int(rows)) for r in done],
+                                          "module string, lob string, rows bigint").selectExpr(
+                        "*", "current_timestamp() AS at").write.mode("append").saveAsTable(f"{control}.batches")
         return out
     if step != "source":
         raise ValueError(f"step {step}: source, batch or drop_slots")

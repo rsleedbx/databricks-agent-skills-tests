@@ -20,6 +20,7 @@ __START_AT joins the key. Run it as a job task before the pipeline that reads th
     merge_all(spark, "main", "sales_bronze_", target="sales_silver", tables=quiet, source_column="division")
 """
 import json
+import time
 
 from . import coltypes, discover, evidence
 from .stack import spark_string
@@ -182,15 +183,42 @@ def merge_sql(tgt: str, src: str, source: str, source_column: str, key: list[str
             f"{stale}")
 
 
+LOG = "_lfc_medallion_merge_log"
+
+
+def _log_rows(spark, fq_log: str, rows: list[tuple]) -> None:
+    """Append what merge_all did to the merge log: one row per table and source it copied or merged."""
+    if not rows:
+        return
+    spark.sql(f"CREATE TABLE IF NOT EXISTS {fq_log} (run_id STRING, target_table STRING, source STRING, done STRING, "
+              "version_from BIGINT, version_to BIGINT, inserted BIGINT, updated BIGINT, deleted BIGINT, "
+              "seconds DOUBLE, at TIMESTAMP) COMMENT 'lfc_medallion merge_all: each copy or merge, per table and source'")
+    lit = lambda v: "NULL" if v is None else str(v) if isinstance(v, (int, float)) else spark_string(str(v))  # noqa: E731
+    values = ", ".join("(" + ", ".join(lit(v) for v in r[:-1]) + ", current_timestamp())" for r in rows)
+    spark.sql(f"INSERT INTO {fq_log} VALUES {values}")
+
+
+def _last_metrics(spark, fq: str) -> tuple:
+    """(inserted, updated, deleted) of a table's last commit (a MERGE's operationMetrics)."""
+    r = _rows(spark, f"SELECT operationMetrics AS m FROM (DESCRIBE HISTORY {fq} LIMIT 1)")
+    m = (r[0].m or {}) if r else {}
+    g = lambda k: int(m.get(k) or 0)   # noqa: E731
+    return g("numTargetRowsInserted"), g("numTargetRowsUpdated") + g("numTargetRowsMatchedUpdated"), \
+        g("numTargetRowsDeleted") + g("numTargetRowsMatchedDeleted")
+
+
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
               only=None, name: str = "all_{table}", keys: dict | None = None, workspace=None,
-              take_over: bool = False) -> dict:
+              take_over: bool = False, run_id: str = "", log: str | None = None) -> dict:
     """Keep <catalog>.<target>.<name> current for each table in `tables`, from every source (schema <prefix><source>)
     that has it. keys: {table: [columns]} where the recorded key isn't the one to use. take_over: a target that is
     still a view (the pipeline's, left over when the table moved to this route) is dropped and the table copied whole;
     without it, a view there is an error (a pipeline still defining it would recreate it). Returns, per target table and
     source, what was done: copied (first read or after a full refresh), merged (from the change feed) or unchanged,
-    and the version read."""
+    and the version read. Each table's copies and merges are appended to the merge log (`log`, a table name, by default
+    <target>._lfc_medallion_merge_log) when the table is done, even when it fails part way: run_id, table, source,
+    done, the versions read, the target's inserted, updated and deleted rows, and the seconds; for a dashboard."""
+    fq_log = log or _fq(catalog, target, LOG)
     names = discover.sources(spark, catalog, prefix, only)
     held = discover.tables(spark, catalog, prefix, names)
     state = _state(spark, catalog, target)
@@ -203,65 +231,79 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
         out_name = name.format(table=table)
         tgt = _fq(catalog, target, out_name)
         report[out_name] = {}
-        for s in [x for x in names if table in held[x]]:
-            src = _fq(catalog, f"{prefix}{s}", table)
-            cols = [(c, t) for c, t in columns(spark, src) if c not in CHANGE_COLUMNS]
-            key = list((keys or {}).get(table) or evidence.recorded_keys(spark, src, f"{catalog}.{prefix}{s}.{table}",
-                                                                        workspace))
-            if not key:
-                raise ValueError(f"{catalog}.{prefix}{s}.{table}: no primary key recorded; "
-                                 f"give keys={{{table!r}: [...]}}")
-            if "__START_AT" in {c for c, _ in cols} and "__START_AT" not in key:
-                key.append("__START_AT")   # SCD type 2: a row per version of the key
-            if kinds.get(out_name) in ("MATERIALIZED_VIEW", "VIEW"):   # a pipeline's view (moved to this route)
-                if not take_over:
-                    raise ValueError(f"{catalog}.{target}.{out_name} is a view (a pipeline's?): leave it out of the "
-                                     "pipeline (stack_all skip=...), then take_over=True drops it for the table")
-                spark.sql(f"DROP {kinds[out_name].replace('_', ' ')} {tgt}")
-                existing.discard(out_name)
-                kinds.pop(out_name)
-            created = out_name not in existing   # made now (or dropped by hand since): every source copied
-            have = {} if created else dict(columns(spark, tgt))
-            _ensure_target(spark, tgt, not created, source_column, cols, have)
-            existing.add(out_name)
-            fresh = fresh_targets.setdefault(out_name, created)
-            now, tid = latest_version(spark, src), table_id(spark, src)
-            last, last_id = (None, None) if fresh else state.get((out_name, s), (None, None))
-            # a recreated table: a new id, or (no id saved yet) a version below the one saved; its history starts over
-            if last is not None and (last_id and last_id != tid or now < last):
-                last = -1
-            if last is not None and now == last:
-                report[out_name][s] = {"done": "unchanged", "version": now}
-                continue
-            refreshed, changed = (False, False) if last is None or last < 0 else since(spark, src, last)
-            whole = last is None or last < 0 or refreshed
-            if not whole and not changed:   # new versions, no rows written: nothing to MERGE
-                _save_state(spark, catalog, target, out_name, s, now, tid)
-                report[out_name][s] = {"done": "unchanged", "version": now}
-                continue
-            data = [c for c, _ in cols]
-            done = "copied" if whole else "merged"
-            if not whole:
-                try:
-                    spark.sql(merge_sql(tgt, src, s, source_column, key, data, last, now))
-                # the change data vacuumed or expired, or the feed off: the error class varies, so copy on any
-                except Exception as e:  # noqa: BLE001
-                    whole, done = True, f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})"
-            if whole:   # the first read, a full refresh, a recreated table, an unreadable change feed: one MERGE
-                spark.sql(merge_sql(tgt, src, s, source_column, key, data, None, now))
-            _save_state(spark, catalog, target, out_name, s, now, tid)
-            report[out_name][s] = {"done": done, "version": now}
-        # sources gone (schema dropped, table removed, left out by `only`): their rows and state go too
-        current = [x for x in names if table in held[x]]
-        gone = sorted({src for (t, src) in state if t == out_name} - set(current))
-        if gone and out_name in existing:
-            listed = ", ".join(spark_string(g) for g in gone)
-            spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} IN ({listed})")
-            spark.sql(f"DELETE FROM {_fq(catalog, target, STATE)} WHERE target_table = {spark_string(out_name)} "
-                      f"AND source IN ({listed})")
-            for g in gone:
-                report[out_name][g] = {"done": "removed"}
+        logged: list[tuple] = []
+        try:
+            _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
+                         fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id)
+        finally:
+            _log_rows(spark, fq_log, logged)
     return report
+
+
+def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
+                 fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id):
+    """merge_all's work on one table, every source that has it (logged: what it copied or merged)."""
+    for s in [x for x in names if table in held[x]]:
+        started = time.time()
+        src = _fq(catalog, f"{prefix}{s}", table)
+        cols = [(c, t) for c, t in columns(spark, src) if c not in CHANGE_COLUMNS]
+        key = list((keys or {}).get(table) or evidence.recorded_keys(spark, src, f"{catalog}.{prefix}{s}.{table}",
+                                                                    workspace))
+        if not key:
+            raise ValueError(f"{catalog}.{prefix}{s}.{table}: no primary key recorded; "
+                             f"give keys={{{table!r}: [...]}}")
+        if "__START_AT" in {c for c, _ in cols} and "__START_AT" not in key:
+            key.append("__START_AT")   # SCD type 2: a row per version of the key
+        if kinds.get(out_name) in ("MATERIALIZED_VIEW", "VIEW"):   # a pipeline's view (moved to this route)
+            if not take_over:
+                raise ValueError(f"{catalog}.{target}.{out_name} is a view (a pipeline's?): leave it out of the "
+                                 "pipeline (stack_all skip=...), then take_over=True drops it for the table")
+            spark.sql(f"DROP {kinds[out_name].replace('_', ' ')} {tgt}")
+            existing.discard(out_name)
+            kinds.pop(out_name)
+        created = out_name not in existing   # made now (or dropped by hand since): every source copied
+        have = {} if created else dict(columns(spark, tgt))
+        _ensure_target(spark, tgt, not created, source_column, cols, have)
+        existing.add(out_name)
+        fresh = fresh_targets.setdefault(out_name, created)
+        now, tid = latest_version(spark, src), table_id(spark, src)
+        last, last_id = (None, None) if fresh else state.get((out_name, s), (None, None))
+        # a recreated table: a new id, or (no id saved yet) a version below the one saved; its history starts over
+        if last is not None and (last_id and last_id != tid or now < last):
+            last = -1
+        if last is not None and now == last:
+            report[out_name][s] = {"done": "unchanged", "version": now}
+            continue
+        refreshed, changed = (False, False) if last is None or last < 0 else since(spark, src, last)
+        whole = last is None or last < 0 or refreshed
+        if not whole and not changed:   # new versions, no rows written: nothing to MERGE
+            _save_state(spark, catalog, target, out_name, s, now, tid)
+            report[out_name][s] = {"done": "unchanged", "version": now}
+            continue
+        data = [c for c, _ in cols]
+        done = "copied" if whole else "merged"
+        if not whole:
+            try:
+                spark.sql(merge_sql(tgt, src, s, source_column, key, data, last, now))
+            # the change data vacuumed or expired, or the feed off: the error class varies, so copy on any
+            except Exception as e:  # noqa: BLE001
+                whole, done = True, f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})"
+        if whole:   # the first read, a full refresh, a recreated table, an unreadable change feed: one MERGE
+            spark.sql(merge_sql(tgt, src, s, source_column, key, data, None, now))
+        _save_state(spark, catalog, target, out_name, s, now, tid)
+        report[out_name][s] = {"done": done, "version": now}
+        logged.append((run_id, out_name, s, done.split(" ")[0], None if last is None or last < 0 else int(last),
+                       int(now), *_last_metrics(spark, tgt), round(time.time() - started, 2), None))
+    # sources gone (schema dropped, table removed, left out by `only`): their rows and state go too
+    current = [x for x in names if table in held[x]]
+    gone = sorted({src for (t, src) in state if t == out_name} - set(current))
+    if gone and out_name in existing:
+        listed = ", ".join(spark_string(g) for g in gone)
+        spark.sql(f"DELETE FROM {tgt} WHERE {_q(source_column)} IN ({listed})")
+        spark.sql(f"DELETE FROM {_fq(catalog, target, STATE)} WHERE target_table = {spark_string(out_name)} "
+                  f"AND source IN ({listed})")
+        for g in gone:
+            report[out_name][g] = {"done": "removed"}
 
 
 def merged_targets(spark, catalog: str, target: str) -> set[str]:

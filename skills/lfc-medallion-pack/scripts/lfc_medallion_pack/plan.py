@@ -19,6 +19,7 @@ model), repeated across LOBs, that becomes one n:1 bronze, silver and gold:
 render() writes, under the repo:
     resources/_control.yml        the control schema: every pipeline's event log (events_<pipeline>), every gateway's
                                   staging volume, the checksums and merge watermarks: what the dashboard reads
+    resources/_dashboard.yml      the dashboard (dashboards/lakehouse.lvdash.json) over the control schema's views
     resources/<module>.yml        the bundle resources: schemas (a bronze per LOB, silver, gold), one gateway
                                   and ingestion pipeline per group of LOBs, the transform pipeline, and the refresh
                                   job: ingest, merge (the YAML's dimensions, lfc-medallion's merge route), transform,
@@ -162,7 +163,8 @@ def resources(m: dict, archive: str) -> dict:
                                         "named_parameters": {
                                             "catalog": "${var.catalog}", "prefix": f"${{var.prefix}}_{n}_bronze_",
                                             "target": f"${{resources.schemas.{n}_silver.name}}",
-                                            "source-column": col, "hints": hints}}}
+                                            "source-column": col, "hints": hints,
+                                            "log": f"${{var.catalog}}.{ctl}.merge_log_{n}"}}}
     jobs = {f"{n}_refresh": {
         "name": f"${{var.prefix}}_{n}_refresh",
         "environments": [{"environment_key": "medallion", "spec": {
@@ -205,6 +207,22 @@ def render(project_path: str, archive: str, out: str | None = None) -> dict:
                  "# merge watermarks, for the dashboard. Written by lfc-medallion-pack render.\n" + yaml.safe_dump(
                      {"resources": {"schemas": {"control": _schema("control", "The lakehouse's control schema: event "
                                                                   "logs, gateway staging, checksums, watermarks")}}},
+                     sort_keys=False, width=120))
+    written.append(f)
+    from . import dashboard   # the dashboard over the control schema's views, and its bundle resource
+    os.makedirs(os.path.join(out, "dashboards"), exist_ok=True)
+    f = os.path.join(out, "dashboards", "lakehouse.lvdash.json")
+    with open(f, "w") as fh:
+        json.dump(dashboard.build(os.path.splitext(pl["project"])[0]), fh, indent=1)
+    written.append(f)
+    f = os.path.join(out, "resources", "_dashboard.yml")
+    with open(f, "w") as fh:
+        fh.write("# The lakehouse's dashboard: rows through each stage, pipeline updates, latency, checksums (the control\n"
+                 "# schema's views). Written by lfc-medallion-pack render.\n" + yaml.safe_dump({"resources": {
+                     "dashboards": {"lakehouse": {
+                         "display_name": "${var.prefix} lakehouse: stages, pipelines, latency, checksums",
+                         "file_path": "../dashboards/lakehouse.lvdash.json", "warehouse_id": "${var.warehouse_id}",
+                         "dataset_catalog": "${var.catalog}", "dataset_schema": "${resources.schemas.control.name}"}}}},
                      sort_keys=False, width=120))
     written.append(f)
     keep = dict(pl)

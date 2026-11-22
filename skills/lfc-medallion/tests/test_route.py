@@ -246,11 +246,13 @@ class EntryPoint(unittest.TestCase):
         fake = types.ModuleType("pyspark.sql")
         fake.SparkSession = R(builder=R(getOrCreate=lambda: "spark"))
         with mock.patch.dict(sys.modules, {"pyspark": types.ModuleType("pyspark"), "pyspark.sql": fake}), \
-                mock.patch.object(route, "merge_route", lambda *a: seen.setdefault("args", a) and {}):
+                mock.patch.object(route, "merge_route", lambda *a, **k: seen.update(args=a, kw=k) or {}):
             route.main(["--catalog", "main", "--prefix", "shop_bronze_", "--target", "shop_silver",
-                        "--source-column", "division", "--hints", '{"nation": "lookup"}'])
+                        "--source-column", "division", "--hints", '{"nation": "lookup"}',
+                        "--log", "main.shop_control.merge_log"])
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
+        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log"})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
