@@ -649,6 +649,11 @@ class Scd2Review(unittest.TestCase):
         trimmed = [(5, "T5"), (9, "T9"), (15, "T15")]   # retention dropped 0-4: version 5 looks like the first
         self.assertEqual(merge.keep_generations(stored, trimmed), [(0, "T0"), (9, "T9"), (15, "T15")])
         self.assertEqual(merge.keep_generations(None, trimmed), trimmed)   # nothing stored: the history's
+        # trimmed so that a refresh after the stored ones is the oldest version left: kept
+        self.assertEqual(merge.keep_generations([[0, "T0"]], [(9, "T9"), (15, "T15")], {9, 15}),
+                         [(0, "T0"), (9, "T9"), (15, "T15")])
+        self.assertEqual(merge.keep_generations([[0, "T0"]], [(5, "T5"), (15, "T15")], {15}),   # 5: just the oldest
+                         [(0, "T0"), (15, "T15")])
 
     def test_no_wait_after_a_reset_that_writes_its_rows(self):
         rows = [_h(0, "CREATE TABLE"), _h(2, "MERGE"), _h(5, "CREATE OR REPLACE TABLE AS SELECT")]
@@ -667,8 +672,13 @@ class Scd2Review(unittest.TestCase):
         self.assertFalse(merge.refresh_plan(rows, last=2, now=12, now_s=1795366800.0 + 60)["waiting"])
 
     def test_only_data_gone_falls_back(self):
-        self.assertTrue(merge.data_gone(RuntimeError("[DELTA_CHANGE_DATA_FEED_RANGE] out of range")))
+        self.assertTrue(merge.data_gone(RuntimeError("[DELTA_MISSING_CHANGE_DATA] Error getting change data")))
         self.assertTrue(merge.data_gone(RuntimeError("java.io.FileNotFoundException: part-0001")))
+        self.assertTrue(merge.data_gone(RuntimeError("io.delta.VersionNotFoundException: version 3")))
+        self.assertTrue(merge.data_gone(RuntimeError("Cannot time travel Delta table to version 3. Available: [9]")))
+        # a schema change in the range, a wrong range: bugs to see, not data gone
+        self.assertFalse(merge.data_gone(RuntimeError("[DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA] ...")))
+        self.assertFalse(merge.data_gone(RuntimeError("[USER_RAISED_EXCEPTION] Invalid Streaming Table CDF")))
         self.assertFalse(merge.data_gone(RuntimeError("[DELTA_CONCURRENT_APPEND] ConcurrentAppendException")))
         self.assertFalse(merge.data_gone(RuntimeError("503 Service Unavailable")))
 
@@ -691,7 +701,7 @@ class Scd2Review(unittest.TestCase):
         class S:
             def sql(self, q):
                 if "table_changes(" in q:
-                    raise RuntimeError("[DELTA_CHANGE_DATA_FEED_RANGE] vacuumed\nmore")
+                    raise RuntimeError("[DELTA_MISSING_CHANGE_DATA] vacuumed\nmore")
                 done.append(q)
                 return R(collect=list, columns=["id", "v", "__START_AT", "__END_AT"])   # absent_at's read
         i = {"s": "east", "src": "`c`.`b`.`t`", "cols": [("id", "int"), ("v", "string"), ("__START_AT", "x"),
@@ -700,7 +710,7 @@ class Scd2Review(unittest.TestCase):
              "start_kind": "cdc", "end_kind": "cdc", "plan": merge.refresh_plan(TWO_REFRESHES, 2, 18)}
         report, logged = {"all_t": {}}, []
         merge._catch_up(S(), "`c`.`s`.`all_t`", i, "division", logged, "r", "all_t", report)
-        self.assertIn("catch-up failed, versions since the last read lost: [DELTA_CHANGE_DATA_FEED_RANGE] vacuumed",
+        self.assertIn("catch-up failed, versions since the last read lost: [DELTA_MISSING_CHANGE_DATA] vacuumed",
                       report["all_t"]["east"]["done"])
         copy = [q for q in done if q.startswith("MERGE INTO `c`.`s`.`all_t`")]
         self.assertEqual(len(copy), 1)

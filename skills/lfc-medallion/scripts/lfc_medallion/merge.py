@@ -165,14 +165,15 @@ def generations(rows) -> list[tuple[int, str]]:
     return out
 
 
-def keep_generations(stored, seen: list[tuple[int, str]]) -> list[tuple[int, str]]:
+def keep_generations(stored, seen: list[tuple[int, str]], resets: set | None = None) -> list[tuple[int, str]]:
     """The generations to use: those kept in the state (stored), then the resets seen after the newest of them.
     The oldest version DESCRIBE HISTORY still shows moves once log retention trims the log, so the first load's
-    time is taken from the history only the first time (nothing stored), never again."""
+    time is taken from the history only the first time (nothing stored), never again; seen's first entry is kept
+    after that only when it is itself a reset (resets: their versions), a refresh the trimmed log now starts at."""
     if not stored:
         return seen
     stored = [(int(v), str(t)) for v, t in stored]
-    return stored + [g for g in seen[1:] if g[0] > stored[-1][0]]
+    return stored + [g for n, g in enumerate(seen) if g[0] > stored[-1][0] and (n or g[0] in (resets or ()))]
 
 
 def generation_at(gens: list[tuple[int, str]], version: int) -> tuple[int, str] | None:
@@ -515,7 +516,8 @@ def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
     if START in types and now != last:   # SCD type 2 with something to read: its snapshots, from one history read
         hist = history_rows(spark, src)
         stored = saved[4] if saved and len(saved) > 4 and last_id == tid else None   # a recreated table: its own
-        gens = keep_generations(stored, generations(hist))
+        gens = keep_generations(stored, generations(hist), {int(r.version) for r in hist if evidence.is_reset(
+            r.operation, getattr(r, "operationParameters", None))})
         info.update(gens=gens, times={int(r.version): _iso(r.timestamp) for r in hist},
                     start_kind=_kind(types[START]), end_kind=_kind(types.get(END)),
                     plan=refresh_plan(hist, last, now) if last is not None and last >= 0 and refreshed else None,
@@ -725,10 +727,13 @@ def _catch_up(spark, tgt, i, source_column, logged, run_id, out_name, report) ->
               f"refreshed (catch-up failed, versions since the last read lost: {str(e).splitlines()[0][:100]})")
 
 
-# what an error says when the versions a catch-up reads are gone for good (vacuumed files, expired change data, a
-# version no longer in the log); a conflict, throttling or a network error isn't, and is retried
-GONE = ("FILE_NOT_FOUND", "FILENOTFOUND", "VACUUM", "DELTA_CHANGE_DATA_FEED", "CHANGE_DATA_FEED_RANGE",
-        "VERSION_NOT_FOUND", "VERSIONS_NOT_CONTIGUOUS", "TIME_TRAVEL", "CANNOT TIME TRAVEL", "INVALID STREAMING TABLE CDF")
+# the errors that say the versions a catch-up reads are gone for good: the change data vacuumed or never recorded
+# (DELTA_MISSING_CHANGE_DATA), a data file vacuumed (DELTA_FILE_NOT_FOUND..., FileNotFoundException), a version no
+# longer in the log (VersionNotFoundException, DELTA_VERSIONS_NOT_CONTIGUOUS, "Cannot time travel ... to version").
+# Nothing else: a schema change in the range or a wrong range (Invalid Streaming Table CDF) is a bug to see, and a
+# conflict, throttling or a network error is retried. One not listed is raised every run until someone looks.
+GONE = ("DELTA_MISSING_CHANGE_DATA", "DELTA_FILE_NOT_FOUND", "FILENOTFOUNDEXCEPTION", "VERSIONNOTFOUNDEXCEPTION",
+        "DELTA_VERSIONS_NOT_CONTIGUOUS", "CANNOT TIME TRAVEL DELTA TABLE TO VERSION")
 
 
 def data_gone(e: Exception) -> bool:
