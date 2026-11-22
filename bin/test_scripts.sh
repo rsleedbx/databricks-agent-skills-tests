@@ -101,6 +101,7 @@ check "statschema.tools: ddl(), ddl_to_schema() and shape() give the wrappers' t
   sh -c "cd '$SK/lfc-source-statschema/scripts' && uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q test_tools.py 2>&1"
 check "lfc_source_contract.jdbc: Maven driver and allow-list, TLS URLs, guarded() DO block, JdbcSql, dbapi reads through remote_query and writes through JDBC (fake spark)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_jdbc.py"
 check "lfc_source_contract.cdc: publication FOR TABLE created, kept, tables added, a failed add explained; the slot (fake cursor)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_cdc.py"
+check "lfc-saas-pipeline: package calls (fake API), each notebook and its bundle read the same tables through the same connection" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
   sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
 WC=$SK/lfc-workload-contract/scripts

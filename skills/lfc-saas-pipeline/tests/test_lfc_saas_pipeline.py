@@ -71,7 +71,8 @@ class PipelineTest(unittest.TestCase):
             nb = (root / f"notebooks/{slug}-pipeline.py").read_text()
             bundle = root / f"bundles/{slug}"
             yml = "".join(p.read_text() for p in sorted((bundle / "resources").glob("*.yml")))
-            nb_tables = re.findall(r'"([a-z_0-9]+)"', re.search(r"for t in \(([^)]*)\)", nb).group(1))
+            nb_tables = (re.findall(r'"([a-z_0-9]+)"', re.search(r"for t in \(([^)]*)\)", nb).group(1))
+                         + re.findall(r'"source_table": "([a-z_0-9]+)"', nb))   # a table with its own options
             yml_tables = re.findall(r"source_table: ([a-z_0-9]+)", yml)
             self.assertEqual(nb_tables, yml_tables, slug)
             self.assertIn(f'arg("connection", "{conn}")', nb)
