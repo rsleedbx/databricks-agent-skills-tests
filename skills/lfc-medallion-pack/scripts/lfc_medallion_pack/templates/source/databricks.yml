@@ -27,8 +27,9 @@ variables:
     description: The lakehouse's control schema, catalog.schema (the batches the dashboard's latency starts from)
     default: main.@@NAME@@_control
   archive:
-    description: The tests repo archive the notebook installs the packages from (a branch or tag pins a version)
-    default: @@ARCHIVE@@
+    description: The tests repo archive the notebook installs the packages from; empty, the plan's (the project file's
+      archive, written into plan.json by render)
+    default: ""
 
 resources:
   postgres_projects:

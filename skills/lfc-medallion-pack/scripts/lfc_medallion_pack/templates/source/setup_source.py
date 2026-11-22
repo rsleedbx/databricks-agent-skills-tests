@@ -16,8 +16,8 @@ w = {k: dbutils.widgets.get(k) for k in ("project", "database", "role", "connect
 
 # COMMAND ----------
 
-ARCHIVE = w['archive']
-import subprocess, sys
+import json, subprocess, sys
+ARCHIVE = w['archive'] or json.load(open("plan.json"))["archive"]   # empty: the project file's (render)
 PKGS = {"lfc-statschema": "lfc-source-statschema", "lfc-source-contract": "lfc-source-contract/scripts",
         "lfc-source-datagen": "lfc-source-datagen/scripts", "lfc-medallion": "lfc-medallion/scripts",
         "lfc-medallion-pack": "lfc-medallion-pack/scripts"}
