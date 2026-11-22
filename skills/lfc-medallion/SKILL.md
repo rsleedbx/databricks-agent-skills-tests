@@ -119,6 +119,38 @@ quiet table costs a metadata read, not a MERGE. New bronze columns are added fir
 gets `__START_AT`. The targets have the change data feed and row tracking on, so the silver views reading them still
 refresh incrementally.
 
+### SCD type 2: history kept across a full refresh of bronze
+
+A full refresh of a Lakeflow Connect SCD type 2 table (`DLT REFRESH`, then the reload) leaves one row per live key: its
+older versions are gone from bronze. `merge_all` keeps them in the target:
+
+1. It reads the source's change feed from the version it last read **up to the version before the refresh**. That
+   range still reads after the refresh; a range across it fails (`DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA`),
+   and so do the reload's own versions (`Invalid Streaming Table CDF`).
+2. After a second refresh since the last read, it copies the table as it was just before that one (`VERSION AS OF`).
+3. Then it copies the table now. The copy **closes** each open version the reload doesn't have, and deletes none:
+   `__END_AT` gets the refresh's time and the note `lfc_medallion: closed by full refresh at version <n>`.
+
+A snapshot row (the first load, a reload) has an empty start (`__START_AT.__cdc_timestamp_value` null), so a reload's
+row would match the first load's row of its key. `merge_all` fills that time with its snapshot's: the latest refresh
+at or before the version read, else the table's first version. The internal value stays empty. A key unchanged
+across a refresh therefore shows as two versions with the same values: the one before (closed by the refresh) and
+the reload's. A reader wanting state intervals joins them on equal values.
+
+Also: a source whose newest refresh has no write after it yet (still reloading) is left for the next run; a copy for
+another reason (a recreated table, versions log retention dropped) of a source the target already has also closes
+rather than deletes; a column added since an older version copied is NULL in that copy. The history before a refresh
+is read from Delta's log and files, so a run must come before they are vacuumed (7 days by default; Lakeflow
+Connect's tables don't take property changes). The rules for `DLT REFRESH` and the reload come from Lakeflow Connect's
+current behavior (internal, undocumented): lfc-downstream-history's `sqlserver-scd2-refresh-probe.sh` checks them again.
+
+### History of the tables left on the pipeline: `history_target`
+
+A fact that changes all the time stays on the pipeline (its current rows are the pipeline's view, fast). With
+`merge_route(..., history_target="sales_history")` (or `--history-target`), every table left on the pipeline whose
+bronze is SCD type 2 is also kept by `merge_all` in that schema: `sales_history.all_<table>`, every version, across
+full refreshes as above. Route switches never release it.
+
 ## The whole merge route as one job task: `merge_route`
 
 `merge_route()` does what a refresh needs before the pipeline: plan every source, agree one route per table (`merge`
@@ -193,7 +225,18 @@ tag (nothing switched, every view `NO_OP`). Each time silver and gold equal the 
 moved table and the two silver views reading it (the fact lines `NO_OP`, gold row-based).
 `merge_route` as a serverless `python_wheel_task` (entry point from the archive install): a run with no tag, then one
 table tagged to the pipeline and back, each with silver and gold equal to the baseline.
-Not run yet: more than three sources; bronze of an append-only or SCD type 2 destination (offline tests only).
+`merge_all` on SCD type 2 bronze across full refreshes ([tests/live_scd2_refresh.py](tests/live_scd2_refresh.py),
+Databricks Connect, 2026-11-22), on three Lakeflow Connect SQL Server CDC tables kept from the refresh probe (a long
+gap of 19 versions and inserts and deletes of keys; two refreshes with a change between them; integrated CDC with an
+`ADD COLUMN` in the gap): the target and state seeded as of the first load, then one run. Each target held every
+version the table had before its first refresh, every row it has now, the same open versions and no key twice, and a
+second run changed nothing (15 of 15). Found on the way, all fixed: `DLT REFRESH` wasn't taken as a reset (the copy
+came only through the change feed's failure, and deleted the history); Lakeflow Connect's struct time is a
+TIMESTAMP, not a string; a copy at an older version asked for a column added since.
+`history_target` (`keep_history`) on two of those tables, live: both found SCD type 2 from the catalog's columns and
+copied into the history schema, rows and open versions equal to bronze's; a second run left both unchanged.
+Not run yet: more than three sources; bronze of an append-only destination; `merge_route` end to end with
+`history_target` in a job (its parts only).
 
 ## Trade-offs
 

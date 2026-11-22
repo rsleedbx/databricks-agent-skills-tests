@@ -72,7 +72,7 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False,
-                parallel: int = 8, events: list[str] | None = None) -> dict:
+                parallel: int = 8, events: list[str] | None = None, history_target: str | None = None) -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
@@ -84,7 +84,10 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     sources are planned, in parallel; replan=True plans every source again (its evidence: keys, rows, history).
     Keys are read at once, and up to `parallel` tables are merged at once (merge_all, each on its own thread).
     events: the ingestion pipelines' event logs (tables): one query over them says which sources' tables got rows
-    or a snapshot since their state, and only those are read (changed_since); without it, every source is read."""
+    or a snapshot since their state, and only those are read (changed_since); without it, every source is read.
+    history_target: a schema where merge_all also keeps the tables left on the pipeline whose bronze is SCD type 2
+    (a fact, say: its current rows stay the pipeline's view, fast), so their history outlives a full refresh of
+    bronze, as the merge route's tables' does; never released or switched by a route change."""
     import uuid
     run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
@@ -176,10 +179,53 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
             released += merge.release(spark, catalog, target, [table], name=name)   # its state, if any was saved
             proposed[table] = {**proposed.get(table, {}), "failed": error}
     write_plan(spark, catalog, target, rows, apply, proposed)   # again: what was done
-    return {"run_id": run_id, "planned_sources": sorted(new),
+    history = keep_history(spark, catalog, prefix, history_target, ctx,
+                           sorted(t for t, r in apply.items() if r == "pipeline"), source_column, name, workspace,
+                           run_id, log, events, parallel) if history_target else {}
+    return {"run_id": run_id, "planned_sources": sorted(new), "history": history,
             "changed": None if changed is None else len(changed), "merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
+
+
+def scd2_tables(spark, catalog: str, prefix: str, ctx: dict, tables: list[str]) -> list[str]:
+    """The tables whose bronze is SCD type 2 (__START_AT) in some source: from the catalog's columns read once, else
+    one DESCRIBE per table (its first source)."""
+    cols = ctx.get("cols") or {}
+    out = []
+    for t in tables:
+        srcs = [x for x in ctx["names"] if t in ctx["held"].get(x, ())]
+        known = [cols[x][t] for x in srcs if x in cols and t in cols[x]]
+        names = {c for cs in known for c, _ in cs} if known else (
+            {c for c, _ in merge.columns(spark, f"`{catalog}`.`{prefix}{srcs[0]}`.`{t}`")} if srcs else set())
+        if merge.START in names:
+            out.append(t)
+    return out
+
+
+def keep_history(spark, catalog: str, prefix: str, history_target: str, ctx: dict, tables: list[str],
+                 source_column: str, name: str, workspace, run_id: str, log: str | None, events, parallel: int) -> dict:
+    """merge_all into history_target for the SCD type 2 tables among `tables`: {table: {source: done}}, or
+    {table: {"error": ...}} for one that failed (the others go on)."""
+    todo = scd2_tables(spark, catalog, prefix, ctx, tables)
+    if not todo:
+        return {}
+    hctx = merge.load_context(spark, catalog, prefix, history_target)
+    changed = changed_since(spark, catalog, prefix, hctx, events, name) if events else None
+
+    def one(table):
+        try:
+            report = merge.merge_all(spark, catalog, prefix, history_target, [table], source_column=source_column,
+                                     name=name, workspace=workspace, run_id=run_id, log=log, changed=changed,
+                                     context=hctx)
+            return {t: {s: x["done"] for s, x in v.items()} for t, v in report.items()}
+        except Exception as e:  # noqa: BLE001
+            return {name.format(table=table): {"error": str(e).splitlines()[0][:200]}}
+    out = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(todo)))) as ex:
+        for r in ex.map(one, todo):
+            out.update(r)
+    return out
 
 
 def _hints_changed(rows: list, hints: dict | None) -> bool:
@@ -248,9 +294,12 @@ def main(argv=None) -> None:
     ap.add_argument("--replan", action="store_true", help="plan every source again, not only new ones")
     ap.add_argument("--events", default="", help="the ingestion pipelines' event log tables, comma-separated: only the "
                                                   "sources whose bronze got rows since their state are read")
+    ap.add_argument("--history-target", default="", help="a schema that keeps the SCD type 2 history of the tables "
+                                                          "left on the pipeline (merge_all there)")
     a = ap.parse_args(argv)
     from pyspark.sql import SparkSession
     spark = SparkSession.builder.getOrCreate()
     print(json.dumps(merge_route(spark, a.catalog, a.prefix, a.target, a.source_column,
                                  json.loads(a.hints) if a.hints else None, log=a.log or None,
-                                 replan=a.replan, events=[e for e in a.events.split(",") if e] or None)))
+                                 replan=a.replan, events=[e for e in a.events.split(",") if e] or None,
+                                 history_target=a.history_target or None)))

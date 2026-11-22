@@ -14,7 +14,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
-from lfc_medallion import evidence, merge_all, stack_all
+from lfc_medallion import evidence, merge, merge_all, stack_all
 from lfc_medallion import merge as merge_mod
 from lfc_medallion.merge import STATE, merge_sql
 
@@ -541,6 +541,98 @@ class Shapes(unittest.TestCase):
     def test_replacement_in_one_version_keeps_the_insert(self):
         sql = merge_sql("`c`.`s`.`t`", "`c`.`b`.`t`", "east", "division", ["k"], ["k", "v"], 1, 2)
         self.assertIn("ORDER BY _commit_version DESC, CASE _change_type WHEN 'delete' THEN 1 ELSE 0 END", sql)
+
+
+def _h(version, operation, ts="2026-11-22T17:00:00.000Z"):
+    """A DESCRIBE HISTORY row for refresh_plan / generations."""
+    return R(version=version, operation=operation, operationParameters={}, timestamp=ts)
+
+
+# the history of a probe run with two full refreshes (lfc-downstream-history sqlserver-scd2-refresh-probe.sh REFRESHES=2,
+# 2026-11-22): load at 2, the gap to 8, a refresh at 9 reloaded by 12, a change at 13, a second refresh at 15 reloaded at 18
+TWO_REFRESHES = [_h(0, "CREATE TABLE", "T0"), _h(1, "DLT SETUP"), _h(2, "MERGE"), _h(3, "MERGE"), _h(4, "OPTIMIZE"),
+                 _h(5, "MERGE"), _h(6, "OPTIMIZE"), _h(7, "MERGE"), _h(8, "OPTIMIZE"), _h(9, "DLT REFRESH", "T9"),
+                 _h(10, "SET TBLPROPERTIES"), _h(11, "DLT SETUP"), _h(12, "MERGE"), _h(13, "MERGE"), _h(14, "OPTIMIZE"),
+                 _h(15, "DLT REFRESH", "T15"), _h(16, "SET TBLPROPERTIES"), _h(17, "DLT SETUP"), _h(18, "MERGE")]
+
+
+class Scd2AcrossRefresh(unittest.TestCase):
+    """An SCD type 2 source across full refreshes: what is read, and that nothing the target has is deleted."""
+
+    def test_dlt_refresh_is_a_reset(self):
+        self.assertTrue(evidence.is_reset("DLT REFRESH", {}))
+
+    def test_generations_are_the_first_version_and_each_refresh(self):
+        self.assertEqual(merge.generations(TWO_REFRESHES), [(0, "T0"), (9, "T9"), (15, "T15")])
+        gens = merge.generations(TWO_REFRESHES)
+        self.assertEqual(merge.generation_at(gens, 8), (0, "T0"))     # the first load's snapshot rows
+        self.assertEqual(merge.generation_at(gens, 12), (9, "T9"))    # the first reload's
+        self.assertEqual(merge.generation_at(gens, 18), (15, "T15"))
+
+    def test_plan_reads_up_to_the_version_before_each_refresh(self):
+        plan = merge.refresh_plan(TWO_REFRESHES, last=2, now=18)
+        # the change feed to 8 (reads after the refresh), the version before the second refresh, then now
+        self.assertEqual(plan, {"waiting": False, "steps": [("changes", 2, 8), ("copy", 14), ("copy", 18)]})
+
+    def test_plan_with_one_refresh(self):
+        self.assertEqual(merge.refresh_plan(TWO_REFRESHES[:13], last=2, now=12)["steps"], [("changes", 2, 8), ("copy", 12)])
+
+    def test_no_changes_step_when_read_up_to_the_refresh(self):
+        self.assertEqual(merge.refresh_plan(TWO_REFRESHES[:13], last=8, now=12)["steps"], [("copy", 12)])
+
+    def test_no_plan_without_a_refresh(self):
+        self.assertIsNone(merge.refresh_plan(TWO_REFRESHES, last=9, now=14))
+
+    def test_waiting_while_the_reload_has_no_write(self):
+        self.assertTrue(merge.refresh_plan(TWO_REFRESHES[:11], last=2, now=10)["waiting"])
+
+    def test_snapshot_start_filled_cdc_start_kept(self):
+        sql = merge.start_sql("cdc", "T9")
+        self.assertIn("__cdc_timestamp_value IS NULL THEN named_struct('__cdc_internal_value', "
+                      "coalesce(`__START_AT`.__cdc_internal_value, ''), '__cdc_timestamp_value', TIMESTAMP 'T9') ELSE `__START_AT`", sql)
+        self.assertEqual(merge.start_sql("timestamp", "T9"), "coalesce(`__START_AT`, TIMESTAMP 'T9') AS `__START_AT`")
+        self.assertEqual(merge.start_sql(None, "T9"), "`__START_AT`")   # another shape: as it is
+
+    def test_kind(self):
+        # Lakeflow Connect's (SQL Server CDC, 2026-11-22): the time is a timestamp
+        self.assertEqual(merge._kind("struct<__cdc_internal_value:string,__cdc_timestamp_value:timestamp>"), "cdc")
+        self.assertEqual(merge._kind("STRUCT<__cdc_internal_value: STRING, __cdc_timestamp_value: TIMESTAMP>"), "cdc")
+        self.assertEqual(merge._kind("struct<__cdc_internal_value:string,__cdc_timestamp_value:string>"), "cdc_string")
+        self.assertIsNone(merge._kind("struct<__cdc_internal_value:string,__cdc_timestamp_value:timestamp,x:int>"))
+        self.assertEqual(merge._kind("timestamp"), "timestamp")
+        self.assertIsNone(merge._kind("bigint"))
+
+    def test_copy_closes_open_versions_and_deletes_none(self):
+        end = merge.close_sql("cdc", "T9", "lfc_medallion: closed by full refresh at version 9")
+        sql = merge.merge_into("`c`.`s`.`t`", "SELECT 1", "division", ["k", "__START_AT"], ["k", "v", "__START_AT",
+                               "__END_AT"], whole_source="east", close=end)
+        self.assertIn("WHEN NOT MATCHED BY SOURCE AND t.`division` = 'east' AND t.`__END_AT` IS NULL THEN UPDATE SET "
+                      "t.`__END_AT` = named_struct('__cdc_internal_value', 'lfc_medallion: closed by full refresh at "
+                      "version 9', '__cdc_timestamp_value', TIMESTAMP 'T9')", sql)
+        self.assertNotIn("NOT MATCHED BY SOURCE AND t.`division` = 'east' THEN DELETE", sql)
+
+    def test_copy_without_close_deletes_as_before(self):
+        sql = merge.merge_into("`c`.`s`.`t`", "SELECT 1", "division", ["k"], ["k", "v"], whole_source="east")
+        self.assertIn("WHEN NOT MATCHED BY SOURCE AND t.`division` = 'east' THEN DELETE", sql)
+
+    def test_changes_take_the_filled_start(self):
+        sql = merge.changes_sql("`c`.`b`.`t`", "east", "division", ["k", "__START_AT"], ["k", "v", "__START_AT"], 2, 8,
+                                merge.start_sql("cdc", "T0"))
+        # the filled start in the outer SELECT; the inner dedup partitions by the raw start (a range never crosses a
+        # refresh, so its snapshot rows share one snapshot)
+        self.assertIn("TIMESTAMP 'T0') ELSE `__START_AT` END AS `__START_AT`, _change_type AS `__lfc_change`", sql)
+
+    def test_a_column_added_since_is_null_in_an_older_copy(self):
+        sql = merge.changes_sql("`c`.`b`.`t`", "east", "division", ["k"], ["k", "v", "c"], None, 8, absent={"c": "int"})
+        self.assertIn("`k`, `v`, CAST(NULL AS int) AS `c`, 'insert' AS `__lfc_change` FROM `c`.`b`.`t` VERSION AS OF 8", sql)
+
+    def test_close_time_is_the_refresh_after_the_last_read(self):
+        i = {"last": 2, "gens": merge.generations(TWO_REFRESHES), "end_kind": "cdc",
+             "times": {h.version: h.timestamp for h in TWO_REFRESHES}}
+        self.assertIn("closed by full refresh at version 15', '__cdc_timestamp_value', TIMESTAMP 'T15'", merge._close(i, 18))
+        self.assertIn("closed by full refresh at version 9', '__cdc_timestamp_value', TIMESTAMP 'T9'", merge._close(i, 14))
+        first = {**i, "last": None}   # a first read: not a refresh
+        self.assertIn("not in a whole copy at version 8", merge._close(first, 8))
 
 
 class StackSkips(unittest.TestCase):

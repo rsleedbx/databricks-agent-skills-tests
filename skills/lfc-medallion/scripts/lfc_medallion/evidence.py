@@ -219,13 +219,16 @@ def connection_schema(spark, connection: str, database: str, schema: str, engine
 KEYS_PROPERTY = "spark.internal.streaming_table.apply_changes.keys"
 
 
-RESETS = ("CREATE TABLE", "CREATE OR REPLACE TABLE", "REPLACE TABLE", "TRUNCATE")   # and anything starting so
+# DLT REFRESH: a pipeline's full refresh of a streaming table (Lakeflow Connect's destinations: the files removed, then
+# the reload; a change-feed range across it fails, DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA, 2026-11-22)
+RESETS = ("CREATE TABLE", "CREATE OR REPLACE TABLE", "REPLACE TABLE", "TRUNCATE", "DLT REFRESH")   # and anything
+# starting so
 
 
 def is_reset(operation: str, params) -> bool:
     """Whether a history entry replaces the table's rows (its change feed starts over): CREATE TABLE ..., CREATE OR
-    REPLACE ..., REPLACE TABLE ... (with or without AS SELECT), TRUNCATE, RESTORE, a WRITE in overwrite mode, a
-    STREAMING UPDATE in complete mode."""
+    REPLACE ..., REPLACE TABLE ... (with or without AS SELECT), TRUNCATE, DLT REFRESH, RESTORE, a WRITE in overwrite
+    mode, a STREAMING UPDATE in complete mode."""
     params = json.loads(params) if isinstance(params, str) else (params or {})
     mode = str(params.get("mode", "")).lower()
     output = str(params.get("outputMode", "")).lower()
