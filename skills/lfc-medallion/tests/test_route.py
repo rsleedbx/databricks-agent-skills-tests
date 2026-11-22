@@ -305,15 +305,14 @@ class EntryPoint(unittest.TestCase):
                         "--log", "main.shop_control.merge_log"])
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
-        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None})
+        self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None,
+                                      "history_target": None})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
             route.main(["--catalog", "c", "--prefix", "p_", "--target", "t", "--only", "east"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class WorkspaceOnce(unittest.TestCase):
@@ -335,3 +334,59 @@ class WorkspaceOnce(unittest.TestCase):
             [t.start() for t in ts]
             [t.join() for t in ts]
         self.assertEqual(len(made), 1)
+
+
+HISTORY_CTX = {"names": ["east", "west"], "held": {"east": {"lines", "nation"}, "west": {"lines", "nation"}},
+               "cols": {"east": {"lines": [("id", "int"), ("__START_AT", "struct<...>")], "nation": [("id", "int")]},
+                       "west": {"lines": [("id", "int")], "nation": [("id", "int")]}}}
+
+
+class History(unittest.TestCase):
+    """history_target: the SCD type 2 tables left on the pipeline are kept by merge_all in their own schema."""
+
+    def test_scd2_tables_from_the_catalog_columns(self):   # one source with __START_AT is enough
+        self.assertEqual(route.scd2_tables(None, "main", "shop_bronze_", HISTORY_CTX, ["lines", "nation"]), ["lines"])
+
+    def test_scd2_tables_read_when_the_catalog_has_none(self):
+        ctx = {**HISTORY_CTX, "cols": None}
+        with mock.patch.object(route.merge, "columns", side_effect=lambda s, fq: [("id", "int")] +
+                               ([("__START_AT", "x")] if "lines" in fq else [])) as cols:
+            self.assertEqual(route.scd2_tables(None, "main", "shop_bronze_", ctx, ["lines", "nation"]), ["lines"])
+        self.assertEqual(cols.call_count, 2)   # one DESCRIBE per table, its first source
+
+    def test_keep_history_merges_only_scd2_tables_into_the_history_schema(self):
+        calls = []
+
+        def fake_merge_all(spark, catalog, prefix, target, tables, **kw):
+            calls.append((target, tables, kw.get("take_over", False)))
+            return {f"all_{tables[0]}": {"east": {"done": "merged"}}}
+        with mock.patch.object(route.merge, "load_context", return_value=HISTORY_CTX), \
+                mock.patch.object(route.merge, "merge_all", side_effect=fake_merge_all):
+            got = route.keep_history(None, "main", "shop_bronze_", "shop_history", HISTORY_CTX, ["lines", "nation"],
+                                     "division", "all_{table}", None, "run", None, None, 4)
+        self.assertEqual(calls, [("shop_history", ["lines"], False)])   # never takes over a pipeline's view
+        self.assertEqual(got, {"all_lines": {"east": "merged"}})
+
+    def test_one_failing_table_is_reported_the_others_go_on(self):
+        ctx = {**HISTORY_CTX, "cols": {s: {"lines": [("__START_AT", "x")], "nation": [("__START_AT", "x")]}
+                                    for s in ("east", "west")}}
+
+        def fake_merge_all(spark, catalog, prefix, target, tables, **kw):
+            if tables == ["lines"]:
+                raise RuntimeError("boom\nmore")
+            return {"all_nation": {"east": {"done": "copied"}}}
+        with mock.patch.object(route.merge, "load_context", return_value=ctx), \
+                mock.patch.object(route.merge, "merge_all", side_effect=fake_merge_all):
+            got = route.keep_history(None, "main", "shop_bronze_", "shop_history", ctx, ["lines", "nation"],
+                                     "division", "all_{table}", None, "run", None, None, 4)
+        self.assertEqual(got, {"all_lines": {"error": "boom"}, "all_nation": {"east": "copied"}})
+
+    def test_entry_point_passes_history_target(self):
+        with mock.patch.object(route, "merge_route", return_value={}) as mr, \
+                mock.patch.dict(sys.modules, {"pyspark.sql": types.SimpleNamespace(SparkSession=mock.MagicMock())}):
+            route.main(["--catalog", "main", "--prefix", "p_", "--target", "t", "--history-target", "h"])
+        self.assertEqual(mr.call_args.kwargs["history_target"], "h")
+
+
+if __name__ == "__main__":
+    unittest.main()
