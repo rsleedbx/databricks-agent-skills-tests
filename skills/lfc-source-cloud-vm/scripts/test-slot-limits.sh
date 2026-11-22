@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # test-slot-limits.sh: checks slot.sh's per-owner limits against a fake podman and flock (no VM, no containers): the
 #   LIMITS lookup (owner line, default line, a key missing from the owner's line, a key that starts like another, no
-#   file), `up` at the limit stopping without parking, and `up --park` parking just enough, the earliest started
+#   file), `up` at the limit stopping with exit 3 (a soft limit: the client asks), `up --over-limit` starting it anyway,
+#   and `up --park` parking just enough, the earliest started
 #   first; `masters` on a VM without masters (no lines, exit 0) and with one (its folder, not its .engine file);
 #   SQL Server --edition (the container's MSSQL_PID, kept in the record, the refusals). One
 #   PASS/FAIL line per check; exit 1 on any FAIL.
@@ -44,7 +45,10 @@ mv "$T/limits.off" "$T/limits"
 # alice: max_running=2, three running (b started first, then a, then c), and a parked one to start
 db alice a 2026-10-31T10:00:00Z; db alice b 2026-10-31T09:00:00Z; db alice c 2026-10-31T11:00:00Z; db alice new
 : > "$T/calls"; err=$(slot alice up postgres new 2>&1 >/dev/null); rc=$?
-ok "at the limit: stops, names them, parks nothing" '[ $rc = 1 ] && [[ $err == *"you have 3 of 2 running databases on this VM (b a c)"* ]] && [ ! -s "$T/calls" ]'
+ok "at the limit: exit 3 (ask), names them, parks nothing" '[ $rc = 3 ] && [[ $err == *"you have 3 of 2 running databases on this VM (b a c)"* ]] && [[ $err == *"--over-limit"* ]] && [ ! -s "$T/calls" ]'
+: > "$T/calls"; err=$(slot alice up postgres new --over-limit 2>&1 >/dev/null); rc=$?
+# (the fake podman can't start a container, so up goes no further than the start: what counts is that it passed the limit)
+ok "--over-limit: past the limit (no exit 3), parks nothing, says so" '[ $rc != 3 ] && [ ! -s "$T/calls" ] && [[ $err == *"starting new as well (--over-limit)"* ]]'
 : > "$T/calls"; err=$(slot alice up postgres new --park 2>&1 >/dev/null)
 ok "--park: parks the two that started first, no more" '[ "$(paste -sd, - < "$T/calls")" = "stop lfc-slot-alice-b,stop lfc-slot-alice-a" ] && [ -f "$T/run/lfc-slot-alice-c" ]'
 ok "--park says so" '[[ $err == *"parking your running database b first (2 at a time for you on this VM)"* ]]'

@@ -41,7 +41,7 @@ Db2, Informix, CockroachDB and YugabyteDB get no CDC settings here: each test se
 
 | Setting (`/etc/lfc-slot.env`) | Default | When it's reached |
 |---|---|---|
-| `MAX_PER_OWNER` | 1 (0 = no limit) | the default for `max_running` (below): `up` stops and names your running databases; `up ... --park` parks the one that started first |
+| `MAX_PER_OWNER` | 1 (0 = no limit) | the default for `max_running` (below), a soft limit: `up` stops with exit 3 and names your running databases, so the client asks you; `up ... --over-limit` starts another anyway, `up ... --park` parks the one that started first |
 | `MAX_RUNNING` | vCPUs / `CPUS_PER_DB`, at least 1 | `up` stops with `the VM is full` and lists what's running |
 | `CPUS_PER_DB` | 2; 1 on a personal VM (`KIND=personal`) | follows a resize: the limit is worked out from `nproc` each time |
 | `PORT_MIN`-`PORT_MAX` | 30000-30063 | `no free port`; each database keeps its port until `rm`. A port something else listens on (a container started outside slot.sh) is skipped |
@@ -57,7 +57,7 @@ default max_running=1 hours_per_week=29
 alice max_running=4 hours_per_week=60
 ```
 
-- `max_running`: how many of your databases may run at once (0 = no limit).
+- `max_running`: how many of your databases may run at once before `up` asks (0 = no limit). It's a soft limit: at it, `up` exits 3 with your running databases named, `lfc db up` asks whether to start another anyway, and an agent asks you before it adds `--over-limit`. The VM's own limit, `MAX_RUNNING` (one database per `CPUS_PER_DB` vCPUs), stays a hard stop.
 - `hours_per_week`: above it, the client suggests a VM of your own. A suggestion, not enforced.
 
 `slot.sh limits` prints yours: `{"owner": "alice", "max_running": 4, "hours_per_week": 60}`.
