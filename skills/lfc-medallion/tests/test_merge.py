@@ -396,6 +396,19 @@ class Removed(unittest.TestCase):
         run(spark)
         self.assertEqual(self.deletes(spark), [])
 
+    def test_a_failed_check_deletes_nothing(self):   # SHOW TABLES failing for another reason than a dropped schema
+        class Denied(Spark):
+            def sql(self, q):
+                if q.startswith("SHOW TABLES IN `main`.`shop_bronze_west`"):
+                    raise RuntimeError("PERMISSION_DENIED")
+                return super().sql(q)
+        spark = Denied(state={("all_nation", "east"): 5, ("all_nation", "west"): 7}, targets={"all_nation"},
+                       tables={"west": ["nation"]})
+        spark.seen, spark.lag = ("east", "west"), {("west", "nation")}
+        with self.assertRaisesRegex(RuntimeError, "PERMISSION_DENIED"):
+            run(spark)
+        self.assertEqual(self.deletes(spark), [])
+
     def test_nothing_deleted_without_a_target(self):   # no source has the table, and its target was dropped by hand
         spark = Spark(state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       tables={"east": ["orders"], "west": ["orders"]})

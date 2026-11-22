@@ -68,8 +68,11 @@ def held_tables(spark, catalog: str, prefix: str, names: list[str]) -> tuple[dic
 
 
 def tables_or_none(spark, catalog: str, prefix: str, source: str) -> set[str]:
-    """One source's tables by SHOW TABLES; none when its schema is gone: before anything is deleted as gone."""
+    """One source's tables by SHOW TABLES; none when its schema is gone: before anything is deleted as gone. Any
+    other error (permissions, the network) is raised, so nothing is deleted on it."""
     try:
         return tables(spark, catalog, prefix, [source])[source]
-    except Exception:  # noqa: BLE001  the schema dropped
-        return set()
+    except Exception as e:  # noqa: BLE001
+        if "SCHEMA_NOT_FOUND" in str(e) or "NO_SUCH_NAMESPACE" in str(e):
+            return set()
+        raise
