@@ -15,6 +15,7 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-medallion", "scripts"))
 from lfc_medallion_pack import check, cli, dashboard, lobs, pack, plan, timings, verify  # noqa: E402
 
 COLS = {"branch": ["b_id", "b_balance", "b_filler"], "teller": ["t_id", "t_b_id", "t_balance", "t_filler"],
@@ -115,7 +116,9 @@ class Plan(unittest.TestCase):
         self.assertEqual([t["task_key"] for t in r["jobs"]["bank_verify"]["tasks"]], ["verify"])   # off the path
         merge = job["tasks"][2]
         self.assertEqual(merge["python_wheel_task"]["entry_point"], "lfc-medallion-merge")
-        self.assertEqual(json.loads(merge["python_wheel_task"]["named_parameters"]["hints"]), {})   # evidence decides
+        # the merge route takes the same roles the pipelines are split by: the schema YAML's
+        self.assertEqual(json.loads(merge["python_wheel_task"]["named_parameters"]["hints"]),
+                         {"account": "dimension", "branch": "dimension", "history": "log", "teller": "dimension"})
         self.assertEqual(t["configuration"]["silver_schema"], "${resources.schemas.bank_silver.name}")
         open(os.path.join(self.d, "marts", "tpcb", "gold.sql"), "a").write("-- mine\n")
         plan.render(f, "https://example.invalid/a.zip")

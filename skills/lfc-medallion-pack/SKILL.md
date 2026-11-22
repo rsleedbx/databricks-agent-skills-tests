@@ -47,6 +47,13 @@ modules:
   bank:    {pack: tpcb, lobs: 10, seed: 7, data: true}
 ```
 
+A module may split its tables by role: `split_by_role: true` puts its facts (fact, log, queue, by the schema
+YAML's roles) in ingestion pipelines of their own, `fact_mode: continuous` by default, and its dimensions (dimension,
+lookup, bridge) in others, `dimension_mode: triggered` (the refresh job starts them, then merges and transforms).
+A busy fact then doesn't wait on many idle dimensions in the same update. Each pipeline needs its own gateway and
+slot, so a split takes up to twice the slots for the same tables. Without it (the default) every table of a LOB is in
+one pipeline (`mode: triggered` or `continuous`).
+
 `plan` puts as many LOBs in one ingestion pipeline (and its gateway, slot and publication) as keep it at or under
 `tables_per_pipeline` (Lakeflow Connect: 1,000 tables hard, one of them the staging table, so 999; 250 recommended),
 and stops when the pipelines need more replication slots than `max_slots`. The source job checks the real
@@ -83,7 +90,20 @@ Then `lfc-medallion-pack check <pack>`: every `all_<table>` is a table of the mo
 columns, every join equates the source column on both sides. Keep the signal and its readout in the same pack: a
 change to one is a change to the other.
 
-## Recording and predicting the time each step takes
+## The merge route's work per refresh
+
+lfc-medallion's merge task (`merge_route`) reads only what changed, and each thing once:
+- the sources, their tables and columns: one `information_schema` query; the state, its keys and times: one read;
+- which LOBs' tables got rows or a snapshot since their state: one query over the ingestion pipelines' event logs
+  (`--events`, rendered from the module's pipelines); a table no row reached isn't read at all;
+- per changed source: one history read (the latest version and what changed), the key from the state;
+- per table: one MERGE for all its changed LOBs (their change feeds unioned), one state write; tables at once
+  (`parallel`, 8), metadata reads on threads (16): all on the task's one compute.
+
+Measured on TPC-B, 10 LOBs, 3 merge-route tables (2026-11-22): the task 516 s before, 85 s after a batch, 64 s with
+nothing to merge (its start: installing and reading the catalog); a batch to gold 875 s before, about 370 s after.
+
+
 
 After every run, record it, so the next, bigger deployment can be planned from measurements:
 

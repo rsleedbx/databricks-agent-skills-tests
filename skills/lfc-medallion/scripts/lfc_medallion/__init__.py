@@ -5,7 +5,7 @@ roles holds the rules (cdc-table-plan's classify.py runs them from files); merge
 current from the sources' change feeds, as a job; route runs that job task whole (merge_route) and gives the pipeline
 its side (merged_tables)."""
 from .discover import sources, tables  # noqa: F401
-from .evidence import table_plan  # noqa: F401
+from .evidence import split_tables, table_plan  # noqa: F401
 from .merge import merge_all, release, routes_to_apply  # noqa: F401
 from .route import merge_route, merged_tables  # noqa: F401
 from .stack import source_sql, stack_all, stacked  # noqa: F401

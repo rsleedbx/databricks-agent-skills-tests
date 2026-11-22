@@ -41,7 +41,6 @@ import yaml
 from . import lobs as lobs_mod
 from . import pack as pack_mod
 
-DIMENSION_ROLES = ("dimension", "lookup", "bridge")
 TABLES_PER_PIPELINE = 250      # recommended; a pipeline takes at most 999 source tables (1,000 with its staging table)
 HARD_TABLES = 999
 
@@ -70,12 +69,12 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     if limit > HARD_TABLES:
         raise ValueError(f"tables_per_pipeline {limit}: an ingestion pipeline takes at most {HARD_TABLES} source tables")
     sp = project["source"]["slot_prefix"]
-    roles = p.get("roles") or {}
-    dims = [t for t in p["tables"] if roles.get(t) in DIMENSION_ROLES]
-    if m.get("split_by_role") and dims and len(dims) < len(p["tables"]):
+    from lfc_medallion import split_tables   # the one rule: the merge route's, from the same roles
+    facts, dims = split_tables({t: (p.get("roles") or {}).get(t, "") for t in p["tables"]})
+    if m.get("split_by_role") and dims and facts:
         # facts (fact, log, queue) and dimensions (dimension, lookup, bridge) in pipelines of their own: a busy fact
         # doesn't wait on many idle dimensions; each class takes its own mode
-        classes = [("facts", [t for t in p["tables"] if t not in dims], m.get("fact_mode", "continuous")),
+        classes = [("facts", facts, m.get("fact_mode", "continuous")),
                    ("dimensions", dims, m.get("dimension_mode", "triggered"))]
     else:
         classes = [("all", list(p["tables"]), m.get("mode", "triggered"))]
@@ -96,7 +95,7 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
             "data": bool(m.get("data", False)),
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
             "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit,
-            "hints": m.get("hints") or {}}
+            "hints": m.get("hints") or {}, "dimension_tables": dims}
 
 
 def plan(project_path: str) -> dict:
@@ -176,7 +175,10 @@ def resources(m: dict, archive: str) -> dict:
     # the merge route (lfc-medallion): merge_route classifies each table from evidence (keys, foreign keys, change
     # counters) and keeps dimensions, lookups and bridges by MERGE, facts, logs and queues in the pipeline; a module's
     # own hints (febar.yaml) override a table's role only where the evidence can't tell
-    hints = json.dumps(m.get("hints") or {}, sort_keys=True)
+    # the merge route takes the schema YAML's roles, the same ones the pipelines are split by (and a batch's
+    # tables chosen by): one rule, one source of roles; a module's own hints win
+    hints = json.dumps({t: r for t, r in (m.get("roles") or {}).items() if r} | (m.get("hints") or {}),
+                       sort_keys=True)
     merge_task = {"task_key": "merge", "depends_on": [{"task_key": t["task_key"]} for t in ingest_tasks],
                   "environment_key": "medallion",
                   "python_wheel_task": {"package_name": "lfc-medallion", "entry_point": "lfc-medallion-merge",

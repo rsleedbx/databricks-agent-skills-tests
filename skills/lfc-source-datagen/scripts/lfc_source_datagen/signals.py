@@ -279,22 +279,18 @@ def append(connect, model: str, names, grow: float, sessions: int = 4, log=print
     return out
 
 
-DIMENSION_ROLES = ("dimension", "lookup", "bridge")
-
-
-def batch(connect, model: str, names, rows: int, log=print) -> list[dict]:
-    """One batch of changes per source, as the model's YAML says: `rows` new rows in every table whose role isn't a
-    dimension, lookup or bridge (python/fill.py --mode append, continuing each table's row numbers by its generation
-    rules), then its signals re-applied (their totals: the parents' sums). A rerun, or a retried task, appends another
-    batch: the data stays consistent (the signal covers every row, the totals are recomputed), the rows are more than
-    asked. Works on any DB-API connection
-    connect() returns: psycopg, or a UC JDBC connection (lfc_source_contract.jdbc.dbapi)."""
-    from .sources import model_roles
-    dims = [t for t, r in model_roles(model).items() if r in DIMENSION_ROLES]
+def batch(connect, model: str, names, rows: int, quiet: list[str] = (), log=print) -> list[dict]:
+    """One batch of changes per source: `rows` new rows in every table of the model but the `quiet` ones (its
+    dimensions: the caller decides them, by the one rule lfc_medallion.split_tables applies to the schema YAML's
+    roles), by python/fill.py --mode append, continuing each table's row numbers by its generation rules, then its
+    signals re-applied (their totals: the parents' sums). A rerun, or a retried task, appends another batch: the data
+    stays consistent (the signal covers every row, the totals are recomputed), the rows are more than asked. Works on
+    any DB-API connection connect() returns: psycopg, or a UC JDBC connection (lfc_source_contract.jdbc.dbapi)."""
     out = []
     for name in names:
         check_name(name, "source")
-        _fill(connect, name, 1, ("--mode", "append", "--rows", str(int(rows))) + (("--skip", ",".join(dims)) if dims else ()))
+        _fill(connect, name, 1, ("--mode", "append", "--rows", str(int(rows))) + (("--skip", ",".join(quiet))
+                                                                                   if quiet else ()))
         con = connect()
         cur = con.cursor()
         changed = reapply(cur, model, name, log)

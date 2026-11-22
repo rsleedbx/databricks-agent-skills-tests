@@ -472,9 +472,9 @@ class Rule(unittest.TestCase):
 
 
 class Batch(unittest.TestCase):
-    def test_rows_go_to_the_tables_that_are_not_dimensions_by_the_yaml(self):
+    def test_rows_go_to_every_table_but_the_quiet_ones(self):
         with mock.patch.object(sg, "_fill") as fill, mock.patch.object(sg, "reapply", return_value={"s": [3, None]}):
-            got = sg.batch(Db().connect, "tpcb", ["a"], 500, log=lambda m: None)
+            got = sg.batch(Db().connect, "tpcb", ["a"], 500, quiet=["branch", "teller", "account"], log=lambda m: None)
         self.assertEqual(fill.call_args.args[1:], ("a", 1, ("--mode", "append", "--rows", "500", "--skip",
                                                             "branch,teller,account")))
         self.assertEqual(got, [{"source": "a", "rows": 500, "changed": None}])   # a count the connection didn't give

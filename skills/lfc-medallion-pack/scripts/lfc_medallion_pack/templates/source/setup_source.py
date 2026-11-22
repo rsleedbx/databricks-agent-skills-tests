@@ -18,7 +18,8 @@ w = {k: dbutils.widgets.get(k) for k in ("project", "database", "role", "connect
 ARCHIVE = w['archive']
 import subprocess, sys
 PKGS = {"lfc-statschema": "lfc-source-statschema", "lfc-source-contract": "lfc-source-contract/scripts",
-        "lfc-source-datagen": "lfc-source-datagen/scripts", "lfc-medallion-pack": "lfc-medallion-pack/scripts"}
+        "lfc-source-datagen": "lfc-source-datagen/scripts", "lfc-medallion": "lfc-medallion/scripts",
+        "lfc-medallion-pack": "lfc-medallion-pack/scripts"}
 # every tests-repo package from the one archive (--no-deps: their own pins point at main), then what they need
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps"] +
                       [f"{n} @ {ARCHIVE}#subdirectory=skills/{d}" for n, d in PKGS.items()])
