@@ -215,6 +215,7 @@ modules:
   `step=batch`, the UC JDBC connection to Lakebase): 500 rows on each of 10 LOBs in 170 s, most of it installing; the
   rows and balance updates reached gold through Lakeflow Connect CDC, every balance gap 0. A failed or retried run
   appends again: the data stays consistent, the rows are more than asked (seen: one LOB with 1,000 extra).
+  `tables=all` adds the rows to the dimensions too (new branches, tellers, accounts): the merge route's tables change.
 - `append` (whole scale factors of every table) is not the batch: TPC-B's branch is one row per scale factor, so its
   smallest step is 100,000 accounts.
 - The ingestion pipelines are triggered; their steady time per update (above) sets how far behind bronze runs at a

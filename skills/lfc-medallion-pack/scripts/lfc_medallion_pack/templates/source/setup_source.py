@@ -8,7 +8,8 @@
 # COMMAND ----------
 
 for name, default in (("project", ""), ("database", ""), ("role", ""), ("connection", ""), ("writer", ""),
-                      ("jdbc_connection", ""), ("archive", ""), ("modules", ""), ("step", "source"), ("rows", "0"), ("control", "")):
+                      ("jdbc_connection", ""), ("archive", ""), ("modules", ""), ("step", "source"), ("rows", "0"), ("control", ""),
+                      ("tables", "facts")):
     dbutils.widgets.text(name, default)
 w = {k: dbutils.widgets.get(k) for k in ("project", "database", "role", "connection", "writer", "jdbc_connection",
                                          "archive", "modules", "step")}
@@ -29,11 +30,11 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 w = {k: dbutils.widgets.get(k) for k in ("project", "database", "role", "connection", "writer", "jdbc_connection",
-                                         "modules", "step", "rows", "control")}
+                                         "modules", "step", "rows", "control", "tables")}
 from lfc_medallion_pack.plan import read_plan
 from lfc_medallion_pack.source import run
 rows = run(spark, read_plan("plan.json"), project=w["project"], database=w["database"], role=w["role"], connection=w["connection"],
            writer=w["writer"], jdbc_connection=w["jdbc_connection"], step=w["step"],
            modules=w["modules"].split(",") if w["modules"] else None, rows=int(w["rows"] or 0),
-           control=w["control"])
+           control=w["control"], tables=w["tables"] or "facts")
 display(spark.createDataFrame([{k: str(v) for k, v in r.items()} for r in rows]) if rows else "nothing")

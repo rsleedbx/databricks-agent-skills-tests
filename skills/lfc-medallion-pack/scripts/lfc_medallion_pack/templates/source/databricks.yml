@@ -46,6 +46,7 @@ resources:
         - {name: step, default: source}       # source; batch (rows changes per LOB with data); drop_slots when done
         - {name: rows, default: "0"}
         - {name: modules, default: ""}        # empty: every module of plan.json
+        - {name: tables, default: facts}      # a batch's tables: facts (not the dimensions), or all
       tasks:
         - task_key: source
           notebook_task:
@@ -54,7 +55,8 @@ resources:
                               connection: "${var.connection}", writer: "${var.writer}",
                               jdbc_connection: "${var.jdbc_connection}", archive: "${var.archive}",
                               modules: "{{job.parameters.modules}}", step: "{{job.parameters.step}}",
-                              rows: "{{job.parameters.rows}}", control: "${var.control}"}
+                              rows: "{{job.parameters.rows}}", control: "${var.control}",
+                              tables: "{{job.parameters.tables}}"}
 
 targets:
   dev:

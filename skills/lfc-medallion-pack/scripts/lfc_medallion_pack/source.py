@@ -14,7 +14,7 @@ connections, so no password is in the code:
      holds WAL until its gateway reads it).
 Every step is safe to rerun: a finished LOB is kept, a publication or slot that exists is kept. step="batch" adds
 `rows` changes to every LOB of the modules with data (lfc_source_datagen.signals.batch: new rows in the tables the
-YAML doesn't call dimensions, then the signals); a scheduled run of it is the change stream. step="drop_slots" drops
+YAML doesn't call dimensions, or in every table with tables="all", then the signals); a scheduled run of it is the change stream. step="drop_slots" drops
 the plan's slots (when the test is done; a stopped gateway's slot keeps WAL).
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ def slot_budget(cur, need: int) -> dict:
 
 def run(spark, plan: dict, project: str, database: str, role: str, connection: str, writer: str,
         jdbc_connection: str, step: str = "source", modules=None, rows: int = 0, control: str = "",
-        log=print) -> list[dict]:
+        tables: str = "facts", log=print) -> list[dict]:
     from lfc_source_contract import cdc
     from lfc_source_contract.lakebase import setup
     from lfc_source_datagen.signals import model_sources
@@ -45,13 +45,16 @@ def run(spark, plan: dict, project: str, database: str, role: str, connection: s
     if step == "drop_slots":
         cur = connect().cursor()
         return [{"slot": g["slot"], "left": cdc.slot(cur, g["slot"], drop=True)} for m in mods for g in m["groups"]]
+    if tables not in ("facts", "all"):
+        raise ValueError(f"tables {tables}: facts or all")
     if step == "batch":   # one batch of changes per LOB of the modules with data (signals.batch: the YAML roles)
         from lfc_source_datagen.signals import batch
         out = []
         for m in mods:
             if m["data"]:
                 lob = {x["source_schema"]: x["name"] for x in m["lobs"]}
-                done = batch(connect, m["model"], list(lob), rows, quiet=m.get("dimension_tables") or [], log=log)
+                quiet = [] if tables == "all" else m.get("dimension_tables") or []   # all: the dimensions too
+                done = batch(connect, m["model"], list(lob), rows, quiet=quiet, log=log)
                 out += [{"module": m["module"]} | r for r in done]
                 if control:   # catalog.schema: the batches the dashboard's latency starts from
                     spark.createDataFrame([(m["module"], lob[r["source"]], int(rows), float(r["at"])) for r in done],
