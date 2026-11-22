@@ -23,6 +23,7 @@ connection page); each defaults to `lfcsaas-<connector>`.
 | Atlassian Audit Logs | [notebook](notebooks/atlassian-audit-logs-pipeline.py) | [bundle](bundles/atlassian-audit-logs) | `lfcsaas-atlassian-audit-logs` | audit_logs |
 | OpenAI | [notebook](notebooks/openai-pipeline.py) | [bundle](bundles/openai) | `lfcsaas-openai` | audit_logs, users, usage_completions |
 | Adobe Commerce | [notebook](notebooks/adobe-commerce-pipeline.py) | [bundle](bundles/adobe-commerce) | `lfcsaas-adobe-commerce` | products, customers, orders; no public docs page yet |
+| GitHub | [notebook](notebooks/github-pipeline.py) | [bundle](bundles/github) | `lfcsaas-github` | repositories, pull_requests; sign in to GitHub to make the connection; `org` required (`run_tests.py --var org=...`) |
 
 | Way | Files | When |
 |---|---|---|
