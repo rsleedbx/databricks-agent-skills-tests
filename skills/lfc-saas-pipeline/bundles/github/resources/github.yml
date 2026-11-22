@@ -1,0 +1,37 @@
+resources:
+  schemas:
+    github_data:
+      catalog_name: ${var.catalog}
+      name: ${var.schema}
+      comment: GitHub as Lakeflow Connect lands it
+
+  pipelines:
+    github:
+      name: ${var.schema}
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.github_data.name}
+      ingestion_definition:
+        connection_name: ${var.connection}
+        objects:
+          # repositories, pull_requests (source schema: the organization)
+          - table: &t {source_schema: "${var.org}", source_table: repositories,
+                       destination_catalog: "${var.catalog}", destination_schema: "${resources.schemas.github_data.name}"}
+          - table: {<<: *t, source_table: pull_requests}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users
+
+  jobs:
+    github_refresh:
+      name: ${var.schema}_refresh
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"   # daily at 06:00
+        timezone_id: UTC
+        pause_status: PAUSED
+      tasks:
+        - task_key: refresh
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.github.id}
+      permissions:
+        - level: CAN_VIEW
+          group_name: users

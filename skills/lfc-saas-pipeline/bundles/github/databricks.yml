@@ -1,0 +1,27 @@
+# GitHub into Unity Catalog with Lakeflow Connect, as a bundle: the pipeline of the docs' example
+# (docs.databricks.com/aws/en/ingestion/lakeflow-connect/github-pipeline), its schema, and a job that
+# runs it on a schedule (paused until you unpause it). Deploy from the CLI (databricks bundle deploy --var
+# org=<organization>) or from the workspace (open this file, set org, Deployments, Deploy).
+bundle:
+  name: github
+
+include:
+  - resources/*.yml
+
+variables:
+  connection:
+    description: The GitHub UC connection (made in Catalog Explorer by signing in to GitHub through an OAuth app)
+    default: lfcsaas-github
+  catalog:
+    description: Catalog of the destination schema
+    default: main
+  schema:
+    description: Destination schema, created by the bundle
+    default: github
+  org:
+    description: The GitHub organization to ingest from (one the connection's user can read); required
+
+targets:
+  dev:
+    default: true
+    mode: development
