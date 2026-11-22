@@ -58,6 +58,18 @@ def statements(sql: str) -> list[tuple[str, str]]:
     return out
 
 
+def written_to(p: dict) -> dict[str, str | None]:
+    """Each marts view and the pipeline setting naming the schema it is written to (${catalog}.${gold_schema}.x ->
+    gold_schema), or None for the pipeline's own schema."""
+    out = {}
+    for sql in __import__("lfc_medallion_pack.pack", fromlist=["mart_sql"]).mart_sql(p).values():
+        for raw in STMT.findall(sql):
+            parts = raw.split(".")
+            m = re.fullmatch(r"\$\{(\w+)\}", parts[-2]) if len(parts) > 1 else None
+            out[parts[-1]] = m.group(1) if m else None
+    return out
+
+
 def reads(p: dict) -> dict[str, set[str]]:
     """Each marts view and the tables and views it reads (by their last name part: all_history, silver_accounts)."""
     import sqlglot

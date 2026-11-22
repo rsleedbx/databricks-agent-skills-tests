@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # The facts cycle: only the fact chain of a module's transform pipeline
+# MAGIC # A transform update that waits its turn: the facts cycle (only the fact chain) or, with no selection, all
 # MAGIC Its facts land continuously (their own ingestion pipelines); this refreshes their n:1 views and every silver
 # MAGIC and gold view that reads them (`selection`, from the marts' SQL: render), not the dimensions' views, so a fact
 # MAGIC reaches gold without waiting for the dimension cycle. A pipeline runs one update at a time: this waits for one
@@ -26,7 +26,8 @@ def busy() -> bool:
 
 while busy():   # the dimension cycle's update, or a facts cycle still running
     time.sleep(5)
-update = w.pipelines.start_update(pid, refresh_selection=selection).update_id
+update = (w.pipelines.start_update(pid, refresh_selection=selection) if selection   # empty: every dataset
+          else w.pipelines.start_update(pid)).update_id
 while True:
     state = str(w.pipelines.get_update(pid, update).update.state).split(".")[-1]
     if state in ("COMPLETED", "FAILED", "CANCELED"):

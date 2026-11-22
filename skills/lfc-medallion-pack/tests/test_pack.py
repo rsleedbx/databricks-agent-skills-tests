@@ -80,7 +80,12 @@ class Plan(unittest.TestCase):
         self.assertEqual(facts["ingestion_definition"]["objects"][0]["table"]["source_table"], "history")
         self.assertEqual([t["task_key"] for t in r["jobs"]["bank_refresh"]["tasks"]], ["ingest_2", "merge", "transform"])
         facts_job = r["jobs"]["bank_facts"]["tasks"][0]["notebook_task"]["base_parameters"]
-        self.assertEqual(facts_job["selection"], "all_history,silver_transactions,transactions,unusual_by_hour,lob_summary")
+        self.assertEqual(facts_job["selection"].split(","), [   # qualified: gold's views are in the gold schema
+            "${var.catalog}.${resources.schemas.bank_silver.name}.all_history",
+            "${var.catalog}.${resources.schemas.bank_silver.name}.silver_transactions",
+            "${var.catalog}.${resources.schemas.bank_gold.name}.transactions",
+            "${var.catalog}.${resources.schemas.bank_gold.name}.unusual_by_hour",
+            "${var.catalog}.${resources.schemas.bank_gold.name}.lob_summary"])
         mixed = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 70}))["modules"][0]["groups"]
         self.assertEqual([(x["class"], x["table_names"]) for x in mixed], [("all", None), ("all", None)])   # the default
 
