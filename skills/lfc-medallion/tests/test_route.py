@@ -302,3 +302,24 @@ class EntryPoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkspaceOnce(unittest.TestCase):
+    def test_one_client_for_many_threads(self):
+        import threading
+        made = []
+
+        class W:
+            def __init__(self):
+                made.append(1)
+                import time
+                time.sleep(0.01)
+                self.tables = "tables"
+        fake = types.ModuleType("databricks.sdk")
+        fake.WorkspaceClient = W
+        ws = route._Workspace()
+        with mock.patch.dict(sys.modules, {"databricks": types.ModuleType("databricks"), "databricks.sdk": fake}):
+            ts = [threading.Thread(target=lambda: ws.tables) for _ in range(8)]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+        self.assertEqual(len(made), 1)

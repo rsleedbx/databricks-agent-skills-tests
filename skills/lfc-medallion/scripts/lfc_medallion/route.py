@@ -44,15 +44,23 @@ def write_plan(spark, catalog: str, target: str, rows: list, apply: dict, propos
 
 
 class _Workspace:
-    """One databricks.sdk WorkspaceClient for the whole run, made on first use (the lookups that need it are few)."""
+    """One databricks.sdk WorkspaceClient for the whole run, made on first use (the lookups that need it are few),
+    under a lock: the key reads run on several threads, and two making the client at once broke its config
+    ("dictionary changed size during iteration", 2026-11-22)."""
 
     def __init__(self):
+        import threading
         self._w = None
+        self._lock = threading.Lock()
 
     def __getattr__(self, attr):
+        if attr.startswith("_"):
+            raise AttributeError(attr)
         if self._w is None:
-            from databricks.sdk import WorkspaceClient
-            self._w = WorkspaceClient()
+            with self._lock:
+                if self._w is None:
+                    from databricks.sdk import WorkspaceClient
+                    self._w = WorkspaceClient()
         return getattr(self._w, attr)
 
 
