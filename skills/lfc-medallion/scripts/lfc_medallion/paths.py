@@ -6,68 +6,124 @@ cardinality. A path is an engine and a way to split the sources:
   split   k          the n changed sources in k groups, each one MERGE of a UNION ALL of its sources' change feeds,
                      the k MERGEs at once on threads: k = 1 is one MERGE of everything, k = n one MERGE per source
 
-A UNION ALL plans its sources' change feeds one after another (their logs and version ranges), so one MERGE grows with
-its sources; the k MERGEs plan at once, but each commits to the same target in turn. So a path costs
+A path takes the longer of two times (a roofline):
 
-  fixed + per_source * ceil(n / k) + per_commit * k + per_row * rows   (+ start, a stopped warehouse's first use)
+  latency     fixed + per_source * ceil(n / k) + per_commit * k
+              one MERGE alone: it plans its sources' change feeds one after another (a UNION ALL) and reads them, and
+              the k MERGEs of one table commit to it in turn
+  throughput  (w_source * n * at_once + w_statement * k * at_once + w_row * rows * at_once) / units
+              the engine's work for every MERGE in flight (`at_once` tables, each k MERGEs), over its capacity
+              (`units`: a warehouse's clusters times its size, 2X-Small = 1; the job's session = 1)
 
-and the best k is about sqrt(per_source * n / per_commit). Each engine's line starts from what was measured
-(DEFAULTS) and is refit from the paths log (every MERGE's engine, k, sources, rows and seconds) once it has runs at
-two or more shapes; an engine never measured is taken only when forced. choose() gives the cheapest path and the
-predictions it was chosen over, for the log.
+plus a stopped warehouse's start on its first use. Few sources: one MERGE, its latency binds. Many: split until the
+engine's throughput binds; more units (clusters, a larger size) move that point. Each engine's line starts from what
+was measured (DEFAULTS) and is refit from the paths log (every MERGE's engine, k, sources, rows, tables at once, units
+and seconds): each run counts toward the side that binds it. An engine never measured is taken only when forced.
+choose() gives the cheapest path and the predictions it was chosen over, for the log.
 """
 from __future__ import annotations
 
 import math
+from typing import NamedTuple
 
 ENGINES = ("spark", "warehouse")
 
-# (fixed s, per source s, per commit s, per row s, measured): scale1, TPC-B, 3 merge-route tables at once, 20 rows a
-# source, 2026-11-22. spark from the merge job's log, k = 1: 14 s at 10 sources, 78 at 62, 141 at 124 (its per-commit
-# cost not measured yet: the warehouse's taken). warehouse, a serverless SQL warehouse: k = 1, 6.6, 17.6 and 31.1 s
-# (33 to 35 three tables at once); k = n (a MERGE a source, 16 threads), 9.1, 41.6 and 70.3 s.
-DEFAULTS = {"spark": (3.0, 1.11, 0.54, 0.0, True), "warehouse": (4.5, 0.23, 0.54, 0.0, True)}
+
+class Line(NamedTuple):
+    """An engine's costs, in seconds."""
+    fixed: float          # a MERGE's own start
+    per_source: float     # each source in one MERGE (planned and read in turn)
+    per_commit: float     # each MERGE of one table (they commit to it in turn)
+    w_source: float       # the engine's work per source, over its units
+    w_statement: float    # the engine's work per MERGE, over its units
+    w_row: float = 0.0    # the engine's work per change row, over its units
+    measured: bool = True
+
+
+# scale1, TPC-B, 124 LOBs, 3 merge-route tables at once, a batch of 20 rows into every table, 2026-11-22. warehouse: a
+# serverless 2X-Small, 1 cluster: k = 1 105 s (compile 32 s, read 67 s: latency), k = 7 67 s, k = 16 74 s (queued 12
+# to 16 s: throughput); spark, the merge job: k = 1 132 s, k = 18 188 s.
+DEFAULTS = {"spark": Line(3.0, 1.05, 0.54, 0.30, 1.40), "warehouse": Line(6.0, 0.80, 0.54, 0.155, 0.26)}
 START_S = 15.0    # a stopped serverless warehouse's start before its first statement (an estimate until measured)
-MAX_K = 32        # MERGEs of one table at once (a warehouse runs about 10 queries a cluster at once; more queue)
+MAX_K = 32        # MERGEs of one table at once
+SIZES = ("2X-Small", "X-Small", "Small", "Medium", "Large", "X-Large", "2X-Large", "3X-Large", "4X-Large")
 
 
-def cost(line: tuple, sources: int, k: int, rows: int = 0) -> float:
-    a, b, c, d, _ = line
-    return a + b * math.ceil(sources / k) + c * k + d * (rows or 0)
+def units(cluster_size: str | None, clusters: int | None) -> float:
+    """A warehouse's capacity in 2X-Small clusters: each size up doubles it."""
+    i = SIZES.index(cluster_size) if cluster_size in SIZES else 0
+    return float(2 ** i * max(1, clusters or 1))
+
+
+def latency(line: Line, sources: int, k: int) -> float:
+    return line.fixed + line.per_source * math.ceil(sources / k) + line.per_commit * k
+
+
+def throughput(line: Line, sources: int, k: int, rows: int = 0, at_once: int = 1, u: float = 1.0) -> float:
+    return (line.w_source * sources + line.w_statement * k + line.w_row * (rows or 0)) * max(1, at_once) / max(u, 1e-9)
+
+
+def cost(line: Line, sources: int, k: int, rows: int = 0, at_once: int = 1, u: float = 1.0) -> float:
+    return max(latency(line, sources, k), throughput(line, sources, k, rows, at_once, u))
 
 
 class Model:
     def __init__(self, lines: dict | None = None, start_s: float = START_S, max_k: int = MAX_K):
-        self.lines = dict(DEFAULTS if lines is None else lines)
+        self.lines = {e: Line(*v) for e, v in (DEFAULTS if lines is None else lines).items()}
         self.start_s, self.max_k = start_s, max_k
 
-    def best(self, engine: str, sources: int, rows: int = 0, cold: bool = False) -> tuple[int, float]:
+    def best(self, engine: str, sources: int, rows: int = 0, cold: bool = False, at_once: int = 1,
+             u: float = 1.0) -> tuple[int, float]:
         """(k, seconds): the cheapest split for this engine."""
         line = self.lines[engine]
         ks = range(1, max(1, min(self.max_k, sources)) + 1)
-        k = min(ks, key=lambda k: (cost(line, sources, k, rows), k))
-        return k, cost(line, sources, k, rows) + (self.start_s if cold and engine == "warehouse" else 0.0)
+        k = min(ks, key=lambda k: (round(cost(line, sources, k, rows, at_once, u), 3), k))
+        return k, cost(line, sources, k, rows, at_once, u) + (self.start_s if cold and engine == "warehouse" else 0.0)
 
-    def fit(self, runs: list[tuple]) -> "Model":
-        """Refit each engine's line from its runs [(engine, k, sources, rows, seconds)], by least squares on
-        ceil(n/k), k and rows; an engine whose runs don't vary in both keeps the parts they can't tell apart."""
+    def fit(self, runs: list[tuple], rounds: int = 3) -> "Model":
+        """Refit each engine's line from its runs [(engine, k, sources, rows, seconds, at_once, units)]: each run goes
+        to the side that binds it under the current line, and each side is refit by least squares from its runs when
+        they vary enough; a side whose runs can't tell its parts apart keeps them."""
         by: dict[str, list] = {}
-        for e, k, n, r, s in runs:
+        for r in runs:
+            e, k, n, rows, s = r[:5]
+            at_once, u = (list(r[5:7]) + [1, 1.0])[:2]
             if e in self.lines and s is not None and n and k:
-                by.setdefault(e, []).append((math.ceil(n / k), float(k), float(r or 0), float(s)))
+                by.setdefault(e, []).append((int(k), int(n), float(rows or 0), float(s), int(at_once or 1),
+                                             float(u or 1.0)))
         for e, pts in by.items():
-            a0, b0, c0, d0, _ = self.lines[e]
-            if len({p[0] for p in pts}) < 2:
-                continue
-            if len({p[1] for p in pts}) >= 2 and len(pts) >= 4:   # both planning and commits vary: fit both
-                got = _lsq([(1.0, p[0], p[1]) for p in pts], [p[3] - d0 * p[2] for p in pts])
-                if got and got[1] >= 0 and got[2] >= 0:
-                    self.lines[e] = (got[0], got[1], got[2], d0, True)
-                    continue
-            got = _lsq([(1.0, p[0]) for p in pts], [p[3] - c0 * p[1] - d0 * p[2] for p in pts])   # planning only
-            if got and got[1] >= 0:
-                self.lines[e] = (got[0], got[1], c0, d0, True)
+            for _ in range(rounds):
+                ln = self.lines[e]
+                lat = [p for p in pts if latency(ln, p[1], p[0]) >= throughput(ln, p[1], p[0], p[2], p[4], p[5])]
+                thr = [p for p in pts if p not in lat]
+                ln = _fit_latency(ln, lat)
+                self.lines[e] = _fit_throughput(ln, thr)
         return self
+
+
+def _fit_latency(ln: Line, pts: list) -> Line:
+    if len({math.ceil(n / k) for k, n, *_ in pts}) < 2:
+        return ln
+    if len({k for k, *_ in pts}) >= 2 and len(pts) >= 4:   # planning and commits both vary: fit both
+        got = _lsq([(1.0, math.ceil(n / k), float(k)) for k, n, *_ in pts], [p[3] for p in pts])
+        if got and min(got) >= 0:
+            return ln._replace(fixed=got[0], per_source=got[1], per_commit=got[2])
+    got = _lsq([(1.0, math.ceil(n / k)) for k, n, *_ in pts], [p[3] - ln.per_commit * p[0] for p in pts])
+    return ln._replace(fixed=got[0], per_source=got[1]) if got and min(got) >= 0 else ln
+
+
+def _fit_throughput(ln: Line, pts: list) -> Line:
+    """seconds * units / at_once = w_source * n + w_statement * k: both when the runs vary in n/k, else one scale."""
+    if not pts:
+        return ln
+    xs, ys = [(float(n), float(k)) for k, n, *_ in pts], [s * u / a for k, n, r, s, a, u in pts]
+    if len({round(n / k, 3) for k, n, *_ in pts}) >= 2:
+        got = _lsq(xs, ys)
+        if got and min(got) >= 0:
+            return ln._replace(w_source=got[0], w_statement=got[1])
+    now = [ln.w_source * x[0] + ln.w_statement * x[1] for x in xs]
+    f = sum(a * b for a, b in zip(now, ys)) / (sum(a * a for a in now) or 1.0)
+    return ln._replace(w_source=ln.w_source * f, w_statement=ln.w_statement * f) if f > 0 else ln
 
 
 def _lsq(xs: list[tuple], ys: list[float]) -> tuple | None:
@@ -95,17 +151,20 @@ def parse(path: str) -> tuple[str, int | None]:
 
 
 def choose(model: Model, sources: int, rows: int = 0, engines=("spark",), forced: str | None = None,
-           cold: frozenset = frozenset()) -> tuple[str, int, dict]:
-    """(engine, k, {engine: [k, predicted seconds]}) for one table's MERGE of `sources` sources: `forced` when given
-    (an engine, with or without its k), else the cheapest measured engine at its best k."""
-    preds = {e: list(model.best(e, sources, rows, e in cold)) for e in engines if e in model.lines}
+           cold: frozenset = frozenset(), at_once: int = 1, units: dict | None = None) -> tuple[str, int, dict]:
+    """(engine, k, {engine: [k, predicted seconds]}) for one table's MERGE of `sources` sources, `at_once` tables'
+    MERGEs in flight on engines of `units` ({engine: units}, 1 by default): `forced` when given (an engine, with or
+    without its k), else the cheapest measured engine at its best k."""
+    u = units or {}
+    preds = {e: list(model.best(e, sources, rows, e in cold, at_once, u.get(e, 1.0)))
+             for e in engines if e in model.lines}
     if forced:
         e, k = parse(forced)
         if e not in preds:
             raise ValueError(f"path {forced}: engine {e} isn't available (a warehouse needs --warehouse)")
         k = min(k or preds[e][0], max(1, sources))
-        return e, k, preds | {e: [k, round(cost(model.lines[e], sources, k, rows), 1)]}
-    known = [e for e in preds if model.lines[e][4]] or list(preds)
+        return e, k, preds | {e: [k, round(cost(model.lines[e], sources, k, rows, at_once, u.get(e, 1.0)), 1)]}
+    known = [e for e in preds if model.lines[e].measured] or list(preds)
     e = min(known, key=lambda e: (preds[e][1], e))
     return e, preds[e][0], {x: [k, round(s, 1)] for x, (k, s) in preds.items()}
 
@@ -124,21 +183,23 @@ def groups(items: list, k: int) -> list[list]:
 
 class Planner:
     """One merge run's choices: the engines there are ({name: a session with sql()}), the model, a forced path, each
-    (table, source)'s change rows (from the event logs) and the engines not started yet. pick() per table's MERGE,
-    record() what it took; records are the paths log's rows."""
+    (table, source)'s change rows (from the event logs), the engines not started yet, each engine's units and the
+    tables merged at once (`at_once`, set once the run knows them). pick() per table's MERGE, record() what it took;
+    records are the paths log's rows."""
 
     def __init__(self, engines: dict, model: Model | None = None, forced: str | None = None, rows: dict | None = None,
-                 cold=()):
+                 cold=(), units: dict | None = None, at_once: int = 1):
         import threading
         self.engines, self.model, self.forced = engines, model or Model(), forced
         self.rows, self.cold, self.records, self._lock = dict(rows or {}), set(cold), [], threading.Lock()
+        self.units, self.at_once = dict(units or {}), at_once
 
     def pick(self, table: str, sources: list[str]):
         """(engine name, its session, k, change rows, predictions) for one MERGE of `sources` of `table`."""
         rows = sum(int(self.rows.get((table, s)) or 0) for s in sources)
         with self._lock:
             e, k, preds = choose(self.model, len(sources), rows, tuple(self.engines), self.forced,
-                                 frozenset(self.cold))
+                                 frozenset(self.cold), self.at_once, self.units)
             self.cold.discard(e)   # started by this MERGE: warm for the next
         return e, self.engines[e], k, rows, preds
 
@@ -148,4 +209,5 @@ class Planner:
             self.records.append({"target_table": target_table, "engine": engine, "k": k, "sources": sources,
                                  "change_rows": rows, "predicted_s": (preds.get(engine) or [None, None])[1],
                                  "seconds": round(seconds, 2), "retries": retries, "done": done,
-                                 "forced": bool(self.forced), "predictions": preds})
+                                 "forced": bool(self.forced), "predictions": preds, "at_once": self.at_once,
+                                 "units": self.units.get(engine, 1.0)})

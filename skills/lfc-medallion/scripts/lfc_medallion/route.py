@@ -164,6 +164,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
             return table, None, e
     todo = sorted(t for t, r in apply.items() if r == "merge" and t not in skip)
+    planner.at_once = max(1, min(parallel, len(todo)))   # the tables whose MERGEs share an engine at once
     with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(todo)))) as ex:
         results = list(ex.map(merge_one, todo))
     try:
@@ -261,8 +262,7 @@ def make_planner(spark, catalog: str, target: str, log: str | None, warehouse: s
     """The run's paths.Planner: spark, and the warehouse when given (cold unless it is running), the model refit from
     the paths log's merged runs, a forced path unless `path` is auto (or none), and each pair's change rows."""
     from . import paths
-    engines = {"spark": spark}
-    cold = set()
+    engines, cold, units = {"spark": spark}, set(), {"spark": 1.0}
     if warehouse:
         from .engine import Warehouse
         wh = Warehouse(warehouse)
@@ -270,17 +270,20 @@ def make_planner(spark, catalog: str, target: str, log: str | None, warehouse: s
         try:
             if wh.state() != "RUNNING":
                 cold.add("warehouse")
+            units["warehouse"] = wh.units()
         except Exception:  # noqa: BLE001
             cold.add("warehouse")
     runs = []
     try:
-        runs = [(r.engine, int(r.k), int(r.sources), int(r.change_rows or 0), float(r.seconds)) for r in spark.sql(
-            f"SELECT engine, k, sources, change_rows, seconds FROM {paths_log(catalog, target, log)} "
+        runs = [(r.engine, int(r.k), int(r.sources), int(r.change_rows or 0), float(r.seconds), int(r.at_once or 1),
+                 float(r.units or 1.0)) for r in spark.sql(
+            f"SELECT engine, k, sources, change_rows, seconds, at_once, units FROM {paths_log(catalog, target, log)} "
             "WHERE done = 'merged' ORDER BY at DESC LIMIT 2000").collect()]
-    except Exception:  # noqa: BLE001  no log yet: the measured defaults
+    except Exception:  # noqa: BLE001  no log yet (or one from before at_once and units): the measured defaults
         pass
     forced = None if path in (None, "", "auto") else path
-    return paths.Planner(engines, paths.Model().fit(runs), forced, changed if isinstance(changed, dict) else {}, cold)
+    return paths.Planner(engines, paths.Model().fit(runs), forced, changed if isinstance(changed, dict) else {}, cold,
+                         units)
 
 
 def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, records: list[dict]) -> None:
@@ -292,14 +295,21 @@ def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, 
     fq = paths_log(catalog, target, log)
     _shared(spark, f"CREATE TABLE IF NOT EXISTS {fq} (run_id STRING, target_table STRING, engine STRING, k INT, "
                    "sources INT, change_rows BIGINT, predicted_s DOUBLE, seconds DOUBLE, retries INT, done STRING, "
-                   "forced BOOLEAN, predictions STRING, at TIMESTAMP) COMMENT 'lfc_medallion: each MERGE, its path "
-                   "(engine, k at once), its predicted and taken seconds (paths.py)'")
+                   "forced BOOLEAN, predictions STRING, at TIMESTAMP, at_once INT, units DOUBLE) COMMENT "
+                   "'lfc_medallion: each MERGE, its path (engine, k at once), its predicted and taken seconds, the "
+                   "tables merged at once and the engine units (paths.py)'")
+    try:   # a log from before at_once and units
+        spark.sql(f"ALTER TABLE {fq} ADD COLUMNS (at_once INT, units DOUBLE)")   # once: no retry
+    except Exception:  # noqa: BLE001  already there
+        pass
     num = lambda v: "NULL" if v is None else str(v)  # noqa: E731
     vals = ", ".join(f"({spark_string(run_id)}, {spark_string(r['target_table'])}, {spark_string(r['engine'])}, "
                      f"{int(r['k'])}, {int(r['sources'])}, {int(r['change_rows'] or 0)}, {num(r['predicted_s'])}, "
                      f"{r['seconds']}, {int(r['retries'])}, {spark_string(r['done'])}, {str(r['forced']).lower()}, "
-                     f"{spark_string(json.dumps(r['predictions']))}, current_timestamp())" for r in records)
-    _shared(spark, f"INSERT INTO {fq} VALUES {vals}")
+                     f"{spark_string(json.dumps(r['predictions']))}, current_timestamp(), "
+                     f"{int(r.get('at_once') or 1)}, {float(r.get('units') or 1.0)})" for r in records)
+    _shared(spark, f"INSERT INTO {fq} (run_id, target_table, engine, k, sources, change_rows, predicted_s, seconds, "
+                   f"retries, done, forced, predictions, at, at_once, units) VALUES {vals}")
 
 
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",

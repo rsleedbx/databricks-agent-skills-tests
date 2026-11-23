@@ -86,6 +86,12 @@ class Warehouse:
         """The warehouse's state (RUNNING, STOPPED, STARTING, ...): a stopped one costs its start first."""
         return str(self.w.warehouses.get(self.id).state).split(".")[-1]
 
+    def units(self) -> float:
+        """Its capacity for paths.py: its most clusters times its size (2X-Small = 1, each size up doubles)."""
+        from .paths import units
+        w = self.w.warehouses.get(self.id)
+        return units(w.cluster_size, w.max_num_clusters)
+
     def sql(self, query: str, args: dict | None = None) -> _Result:
         from databricks.sdk.service.sql import (Disposition, ExecuteStatementRequestOnWaitTimeout, Format,
                                                 StatementParameterListItem, StatementState)
