@@ -7,14 +7,17 @@ the gateway's staging volume, or files in object storage.
                           _op   'upsert' or 'delete'   (AUTO CDC's apply_as_deletes)
                           _seq  sortable within the table: a later change has a larger _seq (AUTO CDC's sequence_by);
                                 a delete and an insert of one key at one position sort delete first
-  watermark(session)      the position up to which every change has arrived (CockroachDB's RESOLVED, the gateway's
-                          extraction watermark, a bronze table's latest version)
+  watermark(session, kind)
+                          the position up to which every change has arrived (CockroachDB's RESOLVED, the gateway's
+                          extraction watermark, a bronze table's latest version); kind: one of the adapter's own,
+                          where it has more than one
   stats(session, after)   change rows, bytes and files since a position, from metadata only (no data read): the
                           planner's inputs, as the materialized-view planner's source_table_information
   shared                  whether one physical object carries many tables' or sources' changes (one scan can serve
                           them all), or one table's
 
-A position is a kind and a value; positions of one kind compare, and the consumer keeps them as opaque text.
+A position is a kind and a value; positions of one kind compare, and the consumer keeps them as opaque text. A range's
+two positions are one kind; to=None is an open end, the latest change (a time range can't end after the last one).
 """
 from __future__ import annotations
 
@@ -52,9 +55,9 @@ class Source(Protocol):
 
     def snapshot_sql(self, at: Position | None = None) -> str: ...
 
-    def changes_sql(self, after: Position, to: Position) -> str: ...
+    def changes_sql(self, after: Position, to: Position | None) -> str: ...   # None: to the latest
 
-    def watermark(self, session) -> Position: ...
+    def watermark(self, session, kind: str | None = None) -> Position: ...   # kind: one of its own
 
     def stats(self, session, after: Position | None) -> Stats: ...
 

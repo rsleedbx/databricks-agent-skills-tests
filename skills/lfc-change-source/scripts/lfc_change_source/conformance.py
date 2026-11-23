@@ -69,7 +69,7 @@ def check(session, source, positions: list) -> list[str]:
         same = [o for (p, o) in sorted(s) if p[:1] == sorted(s)[-1][0][:1]]
         if DELETE in same and same.index(DELETE) != 0:
             bad.append(f"_seq: key {k}: a delete sorts after an insert at one position")
-    w = source.watermark(session)
+    w = source.watermark(session, positions[-1].kind)
     if w.kind != positions[-1].kind or _order(w.value) < _order(positions[-1].value):
         bad.append(f"watermark: {w} is behind {positions[-1]}")
     st = source.stats(session, positions[0])
@@ -95,12 +95,15 @@ def main(argv=None) -> None:
     ap.add_argument("--adapter", required=True, choices=sorted(ADAPTERS))
     ap.add_argument("--warehouse", required=True, help="a SQL warehouse id")
     ap.add_argument("--schema", required=True, help="catalog.schema for the scenario's scratch objects")
+    ap.add_argument("--kind", default=None, help="a position kind of the adapter's own (lfc_bronze: commit_ts)")
     a = ap.parse_args(argv)
     from .engine import Warehouse   # sql().collect() on a SQL warehouse
     session = Warehouse(a.warehouse)
-    source, positions = ADAPTERS[a.adapter].build(session, a.schema, SNAPSHOT, STEPS, COLUMNS, KEYS)
+    kw = {"kind": a.kind} if a.kind else {}
+    source, positions = ADAPTERS[a.adapter].build(session, a.schema, SNAPSHOT, STEPS, COLUMNS, KEYS, **kw)
     bad = check(session, source, positions)
-    print("\n".join(bad) if bad else f"{a.adapter}: conforms ({len(STEPS)} steps, {len(positions)} positions)")
+    print("\n".join(bad) if bad else f"{a.adapter}: conforms ({len(STEPS)} steps, {len(positions)} positions, "
+                                     f"{positions[0].kind})")
     raise SystemExit(1 if bad else 0)
 
 

@@ -37,6 +37,18 @@ class LfcBronze(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.b.changes_sql(Position("lsn", "0/16B3748"), V(8))
 
+    def test_commit_time_positions(self):   # read from a saved time, to the latest commit: no version lookup
+        from lfc_change_source.lfc_bronze import TS, nothing_newer
+        at = Position(TS, "2026-11-23T20:52:43.005Z")
+        self.assertIn("TIMESTAMP AS OF TIMESTAMP'2026-11-23T20:52:43.005Z'", self.b.snapshot_sql(at))
+        q = self.b.changes_sql(at, None)
+        self.assertIn("table_changes('c.s.account', TIMESTAMP'2026-11-23T20:52:43.005Z' + INTERVAL 1 MICROSECOND)", q)
+        self.assertIn("_commit_timestamp", q)   # what a consumer saves after reading by time
+        with self.assertRaises(ValueError):
+            self.b.changes_sql(at, V(9))   # one kind a range
+        self.assertTrue(nothing_newer(RuntimeError("[DELTA_TIMESTAMP_GREATER_THAN_COMMIT] Timestamp ... is after")))
+        self.assertFalse(nothing_newer(RuntimeError("[DELTA_CHANGE_DATA_FILE_NOT_FOUND]")))
+
     def test_watermark_and_stats_from_history(self):
         seen = []
         def sql(q):
