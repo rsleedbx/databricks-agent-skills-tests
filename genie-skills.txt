@@ -1,0 +1,16 @@
+# Skills bin/genie_skills_sync.sh copies into a workspace's Genie Code skills folder.
+# One skill folder name per line. List only skills that work inside Databricks:
+# no podman, ssh, cloud VMs or cloud CLIs, no local browser.
+cdc-table-plan
+lfc-downstream-history
+lfc-medallion
+lfc-medallion-pack
+lfc-meta-ads
+lfc-pipeline-diagram
+lfc-saas-answer
+lfc-saas-pipeline
+lfc-source-contract
+lfc-source-sizing
+lfc-workload-contract
+lfc-workspace-setup
+options-first
