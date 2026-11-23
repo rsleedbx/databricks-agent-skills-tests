@@ -15,7 +15,7 @@ The staging volume is `/Volumes/<gateway_storage_catalog>/<gateway_storage_schem
 (`cdc.staging`). Each table gets one `INSERT ... SELECT FROM read_files(...)` per gateway, and a file already read is
 left out (`NOT IN` its path), so the work is a few statements per gateway, not one per LOB or file. The volume also
 has `backup/` (the SQLite state with the committed LSN: `cdc.committed`), `snapshot/`, `metadata/`, `manager/` and
-`applier_metadata/`. The telemetry's `RESOURCES` and `HEARTBEAT` events (the gateway JVM's memory) aren't read yet.
+`applier_metadata/` (every file and its format: [gateway-staging.md](gateway-staging.md)). The telemetry's `RESOURCES` and `HEARTBEAT` events (the gateway JVM's memory) aren't read yet.
 
 `v_latency` then gives each batch, per LOB:
 
