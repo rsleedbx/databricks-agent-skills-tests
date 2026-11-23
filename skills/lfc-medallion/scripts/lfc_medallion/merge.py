@@ -590,6 +590,25 @@ def _before(spark, tgt: str) -> int | None:
         return None
 
 
+STAGE, STAGE_FROM = "_lfc_medallion_stage_", 8   # a table's changes staged when this many sources share its MERGE
+
+
+def _stage(spark, stage: str, tgt: str, source_column: str, cols: list[str], each: list[str],
+           threads: int = 16) -> str:
+    """The rows for one MERGE of many sources, staged: each source's changes (changes_sql) inserted into `stage` on its
+    own thread, then the MERGE reads the stage. A UNION ALL of them plans every source's change feed one after another
+    (its log and version range, about 0.5 s each, measured: 62 sources 31 s of planning for 3,472 rows); here they
+    plan at once. The stage has the target's columns (widened to every source's), so each source's rows fit; blind
+    appends to one table don't conflict."""
+    from concurrent.futures import ThreadPoolExecutor
+    names = ", ".join(_q(c) for c in [source_column] + cols)
+    spark.sql(f"CREATE OR REPLACE TABLE {stage} AS SELECT {names}, CAST(NULL AS STRING) AS `__lfc_change` "
+              f"FROM {tgt} WHERE false")
+    with ThreadPoolExecutor(max_workers=max(1, min(threads, len(each)))) as ex:
+        list(ex.map(lambda q: spark.sql(f"INSERT INTO {stage} {q}"), each))
+    return f"SELECT * FROM {stage}"
+
+
 def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                  fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed=None,
                  cols_known=None, keep_gone=False):
@@ -653,15 +672,25 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
         for i in feed:
             groups.setdefault((tuple(i["key"]), tuple(c for c, _ in i["cols"])), []).append(i)
         for (key, cols), part in groups.items():
-            rows = " UNION ALL ".join(changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"],
-                                                  i["now"], _start(i, i["now"])) for i in part)
+            each = [changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"],
+                                _start(i, i["now"])) for i in part]
+            stage = None
             try:
                 t0 = time.time()
+                if len(part) >= STAGE_FROM:   # each source's change feed planned on its own thread, not in a row
+                    stage = _fq(catalog, target, f"{STAGE}{out_name}")
+                    rows = _stage(spark, stage, tgt, source_column, list(cols), each)
+                else:
+                    rows = " UNION ALL ".join(each)
                 before = _before(spark, tgt)
                 spark.sql(merge_into(tgt, rows, source_column, list(key), list(cols)))
                 n = _merged_counts(spark, tgt, source_column, before)
+                if stage:
+                    spark.sql(f"DROP TABLE IF EXISTS {stage}")
             # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
             except Exception:  # noqa: BLE001
+                if stage:
+                    spark.sql(f"DROP TABLE IF EXISTS {stage}")
                 for i in part:
                     try:
                         t1 = time.time()
