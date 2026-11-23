@@ -319,7 +319,8 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
         self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None,
-                                      "history_target": None, "warehouse": None, "path": "auto"})
+                                      "history_target": None, "warehouse": None, "path": "auto",
+                                      "read_by": "version"})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):

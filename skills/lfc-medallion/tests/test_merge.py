@@ -225,6 +225,24 @@ class FirstAndLater(unittest.TestCase):
         self.assertEqual(rec["sources"], 1)
         self.assertRegex(rec["fingerprint"], r"^[0-9a-f]{12}$")   # the table's key and columns
 
+    def test_read_by_time_reads_no_history(self):   # the event logs said it changed: from its saved time, no reads
+        import datetime as dt
+        class NoReads:
+            def sql(self, q):
+                raise AssertionError(f"read: {q[:60]}")
+        saved = (5, "id-east", ["n_nationkey"], dt.datetime(2026, 11, 23, 12, 0, 0), None)
+        i = merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
+                               {("all_nation", "east"): saved}, False, COLS, by_time=True)
+        self.assertEqual((i["after_ts"], i["last"], i["now"], i["whole"]), ("2026-11-23T11:58:00.000000Z", 5, 5, False))
+        q = merge_mod.changes_sql(i["src"], "east", "division", i["key"], [c for c, _ in COLS], i["last"], i["now"],
+                                  after_ts=i["after_ts"])
+        self.assertIn("TIMESTAMP'2026-11-23T11:58:00.000000Z' + INTERVAL 1 MICROSECOND)", q)   # to the latest commit
+        self.assertEqual(merge_mod._saved(i)[1], 5)   # its saved version stays: a lower bound
+        scd2 = [("n_nationkey", "int"), ("__START_AT", "struct<x:int>")]
+        with self.assertRaises(AssertionError):   # SCD type 2: read by version (its history is needed)
+            merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
+                               {("all_nation", "east"): saved}, False, scd2, by_time=True)
+
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})

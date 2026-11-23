@@ -77,7 +77,7 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False,
                 parallel: int = 8, events: list[str] | None = None, history_target: str | None = None,
-                warehouse: str | None = None, path: str | None = None) -> dict:
+                warehouse: str | None = None, path: str | None = None, read_by: str = "version") -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
@@ -165,7 +165,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         try:
             return table, merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column,
                                           name=name, workspace=workspace, take_over=True, run_id=run_id, log=log,
-                                          changed=changed, context=ctx, planner=planner), None
+                                          changed=changed, context=ctx, planner=planner, read_by=read_by), None
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
             return table, None, e
     todo = sorted(t for t, r in apply.items() if r == "merge" and t not in skip)
@@ -353,8 +353,12 @@ def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, 
                    f"statements, compile_s, execute_s, queue_s, read_bytes, read_files, planning_s) VALUES {vals}")
 
 
+MARGIN_S = 120   # event-log times against the state's: a run's own rows count as changed; reading by time starts this
+                 # far before the state's time, so every source flagged as changed has a commit after its start
+
+
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",
-                  margin_s: int = 120) -> dict | None:
+                  margin_s: int = MARGIN_S) -> dict | None:
     """The (table, source) pairs whose bronze table got rows (upserted or deleted), or any completed snapshot (a full
     refresh, even of an empty table; snapshots run only in the first update and a refresh),
     after its state was saved, from ONE query over the ingestion pipelines' event logs (flow_progress per flow: a
@@ -384,10 +388,13 @@ def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str]
     except Exception:  # noqa: BLE001  an event log not there yet, no access: read every source
         return None
     out: dict = {}   # (table, source) -> its change rows since about its state (the planner's cardinality)
+    ctx["refreshed"] = set()   # pairs whose snapshot flow ran: read by version (it detects the reset), not by time
     for r in got:
         pair = flows.get(r.flow)
         if not pair:
             continue
+        if r.flow.endswith("_snapshot_flow"):
+            ctx["refreshed"].add(pair)
         saved = ctx["state"].get((name.format(table=pair[0]), pair[1]))
         at = saved[3] if saved and len(saved) > 3 else None
         if at is None or (r.at.timestamp() if hasattr(r.at, "timestamp") else 0) > at.timestamp() - margin_s:
@@ -411,6 +418,9 @@ def main(argv=None) -> None:
     ap.add_argument("--replan", action="store_true", help="plan every source again, not only new ones")
     ap.add_argument("--warehouse", default="", help="a SQL warehouse id: a path the optimizer may take (paths.py)")
     ap.add_argument("--path", default="auto", help="auto (by cost), or force one: spark, warehouse, warehouse:8 ...")
+    ap.add_argument("--read-by", default="version", choices=("version", "time"),
+                    help="time: an SCD type 1 source the event logs flag as changed is read from its saved time "
+                         "(no history read per source); version: by Delta versions")
     ap.add_argument("--events", default="", help="the ingestion pipelines' event log tables, comma-separated: only the "
                                                   "sources whose bronze got rows since their state are read")
     ap.add_argument("--history-target", default="", help="a schema that keeps the SCD type 2 history of the tables "
@@ -422,4 +432,4 @@ def main(argv=None) -> None:
                                  json.loads(a.hints) if a.hints else None, log=a.log or None,
                                  replan=a.replan, events=[e for e in a.events.split(",") if e] or None,
                                  history_target=a.history_target or None, warehouse=a.warehouse or None,
-                                 path=a.path or None)))
+                                 path=a.path or None, read_by=a.read_by)))
