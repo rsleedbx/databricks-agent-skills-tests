@@ -315,7 +315,7 @@ def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, 
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",
                   margin_s: int = 120) -> dict | None:
     """The (table, source) pairs whose bronze table got rows (upserted or deleted), or any completed snapshot (a full
-    refresh, even of an empty table; snapshots run only in the first update and a refresh: 3 of 17 updates measured),
+    refresh, even of an empty table; snapshots run only in the first update and a refresh),
     after its state was saved, from ONE query over the ingestion pipelines' event logs (flow_progress per flow: a
     destination table's flow is named <catalog>_<prefix><source>_<table>_<cdc|snapshot>_flow); a pair with no state
     is changed. None when the logs can't be read: then every source is read."""

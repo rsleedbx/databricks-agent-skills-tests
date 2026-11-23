@@ -1,7 +1,7 @@
 """flows: the built-in n:1 path, an AUTO CDC flow per source into one streaming table per table, in a Lakeflow
 Spark Declarative Pipelines source file. The pipeline keeps each flow's position (its checkpoint) and runs the flows
 at once, so no statement plans every source's change feed; the cost is the pipeline's per flow (Lakeflow Connect's
-applier is the same kind of pipeline: about 1 s a flow a triggered update, 2026-11-22), which continuous mode pays
+applier is the same kind of pipeline: a cost a flow a triggered update), which continuous mode pays
 once, not each update. A path for paths.py to be measured against (references/merge-paths.md).
 
     from pyspark import pipelines as dp

@@ -27,8 +27,8 @@ has `backup/` (the SQLite state with the committed LSN: `cdc.committed`), `snaps
 
 On the dashboard's Latency page these appear as fetched, staged, applier (bronze minus staged) and to bronze.
 
-Measured 2026-11-22, `scale1` (TPC-B at SF 0.01, 62 LOBs, 248 tables in one triggered pipeline, a batch of 20 rows
-into every table): staged 4.2 s after the commit on average; bronze 937 s after staging (509 to 1,409 s); 941 s from
-the commit to bronze. The gateway's capture is under 1% of the time to bronze; the applier's triggered update (about
-1 s per flow, data or not) is the rest. That is the case for an applier of one's own fed by the gateway's staging,
-or Debezium or Zerobus, once the table count is in the thousands.
+Read a batch's split from `v_latency`: staged minus the commit is the gateway's capture, bronze minus staged the
+applier. In the triggered runs so far the capture was a small fraction of the time to bronze and the applier's
+update (a cost a flow, data or not) the rest: the case for an applier of one's own fed by the gateway's staging, or
+Debezium or Zerobus, once the table count is in the thousands. The numbers are kept with their configuration in
+internal notes.

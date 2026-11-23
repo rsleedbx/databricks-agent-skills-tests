@@ -13,7 +13,7 @@ A path takes the longer of two times (a roofline):
               the k MERGEs of one table commit to it in turn
   throughput  (w_source * n * at_once + w_statement * k * at_once + w_row * rows * at_once) / units
               the engine's work for every MERGE in flight (`at_once` tables, each k MERGEs), over its capacity
-              (`units`: a warehouse's clusters times its size, 2X-Small = 1; the job's session = 1)
+              (`units`: a warehouse's running clusters, a size up 1.25 times, 2X-Small = 1; the job's session = 1)
 
 plus a stopped warehouse's start on its first use. Few sources: one MERGE, its latency binds. Many: split until the
 engine's throughput binds; more units (clusters, a larger size) move that point. Each engine's line starts from what
@@ -40,19 +40,23 @@ class Line(NamedTuple):
     measured: bool = True
 
 
-# scale1, TPC-B, 124 LOBs, 3 merge-route tables at once, a batch of 20 rows into every table, 2026-11-22. warehouse: a
-# serverless 2X-Small, 1 cluster: k = 1 105 s (compile 32 s, read 67 s: latency), k = 7 67 s, k = 16 74 s (queued 12
-# to 16 s: throughput); spark, the merge job: k = 1 132 s, k = 18 188 s.
-DEFAULTS = {"spark": Line(3.0, 1.05, 0.54, 0.30, 1.40), "warehouse": Line(6.0, 0.80, 0.54, 0.155, 0.26)}
+# Starting lines, fit from runs of TPC-B at many LOBs on a serverless warehouse and a serverless job; every run's
+# paths log refits them (Model.fit), so a deployment's own runs replace them.
+DEFAULTS = {"spark": Line(3.0, 1.05, 0.54, 0.30, 1.40), "warehouse": Line(14.6, 0.73, 2.09, 0.204, 0.345)}
 START_S = 15.0    # a stopped serverless warehouse's start before its first statement (an estimate until measured)
 MAX_K = 32        # MERGEs of one table at once
 SIZES = ("2X-Small", "X-Small", "Small", "Medium", "Large", "X-Large", "2X-Large", "3X-Large", "4X-Large")
 
 
+SIZE_STEP = 1.25   # a size up: a larger cluster runs each MERGE a little faster, it admits no more of them
+
+
 def units(cluster_size: str | None, clusters: int | None) -> float:
-    """A warehouse's capacity in 2X-Small clusters: each size up doubles it."""
+    """A warehouse's capacity for many small MERGEs, in 2X-Small clusters: the clusters running (each admits about
+    10 at once), times SIZE_STEP a size up (a larger cluster runs each
+    MERGE a little faster but admits no more of them)."""
     i = SIZES.index(cluster_size) if cluster_size in SIZES else 0
-    return float(2 ** i * max(1, clusters or 1))
+    return float(SIZE_STEP ** i * max(1, clusters or 1))
 
 
 def latency(line: Line, sources: int, k: int) -> float:

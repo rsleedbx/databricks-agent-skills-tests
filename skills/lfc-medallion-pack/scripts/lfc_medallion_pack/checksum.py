@@ -113,7 +113,7 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, connection: s
 def _run(spark, plan, module, catalog, prefix, connection, database, lobs, threads: int = 16) -> list[dict]:
     """The checksums in few round trips: per table one remote_query over every LOB (source) and one GROUP BY over the
     n:1 table, and each LOB's bronze table on a thread (16 at once): not three queries one after another per table
-    and LOB (124 LOBs, 496 tables: 2,174 s)."""
+    and LOB, which grows with LOBs times tables."""
     m = next(x for x in plan["modules"] if x["module"] == module)
     cols = model_columns(m["model"])
     col, silver = m["source_column"], f"`{catalog}`.`{prefix}_{module}_silver`"

@@ -3,8 +3,8 @@ SparkSession this code uses, sql(query, args=None).collect() -> rows read by nam
 merge_all and merge_route run on either: a merge task can send its statements to the warehouse through the Statement
 Execution API and keep the job's compute for nothing else.
 
-Measured 2026-11-22 (scale1, TPC-B, 124 LOBs): one table's MERGE of every LOB's changes (a UNION ALL of their change
-feeds) took 141 s in the serverless merge job and 33 s on a serverless SQL warehouse, three tables at once on each.
+A warehouse plans many sources' change feeds faster than a job's session, so the optimizer (paths.py) may send
+a table's MERGE there.
 
     from lfc_medallion.engine import Warehouse
     wh = Warehouse("abc123")                 # the WorkspaceClient from the environment (a job: its own identity)
@@ -87,9 +87,9 @@ class Warehouse:
         return str(self.w.warehouses.get(self.id).state).split(".")[-1]
 
     def units(self) -> float:
-        """Its capacity for paths.py: the clusters running now (stopped: its minimum) times its size (2X-Small = 1,
-        each size up doubles). Not its maximum: autoscaling adds a cluster only after queries have queued a while
-        (2026-11-23: 1 to 2 clusters a minute into a burst, never the 4 allowed), too late for MERGEs of a minute."""
+        """Its capacity for paths.py: the clusters running now (stopped: its minimum), a size up 1.25 times
+        (paths.units). Not its maximum: autoscaling adds a cluster only after queries have queued a while, too late
+        for a burst of MERGEs that lasts a minute."""
         from .paths import units
         w = self.w.warehouses.get(self.id)
         return units(w.cluster_size, max(w.num_clusters or 0, w.min_num_clusters or 1))

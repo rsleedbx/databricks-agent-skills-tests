@@ -23,6 +23,10 @@ many, the planner splits until throughput binds; more units move that point. The
 the changed sources and their change rows from the ingestion pipelines' event logs (`changed_since`), and the
 warehouse's state and size.
 
+Every run so far is in the per-object regime: the bytes were far too few to cost time, so the time is per LOB, per
+statement and per commit. Splitting rescans target files, which costs once change rows are large; bytes and objects
+first: [performance reasoning](performance-reasoning.md).
+
 Each engine's line starts from what was measured and is refit, by least squares, from the paths log
 (`<merge log>_paths`: each table's MERGE, its engine, k, sources, change rows, tables at once, units, predicted and
 taken seconds, retries, and the other paths' predictions). Each run is fitted to the side that binds it, so every run
@@ -32,31 +36,32 @@ is a measurement. An engine never measured is taken only when forced.
 path to measure one (`spark`, `spark:1`, `warehouse`, `warehouse:8`). lfc-medallion-pack renders the bundle's
 `warehouse_id` and the module's `merge_path` (default `auto`).
 
-Measured 2026-11-22 (TPC-B, `scale1`, 3 merge-route tables at once, 20 rows a source):
+## Measuring a path
 
-| Path | 10 sources | 62 | 124 |
-|---|---|---|---|
-| spark, k = 1 (the merge job) | 14 s | 78 s | 141 s |
-| warehouse, k = 1 | 6.6 s | 17.6 s | 31.1 s (33 to 35 three tables at once) |
-| warehouse, k = n (a MERGE a source, 16 threads, target partitioned by source: no conflicts) | 9.1 s | 41.6 s | 70.3 s |
-| one stage table for every source's changes, then one MERGE (dropped) | | | 303 s: each source a commit to that table, in turn |
+Run the same changes through each path: a batch, the ingestion only, a copy of the merge state, then per path the
+state restored and the merge task alone, with `--path` forced (`spark:1`, `warehouse:1`, `warehouse:7`, ...) and once
+`auto`. Each MERGE's engine, k, sources, rows, tables at once, units, predicted and taken seconds land in the paths
+log. For a warehouse, its phases per MERGE (compile, execute, waiting at capacity), bytes and files are in
+`system.query.history`, and its clusters over time in `system.compute.warehouse_events`. Measured results are kept
+with their configuration in internal notes.
 
-Measured 2026-11-22 at 124 LOBs, the same changes each time (a batch of 20 rows into every table), 3 tables at once.
-The warehouse was a serverless 2X-Small with 1 cluster:
+What the runs show:
 
-| Path | Merge task | Warehouse phases a MERGE (query history) |
-|---|---|---|
-| spark, k = 1 | 132 s | |
-| spark, k = 18 (chosen by the old model's guessed commit cost) | 188 s | |
-| warehouse, k = 1 | 105 s | compile 32 s, read 67 s |
-| warehouse, k = 7 | 67 s | compile 6 s, read 22 s, queued 16 s |
-| warehouse, k = 16 | 74 s | compile 3 s, read 12 s, queued 12 s |
+- **One MERGE of every changed source is latency-bound.** It plans and reads the sources one after another, and a
+  warehouse plans each faster than the job's session.
+- **Splitting is throughput-bound on one cluster.** The MERGEs queue.
+- **Clusters set the capacity.** Each runs about 10 MERGEs at once. A larger size runs each a little faster but admits
+  no more.
+- **Autoscaling is too slow for a minute's burst.** It adds a cluster after queries have queued a while. Set the
+  minimum clusters for the merge, not only the maximum.
+- **With no queue left, the table's commits bind.** Each of k MERGEs commits in turn, so past a point more MERGEs cost
+  more than they save.
+- **At thousands of changed sources a table is throughput-bound** however it's split. It needs more clusters, or fewer
+  objects per source (reading the gateway's staging instead of each LOB's change feed).
+- **A stage table for every source's changes, then one MERGE, was slower.** Each source is a commit to that table, in
+  turn.
+- **On the job's session, splitting doesn't help.**
 
-At k = 1 latency binds. At k = 7 and 16 one cluster's throughput binds: every MERGE runs slower and queues. The
-defaults in `paths.py` fit these runs. At 4 units they predict warehouse, k ≈ 14, about 21 s. Still to measure:
-- more units;
-- the warehouse's start;
-- rows large enough to matter;
-- the built-in alternative, an AUTO CDC flow per source into one streaming table (`flows.py`). Its first update of
-  372 flows took 1,544 s, with the same result as the merge route; still to measure: triggered after a batch, and
-  continuous.
+Still to measure: the warehouse's start; rows large enough to matter; the built-in alternative, an AUTO CDC flow per
+source into one streaming table (`flows.py`). Its first update gave the same result as the merge route; still to
+measure: triggered after a batch, and continuous.

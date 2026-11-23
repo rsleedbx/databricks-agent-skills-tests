@@ -103,17 +103,18 @@ lfc-medallion's merge task (`merge_route`) reads only what changed, and each thi
   the merge log from the target's own change feed for that commit (only the files the MERGE wrote), one state write;
   tables at once (`parallel`, 8), metadata reads on threads (16): all on the task's one compute.
 
-Each LOB's change feed costs about 0.5 s to plan (its log and version range), and a UNION ALL plans them one after
-another, so a table's MERGE grows with its LOBs: 14 s at 10, 78 s at 62, 141 s at 124 (`scale1`, 2026-11-22).
-Staging each LOB's changes into one table on threads first was slower (303 s at 124: every INSERT is a commit to
-that table, and its log takes them one at a time). The gateway's staging volume holds every LOB's changes of a
-pipeline together ([references/gateway-staging.md](references/gateway-staging.md)): read from there, one read
-would cover them all.
+Each LOB's change feed has its own planning cost (its log and version range), and a UNION ALL plans them one after
+another, so a table's MERGE grows with its LOBs. Staging each LOB's changes into one table first was slower: every
+INSERT is a commit to that table, and its log takes them one at a time. The gateway's staging volume holds every
+LOB's changes of a pipeline together ([references/gateway-staging.md](references/gateway-staging.md)): read from
+there, one read would cover them all. The merge's engine and split are chosen by cost
+([merge paths](../lfc-medallion/references/merge-paths.md)).
 
-Measured on TPC-B, 10 LOBs, 3 merge-route tables (2026-11-22): the task 516 s before, 85 s after a batch, 64 s with
-nothing to merge (its start: installing and reading the catalog); a batch to gold 875 s before, about 370 s after.
-
-
+Before a run, write down its prediction (its bytes and objects:
+[performance reasoning](../lfc-medallion/references/performance-reasoning.md); `lmp predict`; the documented limits),
+the decision it can change and why nothing measured settles it; run it only then, with the prediction in `--note`.
+Read a doc's rule with its scope: "10 queries a cluster" is the classic and pro warehouses' rule; for serverless the
+docs advise a larger warehouse first, which made a larger-size run worth making.
 
 After every run, record it, so the next, bigger deployment can be planned from measurements:
 
@@ -124,29 +125,21 @@ lmp predict runs.jsonl --tables 2000      # each step's seconds at that size: a 
 lmp report runs.jsonl                     # the records as a table
 ```
 
-A record names no workspace, id or user. The measured runs so far: [references/scale.md](references/scale.md).
+A record names no workspace, id or user. Measured results depend on the configuration, so they are kept with it, in
+internal notes, not here; what each step's time grows with, and how to read the records:
+[references/scale.md](references/scale.md).
 
-| Measured (TPC-B on Lakebase, 2026-11-21) | 3 LOBs, 12 tables | 250 LOBs, 1,000 tables in 5 pipelines |
-|---|---|---|
-| Source, empty (the job) | 124 s | 1,700 s (247 LOBs added: about 7 s each, one JDBC session per statement) |
-| Deploy | 11 s | 28 s (255 resources) |
-| Ingest, first snapshot of a pipeline | 124 s (12 tables) | about 810 s per 248-table pipeline: initializing 170, setting up tables 165, running 445 |
-| Ingest, steady (no new tables, no data) | | about 680 s per 248-table pipeline: initializing 175, setting up 100, running 345 |
-| Transform (n:1, silver, gold) | 84 s | 356 s first, 617 s next (initializing 301: finding 250 sources' tables) |
-| Verify | 63 s (mostly installing) | 66 s |
+The data test (10 LOBs at SF 1) checks gold's unusual share per tier against the rule that gives each row, and every
+balance against the sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
 
-The data test (10 LOBs at SF 1, 1,000,000 history rows): source 392 s, ingest 235 s, transform 94 s; gold's unusual
-share per tier 0.49% / 3.05% / 7.02% (high / core / low), as the rule gives each row, and every balance equal to the
-sum of its history (TPC-B's consistency rule) through Lakeflow Connect.
-
-An ingestion pipeline's time grows with its tables even when they're empty: about 2.6 s per table per update at 248.
-Plan the refresh interval from it: a 248-table pipeline can't refresh more often than about every 11 minutes.
+An ingestion pipeline's time grows with its tables even when they're empty (a cost a flow a triggered update): plan
+the refresh interval from `lmp predict` at the pipeline's table count, not from the data's size.
 
 ## The control schema and the dashboard
 
 `render` writes `resources/_control.yml`, `<prefix>_control`, and puts in it what a deployment needs to be watched and
 restarted, from its first deploy (adding an event log to an ingestion pipeline later recreates it, and every table
-of it is snapshotted again: measured 2026-11-21):
+of it is snapshotted again):
 
 | In the control schema | Written by |
 |---|---|
@@ -173,12 +166,10 @@ any model. Its pages:
 The checksum: each row's columns as canonical text by their YAML type (decimals at their scale, timestamps as epoch
 microseconds, chars trimmed, NULL as `chr(1)`), MD5, the first 8 hex digits as a number, summed with `COUNT(*)`: the
 same on every engine with MD5 (an XOR aggregate isn't on all), computed where the rows are (the source through
-`remote_query`). Measured: 40 of 40 match on 10 TPC-B LOBs, 2,011,110 rows, through both routes.
-
- (measured 2026-11-21, TPC-B, 10 LOBs with data)
+`remote_query`). Tested: every LOB's table matched through both routes.
 
 A selective full refresh of one LOB's fact (`history`) and dimension (`account`) on its ingestion pipeline
-(`start-update --json '{"full_refresh_selection": ["<catalog>.<schema>.<table>", ...]}'`, about 2 minutes):
+(`start-update --json '{"full_refresh_selection": ["<catalog>.<schema>.<table>", ...]}'`):
 
 - **Bronze:** the table is replaced (a `DLT REFRESH` commit), then reloaded by MERGEs; only the selected tables
   change. Its change data feed, deletion vectors and row tracking stay on (row tracking under new column names: a new
@@ -218,35 +209,34 @@ modules:
   generation rules, continuing their row numbers: `append`), the signal's rule marks the new rows, and its `totals:`
   add the batch's sums to their parents (TPC-B: a transaction's balances). No model or table is named in Python.
 - The batch is `lfc_source_datagen.signals.batch(connect, model, sources, rows)`, on whichever DB-API connection
-  `connect()` gives: psycopg, or the UC JDBC connection (`lfc_source_contract.jdbc.dbapi`). Measured 2026-11-21 on a
-  local PostgreSQL 14, TPC-B at SF 1: 500 history rows a batch in 0.6 s through both, the dimension tables' counts
-  unchanged, every account and teller balance still the sum of its history. Through UC JDBC the rows changed come back
-  as unknown (`None`): Spark's `sessionInitStatement` returns no count. From the workspace (`setup_source` with
-  `step=batch`, the UC JDBC connection to Lakebase): 500 rows on each of 10 LOBs in 170 s, most of it installing; the
-  rows and balance updates reached gold through Lakeflow Connect CDC, every balance gap 0. A failed or retried run
-  appends again: the data stays consistent, the rows are more than asked (seen: one LOB with 1,000 extra).
+  `connect()` gives: psycopg, or the UC JDBC connection (`lfc_source_contract.jdbc.dbapi`). Tested through both on
+  TPC-B: the dimension tables' counts unchanged, every account and teller balance still the sum of its history.
+  Through UC JDBC the rows changed come back as unknown (`None`): Spark's `sessionInitStatement` returns no count.
+  From the workspace (`setup_source` with `step=batch`, the UC JDBC connection to Lakebase) the rows and balance
+  updates reached gold through Lakeflow Connect CDC, every balance gap 0. A failed or retried run appends again: the
+  data stays consistent, the rows are more than asked.
   `tables=all` adds the rows to the dimensions too (new branches, tellers, accounts): the merge route's tables change.
 - A batch over many LOBs is a few round trips, not a few per LOB: one catalog read, then per level one execute of
   50 LOBs' INSERTs, then their signals in one execute (`fill.py` `append_many`, `signals.reapply_many`). Through UC
-  JDBC each statement is a Spark job (about 0.7 s): the per-LOB path took 13.6 s a LOB (62 LOBs: 842 s, about 27
-  statements each); measured locally, 4 LOBs took 13 statements where the per-LOB path took about 108.
+  JDBC each statement is a Spark job, so the statements, not the rows, set the batch's time: the per-LOB path
+  took tens of statements a LOB, this a few for all of them.
 - `append` (whole scale factors of every table) is not the batch: TPC-B's branch is one row per scale factor, so its
   smallest step is 100,000 accounts.
-- The ingestion pipelines are triggered; their steady time per update (above) sets how far behind bronze runs at a
+- The ingestion pipelines are triggered; their steady time per update (`lmp predict`) sets how far behind bronze runs at a
   given batch size, which is what the ramp measures.
 
 
 - One gateway, slot and publication per ingestion pipeline; the source's slot and sender limits cap the pipelines. A
   Lakebase project allows 10 of each and holds 2 physical slots of its own (`wal_proposer_slot`,
-  `wal_retention_slot`), so it takes 8 ingestion pipelines (measured 2026-11-21); set `source.max_slots: 8` for it.
+  `wal_retention_slot`), so it takes 8 ingestion pipelines; set `source.max_slots: 8` for it.
 - **Adding LOBs to a deployed pipeline needs its gateway restarted.** A gateway reads the source's tables when it
-  starts: given more schemas, the ingestion pipeline found none of the new ones (measured: 59 LOBs, 236 tables, absent
-  after a full update; verify's bronze check fails and says so). Restart the gateway, then refresh.
+  starts: given more schemas, the ingestion pipeline found none of the new ones, even after a full update (verify's
+  bronze check fails and says so). Restart the gateway, then refresh.
 - Every bronze table also gets a backing table (`__materialization_mat_*`): Unity Catalog objects are about twice
   the tables; the first LOB's bronze schema holds its pipeline's `cdc_staging_table` and event log.
 - Every LOB of a tier is the same data (the generator is deterministic and the tier's numbers are shared): the score
   decides the tier only. Spread within a tier is not done yet.
 - Tiers are by rank among the module's LOBs: adding LOBs can move a LOB to another tier, while its data keeps the
   numbers it was built with (a built LOB is kept). Draw the full count once for a data module.
-- A table without a primary key (TPC-B's history) has no key for SCD type 1: see the measured results.
+- A table without a primary key (TPC-B's history) has no key for SCD type 1, so it can't take the merge route.
 - Not covered yet: the merge route (lfc-medallion) for the quiet tables at many LOBs; an app over the contract.

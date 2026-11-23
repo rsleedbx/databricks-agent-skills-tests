@@ -26,15 +26,15 @@ class Choose(unittest.TestCase):
         self.assertAlmostEqual(s, paths.throughput(WH, 2500, k), places=6)
         self.assertGreater(m.best("warehouse", 2500, u=16.0)[0], k)
 
-    def test_throughput_binds_and_units_move_it(self):   # 124 sources, 3 tables at once, the 2026-11-22 harness
+    def test_throughput_binds_and_units_move_it(self):   # 124 sources, 3 tables at once
         m = paths.Model({"warehouse": WH})
-        self.assertAlmostEqual(paths.cost(WH, 124, 1, at_once=3), 105.7, places=0)    # measured 105 s
-        self.assertAlmostEqual(paths.cost(WH, 124, 7, at_once=3), 63.2, places=0)     # measured 67 s
+        self.assertAlmostEqual(paths.cost(WH, 124, 1, at_once=3), 105.7, places=0)
+        self.assertAlmostEqual(paths.cost(WH, 124, 7, at_once=3), 63.2, places=0)
         k1, s1 = m.best("warehouse", 124, at_once=3, u=1.0)
         k4, s4 = m.best("warehouse", 124, at_once=3, u=4.0)
         self.assertLess(s4, s1 / 2)   # four clusters: throughput no longer binds as soon
         self.assertGreater(k4, k1)
-        self.assertEqual(paths.units("Small", 2), 8.0)
+        self.assertAlmostEqual(paths.units("Small", 2), 2 * 1.25 ** 2)
 
     def test_the_cheaper_engine_and_a_cold_start(self):
         m = paths.Model({"spark": SPARK, "warehouse": WH}, start_s=60)

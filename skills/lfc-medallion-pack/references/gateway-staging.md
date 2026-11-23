@@ -38,7 +38,7 @@ their types (`C_..._1 int`, `C_..._3 decimal(12,2)`, `C_..._4 string`), then `__
 snapshot is consistent at, e.g. `00000000/8A44A650-0000000000000000000`) and `__operation` (`INSERT`).
 
 **Changes:** `cdc/<segment>/<n>`: a segment folder per gateway run (its start, epoch ms: a restart begins a new one),
-files numbered from `0`, JSON lines, one change each (about 200 rows, 118 KB, a file here). A record:
+files numbered from `0`, JSON lines, one change each. A record:
 
 ```json
 {"d": 103, "operation": "UPDATE", "txnID": "116", "schemaVersion": 0,
