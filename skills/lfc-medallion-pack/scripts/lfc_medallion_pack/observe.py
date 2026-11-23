@@ -11,7 +11,8 @@ for a dashboard (and Genie). Nothing names a model: the modules, LOBs, tables an
                   3 n1 pipeline      the transform's all_<table> views (rows written)
                   4 silver, 5 gold   the transform's views (rows written; no LOB: a view holds every LOB)
   v_updates     each pipeline update: when it started and ended, how, and its seconds in each phase
-  v_latency     each batch of changes (the source job's batch step), and when its LOB's rows next reached bronze, the
+  v_latency     each batch of changes (the source job's batch step), and when its LOB's rows were next fetched by
+                the gateway and staged (cdc.capture: its telemetry and change files), reached bronze (the applier), the
                 n:1 merge, and gold (the transform's next completed update): seconds after the batch
   v_checksums   the latest checksum of each table of each LOB: rows and digest in the source, bronze and n:1
   v_refresh     each view of each transform update: its layer, the refresh technique chosen (row-based, no-op,
@@ -97,6 +98,11 @@ def latency_sql(catalog: str, control: str) -> str:
     ctl = f"`{catalog}`.`{control}`"
     return (f"CREATE OR REPLACE VIEW {ctl}.v_latency AS\n"
             f"SELECT b.module, b.lob, b.at AS batch_at, b.rows,\n"
+            # the gateway: fetched (its extraction watermark past the batch's commit), then staged (the change file)
+            f"  (SELECT MIN(e.fetch_watermark) FROM {ctl}.gateway_events e WHERE e.kind = 'extraction' "
+            f"AND e.module = b.module AND e.commit_watermark >= b.at - INTERVAL 2 SECONDS) AS fetched_at,\n"
+            f"  (SELECT MIN(f.written) FROM {ctl}.staged_files f WHERE f.module = b.module AND f.lob = b.lob "
+            f"AND f.newest_commit >= b.at - INTERVAL 2 SECONDS) AS staged_at,\n"
             f"  (SELECT MIN(c.at) FROM {ctl}.v_changes c WHERE c.stage = '2 bronze' AND c.module = b.module "
             f"AND c.lob = b.lob AND c.kind = 'cdc' AND c.upserted > 0 AND c.at > b.at) AS bronze_at,\n"
             f"  (SELECT MIN(c.at) FROM {ctl}.v_changes c WHERE c.stage = '3 n1 merge' AND c.module = b.module "
@@ -128,6 +134,13 @@ def table_sql(plan: dict, catalog: str, control: str) -> list[str]:
     out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.cdc_positions (checked_at TIMESTAMP, module STRING, "
                "gateway STRING, scope STRING, lob STRING, table_name STRING, source_lsn STRING, target_lsn STRING, "
                "slot_confirmed_lsn STRING, delta_bytes BIGINT, state STRING, last_change_time TIMESTAMP)")
+    out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.gateway_events (module STRING, gateway STRING, kind STRING, "
+               "at TIMESTAMP, lob STRING, table_name STRING, commit_watermark TIMESTAMP, fetch_watermark TIMESTAMP, "
+               "window_start TIMESTAMP, window_end TIMESTAMP, inserted BIGINT, updated BIGINT, deleted BIGINT, "
+               "duration_ms BIGINT, file STRING) COMMENT 'each gateway telemetry from its staging volume (cdc.capture)'")
+    out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.staged_files (module STRING, gateway STRING, lob STRING, file STRING, "
+               "written TIMESTAMP, rows BIGINT, newest_commit TIMESTAMP, oldest_commit TIMESTAMP) "
+               "COMMENT 'each change file a gateway staged, per LOB: when written, the source commits in it (cdc.capture)'")
     out.append(f"CREATE TABLE IF NOT EXISTS {ctl}.checksums (checked_at TIMESTAMP, module STRING, lob STRING, "
                "`table` STRING, route STRING, source_rows BIGINT, bronze_rows BIGINT, n1_rows BIGINT, source_digest BIGINT, "
                "bronze_digest BIGINT, n1_digest BIGINT, status STRING)")

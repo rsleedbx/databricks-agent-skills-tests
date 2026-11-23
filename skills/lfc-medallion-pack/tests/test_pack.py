@@ -10,6 +10,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import types
 
 import yaml
 
@@ -184,6 +186,29 @@ class Checksum(unittest.TestCase):
         pg = checksum.row_text([{"name": "a", "type": "timestamptz"}, {"name": "b", "type": "timestamp"}], "postgres")
         self.assertIn('EXTRACT(EPOCH FROM ("a")::timestamptz)', pg)
         self.assertIn('EXTRACT(EPOCH FROM ("b")::timestamp)', pg)
+
+
+class Capture(unittest.TestCase):
+    def test_one_insert_each_per_gateway_from_its_staging_volume(self):   # telemetry and change files, new files only
+        from lfc_medallion_pack import cdc
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 70}))
+        finally:
+            shutil.rmtree(d)
+        ran = []
+        spark = types.SimpleNamespace(sql=ran.append)
+        with mock.patch.object(cdc, "staging", lambda w, name: ("id", f"/Volumes/c/s/{name}")), \
+                mock.patch.object(cdc.os.path, "isdir", lambda p: True):
+            done = cdc.capture(spark, pl, "p", "main", "ctl", workspace=object())
+        self.assertEqual(done, ["bank_gw_1", "bank_gw_2"])
+        self.assertEqual(len(ran), 4)   # two gateways x (telemetry, change files): not a statement per LOB or file
+        ev, staged = ran[0], ran[1]
+        self.assertIn("read_files('/Volumes/c/s/p_bank_gw_1/telemetry/', format => 'json')", ev)
+        self.assertIn("upstream_fetch_timestamp_watermark_ms", ev)
+        self.assertIn("NOT IN (SELECT file FROM `main`.`ctl`.gateway_events WHERE gateway = 'bank_gw_1')", ev)
+        self.assertIn("_metadata.file_modification_time", staged)
+        self.assertIn("substr(table_id.schema, 6)", staged)   # bank_lob_001 -> lob_001
 
 
 class Dashboard(unittest.TestCase):

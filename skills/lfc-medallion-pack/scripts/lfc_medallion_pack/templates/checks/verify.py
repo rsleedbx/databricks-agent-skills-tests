@@ -38,6 +38,8 @@ checksum.save(spark, sums, w["catalog"], c["control"])   # the dashboard reads <
 from lfc_medallion_pack import cdc
 cdc.save(spark, cdc.run(spark, plan, w["prefix"], c["connection"], c["database"]), w["catalog"], c["control"])
 from lfc_medallion_pack import observe
+observe.ensure_tables(spark, plan, w["catalog"], c["control"])
+cdc.capture(spark, plan, w["prefix"], w["catalog"], c["control"])   # the gateways' telemetry and staged change files
 observe.create_views(spark, plan, w["catalog"], w["prefix"], c["control"])   # v_changes, v_updates, v_latency, ...
 off = [x for x in sums if x["status"] != "match"]
 rows.append({"check": "checksums (rows and contents: source, bronze, n:1)", "want": f"{len(sums)} match",

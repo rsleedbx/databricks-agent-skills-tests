@@ -147,6 +147,7 @@ of it is snapshotted again: measured 2026-11-21):
 |---|---|
 | `events_<pipeline>`: every gateway's, ingestion pipeline's and transform pipeline's event log | the pipelines (`event_log:`) |
 | the gateways' staging volumes | the gateways (`gateway_storage_schema`) |
+| `gateway_events`, `staged_files`: each gateway's telemetry and change files, read from its staging volume, so a batch's time splits into gateway capture and applier ([references/gateway-timing.md](references/gateway-timing.md)) | the verify job (`cdc.capture`) |
 | `merge_log_<module>`: each copy or merge per table and LOB: versions read, inserted, updated, deleted, seconds, run id | lfc-medallion's merge task (`--log`) |
 | `batches`: each batch of changes per LOB, and when | the source job's `batch` step |
 | `checksums`: rows and an MD5 digest per table per LOB in the source, bronze and n:1 (`checksum.py`) | verify |
