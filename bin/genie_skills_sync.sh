@@ -35,9 +35,10 @@ while IFS= read -r s; do
   [ -f "$ROOT/skills/$s/SKILL.md" ] || { echo "not a skill: $s (in genie-skills.txt)" >&2; exit 1; }
   SKILLS+=("$s")
 done < "$LIST"
+[ ${#SKILLS[@]} -gt 0 ] || { echo "no skills in $LIST" >&2; exit 1; }
 
 # Links from a listed skill to a skill that isn't listed won't resolve in the workspace.
-for s in "${SKILLS[@]}"; do
+for s in ${SKILLS[@]+"${SKILLS[@]}"}; do
   for t in $(grep -rhoE '\.\./(\.\./)?[a-z0-9-]+/' "$ROOT/skills/$s" --include='*.md' 2>/dev/null \
              | sed -E 's#(\.\./)+##; s#/$##' | sort -u); do
     [ -d "$ROOT/skills/$t" ] || continue
@@ -49,19 +50,27 @@ COMMIT=$(git -C "$ROOT" rev-parse --short HEAD)
 DIRTY=$(git -C "$ROOT" status --porcelain -- skills genie-skills.txt | head -1)
 [ -z "$DIRTY" ] || COMMIT="$COMMIT+uncommitted"
 
-# Folders already in the destination: ours (with .synced-from) or someone else's.
-existing=$(databricks workspace list "$DEST" --profile "$PROFILE" -o json 2>/dev/null \
-  | jq -r '.[]? | select(.object_type=="DIRECTORY") | .path | sub(".*/"; "")' || true)
-
 STAGE=$(mktemp -d)
-trap 'rm -rf "${STAGE:?}"' EXIT
-for s in "${SKILLS[@]}"; do
+trap 'rm -rf "${STAGE:?}" "${STAGE:?}.nb"' EXIT
+
+# Folders already in the destination: ours (with .synced-from) or someone else's. Only a missing
+# destination counts as empty: any other failure stops here, before the ownership check is skipped.
+if listed=$(databricks workspace list "$DEST" --profile "$PROFILE" -o json 2>"$STAGE/.err"); then
+  existing=$(printf '%s' "$listed" | jq -r '.[]? | select(.object_type=="DIRECTORY") | .path | sub(".*/"; "")')
+elif grep -qiE "does ?n.t exist|RESOURCE_DOES_NOT_EXIST" "$STAGE/.err"; then
+  existing=
+else
+  echo "cannot list $DEST: $(head -1 "$STAGE/.err")" >&2; exit 1
+fi
+rm -f "$STAGE/.err"
+for s in ${SKILLS[@]+"${SKILLS[@]}"}; do
   if [ -z "$ADOPT" ] && printf '%s\n' "$existing" | grep -qx -- "$s" \
      && ! databricks workspace get-status "$DEST/$s/.synced-from" --profile "$PROFILE" >/dev/null 2>&1; then
     echo "skip $s: $DEST/$s exists and was not copied by this script"
     continue
   fi
-  rsync -a --exclude __pycache__ --exclude '*.pyc' --exclude .DS_Store "$ROOT/skills/$s/" "$STAGE/$s/"
+  # only the files git tracks (their working-tree text), so nothing untracked or ignored is published
+  (cd "$ROOT/skills/$s" && git ls-files -z) | rsync -a --from0 --files-from=- "$ROOT/skills/$s/" "$STAGE/$s/"
   printf 'databricks-agent-skills-tests %s\n' "$COMMIT" > "$STAGE/$s/.synced-from"
   echo "copy $s -> $DEST/$s"
 done
@@ -78,8 +87,25 @@ fi
 [ -n "$(ls -A "$STAGE")" ] || [ ${#STALE[@]} -gt 0 ] || { echo "nothing to do"; exit 0; }
 [ -z "$DRY" ] || { echo "dry run: nothing written"; exit 0; }
 if [ -n "$(ls -A "$STAGE")" ]; then
+  # import-dir makes a notebook (and drops .py) of every file starting "# Databricks notebook source"; the skills
+  # name and read them as files, so those go in one by one as RAW files, after any notebook a past run left
+  NB=$(cd "$STAGE" && grep -rlx --include='*.py' -m1 '# Databricks notebook source' . | sed 's#^\./##' || true)
+  for f in $NB; do mkdir -p "$STAGE.nb/$(dirname "$f")" && mv "$STAGE/$f" "$STAGE.nb/$f"; done
   databricks workspace mkdirs "$DEST" --profile "$PROFILE"
   databricks workspace import-dir "$STAGE" "$DEST" --overwrite --profile "$PROFILE" >/dev/null
+  for f in $NB; do
+    old=$(databricks workspace get-status "$DEST/${f%.py}" --profile "$PROFILE" -o json 2>/dev/null | jq -r '.object_type // empty')
+    [ "$old" != NOTEBOOK ] || databricks workspace delete "$DEST/${f%.py}" --profile "$PROFILE"
+    databricks workspace mkdirs "$DEST/$(dirname "$f")" --profile "$PROFILE"
+    databricks workspace import "$DEST/$f" --file "$STAGE.nb/$f" --format RAW --overwrite --profile "$PROFILE"
+  done
+  rm -rf "${STAGE:?}.nb"
+  # each copied folder must carry its marker, or the next run would take it for someone else's
+  for s in "$STAGE"/*/; do
+    s=$(basename "$s")
+    databricks workspace get-status "$DEST/$s/.synced-from" --profile "$PROFILE" >/dev/null 2>&1 ||
+      { echo "$DEST/$s/.synced-from missing after the import" >&2; exit 1; }
+  done
 fi
 for d in ${STALE[@]+"${STALE[@]}"}; do
   databricks workspace delete "$DEST/$d" --recursive --profile "$PROFILE"
