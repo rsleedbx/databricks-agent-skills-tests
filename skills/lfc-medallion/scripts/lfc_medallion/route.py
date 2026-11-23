@@ -77,7 +77,7 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False,
                 parallel: int = 8, events: list[str] | None = None, history_target: str | None = None,
-                warehouse: str | None = None, path: str | None = None, read_by: str = "version") -> dict:
+                warehouse: str | None = None, path: str | None = None, read_by: str = "time") -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
@@ -419,9 +419,10 @@ def main(argv=None) -> None:
     ap.add_argument("--replan", action="store_true", help="plan every source again, not only new ones")
     ap.add_argument("--warehouse", default="", help="a SQL warehouse id: a path the optimizer may take (paths.py)")
     ap.add_argument("--path", default="auto", help="auto (by cost), or force one: spark, warehouse, warehouse:8 ...")
-    ap.add_argument("--read-by", default="version", choices=("version", "time"),
-                    help="time: an SCD type 1 source the event logs flag as changed is read from its saved time "
-                         "(no history read per source); version: by Delta versions")
+    ap.add_argument("--read-by", default="time", choices=("version", "time"),
+                    help="time (the default): an SCD type 1 source the event logs flag as changed is read from its "
+                         "saved time, with no history read per source (SCD type 2, first reads, refreshed and "
+                         "recreated tables go by version); version: every source by Delta versions")
     ap.add_argument("--events", default="", help="the ingestion pipelines' event log tables, comma-separated: only the "
                                                   "sources whose bronze got rows since their state are read")
     ap.add_argument("--history-target", default="", help="a schema that keeps the SCD type 2 history of the tables "

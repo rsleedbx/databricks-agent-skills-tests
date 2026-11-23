@@ -62,6 +62,27 @@ Without deletion vectors a MERGE's cost follows the files it rewrites, not its r
 the n:1 targets this skill creates have deletion vectors and row tracking. A deployment whose `insights` say
 otherwise is where that term gets measured.
 
+## Reading sources by time (the default)
+
+Reading each changed source by version costs a lookup per source before the MERGE can be planned: its table id and
+its history since the saved version. With many sources that's most of the merge task. So by default
+(`read_by="time"`, `--read-by time`; the pack's `merge_read_by`) an SCD type 1 source is read by time from its saved
+time (less the event-log margin) to its latest commit. It uses lfc-change-source's `commit_ts` positions, with no
+lookup per source: Delta resolves the range inside the MERGE.
+
+A source is read by time only when:
+- **The event logs flag it as changed,** and its last ingestion event is after its saved time.
+- **No snapshot flow ran for it.** A refresh takes the version path, which copies it.
+- **Its table wasn't created after its saved time.** One `information_schema.tables` query, joined with the state,
+  returns only the recreated tables, at any table count.
+- **It isn't SCD type 2,** and it has a saved state with its key.
+
+Every other source goes by version (`read_by="version"` makes all of them do so). Its saved version stays as a lower
+bound. A source whose change feed fails is copied from its latest version, and one with no commit after its start
+counts as unchanged. A commit in the same second as the saved time can be read again: for SCD type 1 that applies the
+same change twice, with the same result. Checked: both modes leave identical n:1 tables; a refresh under the time
+mode is copied and its checksum matches.
+
 ## Measuring a path
 
 Run the same changes through each path: a batch, the ingestion only, a copy of the merge state, then per path the

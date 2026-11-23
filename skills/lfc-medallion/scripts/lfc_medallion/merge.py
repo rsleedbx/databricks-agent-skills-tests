@@ -446,7 +446,7 @@ def _last_metrics(spark, fq: str) -> tuple:
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
               only=None, name: str = "all_{table}", keys: dict | None = None, workspace=None,
               take_over: bool = False, run_id: str = "", log: str | None = None, changed: set | None = None,
-              context: dict | None = None, keep_gone: bool = False, planner=None, read_by: str = "version") -> dict:
+              context: dict | None = None, keep_gone: bool = False, planner=None, read_by: str = "time") -> dict:
     """Keep <catalog>.<target>.<name> current for each table in `tables`, from every source (schema <prefix><source>)
     that has it. keys: {table: [columns]} where the recorded key isn't the one to use. take_over: a target that is
     still a view (the pipeline's, left over when the table moved to this route) is dropped and the table copied whole;

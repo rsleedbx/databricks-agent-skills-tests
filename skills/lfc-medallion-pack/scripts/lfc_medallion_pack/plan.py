@@ -104,7 +104,7 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     return {"module": name, "pack": p["name"], "pack_dir": p["dir"], "model": p["model"],
             "source_column": p["source_column"], "tables": p["tables"], "roles": p.get("roles", {}),
             "data": bool(m.get("data", False)), "merge_path": m.get("merge_path") or "auto",
-            "merge_read_by": m.get("merge_read_by") or "version",
+            "merge_read_by": m.get("merge_read_by") or "time",
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
             "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit,
             "hints": m.get("hints") or {}, "dimension_tables": dims,
@@ -216,7 +216,7 @@ def resources(m: dict, archive: str) -> dict:
                                             # once (lfc_medallion.paths); merge_path forces one: spark, warehouse:8
                                             "warehouse": "${var.warehouse_id}",
                                             "path": m.get("merge_path") or "auto",
-                                            "read-by": m.get("merge_read_by") or "version"}}}
+                                            "read-by": m.get("merge_read_by") or "time"}}}
     if not merge_task["depends_on"]:   # every pipeline continuous: nothing to wait for
         merge_task.pop("depends_on")
     jobs = {f"{n}_refresh": {

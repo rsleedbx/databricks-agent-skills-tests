@@ -320,7 +320,7 @@ class EntryPoint(unittest.TestCase):
                                         {"nation": "lookup"}))
         self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None,
                                       "history_target": None, "warehouse": None, "path": "auto",
-                                      "read_by": "version"})
+                                      "read_by": "time"})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
