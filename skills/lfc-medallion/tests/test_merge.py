@@ -186,6 +186,22 @@ class FirstAndLater(unittest.TestCase):
         self.assertEqual(len(sources_read), 1)   # each source's feed only inside the one MERGE
         self.assertEqual({r[2]: r[6:9] for r in logged}, {"east": (0, 1, 0), "west": (2, 0, 0)})
 
+    def test_a_forced_split_runs_k_merges_and_is_recorded(self):   # the optimizer's k: here 2 MERGEs at once
+        from lfc_medallion import paths
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        planner = paths.Planner({"spark": spark}, forced="spark:2", rows={("nation", "east"): 1, ("nation", "west"): 2})
+        report = run(spark, planner=planner)
+        self.assertEqual({s: r["done"] for s, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
+        merges = spark.merges()
+        self.assertEqual(len(merges), 2)
+        self.assertTrue(all("UNION ALL" not in m for m in merges))   # one source each
+        (rec,) = planner.records
+        self.assertEqual((rec["engine"], rec["k"], rec["sources"], rec["change_rows"], rec["forced"]),
+                         ("spark", 2, 2, 3, True))
+
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})

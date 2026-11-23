@@ -100,7 +100,7 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
                            "slot": slot, "publication": f"{slot}_pub"})
     return {"module": name, "pack": p["name"], "pack_dir": p["dir"], "model": p["model"],
             "source_column": p["source_column"], "tables": p["tables"], "roles": p.get("roles", {}),
-            "data": bool(m.get("data", False)),
+            "data": bool(m.get("data", False)), "merge_path": m.get("merge_path") or "auto",
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
             "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit,
             "hints": m.get("hints") or {}, "dimension_tables": dims,
@@ -207,7 +207,11 @@ def resources(m: dict, archive: str) -> dict:
                                             "log": f"${{var.catalog}}.{ctl}.merge_log_{n}",
                                             # only the sources whose bronze got rows since their state are read
                                             "events": ",".join(f"${{var.catalog}}.{ctl}.events_{n}_ingest_{g['k']}"
-                                                               for g in m["groups"])}}}
+                                                               for g in m["groups"]),
+                                            # the MERGE optimizer may run a table's MERGEs on the warehouse, k at
+                                            # once (lfc_medallion.paths); merge_path forces one: spark, warehouse:8
+                                            "warehouse": "${var.warehouse_id}",
+                                            "path": m.get("merge_path") or "auto"}}}
     if not merge_task["depends_on"]:   # every pipeline continuous: nothing to wait for
         merge_task.pop("depends_on")
     jobs = {f"{n}_refresh": {

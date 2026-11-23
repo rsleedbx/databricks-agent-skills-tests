@@ -35,7 +35,7 @@ left for the next run.
 import json
 import time
 
-from . import coltypes, discover, evidence
+from . import coltypes, discover, evidence, paths
 from .stack import spark_string
 
 STATE = "_lfc_medallion_merge_state"
@@ -441,7 +441,7 @@ def _last_metrics(spark, fq: str) -> tuple:
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
               only=None, name: str = "all_{table}", keys: dict | None = None, workspace=None,
               take_over: bool = False, run_id: str = "", log: str | None = None, changed: set | None = None,
-              context: dict | None = None, keep_gone: bool = False) -> dict:
+              context: dict | None = None, keep_gone: bool = False, planner=None) -> dict:
     """Keep <catalog>.<target>.<name> current for each table in `tables`, from every source (schema <prefix><source>)
     that has it. keys: {table: [columns]} where the recorded key isn't the one to use. take_over: a target that is
     still a view (the pipeline's, left over when the table moved to this route) is dropped and the table copied whole;
@@ -468,7 +468,7 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
         try:
             _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                          fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed,
-                         ctx.get("cols"), keep_gone)
+                         ctx.get("cols"), keep_gone, planner)
         finally:
             _log_rows(spark, fq_log, logged)
     return report
@@ -590,9 +590,30 @@ def _before(spark, tgt: str) -> int | None:
         return None
 
 
+def _merge_split(eng, tgt: str, parts: list[list[str]], source_column: str, key: list[str], cols: list[str],
+                 tries: int = 8) -> int:
+    """One MERGE per part (each a UNION ALL of its sources' changes), the parts at once on threads, on one engine; a
+    MERGE that meets another's commit (CONCURRENT...) is tried again. The retries, for the paths log."""
+    def one(p):
+        q = merge_into(tgt, " UNION ALL ".join(p), source_column, key, cols)
+        for attempt in range(tries):
+            try:
+                eng.sql(q)
+                return attempt
+            except Exception as e:  # noqa: BLE001
+                if attempt == tries - 1 or "CONCURRENT" not in str(e).upper():
+                    raise
+                time.sleep(0.2 * 2 ** attempt)
+    if len(parts) == 1:
+        return one(parts[0])
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(parts)) as ex:
+        return sum(ex.map(one, parts))
+
+
 def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                  fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed=None,
-                 cols_known=None, keep_gone=False):
+                 cols_known=None, keep_gone=False, planner=None):
     """merge_all's work on one table: every source read at once (metadata, threads), then a whole copy for each source
     that needs one, ONE MERGE for all the sources whose changes come from the change feed, and one state write: so a
     table of hundreds of sources costs a few statements, not a few per source (logged: what it copied or merged)."""
@@ -653,15 +674,25 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
         for i in feed:
             groups.setdefault((tuple(i["key"]), tuple(c for c, _ in i["cols"])), []).append(i)
         for (key, cols), part in groups.items():
-            rows = " UNION ALL ".join(changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"],
-                                                  i["now"], _start(i, i["now"])) for i in part)
+            each = {i["s"]: changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"],
+                                        _start(i, i["now"])) for i in part}
+            # the path: the engine and how many MERGEs at once (paths.Planner, by cost); none: one MERGE on spark
+            e, eng, k, crows, preds = ("spark", spark, 1, 0, None) if planner is None else \
+                planner.pick(table, [i["s"] for i in part])
             try:
                 t0 = time.time()
-                before = _before(spark, tgt)
-                spark.sql(merge_into(tgt, rows, source_column, list(key), list(cols)))
-                n = _merged_counts(spark, tgt, source_column, before)
+                before = _before(eng, tgt)
+                retries = _merge_split(eng, tgt, [[each[i["s"]] for i in g] for g in paths.groups(part, k)],
+                                       source_column, list(key), list(cols))
+                n = _merged_counts(eng, tgt, source_column, before)
+                if planner is not None:
+                    planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, retries)
             # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
-            except Exception:  # noqa: BLE001
+            # (on spark; a source's changes merged again change nothing: the same rows match)
+            except Exception as err:  # noqa: BLE001
+                if planner is not None:
+                    planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, 0,
+                                   f"failed, each source alone: {str(err).splitlines()[0][:120]}")
                 for i in part:
                     try:
                         t1 = time.time()

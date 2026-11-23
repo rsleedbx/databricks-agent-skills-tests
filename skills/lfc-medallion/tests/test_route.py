@@ -5,6 +5,7 @@ and merged), merged_tables before and after a plan exists, and the entry point's
     python3 -m unittest skills/lfc-medallion/tests/test_route.py
 """
 import os
+import re
 import sys
 import types
 import unittest
@@ -41,6 +42,16 @@ class Spark:
             rows = [R(table_name=n, table_type=k) for n, k in self.kinds.items()]
         elif q.startswith("DROP TABLE IF EXISTS"):
             self.dropped.append(q.rsplit("`.`", 1)[1].rstrip("`"))
+            rows = []
+        elif q.startswith("CREATE OR REPLACE TABLE") and route.PLAN in q:   # write_plan, as SQL: its rows recorded
+            name = q.split(" AS ", 1)[0].split()[-1]
+            body = q.split(" AS ", 1)[1]
+            got = [tuple(v for v, _ in re.findall(r"'((?:[^'\\]|\\.)*)' AS (\w+)", part))
+                   for part in body.split(" UNION ALL ")] if "WHERE false" not in body else []
+            self.written = (name, got, None)
+            self.writes.append({r[1]: r[6] for r in got})
+            rows = []
+        elif "_lfc_medallion_merge_paths" in q or q.startswith("SELECT engine, k, sources"):   # the paths log
             rows = []
         else:
             raise AssertionError(q)
@@ -154,7 +165,7 @@ class MergeRoute(unittest.TestCase):
         self.run_route(spark, apply={"lines": "pipeline", "nation": "pipeline", "part": "merge"})
         name, rows, schema = spark.written
         self.assertEqual(name, "`main`.`shop_silver`._lfc_medallion_plan")
-        self.assertIn("source string", schema)
+        self.assertIsNone(schema)   # written as SQL (CREATE OR REPLACE TABLE ... AS), so either engine runs it
         self.assertIn(("east", "nation", "dimension", "merge", "relations", "nation in east", "pipeline", ""), rows)
         self.assertEqual(len(rows), 6)   # 3 tables x 2 sources
 
@@ -286,7 +297,7 @@ class ChangedSince(unittest.TestCase):
                         R(flow="main_shop_bronze_east_part_snapshot_flow", at=t0 + dt.timedelta(minutes=1))]
                 return R(collect=lambda: rows)
         got = route.changed_since(S(), "main", "shop_bronze_", ctx, ["main.ctl.events_ingest_1"])
-        self.assertEqual(got, {("nation", "east"), ("part", "east")})   # west's change is older than its state
+        self.assertEqual(set(got), {("nation", "east"), ("part", "east")})   # west's change is older than its state
         self.assertEqual(len(seen), 1)   # one query over the logs
         self.assertIn("endswith(f, '_snapshot_flow') AND status = 'COMPLETED'", seen[0])   # a refresh of no rows
         ctx["state"].pop(("all_nation", "west"))
@@ -306,7 +317,7 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(seen["args"], ("spark", "main", "shop_bronze_", "shop_silver", "division",
                                         {"nation": "lookup"}))
         self.assertEqual(seen["kw"], {"log": "main.shop_control.merge_log", "replan": False, "events": None,
-                                      "history_target": None})
+                                      "history_target": None, "warehouse": None, "path": "auto"})
 
     def test_no_subset_of_sources(self):   # a subset would make merge_all drop the other sources' rows
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
