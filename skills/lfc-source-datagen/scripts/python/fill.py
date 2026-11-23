@@ -110,6 +110,36 @@ def fill(a, connect=None):
     return 1 if errors else 0
 
 
+def append_many(engine, schemas, rows, connect, skip=(), per_trip=50, done=None):
+    """Add `rows` rows to every table but `skip` of each schema in `schemas`, which hold the same tables (one model's
+    copies, e.g. a module's LOBs), in a few round trips: one catalog read (the first schema's), each schema planned from
+    it (an append's INSERT finds its own start in SQL), then per level one execute per `per_trip` schemas, their INSERTs
+    together (on PostgreSQL one transaction). fill() per schema repeats the catalog and the status reads, a round trip
+    each: through a UC JDBC connection about 0.7 s apiece, most of a batch's time. done(schemas) runs after each part's
+    last level. An engine that splits its statements (eng.split) runs them one by one."""
+    eng = ENGINES[engine]()
+    o = planner.Opts(rows=rows, mode="append", skip=frozenset(skip))
+    sch = (lambda s: eng.schema(s)) if hasattr(eng, "schema") else (lambda s: s)
+    con = connect(); cur = con.cursor()
+    if hasattr(eng, "session"): eng.session(cur)
+    tabs = eng.catalog(cur, sch(schemas[0]))
+    if not tabs: raise ValueError(f"no tables in {schemas[0]}")
+    plans = {x: planner.plan(eng, tabs, sch(x), o) for x in schemas}
+    eng.prepare(cur, o)
+    levels = sorted({lv for p in plans.values() for lv, _, _ in p})
+    for k in range(0, len(schemas), per_trip):
+        part = schemas[k:k + per_trip]
+        for lv in levels:
+            stmts = [s for x in part for l, _, s in plans[x] if l == lv]
+            if hasattr(eng, "split"):
+                for s in stmts:
+                    for piece in eng.split(s): cur.execute(piece)
+            elif stmts:
+                cur.execute(f"/* lfc append, level {lv}, {len(part)} schemas */\n" + ";\n".join(stmts))
+        if done: done(part)
+    con.close()
+
+
 def options(argv=None):
     """The command line's options (also for a caller that builds them: options([engine, schema, "--sessions", "2"]))."""
     ap = argparse.ArgumentParser(description="fill a schema's tables to their lfc:rows targets, through a driver")

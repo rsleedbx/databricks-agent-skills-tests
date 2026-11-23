@@ -218,6 +218,10 @@ modules:
   rows and balance updates reached gold through Lakeflow Connect CDC, every balance gap 0. A failed or retried run
   appends again: the data stays consistent, the rows are more than asked (seen: one LOB with 1,000 extra).
   `tables=all` adds the rows to the dimensions too (new branches, tellers, accounts): the merge route's tables change.
+- A batch over many LOBs is a few round trips, not a few per LOB: one catalog read, then per level one execute of
+  50 LOBs' INSERTs, then their signals in one execute (`fill.py` `append_many`, `signals.reapply_many`). Through UC
+  JDBC each statement is a Spark job (about 0.7 s): the per-LOB path took 13.6 s a LOB (62 LOBs: 842 s, about 27
+  statements each); measured locally, 4 LOBs took 13 statements where the per-LOB path took about 108.
 - `append` (whole scale factors of every table) is not the batch: TPC-B's branch is one row per scale factor, so its
   smallest step is 100,000 accounts.
 - The ingestion pipelines are triggered; their steady time per update (above) sets how far behind bronze runs at a

@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import types
 import unittest
 from contextlib import redirect_stderr
 from unittest import mock
@@ -141,7 +142,9 @@ class Cur:
 
     def execute(self, q, params=None):
         self.q.append(q)
-        if "obj_description" in q:
+        if q.startswith("SELECT n.nspname, c.relname, obj_description"):   # reapply_many: every source's comments
+            self.rows = [(x, t, self.comments.get(t)) for x, t in re.findall(r"n.nspname = '(\w+)' AND c.relname = '(\w+)'", q)]
+        elif "obj_description" in q:
             self.rows = [(self.comments.get(re.search(r"\.\"?(\w+)\"?'::regclass", q).group(1)),)]
         else:
             self.rows = [self.answers.pop(0)]
@@ -203,10 +206,14 @@ class Reapply(unittest.TestCase):
             rowcount = 7
 
             def execute(self, q, params=None):
-                if q.startswith("SELECT obj_description"):
+                if q.startswith("SELECT n.nspname"):
                     return super().execute(q, params)
                 self.q.append(q)
-                self.rows = []
+                self.rows, self.left = [], q.count(";\n")   # one execute of the steps: a result each (nextset)
+
+            def nextset(self):
+                self.left -= 1
+                return self.left >= 0
         cur = Cur({"web_sales": sg.comment("tpcds", "web_ship_delay", TpcdsSignals.S)}, [])
         got = sg.reapply(cur, "tpcds", "a", log=lambda m: None)
         self.assertEqual(list(got), ["web_ship_delay"])                       # store_returns has no signal comment
@@ -488,12 +495,49 @@ class Rule(unittest.TestCase):
 
 class Batch(unittest.TestCase):
     def test_rows_go_to_every_table_but_the_quiet_ones(self):
-        with mock.patch.object(sg, "_fill") as fill, mock.patch.object(sg, "reapply", return_value={"s": [3, None]}):
-            got = sg.batch(Db().connect, "tpcb", ["a"], 500, quiet=["branch", "teller", "account"], log=lambda m: None)
-        self.assertEqual(fill.call_args.args[1:], ("a", 1, ("--mode", "append", "--rows", "500", "--skip",
-                                                            "branch,teller,account")))
-        self.assertIsInstance(got[0].pop("at"), float)                             # the LOB's own commit time
-        self.assertEqual(got, [{"source": "a", "rows": 500, "changed": None}])   # a count the connection didn't give
+        fill = mock.Mock()
+
+        def reapply_many(cur, model, names, log, per_trip, done):
+            done(list(names))
+            return {x: {"s": [3, None]} for x in names}
+        with mock.patch.object(sg, "_planner", return_value=fill), mock.patch.object(sg, "reapply_many", reapply_many):
+            got = sg.batch(Db().connect, "tpcb", ["a", "b"], 500, quiet=["branch", "teller", "account"],
+                           log=lambda m: None)
+        args, kw = fill.append_many.call_args
+        self.assertEqual((args[:3], kw["skip"]), (("postgres", ["a", "b"], 500), ["branch", "teller", "account"]))
+        self.assertIsInstance(got[0].pop("at"), float)                             # when its part committed
+        self.assertEqual(got[0], {"source": "a", "rows": 500, "changed": None})   # a count the connection didn't give
+
+
+class AppendMany(unittest.TestCase):
+    def test_one_catalog_read_and_one_execute_per_level_per_part(self):   # not a fill() per schema
+        fillpy = src._planner("fill")
+        ran = []
+
+        class Eng:
+            def catalog(self, cur, sch):
+                ran.append(f"catalog {sch}")
+                return ["t"]
+
+            def prepare(self, cur, o):
+                pass
+
+        class Con:
+            def cursor(self):
+                return types.SimpleNamespace(execute=ran.append)
+
+            def close(self):
+                pass
+        plan = lambda eng, tabs, sch, o: [(0, "p", f"INSERT {sch}.p"), (1, "c", f"INSERT {sch}.c")]  # noqa: E731
+        parts = []
+        with mock.patch.dict(fillpy.ENGINES, {"fake": Eng}), mock.patch.object(fillpy.planner, "plan", plan):
+            fillpy.append_many("fake", ["a", "b", "c"], 20, Con, per_trip=2, done=parts.append)
+        self.assertEqual(ran, ["catalog a",
+                               "/* lfc append, level 0, 2 schemas */\nINSERT a.p;\nINSERT b.p",
+                               "/* lfc append, level 1, 2 schemas */\nINSERT a.c;\nINSERT b.c",
+                               "/* lfc append, level 0, 1 schemas */\nINSERT c.p",
+                               "/* lfc append, level 1, 1 schemas */\nINSERT c.c"])
+        self.assertEqual(parts, [["a", "b"], ["c"]])
 
 
 class CommandLine(unittest.TestCase):

@@ -31,7 +31,7 @@ import time
 
 from lfc_source_contract.jdbc import ident, literal
 
-from .sources import _fill, build, check_name, parse, psql_vars, read_sql, statements
+from .sources import _fill, _planner, build, check_name, parse, psql_vars, read_sql, statements
 
 
 @functools.lru_cache(maxsize=None)
@@ -238,23 +238,59 @@ def reapply(cur, model: str, name: str, log=print) -> dict[str, list[int]]:
     {signal: rows each statement changed}. The steps change only rows whose values differ, so on unchanged rows every
     count is 0 (the last statement, the comment, counts none). A count is None where the connection doesn't report one
     (a UC JDBC connection's writes run as Spark's sessionInitStatement, which returns no count)."""
-    s = ident(name)
-    cur.execute(f"SET search_path = {s}")
-    out = {}
-    for sig in spec(model):
-        cur.execute(f"SELECT obj_description({literal(s + '.' + ident(sig['table']))}::regclass, 'pg_class')")
-        params = parameters((cur.fetchall() or [[None]])[0][0], sig["name"])
-        if params is None:
-            continue
-        nums = ",".join(str(params[k]) for k in sig["parameters"])
-        counts = []
-        for st in steps(model, name, "/".join(nums if x["name"] == sig["name"] else "" for x in spec(model))):
-            cur.execute(st)
-            rc = getattr(cur, "rowcount", -1)
-            counts.append((None if rc is None or rc < 0 else rc) if _dml(st) else 0)   # UC JDBC: -1 for DML too
-        out[sig["name"]] = counts
-        log(f"signals: {name}: {sig['name']} re-applied, rows changed per statement {counts}")
+    return reapply_many(cur, model, [name], log)[name]
+
+
+def reapply_many(cur, model: str, names, log=print, per_trip: int = 50, done=None) -> dict[str, dict[str, list]]:
+    """reapply() for many sources at once: their signals' comments in one read, then per `per_trip` sources one
+    execute of their steps (each source's after its own SET search_path; on PostgreSQL one transaction), so a batch
+    over hundreds of LOBs is a few round trips, not a few per LOB. {source: {signal: rows each statement changed}}:
+    the counts from each statement's own result where the cursor gives them (psycopg's nextset), else None for the
+    statements that change rows. done(sources) runs after each part."""
+    sigs = spec(model)
+    names = list(names)
+    out = {x: {} for x in names}
+    if not sigs:
+        return out
+    pairs = " OR ".join(f"(n.nspname = {literal(x)} AND c.relname = {literal(sig['table'])})"
+                        for x in names for sig in sigs)
+    cur.execute("SELECT n.nspname, c.relname, obj_description(c.oid, 'pg_class') FROM pg_class c "
+                f"JOIN pg_namespace n ON n.oid = c.relnamespace WHERE {pairs}")
+    text = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+    for k in range(0, len(names), per_trip):
+        part, run = names[k:k + per_trip], []   # run: (source, signal or None, statement)
+        for x in part:
+            run.append((x, None, f"SET search_path = {ident(x)}"))
+            for sig in sigs:
+                params = parameters(text.get((x, sig["table"])), sig["name"])
+                if params is None:
+                    continue
+                nums = ",".join(str(params[q]) for q in sig["parameters"])
+                extra = "/".join(nums if y["name"] == sig["name"] else "" for y in sigs)
+                run += [(x, sig["name"], st) for st in steps(model, x, extra)]
+                out[x][sig["name"]] = []
+        if len(run) > len(part):
+            cur.execute(f"/* lfc signals, {len(part)} sources */\n" + ";\n".join(st for _, _, st in run))
+            for (x, sig, st), rc in zip(run, _counts(cur, len(run))):
+                if sig is not None:
+                    out[x][sig].append((None if rc is None or rc < 0 else rc) if _dml(st) else 0)
+        for x in part:
+            for sig, c in out[x].items():
+                log(f"signals: {x}: {sig} re-applied, rows changed per statement {c}")
+        if done:
+            done(part)
     return out
+
+
+def _counts(cur, n: int) -> list:
+    """Each statement's row count from one execute of n statements: psycopg gives a result per statement (nextset);
+    a cursor without results per statement (a UC JDBC connection) gives none."""
+    if not hasattr(cur, "nextset"):
+        return [None] * n
+    got = [getattr(cur, "rowcount", -1)]
+    while len(got) < n and cur.nextset():
+        got.append(getattr(cur, "rowcount", -1))
+    return got + [None] * (n - len(got))
 
 
 DML = ("INSERT", "UPDATE", "DELETE", "MERGE", "WITH")
@@ -293,21 +329,22 @@ def append(connect, model: str, names, grow: float, sessions: int = 4, log=print
     return out
 
 
-def batch(connect, model: str, names, rows: int, quiet: list[str] = (), log=print) -> list[dict]:
+def batch(connect, model: str, names, rows: int, quiet: list[str] = (), log=print, per_trip: int = 50) -> list[dict]:
     """One batch of changes per source: `rows` new rows in every table of the model but the `quiet` ones (its
     dimensions: the caller decides them, by the one rule lfc_medallion.split_tables applies to the schema YAML's
-    roles), by python/fill.py --mode append, continuing each table's row numbers by its generation rules, then its
-    signals re-applied (their totals: the parents' sums). A rerun, or a retried task, appends another batch: the data
-    stays consistent (the signal covers every row, the totals are recomputed), the rows are more than asked. Works on
-    any DB-API connection connect() returns: psycopg, or a UC JDBC connection (lfc_source_contract.jdbc.dbapi)."""
-    out = []
+    roles), by python/fill.py's append_many (one catalog read, each level's INSERTs for `per_trip` sources in one
+    execute), continuing each table's row numbers by its generation rules, then its signals re-applied (reapply_many:
+    their totals, the parents' sums), so a batch over hundreds of LOBs is a few round trips. A rerun, or a retried
+    task, appends another batch: the data stays consistent (the signal covers every row, the totals are recomputed),
+    the rows are more than asked. Works on any DB-API connection connect() returns: psycopg, or a UC JDBC connection
+    (lfc_source_contract.jdbc.dbapi). `at`: when the source's part committed, where its latency starts."""
+    names = list(names)
     for name in names:
         check_name(name, "source")
-        _fill(connect, name, 1, ("--mode", "append", "--rows", str(int(rows))) + (("--skip", ",".join(quiet))
-                                                                                   if quiet else ()))
-        con = connect()
-        cur = con.cursor()
-        out.append({"source": name, "rows": int(rows), "changed": changed_rows(reapply(cur, model, name, log)),
-                    "at": time.time()})   # when this source's batch committed: a latency starts here, per source
-        con.close()
-    return out
+    _planner("fill").append_many("postgres", names, int(rows), connect, skip=quiet, per_trip=per_trip)
+    con = connect()
+    at = {}
+    changed = reapply_many(con.cursor(), model, names, log, per_trip,
+                           done=lambda part: at.update(dict.fromkeys(part, time.time())))
+    con.close()
+    return [{"source": x, "rows": int(rows), "changed": changed_rows(changed[x]), "at": at[x]} for x in names]
