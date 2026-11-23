@@ -188,6 +188,37 @@ class Checksum(unittest.TestCase):
         self.assertIn('EXTRACT(EPOCH FROM ("b")::timestamp)', pg)
 
 
+class ChecksumQueries(unittest.TestCase):
+    def test_one_source_and_one_n1_query_per_table_bronze_per_lob(self):   # not three per table and LOB
+        from lfc_medallion_pack import checksum
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 5, "data": True}))
+        finally:
+            shutil.rmtree(d)
+        m = pl["modules"][0]
+        ran = []
+
+        def sql(q, args=None):
+            ran.append(args["q"] if args else q)
+            if args:   # the source: a row per LOB
+                rows = [types.SimpleNamespace(g=x["name"], n_rows=3, digest=7) for x in m["lobs"]]
+            elif "GROUP BY 1" in q:
+                rows = [types.SimpleNamespace(g=x["name"], n_rows=3, digest=7) for x in m["lobs"]]
+            elif "SHOW TABLES" in q:
+                rows = []
+            else:
+                rows = [types.SimpleNamespace(n_rows=3, digest=7)]
+            return types.SimpleNamespace(collect=lambda: rows)
+        got = checksum._run(types.SimpleNamespace(sql=sql), pl, "bank", "main", "p", "c", "db", None)
+        self.assertEqual(len(got), 5 * 4)
+        self.assertEqual({r["status"] for r in got}, {"match"})
+        src = [q for q in ran if "UNION ALL" in q]
+        self.assertEqual(len(src), 4)   # one per table, every LOB in it
+        self.assertEqual(sum(1 for q in ran if "GROUP BY 1" in q), 4)
+        self.assertEqual(sum(1 for q in ran if "_bank_bronze_" in q), 5 * 4)
+
+
 class Capture(unittest.TestCase):
     def test_one_insert_each_per_gateway_from_its_staging_volume(self):   # telemetry and change files, new files only
         from lfc_medallion_pack import cdc

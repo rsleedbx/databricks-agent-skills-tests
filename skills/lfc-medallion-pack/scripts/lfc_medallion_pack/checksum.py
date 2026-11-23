@@ -71,12 +71,16 @@ def row_text(columns: list[dict], engine: str) -> str:
     return r["join"].join(parts)
 
 
-def query(columns: list[dict], engine: str, relation: str, where: str = "") -> str:
-    """SELECT rows, digest FROM relation [WHERE ...]: the table's count and digest sum on that engine."""
+def query(columns: list[dict], engine: str, relation: str, where: str = "", label: str | None = None,
+          by: str | None = None) -> str:
+    """SELECT rows, digest FROM relation [WHERE ...]: the table's count and digest sum on that engine. label: a
+    constant first column `g` (one part of a UNION ALL over many tables); by: a column to group by, as `g` (every
+    source of an n:1 table in one query)."""
     r = RENDER[engine]
     d = r["digest"].format(t=f"({row_text(columns, engine)})")
-    return (f"SELECT COUNT(*) AS n_rows, {r['sum'].format(d=d)} AS digest FROM {relation}"
-            + (f" WHERE {where}" if where else ""))
+    g = f"'{label}' AS g, " if label is not None else f"{by} AS g, " if by else ""
+    return (f"SELECT {g}COUNT(*) AS n_rows, {r['sum'].format(d=d)} AS digest FROM {relation}"
+            + (f" WHERE {where}" if where else "") + (" GROUP BY 1" if by else ""))
 
 
 def model_columns(model: str) -> dict[str, list[dict]]:
@@ -106,7 +110,10 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, connection: s
         spark.conf.set(key, was)
 
 
-def _run(spark, plan, module, catalog, prefix, connection, database, lobs) -> list[dict]:
+def _run(spark, plan, module, catalog, prefix, connection, database, lobs, threads: int = 16) -> list[dict]:
+    """The checksums in few round trips: per table one remote_query over every LOB (source) and one GROUP BY over the
+    n:1 table, and each LOB's bronze table on a thread (16 at once): not three queries one after another per table
+    and LOB (124 LOBs, 496 tables: 2,174 s)."""
     m = next(x for x in plan["modules"] if x["module"] == module)
     cols = model_columns(m["model"])
     col, silver = m["source_column"], f"`{catalog}`.`{prefix}_{module}_silver`"
@@ -114,27 +121,37 @@ def _run(spark, plan, module, catalog, prefix, connection, database, lobs) -> li
     if spark.sql(f"SHOW TABLES IN {silver} LIKE '_lfc_medallion_plan'").collect():
         route = {r.table_name: r.route for r in spark.sql(
             f"SELECT DISTINCT table_name, route FROM {silver}._lfc_medallion_plan").collect()}
+    xs = [x for x in m["lobs"] if not lobs or x["name"] in lobs]   # names: lower-case letters, digits and _
+    got: dict = {}   # (lob, table) -> {layer: (rows, digest)}
+    for t in m["tables"]:   # the source: every LOB's table in one remote_query (one round trip, PostgreSQL runs it)
+        q = " UNION ALL ".join(query(cols[t], "postgres", f'"{x["source_schema"]}"."{t}"', label=x["name"]) for x in xs)
+        for r in spark.sql("SELECT * FROM remote_query(:c, database => :d, query => :q)",
+                           args={"c": connection, "d": database, "q": q}).collect():
+            got.setdefault((r.g, t), {})["source"] = (int(r.n_rows), int(r.digest))
+        # n:1: every LOB of the table in one query, grouped by the source column
+        for r in spark.sql(query(cols[t], "databricks", f"{silver}.`all_{t}`", by=f"`{col}`")).collect():
+            got.setdefault((r.g, t), {})["n1"] = (int(r.n_rows), int(r.digest))
+
+    def bronze(xt):   # each LOB's bronze table is a table of its own: planned on its own thread
+        x, t = xt
+        r = spark.sql(query(cols[t], "databricks", f"`{catalog}`.`{prefix}_{module}_bronze_{x['name']}`.`{t}`")).collect()[0]
+        return x["name"], t, (int(r.n_rows), int(r.digest))
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=threads) as ex:
+        for name, t, v in ex.map(bronze, [(x, t) for x in xs for t in m["tables"]]):
+            got.setdefault((name, t), {})["bronze"] = v
     out = []
-    for x in m["lobs"]:
-        if lobs and x["name"] not in lobs:
-            continue
+    for x in xs:
         for t in m["tables"]:
-            src = query(cols[t], "postgres", f'"{x["source_schema"]}"."{t}"')
-            s = spark.sql("SELECT * FROM remote_query(:c, database => :d, query => :q)",
-                          args={"c": connection, "d": database, "q": src}).collect()[0]
-            b = spark.sql(query(cols[t], "databricks",
-                                f"`{catalog}`.`{prefix}_{module}_bronze_{x['name']}`.`{t}`")).collect()[0]
-            n = spark.sql(query(cols[t], "databricks", f"{silver}.`all_{t}`",
-                                f"`{col}` = {_q(x['name'])}")).collect()[0]
-            got = {"source": (int(s.n_rows), int(s.digest)), "bronze": (int(b.n_rows), int(b.digest)),
-                   "n1": (int(n.n_rows), int(n.digest))}
-            off = [k for k in ("bronze", "n1") if got[k] != got["source"]]
+            g = got.get((x["name"], t), {})
+            g = {k: g.get(k, (0, 0)) for k in ("source", "bronze", "n1")}   # none: no rows in that layer
+            off = [k for k in ("bronze", "n1") if g[k] != g["source"]]
             out.append({"module": module, "lob": x["name"], "table": t, "route": route.get(t, "pipeline"),
-                        "source_rows": got["source"][0],
-                        "bronze_rows": got["bronze"][0], "n1_rows": got["n1"][0], "source_digest": got["source"][1],
-                        "bronze_digest": got["bronze"][1], "n1_digest": got["n1"][1],
+                        "source_rows": g["source"][0],
+                        "bronze_rows": g["bronze"][0], "n1_rows": g["n1"][0], "source_digest": g["source"][1],
+                        "bronze_digest": g["bronze"][1], "n1_digest": g["n1"][1],
                         "status": "match" if not off else "differs: " + ", ".join(
-                            f"{k} {'rows' if got[k][0] != got['source'][0] else 'contents'}" for k in off)})
+                            f"{k} {'rows' if g[k][0] != g['source'][0] else 'contents'}" for k in off)})
     return out
 
 
