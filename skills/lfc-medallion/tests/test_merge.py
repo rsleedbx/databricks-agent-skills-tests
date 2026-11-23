@@ -297,6 +297,37 @@ class FirstAndLater(unittest.TestCase):
         self.assertIn("t.created > s.updated_at", seen[0])   # only the recreated come back, at any table count
         self.assertIn("s.target_table = concat('all_', t.table_name, '')", seen[0])
 
+    def test_a_refresh_the_event_log_missed_is_copied_from_its_latest_version(self):   # by time, then the feed fails
+        import datetime as dt
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        real = spark.sql
+        at = dt.datetime(2026, 11, 23, 12, 0, 0)
+        def sql(q):
+            if q.startswith("SELECT target_table, source, version"):
+                return R(collect=lambda: [R(target_table=t, source=x, version=v, table_id=i, updated_at=at,
+                                            key_columns='["n_nationkey"]', snapshots=None)
+                                          for (t, x), (v, i) in spark.state.items()])
+            if q.startswith("SELECT t.table_schema, t.table_name, t.created"):
+                return R(collect=lambda: [])
+            if q.startswith("MERGE INTO `main`.`shop_silver`.`all_nation`") and "table_changes('main.shop_bronze_east" in q:
+                raise RuntimeError("[DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA] a full refresh in between")
+            return real(q)
+        spark.sql = sql
+        real_ctx = merge_mod.load_context
+        def ctx(*a, **k):
+            c = real_ctx(*a, **k)
+            c["event_at"] = {("nation", "east"): at + dt.timedelta(minutes=5), ("nation", "west"): at + dt.timedelta(minutes=5)}
+            return c   # no refreshed pairs: the event log missed east's refresh
+        with mock.patch.object(merge_mod, "load_context", ctx):
+            report = run(spark, read_by="time", changed={("nation", "east"): 1, ("nation", "west"): 2})
+        self.assertTrue(report["all_nation"]["east"]["done"].startswith("copied (change feed unreadable"), report)
+        self.assertEqual(report["all_nation"]["west"]["done"], "merged")
+        copy = [m for m in spark.merges() if "shop_bronze_east" in m and "table_changes" not in m]
+        self.assertTrue(copy and "VERSION AS OF 9" in copy[0], copy)   # its latest version, not the stale 5
+
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})
