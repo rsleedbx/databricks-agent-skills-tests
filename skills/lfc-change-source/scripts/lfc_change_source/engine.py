@@ -89,8 +89,10 @@ class Warehouse:
         out, todo, end = {}, list(dict.fromkeys(i for i in statement_ids if i)), time.time() + wait_s
         while todo and time.time() < end:
             for i in range(0, len(todo), 100):
-                for q in self.w.query_history.list(filter_by=QueryFilter(statement_ids=todo[i:i + 100]),
-                                                   include_metrics=True, max_results=100):
+                got = self.w.query_history.list(filter_by=QueryFilter(statement_ids=todo[i:i + 100]),
+                                                include_metrics=True, max_results=100)
+                # a newer SDK pages for you; an older one (a job's environment) returns ListQueriesResponse
+                for q in (got.res or []) if hasattr(got, "res") else got:
                     m = q.metrics
                     if not q.is_final or m is None:
                         continue

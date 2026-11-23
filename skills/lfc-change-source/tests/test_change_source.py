@@ -65,6 +65,17 @@ class Conformance(unittest.TestCase):
                                 for c in classes), name)
 
 
+class Engine(unittest.TestCase):
+    def test_phases_from_either_sdk_shape(self):   # an older SDK (a job's environment) returns ListQueriesResponse
+        from lfc_change_source.engine import Warehouse
+        m = types.SimpleNamespace(compilation_time_ms=2000, execution_time_ms=5000,
+                                  query_compilation_start_timestamp=3000, read_bytes=10, read_files_count=1)
+        q = types.SimpleNamespace(query_id="s1", is_final=True, query_start_time_ms=1000, metrics=m)
+        for ret in ([q], types.SimpleNamespace(res=[q])):
+            w = types.SimpleNamespace(query_history=types.SimpleNamespace(list=lambda ret=ret, **k: ret))
+            self.assertEqual(Warehouse("x", w).phases(["s1"], wait_s=1)["s1"]["queue_s"], 2.0)
+
+
 class Samples(unittest.TestCase):
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")
 
