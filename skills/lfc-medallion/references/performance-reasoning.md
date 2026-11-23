@@ -28,6 +28,35 @@ until capacity binds. Moving bytes to another place, without removing them, help
   a good part of it, with nested types (struct, array, map, binary, variant) the heaviest. So a cost model needs rows,
   columns and types, and bytes per row only as one input.
 
+## The method decides the bytes
+
+Before the rate, predict the method: each processes different bytes, so its time follows a different input. For
+materialized views, every refresh logs the technique it chose, why, and what its sources held and changed
+(`planning_information`). `methods.py` reads that from any event log, or from the pipeline events system table, and
+fits each technique's time against each input.
+
+| Method | Processes | Time follows | Docs |
+|---|---|---|---|
+| Skip (NO_OP) | nothing: no source changed | per object only (planning) | the refresh detects changes first |
+| Append only | the new rows | new rows; nearly flat in table size | only new data, when the query and sources allow it |
+| Incremental (row based, group or generic aggregate, window) | the changes | change bytes, changed rows and files, plus planning | "only process new or changed data"; some operations "require row tracking" |
+| Complete recompute | every source row | the sources' full size; the changes don't matter | "will do a full recompute of the data if needed"; always on classic compute |
+| MERGE / AUTO CDC into Delta | the files the changed keys touch | files rewritten × file size; with deletion vectors, rows changed | "modifying a single row requires rewriting the entire Parquet file"; deletion vectors "mark rows as modified in metadata" |
+| A pipeline update | its graph | a cost a flow and a cluster start, before any data | an update "starts a cluster", then sets up the graph |
+
+- **Planning is a per-object cost every method pays.** For incremental methods it's often the largest single input:
+  the planner reads each source's metadata (sizes, changed files) before any data moves. That's the same kind of cost
+  as the n:1 merge planning each LOB's change feed.
+- **The choice is cost-based, by thresholds and history.** The decision path names a small-changes threshold, the
+  refresh history, or a technique that can't apply. That's the same design as the merge optimizer's choice of engine
+  and split ([merge paths](merge-paths.md)).
+- **To predict a refresh:**
+  1. Predict its method, from the change share, the size, and whether the sources have row tracking and deletion
+     vectors (the docs recommend both on every source).
+  2. Then predict its time from that method's input.
+
+  Checking an earlier run's method costs a query on its event log, not a new test.
+
 ## What the runs so far show
 
 All of the merge and ingestion runs so far are in the per-object regime: their data bytes were far too few to cost

@@ -146,6 +146,17 @@ def _lsq(xs: list[tuple], ys: list[float]) -> tuple | None:
     return tuple(m[i][n] / m[i][i] for i in range(n))
 
 
+def fit_r2(xs: list[tuple], ys: list[float]) -> tuple[tuple | None, float | None]:
+    """Least squares with an intercept: (coefficients, intercept first; R²), or (None, None) when singular."""
+    w = _lsq([(1.0, *x) for x in xs], ys) if xs else None
+    if not w:
+        return None, None
+    pred = [w[0] + sum(a * b for a, b in zip(w[1:], x)) for x in xs]
+    mean = sum(ys) / len(ys)
+    total = sum((y - mean) ** 2 for y in ys)
+    return w, (1 - sum((y - p) ** 2 for y, p in zip(ys, pred)) / total) if total else None
+
+
 def parse(path: str) -> tuple[str, int | None]:
     """'warehouse' or 'warehouse:8' -> (engine, k or None: the model's)."""
     engine, _, k = path.partition(":")
