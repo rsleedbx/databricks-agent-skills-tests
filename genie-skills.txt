@@ -1,0 +1,19 @@
+# Skills bin/genie_skills_sync.sh copies into a workspace's Genie Code skills folder.
+# One skill folder name per line. List only skills whose main path runs in a notebook:
+# Python or SQL. Notebook compute has no jq, uv, psql or sqlcmd (jq, uv and Python
+# packages install at run time), and the Databricks CLI there refuses to run outside the
+# web terminal, so shell scripts and Python that call the CLI don't work from Genie Code.
+cdc-table-plan
+lfc-downstream-history
+lfc-medallion
+lfc-medallion-pack
+lfc-pipeline-diagram
+lfc-saas-answer
+lfc-saas-pipeline
+lfc-source-contract
+lfc-source-datagen
+lfc-source-sizing
+lfc-source-statschema
+lfc-workload-contract
+options-first
+zerobus-sdk-freshness-test
