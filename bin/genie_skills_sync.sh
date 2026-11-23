@@ -94,7 +94,7 @@ if [ -n "$(ls -A "$STAGE")" ]; then
   databricks workspace mkdirs "$DEST" --profile "$PROFILE"
   databricks workspace import-dir "$STAGE" "$DEST" --overwrite --profile "$PROFILE" >/dev/null
   for f in $NB; do
-    old=$(databricks workspace get-status "$DEST/${f%.py}" --profile "$PROFILE" -o json 2>/dev/null | jq -r '.object_type // empty')
+    old=$(databricks workspace get-status "$DEST/${f%.py}" --profile "$PROFILE" -o json 2>/dev/null | jq -r '.object_type // empty' || true)
     [ "$old" != NOTEBOOK ] || databricks workspace delete "$DEST/${f%.py}" --profile "$PROFILE"
     databricks workspace mkdirs "$DEST/$(dirname "$f")" --profile "$PROFILE"
     databricks workspace import "$DEST/$f" --file "$STAGE.nb/$f" --format RAW --overwrite --profile "$PROFILE"
