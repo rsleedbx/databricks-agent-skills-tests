@@ -201,7 +201,9 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
     return r
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """The command line; argv (default sys.argv[1:]) lets a notebook call it in its own process, where the SDK has
+    the notebook's login (a subprocess there has none)."""
     a = argparse.ArgumentParser(prog="lakebase-source", description=__doc__.split("\n")[0])
     a.add_argument("--project", required=True, help="Lakebase project id")
     a.add_argument("--role", required=True, help="the connection's Postgres login")
@@ -216,7 +218,7 @@ def main() -> int:
     a.add_argument("--contract", help="write the source contract here")
     a.add_argument("--writer", help="a writer login for the JDBC connection (with --jdbc-connection)")
     a.add_argument("--jdbc-connection", help="also a TYPE JDBC connection for writes, holding --writer, on --database")
-    x = a.parse_args()
+    x = a.parse_args(argv)
     if x.contract and not x.profile:
         a.error("--contract needs --profile (its sql_cmd runs lakebase-sql.sh with that profile)")
     try:

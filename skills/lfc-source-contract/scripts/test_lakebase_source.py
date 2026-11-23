@@ -140,6 +140,16 @@ class LakebaseSource(unittest.TestCase):
         with self.assertRaises(ls.SetupError):
             ls.suspend_settings(30)                                                     # Lakebase's minimum is 60
 
+    def test_main_takes_argv(self):
+        w, pg = workspace(), database(role_exists=False)
+        out = io.StringIO()
+        with mock.patch.object(ls, "WorkspaceClient", return_value=w), \
+             mock.patch.object(ls.psycopg, "connect", return_value=pg), \
+             mock.patch.object(sys, "argv", ["notebook"]), \
+             contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            rc = ls.main(["--project", "p", "--role", "r", "--connection", "c"])   # sys.argv is not read
+        self.assertEqual(rc, 0)
+
     def test_entry_point_and_wrapper(self):
         with open(os.path.join(HERE, "pyproject.toml")) as f:
             line = next(x for x in f if x.startswith("lfc-lakebase-source"))
