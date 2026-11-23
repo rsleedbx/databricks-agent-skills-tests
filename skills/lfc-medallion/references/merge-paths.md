@@ -1,4 +1,9 @@
-# The MERGE optimizer: which engine, how many MERGEs at once
+# The fan-in planner: which engine, how many MERGEs at once, merge or copy
+
+**The fan-in planner** is the merge route's planner (`paths.py`). Many sources fan in to one n:1 table, and for each
+table and run it chooses how that table's MERGE runs. The pipeline route's materialized views have their own planner,
+Databricks' refresh planner (Enzyme). The fan-in planner copies its decisions where they apply, and plans what Enzyme
+doesn't: many sources into one table, skipping unchanged sources without planning them, the engine, and the split.
 
 A table on the merge route gets its changed sources' rows in one MERGE of a UNION ALL of their change feeds. That
 statement plans each source's change feed (its log and version range) one after another, so it grows with the sources:
@@ -36,14 +41,14 @@ is a measurement. An engine never measured is taken only when forced.
 path to measure one (`spark`, `spark:1`, `warehouse`, `warehouse:8`). lfc-medallion-pack renders the bundle's
 `warehouse_id` and the module's `merge_path` (default `auto`).
 
-## What it copies from the materialized-view planner
+## What the fan-in planner copies from Enzyme
 
-A materialized view's refresh planner (its `planning_information` event: [performance reasoning](performance-reasoning.md))
-already chooses a method by cost and history. The merge planner takes the same decisions and names, and keeps its
+Enzyme, a materialized view's refresh planner (its `planning_information` event: [performance reasoning](performance-reasoning.md))
+already chooses a method by cost and history. The fan-in planner takes the same decisions and names, and keeps its
 own work for what that planner doesn't do: many sources into one table, skipping unchanged sources without planning
 them, the engine, and the split.
 
-| The view planner | Here |
+| Enzyme | The fan-in planner |
 |---|---|
 | Skip when nothing changed (NO_OP) | `changed_since`: an unchanged source isn't read |
 | Incremental or complete recompute, by thresholds on the change share (`THRESHOLD_SMALL_CHANGES_INC`) | `paths.technique`, per source: change rows at or over `COPY_SHARE` of its rows in the target are copied whole (`THRESHOLD_LARGE_CHANGES_RECOMPUTE`), a partition overwrite by source; the target's rows a source come from one `GROUP BY`, read only when a source has `COPY_MIN_ROWS` changes or more |

@@ -1,5 +1,7 @@
-"""paths: how one table's MERGE of its changed sources runs, chosen by cost, as a SQL planner picks a plan by
-cardinality. A path is an engine and a way to split the sources:
+"""paths: the fan-in planner, the merge route's planner. Many sources fan in to one n:1 table; for each table and run
+it chooses how that table's MERGE of its changed sources runs, by cost, as a SQL planner picks a plan by cardinality.
+(The pipeline route's materialized views are planned by Databricks' own refresh planner, Enzyme; the fan-in planner
+takes its decisions where they apply: references/merge-paths.md.) A path is an engine and a way to split the sources:
 
   engine  spark      the merge job's own Spark session
           warehouse  a SQL warehouse, through the Statement Execution API (engine.Warehouse)
