@@ -186,25 +186,6 @@ class FirstAndLater(unittest.TestCase):
         self.assertEqual(len(sources_read), 1)   # each source's feed only inside the one MERGE
         self.assertEqual({r[2]: r[6:9] for r in logged}, {"east": (0, 1, 0), "west": (2, 0, 0)})
 
-    def test_many_sources_are_staged_on_threads_then_merged_once(self):   # not one UNION planned source by source
-        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
-                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
-                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
-                      targets={"all_nation"})
-        with mock.patch.object(merge_mod, "STAGE_FROM", 2):
-            report = run(spark)
-        stage = "`main`.`shop_silver`.`_lfc_medallion_stage_all_nation`"
-        self.assertEqual({s: r["done"] for s, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
-        made = [q for q in spark.done if stage in q]
-        self.assertTrue(made[0].startswith(f"CREATE OR REPLACE TABLE {stage} AS SELECT `division`, `n_nationkey`"))
-        inserts = [q for q in made if q.startswith(f"INSERT INTO {stage}")]
-        self.assertEqual(len(inserts), 2)
-        self.assertTrue(any("table_changes('main.shop_bronze_east.nation', 6, 9)" in q for q in inserts))
-        (m,) = spark.merges()
-        self.assertIn(f"USING (SELECT * FROM {stage}) c", m)
-        self.assertNotIn("UNION ALL", m)
-        self.assertEqual(made[-1], f"DROP TABLE IF EXISTS {stage}")
-
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})

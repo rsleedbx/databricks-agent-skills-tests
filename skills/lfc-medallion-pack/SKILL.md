@@ -99,9 +99,7 @@ lfc-medallion's merge task (`merge_route`) reads only what changed, and each thi
 - which LOBs' tables got rows or a snapshot since their state: one query over the ingestion pipelines' event logs
   (`--events`, rendered from the module's pipelines); a table no row reached isn't read at all;
 - per changed source: one history read (the latest version and what changed), the key from the state;
-- per table: one MERGE for all its changed LOBs (their change feeds unioned, read once; from 8 LOBs staged instead:
-  each LOB's changes inserted into a stage table on its own thread, as planning each change feed costs about 0.5 s and
-  a UNION plans them one after another: 62 LOBs, 31 s of planning for 3,472 rows), then the rows per LOB for
+- per table: one MERGE for all its changed LOBs (their change feeds unioned, read once), then the rows per LOB for
   the merge log from the target's own change feed for that commit (only the files the MERGE wrote), one state write;
   tables at once (`parallel`, 8), metadata reads on threads (16): all on the task's one compute.
 
