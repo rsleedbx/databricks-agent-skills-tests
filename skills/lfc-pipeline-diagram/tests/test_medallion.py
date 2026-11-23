@@ -208,6 +208,19 @@ class Drawing(unittest.TestCase):
 
 
 
+class BadLogin(unittest.TestCase):
+    def test_a_bad_profile_is_an_api_error(self):
+        try:
+            import databricks.sdk  # noqa: F401
+        except ImportError:
+            self.skipTest("no databricks-sdk")
+        med.api._clients.clear()
+        with self.assertRaises(med.api.ApiError):
+            med.api.get("/api/2.0/pipelines/x", "no-such-profile-for-this-test")
+        lay = med.count_layer("landing", ["c.s"], "no-such-profile-for-this-test")
+        self.assertIn("not readable", med.layer_line(lay))                 # drawn, not raised
+
+
 class Notebook(unittest.TestCase):
     def test_diagram_returns_what_the_command_line_prints(self):
         spec = importlib.util.spec_from_file_location("diagram", os.path.join(SCRIPTS, "pipeline-diagram.py"))

@@ -18,12 +18,16 @@ _clients = {}
 
 
 def _sdk(profile):
+    """The SDK's client for profile, None without the SDK; a bad profile or no login is an ApiError."""
     try:
         from databricks.sdk import WorkspaceClient
     except ImportError:
         return None
     if profile not in _clients:
-        _clients[profile] = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
+        try:
+            _clients[profile] = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
+        except Exception as e:                              # the SDK resolves the login here (ValueError)
+            raise ApiError((str(e).strip().splitlines() or ["no Databricks login"])[0]) from e
     return _clients[profile]
 
 
@@ -31,19 +35,16 @@ def get(path, profile=None, query=None):
     """GET path (with query, a dict) and return the decoded JSON ({} for an empty body)."""
     url = path + ("?" + urlencode(query) if query else "")
     w = _sdk(profile)
-    try:
-        if w is not None:
-            return w.api_client.do("GET", url) or {}
+    if w is None:
         cmd = ["databricks", "api", "get", url, "-o", "json"] + (["--profile", profile] if profile else [])
-        r = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise ApiError(((e.stderr or "").strip().splitlines() or [f"databricks api get {path} failed"])[0]) from e
         return json.loads(r.stdout or "null") or {}
-    except subprocess.CalledProcessError as e:
-        raise ApiError(((e.stderr or "").strip().splitlines() or [f"databricks api get {path} failed"])[0]) from e
-    except ApiError:
-        raise
+    try:
+        return w.api_client.do("GET", url) or {}
     except Exception as e:                                  # the SDK's DatabricksError and its subclasses
-        if w is None:
-            raise
         raise ApiError((str(e).strip().splitlines() or [f"GET {path} failed"])[0]) from e
 
 
