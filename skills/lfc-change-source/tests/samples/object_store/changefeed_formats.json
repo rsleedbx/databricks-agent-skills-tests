@@ -1,0 +1,9 @@
+{
+ "documented_not_captured": "formats as crdb_to_dbx checked them against CockroachDB's source (pkg/ccl/changefeedccl/parquet.go, pkg/util/hlc/timestamp.go, pkg/ccl/changefeedccl/sink_cloudstorage.go)",
+ "row_columns": {
+  "__crdb__updated": "1770067697320026017.0000000002",
+  "__crdb__event_type": "c | r | d (d: delete)"
+ },
+ "resolved_filename": "YYYYMMDDHHMMSS + 9-digit nanos + 10-digit logical + .RESOLVED (33 digits), e.g. 202602021528173200260170000000002.RESOLVED",
+ "order": "__crdb__updated compares as text in HLC order; a RESOLVED name converts to the same WallTime.Logical text"
+}

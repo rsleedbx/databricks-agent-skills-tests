@@ -37,7 +37,47 @@ the package `lfc-change-source` (`pip install <archive>#subdirectory=skills/lfc-
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).
 
+## Conformance: an adapter is done when this passes
+
+[conformance.py](scripts/lfc_change_source/conformance.py) holds one scenario as data:
+- a snapshot;
+- inserts and updates;
+- a delete;
+- a key changed twice in one range;
+- a replacement (a delete and an insert of one key at one position);
+- a key inserted, then deleted.
+
+Each adapter's `build()` turns it into its own transport and returns the positions. The checks then run the
+adapter's SQL on a warehouse:
+- **snapshot:** the snapshot's rows;
+- **last change:** each key's final state;
+- **ranges:** resuming range by range gives the same result;
+- **`_seq`:** it increases for a key, with a delete before an insert at one position;
+- **watermark:** it is never behind the last position;
+- **stats:** they come from metadata.
+
+```bash
+python -m lfc_change_source.conformance --adapter lfc_bronze --warehouse <id> --schema <catalog>.<schema>
+```
+
+It makes one scratch table, `lfc_change_source_conformance`, in that schema.
+
+## Adding an adapter
+
+1. **Read the transport's samples.** [tests/samples/](tests/samples/) has real files of each, so the work can start
+   offline.
+2. **Write the module.** Copy `lfc_bronze.py`'s shape: the docstring with the transport, its position kind, a class
+   with `snapshot_sql`, `changes_sql`, `watermark`, `stats` and `shared`, then `build()` for the scenario.
+3. **Register it** in `ADAPTERS` in [scripts/lfc_change_source/__init__.py](scripts/lfc_change_source/__init__.py).
+4. **Make it pass.** Run the offline tests, then conformance on a warehouse, until both pass.
+
+A wrong position kind raises an error that names the expected kind.
+
 ## Checks
 
-`python3 -m unittest skills/lfc-change-source/tests/test_change_source.py`: the
-contract and each adapter's SQL, watermark and stats on fakes.
+`python3 -m unittest skills/lfc-change-source/tests/test_change_source.py` checks, offline:
+- the contract;
+- each adapter's SQL, watermark and stats, on fakes;
+- the scenario's truth;
+- that every registered adapter has the contract's methods and `build()`;
+- that the samples are consistent with their schema files.

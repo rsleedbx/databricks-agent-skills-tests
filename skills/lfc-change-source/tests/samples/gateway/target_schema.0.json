@@ -1,0 +1,52 @@
+{
+  "schemas": [{
+    "catalog": "src_db",
+    "schema": "lob_124",
+    "tables": [{
+      "name": "history",
+      "objectType": "TABLE",
+      "primaryKey": {
+        "name": "history_pk",
+        "columns": ["h_t_id", "h_b_id", "h_a_id", "h_delta", "h_time", "h_filler"]
+      },
+      "columns": [{
+        "name": "h_t_id",
+        "type": "INTEGER",
+        "notNull": true,
+        "uoid": "C_HuC79qK_50284_50300_1",
+        "sourceDataType": "INT"
+      }, {
+        "name": "h_b_id",
+        "type": "INTEGER",
+        "notNull": true,
+        "uoid": "C_HuC79qK_50284_50300_2",
+        "sourceDataType": "INT"
+      }, {
+        "name": "h_a_id",
+        "type": "INTEGER",
+        "notNull": true,
+        "uoid": "C_HuC79qK_50284_50300_3",
+        "sourceDataType": "INT"
+      }, {
+        "name": "h_delta",
+        "type": "DECIMAL(12, 2)",
+        "notNull": true,
+        "uoid": "C_HuC79qK_50284_50300_4",
+        "sourceDataType": "DECIMAL(12, 2)"
+      }, {
+        "name": "h_time",
+        "type": "STRING",
+        "notNull": true,
+        "uoid": "C_HuC79qK_50284_50300_5",
+        "sourceDataType": "NSTRING(29)"
+      }, {
+        "name": "h_filler",
+        "type": "STRING",
+        "notNull": false,
+        "uoid": "C_HuC79qK_50284_50300_6",
+        "sourceDataType": "STRING(22)"
+      }],
+      "uoid": "T_HuC79qK_50284_50300"
+    }]
+  }]
+}

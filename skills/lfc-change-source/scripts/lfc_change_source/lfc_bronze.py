@@ -70,3 +70,33 @@ class Bronze:
             f"FROM (DESCRIBE HISTORY {self.fq}){where}").collect()
         r = rows[0]
         return Stats(*(int(x) if x is not None else None for x in (r[0], r[1], r[2])))
+
+
+def build(session, schema: str, snapshot: list, steps: list, columns: list[str], keys: list[str]):
+    """The conformance scenario as a bronze-like Delta table with its change data feed: the snapshot as one commit,
+    then each step as one commit (a replacement, a key deleted and inserted at one position, as INSERT ... REPLACE
+    WHERE; the rest of a step as one MERGE). (the Bronze, the positions after the snapshot and each step)."""
+    from .contract import quote
+    cat, sch = schema.split(".", 1)
+    fq = f"{quote(cat)}.{quote(sch)}.{quote('lfc_change_source_conformance')}"
+    lit = lambda v: "NULL" if v is None else (str(v) if isinstance(v, int) else "'" + str(v).replace("'", "''") + "'")  # noqa: E731
+    k, v = (quote(c) for c in columns)
+    session.sql(f"CREATE OR REPLACE TABLE {fq} ({k} INT, {v} STRING) "
+                "TBLPROPERTIES (delta.enableChangeDataFeed = true)")
+    session.sql(f"INSERT INTO {fq} VALUES " + ", ".join(f"({lit(a)}, {lit(b)})" for a, b in snapshot))
+    src = Bronze("conformance", fq, "conformance", list(keys), list(columns))
+    positions = [src.watermark(session)]
+    for step in steps:
+        replaced = {key for op, key, _ in step if op == "delete"} & {key for op, key, _ in step if op == "insert"}
+        if replaced:
+            rows = [(key, val) for op, key, val in step if op == "insert" and key in replaced]
+            session.sql(f"INSERT INTO {fq} REPLACE WHERE {k} IN ({', '.join(lit(x) for x in replaced)}) VALUES "
+                        + ", ".join(f"({lit(a)}, {lit(b)})" for a, b in rows))
+        rest = [(op, key, val) for op, key, val in step if key not in replaced]
+        if rest:
+            vals = ", ".join(f"({lit(op)}, {lit(key)}, {lit(val)})" for op, key, val in rest)
+            session.sql(f"MERGE INTO {fq} t USING (SELECT * FROM VALUES {vals} AS v(op, {k}, {v})) s ON t.{k} = s.{k} "
+                        f"WHEN MATCHED AND s.op = 'delete' THEN DELETE WHEN MATCHED THEN UPDATE SET t.{v} = s.{v} "
+                        f"WHEN NOT MATCHED AND s.op != 'delete' THEN INSERT ({k}, {v}) VALUES (s.{k}, s.{v})")
+        positions.append(src.watermark(session))
+    return src, positions

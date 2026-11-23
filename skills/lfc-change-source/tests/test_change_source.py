@@ -49,5 +49,36 @@ class LfcBronze(unittest.TestCase):
         self.assertIn("FROM (DESCRIBE HISTORY `c`.`s`.`account`) WHERE version > 16", seen[-1])
 
 
+class Conformance(unittest.TestCase):
+    def test_scenario_truth(self):
+        from lfc_change_source import conformance
+        self.assertEqual(conformance.expected(), {1: "a2", 2: None, 3: "c2", 4: "d", 5: None})
+        self.assertLess(conformance._order({"v": "9", "o": "1"}), conformance._order({"v": "10", "o": "0"}))
+
+    def test_every_adapter_has_the_contract_and_build(self):
+        import inspect
+        from lfc_change_source import ADAPTERS
+        for name, mod in ADAPTERS.items():
+            self.assertTrue(callable(getattr(mod, "build", None)), name)
+            classes = [c for _, c in inspect.getmembers(mod, inspect.isclass) if c.__module__ == mod.__name__]
+            self.assertTrue(any(all(hasattr(c, m) for m in ("snapshot_sql", "changes_sql", "watermark", "stats"))
+                                for c in classes), name)
+
+
+class Samples(unittest.TestCase):
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")
+
+    def test_gateway_sample_columns_map_through_its_schema(self):
+        import json
+        g = os.path.join(self.here, "gateway")
+        schema = json.load(open(os.path.join(g, "target_schema.0.json")))
+        cols = {c["uoid"]: c["name"] for c in schema["schemas"][0]["tables"][0]["columns"]}
+        lines = [json.loads(x) for x in open(os.path.join(g, "cdc_history_update.jsonl")) if x.strip()]
+        self.assertEqual([x["operation"] for x in lines], ["DELETE", "INSERT"])   # an update of a keyless table
+        self.assertEqual(len({x["cursor"]["sequence"] for x in lines}), 1)        # at one position
+        for x in lines:
+            self.assertEqual(set(x["data"]) - set(cols), set())                 # every column id has a name
+
+
 if __name__ == "__main__":
     unittest.main()
