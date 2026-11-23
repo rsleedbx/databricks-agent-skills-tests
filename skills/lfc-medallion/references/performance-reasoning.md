@@ -23,7 +23,10 @@ until capacity binds. Moving bytes to another place, without removing them, help
   `flow_progress` (`num_output_bytes` ÷ rows), and the change rows from the event logs or the gateway's counts.
 - **Before data exists,** the columns and their types predict bytes per row (strings and decimals weigh most). A table's
   schema is enough to estimate it.
-- **Do columns and types cost time beyond their bytes?** Open. It needs flows large enough to be byte-bound.
+- **Bytes per row alone isn't enough, even at gigabytes.** In large pipeline updates (anonymized, held-out fits) the
+  bytes predicted little of the executor time. The rows (a cost per row), the column count and the type mix explained
+  a good part of it, with nested types (struct, array, map, binary, variant) the heaviest. So a cost model needs rows,
+  columns and types, and bytes per row only as one input.
 
 ## What the runs so far show
 
