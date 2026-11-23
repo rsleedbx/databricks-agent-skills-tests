@@ -131,7 +131,14 @@ class LakebaseSource(unittest.TestCase):
         self.assertEqual(rc, 0)
         spec = w.postgres.create_project.call_args.args[0].spec
         self.assertTrue(spec.enable_pg_native_login); self.assertEqual(spec.pg_version, 17)
+        self.assertEqual(spec.default_endpoint_settings.suspend_timeout_duration.seconds, 300)   # not Lakebase's 24 h
         w.postgres.list_endpoints.assert_called_with("projects/p/branches/production")   # a bare branch id expanded
+
+    def test_suspend_settings(self):
+        self.assertEqual(ls.suspend_settings(600).suspend_timeout_duration.seconds, 600)
+        self.assertTrue(ls.suspend_settings(0).no_suspension)
+        with self.assertRaises(ls.SetupError):
+            ls.suspend_settings(30)                                                     # Lakebase's minimum is 60
 
     def test_entry_point_and_wrapper(self):
         with open(os.path.join(HERE, "pyproject.toml")) as f:

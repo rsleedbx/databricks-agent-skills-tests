@@ -3,7 +3,7 @@ code runs from a checkout (scripts/lakebase-source.py, through uv) and as a work
 from the repo's archive URL, entry point lfc-lakebase-source; no Git credentials needed).
 
   uv run lakebase-source.py --project P --role R --connection C [--database D] [--branch B] [--profile X]
-                            [--create-project [--pg-version 17]] [--contract source.json]
+                            [--create-project [--pg-version 17] [--suspend-seconds 300]] [--contract source.json]
 
 From a notebook cell (the workspace's own login):
 
@@ -11,7 +11,8 @@ From a notebook cell (the workspace's own login):
     setup("my-project", role="lfc_cdc", connection="my_pg_conn")   # {host, connection, connection_created, login_created}
 
 It makes everything the connector needs, each step kept when already done:
-  1. the project (only with --create-project; otherwise a missing project is an error);
+  1. the project (only with --create-project; otherwise a missing project is an error), its compute suspended after
+     5 idle minutes (--suspend-seconds; Lakebase's own default is 24 hours, so it would run all day; 0 = never);
   2. password logins on the project (enable_pg_native_login), which the UC connection's login needs;
   3. the connection's login R, WITH LOGIN REPLICATION and a new random password (an existing login gets a new one);
   4. the Unity Catalog POSTGRESQL connection C from it (an existing one is updated, not recreated, so a gateway that
@@ -38,7 +39,13 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.common.types.fieldmask import FieldMask
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.catalog import ConnectionType, EnvironmentSettings
-from databricks.sdk.service.postgres import EndpointType, Project, ProjectSpec
+from databricks.sdk.service.postgres import (
+    EndpointType,
+    Project,
+    ProjectDefaultEndpointSettings,
+    ProjectSpec,
+)
+from google.protobuf.duration_pb2 import Duration
 from psycopg import sql
 
 from . import jdbc
@@ -63,6 +70,15 @@ def endpoint(w, project: str, branch: str | None = None, proj=None) -> tuple[str
     if ep is None:
         raise SetupError(f"no read-write endpoint on {br}")
     return ep.name, ep.status.hosts.host
+
+
+def suspend_settings(seconds: int) -> ProjectDefaultEndpointSettings:
+    """A new project's compute settings: suspended after seconds idle (Lakebase's minimum is 60), or never with 0."""
+    if seconds == 0:
+        return ProjectDefaultEndpointSettings(no_suspension=True)
+    if seconds < 60:
+        raise SetupError(f"suspend_seconds: 0 (never) or at least 60, not {seconds}")
+    return ProjectDefaultEndpointSettings(suspend_timeout_duration=Duration(seconds=seconds))
 
 
 def owner_login(project: str, branch: str | None = None, profile: str | None = None) -> dict:
@@ -91,7 +107,7 @@ def _login(pg, name: str, pw: str) -> bool:
 
 def setup(project: str, role: str, connection: str, branch: str | None = None, profile: str | None = None,
           create_project: bool = False, pg_version: int = 17, log=print, database: str | None = None,
-          writer: str | None = None, jdbc_connection: str | None = None) -> dict:
+          writer: str | None = None, jdbc_connection: str | None = None, suspend_seconds: int = 300) -> dict:
     """Steps 1 to 4 (the module's docstring) from a notebook cell, a job or the laptop; returns {host, connection,
     connection_created, login_created} (and jdbc_connection, jdbc_created, writer_created with the JDBC options).
     The password goes only into the login and the connection. Raises SetupError.
@@ -111,9 +127,11 @@ def setup(project: str, role: str, connection: str, branch: str | None = None, p
     except NotFound:
         if not create_project:
             raise SetupError(f"no project {project} (add --create-project to create it)") from None
-        spec = ProjectSpec(display_name=project, pg_version=pg_version, enable_pg_native_login=True)
+        spec = ProjectSpec(display_name=project, pg_version=pg_version, enable_pg_native_login=True,
+                           default_endpoint_settings=suspend_settings(suspend_seconds))
         proj = w.postgres.create_project(Project(spec=spec), project_id=project).wait()
-        log(f"lakebase-source: project {project} created (PostgreSQL {pg_version})")
+        idle = f"suspends after {suspend_seconds} s idle" if suspend_seconds else "never suspends"
+        log(f"lakebase-source: project {project} created (PostgreSQL {pg_version}, compute {idle})")
     if not (proj.status and proj.status.enable_pg_native_login):
         w.postgres.update_project(name, Project(spec=ProjectSpec(enable_pg_native_login=True)),
                                   FieldMask(["spec.enable_pg_native_login"])).wait()
@@ -193,6 +211,8 @@ def main() -> int:
     a.add_argument("--profile", help="Databricks CLI profile (default: the environment's login, e.g. a job's)")
     a.add_argument("--create-project", action="store_true", help="create the project when it doesn't exist")
     a.add_argument("--pg-version", type=int, default=17, help="PostgreSQL version of a new project")
+    a.add_argument("--suspend-seconds", type=int, default=300,
+                   help="a new project's compute suspends after this many idle seconds (default 300; 0 = never)")
     a.add_argument("--contract", help="write the source contract here")
     a.add_argument("--writer", help="a writer login for the JDBC connection (with --jdbc-connection)")
     a.add_argument("--jdbc-connection", help="also a TYPE JDBC connection for writes, holding --writer, on --database")
@@ -201,7 +221,8 @@ def main() -> int:
         a.error("--contract needs --profile (its sql_cmd runs lakebase-sql.sh with that profile)")
     try:
         r = setup(x.project, x.role, x.connection, x.branch, x.profile, x.create_project, x.pg_version,
-                  database=x.database if x.jdbc_connection else None, writer=x.writer, jdbc_connection=x.jdbc_connection)
+                  database=x.database if x.jdbc_connection else None, writer=x.writer, jdbc_connection=x.jdbc_connection,
+                  suspend_seconds=x.suspend_seconds)
     except SetupError as e:
         print(f"lakebase-source: {e}", file=sys.stderr)
         return e.code

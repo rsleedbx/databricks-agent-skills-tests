@@ -102,6 +102,8 @@ Every PostgreSQL pipeline needs its own replication slot (its `slot_config`), wh
 
 A Lakebase project stands in for a customer's PostgreSQL when the point is to test Lakeflow Connect's PostgreSQL connector: same workspace, no VM, no firewall. (To get Lakebase data into Unity Catalog for its own sake, Lakebase's Lakehouse Sync needs no connector.) The contract is the same as for any PostgreSQL, so a test written against it runs unchanged on a customer's own database: change the file, not the test.
 
+A project `lakebase-source.py --create-project` makes suspends its compute after 5 idle minutes (`--suspend-seconds`, `0` = never): Lakebase's own default is 24 hours, so a test project would otherwise run all day. A running CDC gateway keeps it awake; stop the pipeline and it scales to zero.
+
 ```json
 {"contract": 1, "name": "lakebase", "engine": "postgres", "host": "<endpoint host>", "port": 5432,
  "user": "<replication role>", "database": "databricks_postgres", "connection": "<UC connection>",
