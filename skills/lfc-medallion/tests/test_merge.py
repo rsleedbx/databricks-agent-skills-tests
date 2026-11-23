@@ -202,6 +202,7 @@ class FirstAndLater(unittest.TestCase):
         (rec,) = planner.records
         self.assertEqual((rec["engine"], rec["k"], rec["sources"], rec["change_rows"], rec["forced"]),
                          ("spark", 2, 2, 3, True))
+        self.assertGreaterEqual(rec["planning_s"], 0)   # the table's time to its first MERGE
 
     def test_a_large_share_of_changes_is_copied_not_merged(self):   # the planner's recompute, by source
         from lfc_medallion import paths

@@ -14,6 +14,7 @@ rows.
 """
 import argparse
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import discover, evidence, merge
@@ -95,10 +96,14 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     import uuid
     run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
+    timings, t = {}, time.time()   # the route's own seconds, part by part: the fan-in planner's planning time
     ctx = merge.load_context(spark, catalog, prefix, target)   # read once, for every table
     sources, held = ctx["names"], ctx["held"]
+    timings["context_s"], t = round(time.time() - t, 1), time.time()
     changed = changed_since(spark, catalog, prefix, ctx, events, name) if events else None
+    timings["changed_since_s"], t = round(time.time() - t, 1), time.time()
     planner = make_planner(spark, catalog, target, log, warehouse, path, changed)
+    timings["planner_s"], t = round(time.time() - t, 1), time.time()
     rows, planned = [], {}
     kept: dict[str, list] = {}   # the last plan's rows, per source
     if not replan and _has(spark, catalog, target, PLAN):
@@ -167,6 +172,7 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     planner.at_once = max(1, min(parallel, len(todo)))   # the tables whose MERGEs share an engine at once
     with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(todo)))) as ex:
         results = list(ex.map(merge_one, todo))
+    timings["tables_s"], t = round(time.time() - t, 1), time.time()
     try:
         add_phases(planner, planner.records)   # each warehouse MERGE's compile, execute, queue and bytes
     except Exception as e:  # noqa: BLE001  query history unreadable: the log without phases
@@ -196,7 +202,8 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     history = keep_history(spark, catalog, prefix, history_target, ctx,
                            sorted(t for t, r in apply.items() if r == "pipeline"), source_column, name, workspace,
                            run_id, log, events, parallel) if history_target else {}
-    return {"run_id": run_id, "planned_sources": sorted(new), "history": history,
+    timings["after_s"] = round(time.time() - t, 1)
+    return {"run_id": run_id, "timings": timings, "planned_sources": sorted(new), "history": history,
             "changed": None if changed is None else len(changed), "merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
@@ -310,7 +317,7 @@ def add_phases(planner, records: list[dict]) -> None:
 
 
 NEWER = ("fingerprint STRING, own_model BOOLEAN, insights STRING, statements STRING, compile_s DOUBLE, "
-         "execute_s DOUBLE, queue_s DOUBLE, read_bytes BIGINT, read_files BIGINT")
+         "execute_s DOUBLE, queue_s DOUBLE, read_bytes BIGINT, read_files BIGINT, planning_s DOUBLE")
 
 
 def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, records: list[dict]) -> None:
@@ -340,10 +347,10 @@ def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, 
                      f"{str(bool(r.get('own_model'))).lower()}, {spark_string(json.dumps(r.get('insights') or []))}, "
                      f"{spark_string(json.dumps(r.get('statements') or []))}, {num(r.get('compile_s'))}, "
                      f"{num(r.get('execute_s'))}, {num(r.get('queue_s'))}, {num(r.get('read_bytes'))}, "
-                     f"{num(r.get('read_files'))})" for r in records)
+                     f"{num(r.get('read_files'))}, {num(r.get('planning_s'))})" for r in records)
     _shared(spark, f"INSERT INTO {fq} (run_id, target_table, engine, k, sources, change_rows, predicted_s, seconds, "
                    f"retries, done, forced, predictions, at, at_once, units, fingerprint, own_model, insights, "
-                   f"statements, compile_s, execute_s, queue_s, read_bytes, read_files) VALUES {vals}")
+                   f"statements, compile_s, execute_s, queue_s, read_bytes, read_files, planning_s) VALUES {vals}")
 
 
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",

@@ -644,6 +644,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     table of hundreds of sources costs a few statements, not a few per source (logged: what it copied or merged)."""
     from concurrent.futures import ThreadPoolExecutor
     srcs = [x for x in names if table in held[x]]
+    started = time.time()   # to the first MERGE: this table's planning (paths log planning_s)
     if kinds.get(out_name) in ("MATERIALIZED_VIEW", "VIEW"):   # a pipeline's view (moved to this route)
         if not take_over:
             raise ValueError(f"{catalog}.{target}.{out_name} is a view (a pipeline's?): leave it out of the "
@@ -722,7 +723,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
                 n = _merged_counts(eng, tgt, source_column, before)
                 if planner is not None:
                     planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, retries, fp=fp,
-                                   insights=insights, statements=ids)
+                                   insights=insights, statements=ids, planning_s=t0 - started)
             # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
             # (on spark; a source's changes merged again change nothing: the same rows match)
             except Exception as err:  # noqa: BLE001

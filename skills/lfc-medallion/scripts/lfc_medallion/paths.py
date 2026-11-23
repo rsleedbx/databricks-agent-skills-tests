@@ -268,7 +268,7 @@ class Planner:
 
     def record(self, target_table: str, engine: str, k: int, sources: int, rows: int, preds: dict, seconds: float,
                retries: int, done: str = "merged", fp: str | None = None, insights: list | None = None,
-               statements: list | None = None) -> None:
+               statements: list | None = None, planning_s: float | None = None) -> None:
         with self._lock:
             self.records.append({"target_table": target_table, "engine": engine, "k": k, "sources": sources,
                                  "change_rows": rows, "predicted_s": (preds.get(engine) or [None, None])[1],
@@ -276,4 +276,5 @@ class Planner:
                                  "forced": bool(self.forced), "predictions": preds, "at_once": self.at_once,
                                  "units": self.units.get(engine, 1.0), "fingerprint": fp,
                                  "own_model": (target_table, fp) in self.tables, "insights": insights or [],
-                                 "statements": statements or []})
+                                 "statements": statements or [],
+                                 "planning_s": None if planning_s is None else round(planning_s, 2)})

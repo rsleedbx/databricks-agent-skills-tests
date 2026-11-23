@@ -124,6 +124,7 @@ class MergeRoute(unittest.TestCase):
                 mock.patch.object(route.merge, "release", release), \
                 mock.patch.object(route.merge, "merge_all", merge_all):
             out = route.merge_route(spark, "main", "shop_bronze_", "shop_silver", source_column="division", **kw)
+        self.assertEqual(set(out["timings"]), {"context_s", "changed_since_s", "planner_s", "tables_s", "after_s"})
         return out, calls
 
     def test_the_last_plan_is_kept_for_its_sources(self):   # only a new source (or one with new tables) is planned
