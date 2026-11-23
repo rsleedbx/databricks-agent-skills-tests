@@ -179,6 +179,25 @@ class Verify(unittest.TestCase):
         self.assertEqual(verify.mart_names(sql), ["transactions", "unusual_by_hour", "lob_summary"])
         self.assertEqual(verify.bind("(:base + :teller) / 1000.0", {"base": 5, "teller": 60}), "(5 + 60) / 1000.0")
 
+    def test_built_signals_from_the_source_comments(self):   # a re-tiered LOB keeps the numbers it was built with
+        import types
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 3, "data": True}))
+        finally:
+            shutil.rmtree(d)
+        lobs = pl["modules"][0]["lobs"]
+        seen = []
+        comment = 'lfc:rows=10 lfc:signal={"signal": "unusual_withdrawal", "parameters": {"base": 7, "big_min": 900}}'
+        rows = [types.SimpleNamespace(s=lobs[0]["source_schema"], t="history", d=comment),
+                types.SimpleNamespace(s=lobs[1]["source_schema"], t="history", d="lfc:rows=10")]   # no signal: left out
+        spark = types.SimpleNamespace(sql=lambda q, args=None: seen.append(args) or types.SimpleNamespace(
+            collect=lambda: rows))
+        got = verify.built_signals(spark, pl, "bank", "conn", "db")
+        self.assertEqual(got, {lobs[0]["name"]: {"base": 7, "big_min": 900}})
+        self.assertEqual(len(seen), 1)   # one remote_query for every LOB
+        self.assertIn("obj_description", seen[0]["q"])
+
 
 class Checksum(unittest.TestCase):
     def test_an_instant_and_a_wall_time(self):   # timestamptz: its own epoch, not through the session's time zone

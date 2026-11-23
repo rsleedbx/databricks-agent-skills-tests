@@ -46,6 +46,29 @@ def params(model: str, signals: str) -> dict:
     return out
 
 
+def built_signals(spark, plan: dict, module: str, connection: str, database: str) -> dict[str, dict]:
+    """Each LOB's signal parameters as it was built, from its signal tables' comments (lfc:signal=<JSON>, read with
+    lfc_source_datagen.signals.parameters), in one remote_query for every LOB. A LOB keeps the numbers it was built
+    with when the module grows and re-ranks it into another tier; a LOB without the comment is left out (its plan's
+    numbers are used)."""
+    from lfc_source_datagen.signals import parameters, spec
+    m = next(x for x in plan["modules"] if x["module"] == module)
+    sigs = spec(m["model"])
+    schemas = {x["source_schema"]: x["name"] for x in m["lobs"]}
+    names = ", ".join("'" + s.replace("'", "''") + "'" for s in schemas)
+    tables = ", ".join("'" + g["table"] + "'" for g in sigs)
+    q = ("SELECT n.nspname AS s, c.relname AS t, obj_description(c.oid, 'pg_class') AS d FROM pg_class c "
+         f"JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname IN ({names}) AND c.relname IN ({tables})")
+    out: dict[str, dict] = {}
+    for r in spark.sql("SELECT * FROM remote_query(:c, database => :d, query => :q)",
+                       args={"c": connection, "d": database, "q": q}).collect():
+        for g in sigs:
+            got = parameters(r.d, g["name"]) if r.t == g["table"] else None
+            if got:
+                out.setdefault(schemas[r.s], {}).update(got)
+    return out
+
+
 def readout_rate(model: str, ro: dict) -> str:
     """The rate a gold row should be labelled at: the model's signal rule (lfc_source_datagen.signals.expected_rate)
     with the rule's columns and formulas as the gold table has them (readout: columns, formulas)."""
@@ -69,8 +92,9 @@ def read_marts(folder: str) -> dict[str, str]:
 
 
 def run(spark, plan: dict, module: str, catalog: str, prefix: str, marts: dict[str, str] | None = None,
-        tolerance: float = 4.0, marts_dir: str | None = None) -> list[dict]:
-    """The checks (the module's docstring); marts: the SQL files, or marts_dir/<pack>/ read for them."""
+        tolerance: float = 4.0, marts_dir: str | None = None, built: dict | None = None) -> list[dict]:
+    """The checks (the module's docstring); marts: the SQL files, or marts_dir/<pack>/ read for them; built: each
+    LOB's signal parameters as it was built (built_signals), else its plan's."""
     m = next(x for x in plan["modules"] if x["module"] == module)
     if marts is None and marts_dir:
         marts = read_marts(os.path.join(marts_dir, m["pack"]))
@@ -118,7 +142,7 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, marts: dict[s
     rate = ro.get("rate") or readout_rate(m["model"], ro)
     tiers: dict[str, list] = {}
     for x in m["lobs"]:
-        p = params(m["model"], x["signals"])
+        p = (built or {}).get(x["name"]) or params(m["model"], x["signals"])   # as built: a re-tiered LOB's own
         r = _one(spark, f"SELECT COUNT(*) AS n, AVG(CASE WHEN {ro['label']} THEN 1.0 ELSE 0.0 END) AS got, "
                         f"AVG({bind(rate, p)}) AS want FROM {gold}.`{ro['table']}` "
                         f"WHERE `{col}` = '{x['name']}'")[0]

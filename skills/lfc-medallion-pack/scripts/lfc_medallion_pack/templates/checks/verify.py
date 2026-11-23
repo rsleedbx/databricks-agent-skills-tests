@@ -26,13 +26,13 @@ dbutils.library.restartPython()
 # COMMAND ----------
 
 from lfc_medallion_pack.plan import read_plan
-from lfc_medallion_pack.verify import run
+from lfc_medallion_pack.verify import built_signals, run
 w = {k: dbutils.widgets.get(k) for k in ("module", "catalog", "prefix")}
-rows = run(spark, read_plan("../source/plan.json"), w["module"], catalog=w["catalog"], prefix=w["prefix"],
-           marts_dir="../marts")
-from lfc_medallion_pack import checksum
-plan = read_plan("../source/plan.json")
 c = {k: dbutils.widgets.get(k) for k in ("connection", "database", "control")}
+plan = read_plan("../source/plan.json")
+built = built_signals(spark, plan, w["module"], c["connection"], c["database"])   # each LOB's numbers as built
+rows = run(spark, plan, w["module"], catalog=w["catalog"], prefix=w["prefix"], marts_dir="../marts", built=built)
+from lfc_medallion_pack import checksum
 sums = checksum.run(spark, plan, w["module"], w["catalog"], w["prefix"], c["connection"], c["database"])
 checksum.save(spark, sums, w["catalog"], c["control"])   # the dashboard reads <control>.checksums
 from lfc_medallion_pack import cdc
