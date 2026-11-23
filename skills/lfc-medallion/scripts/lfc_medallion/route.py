@@ -332,11 +332,10 @@ def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, 
                    f"forced BOOLEAN, predictions STRING, at TIMESTAMP, at_once INT, units DOUBLE, {NEWER}) COMMENT "
                    "'lfc_medallion: each MERGE, its path (engine, k at once), its predicted and taken seconds, the "
                    "tables merged at once and the engine units (paths.py)'")
-    for added in ("at_once INT, units DOUBLE", NEWER):   # a log from before them: once each, no retry
-        try:
-            spark.sql(f"ALTER TABLE {fq} ADD COLUMNS ({added})")
-        except Exception:  # noqa: BLE001  already there
-            pass
+    have = {r[0] for r in spark.sql(f"DESCRIBE TABLE {fq}").collect()}   # a log from before some columns
+    missing = [c for c in ("at_once INT, units DOUBLE, " + NEWER).split(", ") if c.split()[0] not in have]
+    if missing:   # only those: one ALTER of columns some of which exist fails as a whole
+        spark.sql(f"ALTER TABLE {fq} ADD COLUMNS ({', '.join(missing)})")
     num = lambda v: "NULL" if v is None else str(v)  # noqa: E731
     vals = ", ".join(f"({spark_string(run_id)}, {spark_string(r['target_table'])}, {spark_string(r['engine'])}, "
                      f"{int(r['k'])}, {int(r['sources'])}, {int(r['change_rows'] or 0)}, {num(r['predicted_s'])}, "

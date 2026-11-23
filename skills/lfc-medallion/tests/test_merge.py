@@ -243,6 +243,25 @@ class FirstAndLater(unittest.TestCase):
             merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
                                {("all_nation", "east"): saved}, False, scd2, by_time=True)
 
+    def test_read_by_time_merges_through_merge_all(self):   # the whole table path, not only _inspect
+        import datetime as dt
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        real = spark.sql
+        at = dt.datetime(2026, 11, 23, 12, 0, 0)
+        spark.sql = lambda q: R(collect=lambda: [R(target_table=t, source=x, version=v, table_id=i, updated_at=at,
+                                                   key_columns='["n_nationkey"]', snapshots=None)
+                                                 for (t, x), (v, i) in spark.state.items()]) \
+            if q.startswith("SELECT target_table, source, version") else real(q)
+        report = run(spark, read_by="time", changed={("nation", "east"): 1, ("nation", "west"): 2})
+        self.assertEqual({x: r["done"] for x, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
+        merges = spark.merges()
+        self.assertEqual(len(merges), 1)
+        self.assertIn("TIMESTAMP'2026-11-23T11:58:00.000000Z' + INTERVAL 1 MICROSECOND", merges[0])
+        self.assertFalse(any("DESCRIBE HISTORY" in q and "shop_bronze_" in q for q in spark.reads))   # no history read
+
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})

@@ -705,7 +705,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     saves, feed, failed = [], [], []
     try:   # what finished is saved even when a later copy or MERGE fails: the next run doesn't redo it
         for i in info:
-            if i["last"] is not None and i["now"] == i["last"]:
+            if i["last"] is not None and i["now"] == i["last"] and not i.get("after_ts"):   # by time: now is unknown
                 report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
             elif i.get("plan") and i["plan"]["waiting"]:   # a full refresh not reloaded yet: the next run
                 report[out_name][i["s"]] = {"done": "waiting (full refresh reloading)", "version": i["last"]}
