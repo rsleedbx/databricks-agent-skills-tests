@@ -231,9 +231,14 @@ class FirstAndLater(unittest.TestCase):
             def sql(self, q):
                 raise AssertionError(f"read: {q[:60]}")
         saved = (5, "id-east", ["n_nationkey"], dt.datetime(2026, 11, 23, 12, 0, 0), None)
+        later = dt.datetime(2026, 11, 23, 12, 5, 0)   # its last ingestion event: after its saved time
         i = merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
-                               {("all_nation", "east"): saved}, False, COLS, by_time=True)
+                               {("all_nation", "east"): saved}, False, COLS, by_time=True, event_at=later)
         self.assertEqual((i["after_ts"], i["last"], i["now"], i["whole"]), ("2026-11-23T11:58:00.000000Z", 5, 5, False))
+        with self.assertRaises(AssertionError):   # an event within the margin only (already merged): by version
+            merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
+                               {("all_nation", "east"): saved}, False, COLS, by_time=True,
+                               event_at=dt.datetime(2026, 11, 23, 11, 59, 0))
         q = merge_mod.changes_sql(i["src"], "east", "division", i["key"], [c for c, _ in COLS], i["last"], i["now"],
                                   after_ts=i["after_ts"])
         self.assertIn("TIMESTAMP'2026-11-23T11:58:00.000000Z' + INTERVAL 1 MICROSECOND)", q)   # to the latest commit
@@ -241,7 +246,7 @@ class FirstAndLater(unittest.TestCase):
         scd2 = [("n_nationkey", "int"), ("__START_AT", "struct<x:int>")]
         with self.assertRaises(AssertionError):   # SCD type 2: read by version (its history is needed)
             merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
-                               {("all_nation", "east"): saved}, False, scd2, by_time=True)
+                               {("all_nation", "east"): saved}, False, scd2, by_time=True, event_at=later)
 
     def test_read_by_time_merges_through_merge_all(self):   # the whole table path, not only _inspect
         import datetime as dt
@@ -255,7 +260,13 @@ class FirstAndLater(unittest.TestCase):
                                                    key_columns='["n_nationkey"]', snapshots=None)
                                                  for (t, x), (v, i) in spark.state.items()]) \
             if q.startswith("SELECT target_table, source, version") else real(q)
-        report = run(spark, read_by="time", changed={("nation", "east"): 1, ("nation", "west"): 2})
+        real_ctx = merge_mod.load_context
+        def ctx(*a, **k):   # the route's changed_since leaves each pair's last ingestion event in the context
+            c = real_ctx(*a, **k)
+            c["event_at"] = {("nation", "east"): at + dt.timedelta(minutes=5), ("nation", "west"): at + dt.timedelta(minutes=5)}
+            return c
+        with mock.patch.object(merge_mod, "load_context", ctx):
+            report = run(spark, read_by="time", changed={("nation", "east"): 1, ("nation", "west"): 2})
         self.assertEqual({x: r["done"] for x, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
         merges = spark.merges()
         self.assertEqual(len(merges), 1)

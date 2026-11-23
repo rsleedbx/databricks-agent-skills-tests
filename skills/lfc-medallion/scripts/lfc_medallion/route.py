@@ -388,12 +388,14 @@ def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str]
         return None
     out: dict = {}   # (table, source) -> its change rows since about its state (the planner's cardinality)
     ctx["refreshed"] = set()   # pairs whose snapshot flow ran: read by version (it detects the reset), not by time
+    ctx["event_at"] = {}       # each pair's last ingestion event: read by time only when it's after the saved time
     for r in got:
         pair = flows.get(r.flow)
         if not pair:
             continue
         if r.flow.endswith("_snapshot_flow"):
             ctx["refreshed"].add(pair)
+        ctx["event_at"][pair] = max(r.at, ctx["event_at"].get(pair, r.at))
         saved = ctx["state"].get((name.format(table=pair[0]), pair[1]))
         at = saved[3] if saved and len(saved) > 3 else None
         if at is None or (r.at.timestamp() if hasattr(r.at, "timestamp") else 0) > at.timestamp() - margin_s:
