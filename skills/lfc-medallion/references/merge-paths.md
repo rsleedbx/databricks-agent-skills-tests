@@ -36,6 +36,27 @@ is a measurement. An engine never measured is taken only when forced.
 path to measure one (`spark`, `spark:1`, `warehouse`, `warehouse:8`). lfc-medallion-pack renders the bundle's
 `warehouse_id` and the module's `merge_path` (default `auto`).
 
+## What it copies from the materialized-view planner
+
+A materialized view's refresh planner (its `planning_information` event: [performance reasoning](performance-reasoning.md))
+already chooses a method by cost and history. The merge planner takes the same decisions and names, and keeps its
+own work for what that planner doesn't do: many sources into one table, skipping unchanged sources without planning
+them, the engine, and the split.
+
+| The view planner | Here |
+|---|---|
+| Skip when nothing changed (NO_OP) | `changed_since`: an unchanged source isn't read |
+| Incremental or complete recompute, by thresholds on the change share (`THRESHOLD_SMALL_CHANGES_INC`) | `paths.technique`, per source: change rows at or over `COPY_SHARE` of its rows in the target are copied whole (`THRESHOLD_LARGE_CHANGES_RECOMPUTE`), a partition overwrite by source; the target's rows a source come from one `GROUP BY`, read only when a source has `COPY_MIN_ROWS` changes or more |
+| History per query, started again when its fingerprint changes (`HISTORY_BASED_INC`, `QUERY_FINGERPRINT_CHANGED`) | `paths.table_models`: a target table's own runs, per fingerprint (its key and columns: `paths.fingerprint`), once it has `TABLE_RUNS`; else the pooled model |
+| Applicability before cost (`incrementalization_issues`) | no key: no MERGE (the route refuses the table); an unreadable change feed: each source alone, then a copy |
+| Insights (`DELTA_FEATURE_NOT_ENABLED`: deletion vectors, row tracking) | `insights` in the paths log: without deletion vectors a MERGE rewrites every file a changed key is in |
+| Planning time apart (`planning_wall_time_ms`) | `compile_s`, `execute_s` and `queue_s` per MERGE, with `read_bytes` and `read_files`, from query history by statement id (warehouse MERGEs) |
+| Try incremental, fall back (`INCREMENTAL_ATTEMPT_INC`) | a failed MERGE of many sources: each source alone, then a copy |
+
+Without deletion vectors a MERGE's cost follows the files it rewrites, not its rows. No file term is fitted yet:
+the n:1 targets this skill creates have deletion vectors and row tracking. A deployment whose `insights` say
+otherwise is where that term gets measured.
+
 ## Measuring a path
 
 Run the same changes through each path: a batch, the ingestion only, a copy of the merge state, then per path the
