@@ -5,7 +5,7 @@ description: Draw a Lakeflow Connect pipeline as a text diagram and a Mermaid fl
 
 # Pipeline diagram
 
-`scripts/pipeline-diagram.py` (prints its usage with no arguments) reads the ingestion pipeline, its gateway and its UC connection with the Databricks CLI and prints both diagrams. Python 3 standard library only.
+`scripts/pipeline-diagram.py` (prints its usage with no arguments) reads the ingestion pipeline, its gateway and its UC connection through the REST API and prints both diagrams. Python 3: the Databricks Python SDK when installed (`scripts/workspace_api.py`), else the Databricks CLI.
 
 ```bash
 scripts/pipeline-diagram.py --pipeline <ingestion pipeline id> [--profile <profile>]
@@ -13,6 +13,16 @@ scripts/pipeline-diagram.py --pipeline <id> --source-cloud azure --source-host "
   --primary <host>,<port> --secondary <host>,<port> --firewall NSG \
   --secret-store "Azure Key Vault" --secret-kind uc -o diagram.md
 ```
+
+**In a notebook or Genie Code** (the CLI doesn't run there; the SDK uses the notebook's login): import it, don't run
+it as a subprocess (the SDK can't sign in from a child process). `diagram()` takes the same flags and returns the text:
+
+```python
+import importlib, sys
+sys.path.insert(0, "<skills folder>/lfc-pipeline-diagram/scripts")   # e.g. /Workspace/.assistant/skills
+print(importlib.import_module("pipeline-diagram").diagram("--pipeline", "<id>", "--format", "text"))
+```
+`vm-facts.sh` (az/aws) and `show-diagram.sh` stay laptop tools; in a notebook give the VM as `--vm "<text>"`.
 
 | From the workspace | From flags |
 |---|---|

@@ -10,6 +10,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, "..", "scripts")
+sys.path.insert(0, SCRIPTS)                     # medallion.py imports workspace_api.py from beside it
 spec = importlib.util.spec_from_file_location("medallion", os.path.join(SCRIPTS, "medallion.py"))
 med = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(med)
@@ -53,36 +54,38 @@ class Classify(unittest.TestCase):
 
 
 class Workspace(unittest.TestCase):
-    """The workspace-reading paths, on canned CLI output (med.cli patched)."""
+    """The workspace-reading paths, on canned API answers (med.api.get and med.api.tables patched)."""
 
     def setUp(self):
         self.calls = []
-        self.real = med.cli
+        self.real = (med.api.get, med.api.tables)
 
     def tearDown(self):
-        med.cli = self.real
+        med.api.get, med.api.tables = self.real
 
     def fake(self, responses):
-        def cli(args, profile):
-            self.calls.append(args)
-            for prefix, value in responses:
-                if args[:len(prefix)] == prefix:
+        """responses: (("get" | "tables"), value or exception); calls are recorded as (kind, path or schema, query)."""
+        def answer(kind, call):
+            self.calls.append(call)
+            for k, value in responses:
+                if k == kind:
                     if isinstance(value, Exception):
                         raise value
                     return value
-            raise AssertionError(f"unexpected call {args}")
-        med.cli = cli
+            raise AssertionError(f"unexpected call {call}")
+        med.api.get = lambda path, profile=None, query=None: answer("get", ("get", path, query or {}))
+        med.api.tables = lambda cat, sch, profile=None: answer("tables", ("tables", f"{cat}.{sch}", {}))
 
     def test_flow_types_newest_first_error_and_cache(self):
         ev = {"events": [{"details": {"flow_definition": {"output_dataset": "c.s.t", "flow_type": "CHANGE"}}},
                          {"details": {"flow_definition": {"output_dataset": "c.s.t", "flow_type": "APPEND"}}},
                          {"details": {"other": {}}}]}
-        self.fake([(["api", "get"], ev)])
+        self.fake([("get", ev)])
         cache = {}
         self.assertEqual(med.flow_types("p1", None, cache), {"c.s.t": "CHANGE"})   # the newest event wins
         med.flow_types("p1", None, cache)
         self.assertEqual(len(self.calls), 1)                                       # cached per pipeline
-        self.fake([(["api", "get"], subprocess.CalledProcessError(1, "databricks"))])
+        self.fake([("get", med.api.ApiError("PERMISSION_DENIED"))])
         self.assertEqual(med.flow_types("p2", None, {}), {})                       # an API error: no flow types
 
     def test_flow_types_pages_back_and_stops_at_an_older_update(self):
@@ -92,13 +95,12 @@ class Workspace(unittest.TestCase):
                  "t1": {"events": [fd("c.s.a", "CHANGE", "u2"), fd("c.s.b", "APPEND", "u2"), other("u1"),
                                    fd("c.s.a", "MATERIALIZED_VIEW", "u1")], "next_page_token": "t2"},
                  "t2": {"events": [fd("c.s.z", "APPEND", "u0")]}}
-        def cli(args, profile):
-            self.calls.append(args)
-            tok = args[2].split("page_token=")[1] if "page_token=" in args[2] else None
-            return pages[tok]
-        med.cli = cli
+        def get(path, profile=None, query=None):
+            self.calls.append(("get", path, query or {}))
+            return pages[(query or {}).get("page_token")]
+        med.api.get = get
         self.assertEqual(med.flow_types("p", None, {}), {"c.s.a": "CHANGE", "c.s.b": "APPEND"})
-        self.assertIn("max_results=250", self.calls[0][2])                         # the API's most per page
+        self.assertEqual(self.calls[0][2].get("max_results"), 250)                # the API's most per page
         self.assertEqual(len(self.calls), 2)                                       # stopped at update u1, no page t2
 
     def test_names_compare_without_backticks_or_case(self):
@@ -108,7 +110,7 @@ class Workspace(unittest.TestCase):
     def test_parse_layer_and_written(self):
         self.assertEqual(med.parse_layer("silver=c.a,c.b:only=t1,t2"), ("silver", ["c.a", "c.b"], {"t1", "t2"}))
         self.assertEqual(med.parse_layer("gold=c.g"), ("gold", ["c.g"], None))
-        self.fake([(["tables", "list"], [{"name": "cdc_log", "table_type": "MANAGED", "columns": [{"name": "v"}]}])])
+        self.fake([("tables", [{"name": "cdc_log", "table_type": "MANAGED", "columns": [{"name": "v"}]}])])
         import argparse
         a = argparse.Namespace(layers_json=None, layer=["bronze=c.s"], written=["bronze=append"], profile=None)
         self.assertEqual(med.collect(a)[0]["by_kind"], {"append": 1})
@@ -131,23 +133,23 @@ class Workspace(unittest.TestCase):
         ]
         ev = {"events": [{"details": {"flow_definition": {"output_dataset": "c.s.hist", "flow_type": "SNAPSHOT_CHANGE"}}},
                          {"details": {"flow_definition": {"output_dataset": "c.s.mv", "flow_type": "MATERIALIZED_VIEW"}}}]}
-        self.fake([(["tables", "list"], tables), (["api", "get"], ev)])
+        self.fake([("tables", tables), ("get", ev)])
         lay = med.count_layer("silver", ["c.s"], None, only={"lfc_t", "hist", "mv", "v"})
         self.assertEqual((lay["tables"], lay["materialized"], lay["not_materialized"]), (4, 3, 1))
         self.assertEqual(lay["by_kind"], {"scd1": 1, "scd2": 1, "recomputed": 1, "view": 1})
-        self.assertEqual(sum(1 for c in self.calls if c[:2] == ["api", "get"]), 1)  # one events read for pipeline p1
+        self.assertEqual(sum(1 for c in self.calls if c[0] == "get"), 1)          # one events read for pipeline p1
 
 
 class Unreadable(unittest.TestCase):
     def test_no_access_is_drawn_not_raised(self):
-        real = med.cli
-        def cli(args, profile):
-            raise subprocess.CalledProcessError(1, "databricks", stderr="Error: no USE CATALOG on Catalog 'c'.\nmore")
-        med.cli = cli
+        real = med.api.tables
+        def tables(cat, sch, profile=None):
+            raise med.api.ApiError("Error: no USE CATALOG on Catalog 'c'.")
+        med.api.tables = tables
         try:
             lay = med.count_layer("landing", ["c.s"], None)
         finally:
-            med.cli = real
+            med.api.tables = real
         self.assertEqual(lay["tables"], 0)
         self.assertEqual(med.layer_line(lay), "not readable (c.s: Error: no USE CATALOG on Catalog 'c'.)")
         self.assertIn("not readable", med.mermaid([lay], None)[0][1])
@@ -204,6 +206,35 @@ class Drawing(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("needs --engine and --bronze", r.stderr)
 
+
+
+class BadLogin(unittest.TestCase):
+    def test_a_bad_profile_is_an_api_error(self):
+        try:
+            import databricks.sdk  # noqa: F401
+        except ImportError:
+            self.skipTest("no databricks-sdk")
+        med.api._clients.clear()
+        with self.assertRaises(med.api.ApiError):
+            med.api.get("/api/2.0/pipelines/x", "no-such-profile-for-this-test")
+        lay = med.count_layer("landing", ["c.s"], "no-such-profile-for-this-test")
+        self.assertIn("not readable", med.layer_line(lay))                 # drawn, not raised
+
+
+class Notebook(unittest.TestCase):
+    def test_diagram_returns_what_the_command_line_prints(self):
+        spec = importlib.util.spec_from_file_location("diagram", os.path.join(SCRIPTS, "pipeline-diagram.py"))
+        d = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(d)
+        flags = ["--pipeline-json", os.path.join(HERE, "integrated-pipeline.json"),
+                 "--connection-json", os.path.join(HERE, "integrated-connection.json"), "--format", "text"]
+        old = {k: os.environ.get(k) for k in ("LFC_SAAS_TABLES", "LFC_FACTS_DIR")}
+        os.environ.update({k: HERMETIC[k] for k in old})
+        try:
+            self.assertEqual(d.diagram(*flags), diagram(*flags))
+        finally:
+            for k, v in old.items():
+                os.environ.pop(k) if v is None else os.environ.__setitem__(k, v)
 
 
 class ManagedHosts(unittest.TestCase):

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """pipeline-diagram.py: draw a Lakeflow Connect database pipeline as text and/or Mermaid.
 
-The pipeline, its gateway and its UC connection are read with the Databricks CLI (or from saved JSON), so the
+The pipeline, its gateway and its UC connection are read through the REST API (workspace_api.py: the Python SDK, so it
+runs in a notebook too; the Databricks CLI without the SDK) or from saved JSON, so the
 diagram shows what was created: gateway or integrated CDC, serverless or classic, staging, the connection and the
 host:port it points at, the destination tables and their SCD type. What the API can't see (where the source runs,
 replicas, the firewall, a secret store) comes from flags.
@@ -46,11 +47,13 @@ usage: pipeline-diagram.py --pipeline <ingestion pipeline id> [--profile P] [opt
 import argparse
 import json
 import os
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import medallion  # beside this script
+import workspace_api as api  # beside this script
+
+IN_WORKSPACE = bool(os.environ.get("DATABRICKS_RUNTIME_VERSION"))   # a notebook or job: the SDK signs in by itself
 
 CLOUD_NAMES = {"aws": "AWS", "azure": "Azure", "gcp": "Google Cloud", "laptop": "Laptop"}
 DB_TYPES = {"SQLSERVER", "ORACLE", "MYSQL", "POSTGRESQL", "MARIADB"}
@@ -176,11 +179,6 @@ def saas_tables(ctype):
 
 
 SECRET_KIND = {"uc": "UC secret", "workspace": "Workspace secret scope", "inline": "stored in the connection"}
-
-
-def cli(args, profile):
-    cmd = ["databricks", *args, "-o", "json"] + (["-p", profile] if profile else [])
-    return json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout)
 
 
 def load(path):
@@ -677,7 +675,8 @@ def finish_mermaid(L, m, *after):
     return "\n".join(L) + "\n"
 
 
-def main():
+def main(argv=None):
+    """Run as on the command line; argv is the list of arguments (default sys.argv[1:]), so a notebook can call it."""
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--pipeline"); p.add_argument("--profile")
     p.add_argument("--pipeline-json"); p.add_argument("--gateway-json"); p.add_argument("--connection-json")
@@ -697,13 +696,13 @@ def main():
     p.add_argument("--engine"); p.add_argument("--bronze"); p.add_argument("--producer")
     p.add_argument("--producer-host"); p.add_argument("--broker"); p.add_argument("--probe")
     p.add_argument("-o", dest="out")
-    a = p.parse_args()
+    a = p.parse_args(argv)
     a.facts = load(a.source_facts) if a.source_facts else None
     a.layered = bool(a.layer or a.layers_json or a.reverse_etl)
     if a.ingest == "zerobus":
         if not (a.engine and a.bronze):
             print("--ingest zerobus needs --engine and --bronze", file=sys.stderr); sys.exit(2)
-        host = a.workspace_host or (cli(["auth", "describe"], a.profile).get("details", {}).get("host", "") if a.profile else "")
+        host = a.workspace_host or (api.host(a.profile) if a.profile or IN_WORKSPACE else "")
         return emit(a, zerobus_model(a, host))
     if not (a.pipeline or a.pipeline_json):
         print(__doc__, file=sys.stderr); sys.exit(2)
@@ -716,23 +715,23 @@ def main():
         if (conn or {}).get("connection_type", "").upper() == "KAFKA" or kafka_options(ap.get("spec", ap).get("ingestion_definition")) is not None:
             return emit(a, kafka_model(a, ap, conn, host))
     else:
-        ap = cli(["pipelines", "get", a.pipeline], a.profile)
+        ap = api.get(f"/api/2.0/pipelines/{a.pipeline}", a.profile)
         gid = (ap.get("spec", {}).get("ingestion_definition") or {}).get("ingestion_gateway_id")
-        gw = cli(["pipelines", "get", gid], a.profile) if gid else None
+        gw = api.get(f"/api/2.0/pipelines/{gid}", a.profile) if gid else None
         cname = ((gw or {}).get("spec", {}).get("gateway_definition") or {}).get("connection_name") \
             or (ap.get("spec", {}).get("ingestion_definition") or {}).get("connection_name")
-        conn = cli(["connections", "get", cname], a.profile) if cname else None
+        conn = api.get(f"/api/2.1/unity-catalog/connections/{cname}", a.profile) if cname else None
         if conn:  # never keep a secret, even in memory
             (conn.get("options") or {}).pop("password", None)
-        host = cli(["auth", "describe"], a.profile).get("details", {}).get("host", "")
+        host = api.host(a.profile)
         events = []
         if (conn or {}).get("connection_type", "").upper() == "KAFKA":
             return emit(a, kafka_model(a, ap, conn, host))
         if not a.capture and (conn or {}).get("connection_type", "").upper() == "SQLSERVER":
             reader = gid or ap.get("pipeline_id")
             try:
-                events = cli(["api", "get", f"/api/2.0/pipelines/{reader}/events?max_results=250"], a.profile).get("events", [])
-            except subprocess.CalledProcessError:
+                events = api.get(f"/api/2.0/pipelines/{reader}/events", a.profile, {"max_results": 250}).get("events", [])
+            except api.ApiError:
                 events = []
     emit(a, model(a, ap, gw, conn, host, events))
 
@@ -751,6 +750,16 @@ def emit(a, m):
             f.write(out)
     else:
         sys.stdout.write(out)
+
+
+def diagram(*args):
+    """The diagram as text, for a notebook: diagram("--pipeline", "<id>", "--format", "text"), the command line's flags."""
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        main(list(args))
+    return buf.getvalue()
 
 
 if __name__ == "__main__":
