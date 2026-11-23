@@ -202,6 +202,27 @@ class FirstAndLater(unittest.TestCase):
         self.assertEqual((rec["engine"], rec["k"], rec["sources"], rec["change_rows"], rec["forced"]),
                          ("spark", 2, 2, 3, True))
 
+    def test_a_large_share_of_changes_is_copied_not_merged(self):   # the planner's recompute, by source
+        from lfc_medallion import paths
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        real = spark.sql
+        counts = [("east", 60000), ("west", 9)]   # each source's rows in the target
+        spark.sql = lambda q: R(collect=lambda: counts) if " GROUP BY 1" in q and q.startswith(
+            "SELECT `division`, COUNT(*) FROM `main`.`shop_silver`.`all_nation`") else real(q)
+        planner = paths.Planner({"spark": spark}, rows={("nation", "east"): 50000, ("nation", "west"): 2})
+        report = run(spark, planner=planner)
+        self.assertEqual(report["all_nation"]["east"]["done"], "copied (THRESHOLD_LARGE_CHANGES_RECOMPUTE)")
+        self.assertEqual(report["all_nation"]["west"]["done"], "merged")
+        feeds = [m for m in spark.merges() if "table_changes(" in m]
+        self.assertEqual(len(feeds), 1)   # one MERGE of the change feeds, west's only: east was copied whole
+        self.assertNotIn("shop_bronze_east", feeds[0])
+        (rec,) = planner.records
+        self.assertEqual(rec["sources"], 1)
+        self.assertRegex(rec["fingerprint"], r"^[0-9a-f]{12}$")   # the table's key and columns
+
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
                       history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})]}, targets={"all_nation"})

@@ -196,33 +196,82 @@ def groups(items: list, k: int) -> list[list]:
     return out
 
 
+COPY_SHARE = 0.5      # a source whose change rows reach this share of its rows is copied whole, not merged
+COPY_MIN_ROWS = 10000  # below this many change rows a source is merged: the target's row counts aren't read
+TABLE_RUNS = 6        # a target table's own runs (same fingerprint) before its own model replaces the pooled one
+
+
+def technique(change_rows: int | None, source_rows: int | None, share: float = COPY_SHARE) -> tuple[str, str]:
+    """(merge | copy, why) for one source of one table, as the materialized-view planner chooses between incremental
+    and recompute: a small share of changes is merged, a large one copied whole (a partition overwrite by source)."""
+    if not change_rows or change_rows < COPY_MIN_ROWS:
+        return "merge", "THRESHOLD_SMALL_CHANGES_INC"
+    if not source_rows:
+        return "merge", "SOURCE_ROWS_UNKNOWN_INC"
+    if change_rows >= share * source_rows:
+        return "copy", "THRESHOLD_LARGE_CHANGES_RECOMPUTE"
+    return "merge", "THRESHOLD_SMALL_CHANGES_INC"
+
+
+def fingerprint(key: list[str], cols: list[str]) -> str:
+    """A target table's MERGE shape: its key and columns. History is kept per table and fingerprint, and a new one
+    (a column added, another key) starts it again, as a query fingerprint does for a materialized view."""
+    import hashlib
+    return hashlib.sha1(("|".join(key) + "#" + "|".join(cols)).encode()).hexdigest()[:12]
+
+
+def table_models(runs: list[tuple], pooled: "Model", min_runs: int = TABLE_RUNS) -> dict:
+    """{(target_table, fingerprint): Model} refit from that table's own runs when it has `min_runs` or more; others
+    use the pooled model. runs: (target_table, fingerprint, engine, k, sources, rows, seconds, at_once, units)."""
+    by: dict = {}
+    for r in runs:
+        if r[1]:
+            by.setdefault((r[0], r[1]), []).append(r[2:])
+    return {t: Model({e: tuple(v) for e, v in pooled.lines.items()}, pooled.start_s, pooled.max_k).fit(rs)
+            for t, rs in by.items() if len(rs) >= min_runs}
+
+
 class Planner:
     """One merge run's choices: the engines there are ({name: a session with sql()}), the model, a forced path, each
     (table, source)'s change rows (from the event logs), the engines not started yet, each engine's units and the
-    tables merged at once (`at_once`, set once the run knows them). pick() per table's MERGE, record() what it took;
+    tables merged at once (`at_once`, set once the run knows them), and per (target table, fingerprint) a model of
+    its own (table_models). pick() per table's MERGE, techniques() per table's sources, record() what it took;
     records are the paths log's rows."""
 
     def __init__(self, engines: dict, model: Model | None = None, forced: str | None = None, rows: dict | None = None,
-                 cold=(), units: dict | None = None, at_once: int = 1):
+                 cold=(), units: dict | None = None, at_once: int = 1, tables: dict | None = None):
         import threading
         self.engines, self.model, self.forced = engines, model or Model(), forced
         self.rows, self.cold, self.records, self._lock = dict(rows or {}), set(cold), [], threading.Lock()
-        self.units, self.at_once = dict(units or {}), at_once
+        self.units, self.at_once, self.tables = dict(units or {}), at_once, dict(tables or {})
 
-    def pick(self, table: str, sources: list[str]):
-        """(engine name, its session, k, change rows, predictions) for one MERGE of `sources` of `table`."""
+    def needs_counts(self, table: str, sources: list[str]) -> bool:
+        """Whether any source has enough change rows that its share of the target decides merge or copy."""
+        return any(int(self.rows.get((table, s)) or 0) >= COPY_MIN_ROWS for s in sources)
+
+    def techniques(self, table: str, sources: list[str], counts: dict | None = None) -> dict:
+        """{source: (merge | copy, why)}: counts are each source's rows in the target ({source: rows})."""
+        return {s: technique(self.rows.get((table, s)), (counts or {}).get(s)) for s in sources}
+
+    def pick(self, table: str, sources: list[str], out_name: str | None = None, fp: str | None = None):
+        """(engine name, its session, k, change rows, predictions) for one MERGE of `sources` of `table`, by the
+        target's own model when it has one (out_name, fp), else the pooled one."""
         rows = sum(int(self.rows.get((table, s)) or 0) for s in sources)
+        model = self.tables.get((out_name, fp), self.model)
         with self._lock:
-            e, k, preds = choose(self.model, len(sources), rows, tuple(self.engines), self.forced,
+            e, k, preds = choose(model, len(sources), rows, tuple(self.engines), self.forced,
                                  frozenset(self.cold), self.at_once, self.units)
             self.cold.discard(e)   # started by this MERGE: warm for the next
         return e, self.engines[e], k, rows, preds
 
     def record(self, target_table: str, engine: str, k: int, sources: int, rows: int, preds: dict, seconds: float,
-               retries: int, done: str = "merged") -> None:
+               retries: int, done: str = "merged", fp: str | None = None, insights: list | None = None,
+               statements: list | None = None) -> None:
         with self._lock:
             self.records.append({"target_table": target_table, "engine": engine, "k": k, "sources": sources,
                                  "change_rows": rows, "predicted_s": (preds.get(engine) or [None, None])[1],
                                  "seconds": round(seconds, 2), "retries": retries, "done": done,
                                  "forced": bool(self.forced), "predictions": preds, "at_once": self.at_once,
-                                 "units": self.units.get(engine, 1.0)})
+                                 "units": self.units.get(engine, 1.0), "fingerprint": fp,
+                                 "own_model": (target_table, fp) in self.tables, "insights": insights or [],
+                                 "statements": statements or []})

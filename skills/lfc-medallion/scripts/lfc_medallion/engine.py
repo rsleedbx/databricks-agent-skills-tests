@@ -64,8 +64,8 @@ def value(text, type_name: str):
 
 
 class _Result:
-    def __init__(self, rows: list):
-        self._rows = rows
+    def __init__(self, rows: list, statement_id: str | None = None):
+        self._rows, self.statement_id = rows, statement_id   # the id: its phases in query history (route.phases)
 
     def collect(self) -> list:
         return list(self._rows)
@@ -94,6 +94,28 @@ class Warehouse:
         w = self.w.warehouses.get(self.id)
         return units(w.cluster_size, max(w.num_clusters or 0, w.min_num_clusters or 1))
 
+    def phases(self, statement_ids: list[str], wait_s: float = 30.0) -> dict:
+        """{statement id: {compile_s, execute_s, queue_s, read_bytes, read_files}} from query history, once each
+        statement's entry is final (it lags the statement by seconds); missing ones are left out."""
+        from databricks.sdk.service.sql import QueryFilter
+        out, todo, end = {}, list(dict.fromkeys(i for i in statement_ids if i)), time.time() + wait_s
+        while todo and time.time() < end:
+            for i in range(0, len(todo), 100):
+                for q in self.w.query_history.list(filter_by=QueryFilter(statement_ids=todo[i:i + 100]),
+                                                   include_metrics=True, max_results=100):
+                    m = q.metrics
+                    if not q.is_final or m is None:
+                        continue
+                    queued = ((m.query_compilation_start_timestamp or 0) - (q.query_start_time_ms or 0)) / 1e3
+                    out[q.query_id] = {"compile_s": (m.compilation_time_ms or 0) / 1e3,
+                                       "execute_s": (m.execution_time_ms or 0) / 1e3,
+                                       "queue_s": max(0.0, queued) if m.query_compilation_start_timestamp else None,
+                                       "read_bytes": m.read_bytes, "read_files": m.read_files_count}
+            todo = [i for i in todo if i not in out]
+            if todo:
+                time.sleep(5)
+        return out
+
     def sql(self, query: str, args: dict | None = None) -> _Result:
         from databricks.sdk.service.sql import (Disposition, ExecuteStatementRequestOnWaitTimeout, Format,
                                                 StatementParameterListItem, StatementState)
@@ -117,4 +139,4 @@ class Warehouse:
         while chunk is not None and chunk.next_chunk_index is not None:
             chunk = self.w.statement_execution.get_statement_result_chunk_n(r.statement_id, chunk.next_chunk_index)
             data += chunk.data_array or []
-        return _Result([make(value(x, t) for x, t in zip(row, types)) for row in data])
+        return _Result([make(value(x, t) for x, t in zip(row, types)) for row in data], r.statement_id)

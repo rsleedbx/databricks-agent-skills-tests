@@ -60,6 +60,50 @@ class Choose(unittest.TestCase):
             self.assertAlmostEqual(paths.cost(got, n, k, at_once=3), paths.cost(true, n, k, at_once=3), delta=1.0)
         self.assertTrue(got.measured)
 
+    def test_technique_merge_or_copy(self):   # the materialized-view planner's thresholds, by source
+        self.assertEqual(paths.technique(500, 1000), ("merge", "THRESHOLD_SMALL_CHANGES_INC"))       # few rows: merge
+        self.assertEqual(paths.technique(60000, 100000)[0], "copy")                                 # most changed
+        self.assertEqual(paths.technique(20000, 1000000)[0], "merge")                               # a small share
+        self.assertEqual(paths.technique(60000, None), ("merge", "SOURCE_ROWS_UNKNOWN_INC"))
+        p = paths.Planner({"spark": object()}, rows={("t", "a"): 50000, ("t", "b"): 10})
+        self.assertTrue(p.needs_counts("t", ["a", "b"]))
+        self.assertFalse(p.needs_counts("t", ["b"]))
+        self.assertEqual(p.techniques("t", ["a", "b"], {"a": 60000, "b": 9})["a"][0], "copy")
+
+    def test_fingerprint_and_table_models(self):   # a table's own history once it has enough runs of one shape
+        fp = paths.fingerprint(["id"], ["id", "v"])
+        self.assertNotEqual(fp, paths.fingerprint(["id"], ["id", "v", "w"]))
+        true = paths.Line(30.0, 2.0, 1.0, 0.1, 0.1)
+        runs = [("all_t", fp, "warehouse", k, n, 0, paths.cost(true, n, k), 1, 1.0)
+                for k, n in ((1, 10), (1, 50), (1, 100), (2, 100), (4, 100), (8, 100))]
+        pooled = paths.Model({"warehouse": WH})
+        models = paths.table_models(runs + [("all_u", fp, "warehouse", 1, 10, 0, 9.0, 1, 1.0)], pooled)
+        self.assertEqual(set(models), {("all_t", fp)})
+        own = models[("all_t", fp)].lines["warehouse"]
+        self.assertAlmostEqual(paths.cost(own, 100, 1), paths.cost(true, 100, 1), delta=2.0)
+        p = paths.Planner({"warehouse": object()}, pooled, tables=models)
+        self.assertEqual(p.pick("t", ["a"] * 100, "all_t", fp)[4]["warehouse"][1],
+                         round(models[("all_t", fp)].best("warehouse", 100)[1], 1))
+        p.record("all_t", "warehouse", 1, 100, 0, {}, 3.0, 0, fp=fp, insights=["x"], statements=["s1"])
+        self.assertEqual((p.records[0]["own_model"], p.records[0]["statements"]), (True, ["s1"]))
+
+    def test_phases_and_insights(self):   # query history's phases summed per record; the target's Delta features
+        import types
+        from lfc_medallion import merge, route
+        wh = types.SimpleNamespace(phases=lambda ids: {"s1": {"compile_s": 2.0, "execute_s": 5.0, "queue_s": 1.0,
+                                                               "read_bytes": 100, "read_files": 3},
+                                                        "s2": {"compile_s": 1.0, "execute_s": 4.0, "queue_s": None,
+                                                               "read_bytes": 50, "read_files": 2}})
+        recs = [{"statements": ["s1", "s2"]}, {"statements": []}]
+        route.add_phases(types.SimpleNamespace(engines={"warehouse": wh}), recs)
+        self.assertEqual((recs[0]["compile_s"], recs[0]["execute_s"], recs[0]["queue_s"], recs[0]["read_bytes"]),
+                         (3.0, 9.0, 1.0, 150))
+        self.assertIsNone(recs[1]["compile_s"])
+        props = lambda rows: types.SimpleNamespace(sql=lambda q: types.SimpleNamespace(collect=lambda: rows))  # noqa: E731
+        self.assertEqual(merge._insights(props([("delta.feature.deletionVectors", "supported"),
+                                                ("delta.enableRowTracking", "true")]), "t"), [])
+        self.assertEqual(len(merge._insights(props([("delta.enableDeletionVectors", "false")]), "t")), 2)
+
     def test_groups_even_in_order(self):
         self.assertEqual(paths.groups(list(range(7)), 3), [[0, 1, 2], [3, 4], [5, 6]])
         self.assertEqual(paths.groups([1, 2], 5), [[1], [2]])

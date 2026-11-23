@@ -168,6 +168,10 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(todo)))) as ex:
         results = list(ex.map(merge_one, todo))
     try:
+        add_phases(planner, planner.records)   # each warehouse MERGE's compile, execute, queue and bytes
+    except Exception as e:  # noqa: BLE001  query history unreadable: the log without phases
+        print(f"phases not read: {str(e).splitlines()[0][:200]}")
+    try:
         write_paths(spark, catalog, target, log, run_id, planner.records)   # the optimizer's choices and costs
     except Exception as e:  # noqa: BLE001  a log write doesn't undo the merges
         print(f"paths log not written: {str(e).splitlines()[0][:200]}")
@@ -273,17 +277,40 @@ def make_planner(spark, catalog: str, target: str, log: str | None, warehouse: s
             units["warehouse"] = wh.units()
         except Exception:  # noqa: BLE001
             cold.add("warehouse")
-    runs = []
-    try:
-        runs = [(r.engine, int(r.k), int(r.sources), int(r.change_rows or 0), float(r.seconds), int(r.at_once or 1),
-                 float(r.units or 1.0)) for r in spark.sql(
-            f"SELECT engine, k, sources, change_rows, seconds, at_once, units FROM {paths_log(catalog, target, log)} "
-            "WHERE done = 'merged' ORDER BY at DESC LIMIT 2000").collect()]
-    except Exception:  # noqa: BLE001  no log yet (or one from before at_once and units): the measured defaults
-        pass
+    got = []
+    for cols in ("target_table, fingerprint, ", "target_table, NULL AS fingerprint, "):   # a log from before fingerprints
+        try:
+            got = spark.sql(f"SELECT {cols}engine, k, sources, change_rows, seconds, at_once, units FROM "
+                            f"{paths_log(catalog, target, log)} WHERE done = 'merged' ORDER BY at DESC "
+                            "LIMIT 2000").collect()
+            break
+        except Exception:  # noqa: BLE001  no log yet (or one from before at_once and units): the measured defaults
+            continue
+    runs = [(r.target_table, r.fingerprint, r.engine, int(r.k), int(r.sources), int(r.change_rows or 0),
+             float(r.seconds), int(r.at_once or 1), float(r.units or 1.0)) for r in got]
+    pooled = paths.Model().fit([r[2:] for r in runs])
     forced = None if path in (None, "", "auto") else path
-    return paths.Planner(engines, paths.Model().fit(runs), forced, changed if isinstance(changed, dict) else {}, cold,
-                         units)
+    return paths.Planner(engines, pooled, forced, changed if isinstance(changed, dict) else {}, cold, units,
+                         tables=paths.table_models(runs, pooled))
+
+
+def add_phases(planner, records: list[dict]) -> None:
+    """Each record's warehouse statements' phases and bytes from query history (engine.Warehouse.phases), summed
+    into it: compile, execute, queue, bytes and files read. Nothing without a warehouse or statements."""
+    wh = planner.engines.get("warehouse")
+    ids = [i for r in records for i in r.get("statements") or []]
+    if wh is None or not ids or not hasattr(wh, "phases"):
+        return
+    got = wh.phases(ids)
+    for r in records:
+        ph = [got[i] for i in r.get("statements") or [] if i in got]
+        for k in ("compile_s", "execute_s", "queue_s", "read_bytes", "read_files"):
+            vals = [p[k] for p in ph if p.get(k) is not None]
+            r[k] = round(sum(vals), 2) if vals else None
+
+
+NEWER = ("fingerprint STRING, own_model BOOLEAN, insights STRING, statements STRING, compile_s DOUBLE, "
+         "execute_s DOUBLE, queue_s DOUBLE, read_bytes BIGINT, read_files BIGINT")
 
 
 def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, records: list[dict]) -> None:
@@ -295,21 +322,28 @@ def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, 
     fq = paths_log(catalog, target, log)
     _shared(spark, f"CREATE TABLE IF NOT EXISTS {fq} (run_id STRING, target_table STRING, engine STRING, k INT, "
                    "sources INT, change_rows BIGINT, predicted_s DOUBLE, seconds DOUBLE, retries INT, done STRING, "
-                   "forced BOOLEAN, predictions STRING, at TIMESTAMP, at_once INT, units DOUBLE) COMMENT "
+                   f"forced BOOLEAN, predictions STRING, at TIMESTAMP, at_once INT, units DOUBLE, {NEWER}) COMMENT "
                    "'lfc_medallion: each MERGE, its path (engine, k at once), its predicted and taken seconds, the "
                    "tables merged at once and the engine units (paths.py)'")
-    try:   # a log from before at_once and units
-        spark.sql(f"ALTER TABLE {fq} ADD COLUMNS (at_once INT, units DOUBLE)")   # once: no retry
-    except Exception:  # noqa: BLE001  already there
-        pass
+    for added in ("at_once INT, units DOUBLE", NEWER):   # a log from before them: once each, no retry
+        try:
+            spark.sql(f"ALTER TABLE {fq} ADD COLUMNS ({added})")
+        except Exception:  # noqa: BLE001  already there
+            pass
     num = lambda v: "NULL" if v is None else str(v)  # noqa: E731
     vals = ", ".join(f"({spark_string(run_id)}, {spark_string(r['target_table'])}, {spark_string(r['engine'])}, "
                      f"{int(r['k'])}, {int(r['sources'])}, {int(r['change_rows'] or 0)}, {num(r['predicted_s'])}, "
                      f"{r['seconds']}, {int(r['retries'])}, {spark_string(r['done'])}, {str(r['forced']).lower()}, "
                      f"{spark_string(json.dumps(r['predictions']))}, current_timestamp(), "
-                     f"{int(r.get('at_once') or 1)}, {float(r.get('units') or 1.0)})" for r in records)
+                     f"{int(r.get('at_once') or 1)}, {float(r.get('units') or 1.0)}, "
+                     f"{spark_string(r['fingerprint']) if r.get('fingerprint') else 'NULL'}, "
+                     f"{str(bool(r.get('own_model'))).lower()}, {spark_string(json.dumps(r.get('insights') or []))}, "
+                     f"{spark_string(json.dumps(r.get('statements') or []))}, {num(r.get('compile_s'))}, "
+                     f"{num(r.get('execute_s'))}, {num(r.get('queue_s'))}, {num(r.get('read_bytes'))}, "
+                     f"{num(r.get('read_files'))})" for r in records)
     _shared(spark, f"INSERT INTO {fq} (run_id, target_table, engine, k, sources, change_rows, predicted_s, seconds, "
-                   f"retries, done, forced, predictions, at, at_once, units) VALUES {vals}")
+                   f"retries, done, forced, predictions, at, at_once, units, fingerprint, own_model, insights, "
+                   f"statements, compile_s, execute_s, queue_s, read_bytes, read_files) VALUES {vals}")
 
 
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",

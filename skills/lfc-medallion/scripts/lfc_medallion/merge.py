@@ -591,24 +591,48 @@ def _before(spark, tgt: str) -> int | None:
 
 
 def _merge_split(eng, tgt: str, parts: list[list[str]], source_column: str, key: list[str], cols: list[str],
-                 tries: int = 8) -> int:
+                 tries: int = 8) -> tuple[int, list[str]]:
     """One MERGE per part (each a UNION ALL of its sources' changes), the parts at once on threads, on one engine; a
-    MERGE that meets another's commit (CONCURRENT...) is tried again. The retries, for the paths log."""
+    MERGE that meets another's commit (CONCURRENT...) is tried again. (The retries, the statements' ids where the
+    engine gives them: a warehouse's, for their phases in query history), for the paths log."""
     def one(p):
         q = merge_into(tgt, " UNION ALL ".join(p), source_column, key, cols)
         for attempt in range(tries):
             try:
-                eng.sql(q)
-                return attempt
+                return attempt, getattr(eng.sql(q), "statement_id", None)
             except Exception as e:  # noqa: BLE001
                 if attempt == tries - 1 or "CONCURRENT" not in str(e).upper():
                     raise
                 time.sleep(0.2 * 2 ** attempt)
     if len(parts) == 1:
-        return one(parts[0])
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=len(parts)) as ex:
-        return sum(ex.map(one, parts))
+        got = [one(parts[0])]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(parts)) as ex:
+            got = list(ex.map(one, parts))
+    return sum(a for a, _ in got), [i for _, i in got if i]
+
+
+def _counts_by_source(spark, tgt: str, source_column: str) -> dict:
+    """Each source's rows in the target, one GROUP BY: the planner's denominator for merge or copy."""
+    return {r[0]: int(r[1]) for r in spark.sql(f"SELECT {_q(source_column)}, COUNT(*) FROM {tgt} GROUP BY 1").collect()}
+
+
+def _insights(spark, tgt: str) -> list[str]:
+    """What the target's Delta features say about its MERGE cost, as the materialized-view planner's insights:
+    without deletion vectors a MERGE rewrites every file a changed key is in; row tracking is kept for incremental
+    readers. Read once per table and run."""
+    try:
+        props = {str(r[0]).lower(): str(r[1]).lower() for r in spark.sql(f"SHOW TBLPROPERTIES {tgt}").collect()}
+    except Exception:  # noqa: BLE001  not there yet: nothing to say
+        return []
+    out = []
+    if props.get("delta.enabledeletionvectors") == "false" or (
+            "delta.feature.deletionvectors" not in props and "delta.enabledeletionvectors" not in props):
+        out.append("DELTA_FEATURE_NOT_ENABLED: deletion vectors (a MERGE rewrites whole files)")
+    if props.get("delta.enablerowtracking") != "true":
+        out.append("DELTA_FEATURE_NOT_ENABLED: row tracking")
+    return out
 
 
 def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
@@ -670,6 +694,15 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
                 saves.append(_saved(i))
             else:
                 feed.append(i)
+        if planner is not None and feed and planner.needs_counts(table, [i["s"] for i in feed]):
+            # a source whose changes are a large share of its rows is copied whole (paths.technique)
+            how = planner.techniques(table, [i["s"] for i in feed], _counts_by_source(spark, tgt, source_column))
+            for i in [i for i in feed if how[i["s"]][0] == "copy"]:
+                _copy(spark, tgt, i, source_column, logged, run_id, out_name, report,
+                      f"copied ({how[i['s']][1]})")
+                saves.append(_saved(i))
+            feed = [i for i in feed if how[i["s"]][0] != "copy"]
+        insights = _insights(spark, tgt) if planner is not None and feed else []
         groups: dict[tuple, list] = {}   # sources with the same key and columns share one MERGE
         for i in feed:
             groups.setdefault((tuple(i["key"]), tuple(c for c, _ in i["cols"])), []).append(i)
@@ -677,22 +710,25 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
             each = {i["s"]: changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"],
                                         _start(i, i["now"])) for i in part}
             # the path: the engine and how many MERGEs at once (paths.Planner, by cost); none: one MERGE on spark
+            fp = paths.fingerprint(list(key), list(cols))
             e, eng, k, crows, preds = ("spark", spark, 1, 0, None) if planner is None else \
-                planner.pick(table, [i["s"] for i in part])
+                planner.pick(table, [i["s"] for i in part], out_name, fp)
             try:
                 t0 = time.time()
                 before = _before(eng, tgt)
-                retries = _merge_split(eng, tgt, [[each[i["s"]] for i in g] for g in paths.groups(part, k)],
-                                       source_column, list(key), list(cols))
+                retries, ids = _merge_split(eng, tgt, [[each[i["s"]] for i in g] for g in paths.groups(part, k)],
+                                            source_column, list(key), list(cols))
                 n = _merged_counts(eng, tgt, source_column, before)
                 if planner is not None:
-                    planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, retries)
+                    planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, retries, fp=fp,
+                                   insights=insights, statements=ids)
             # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
             # (on spark; a source's changes merged again change nothing: the same rows match)
             except Exception as err:  # noqa: BLE001
                 if planner is not None:
                     planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, 0,
-                                   f"failed, each source alone: {str(err).splitlines()[0][:120]}")
+                                   f"failed, each source alone: {str(err).splitlines()[0][:120]}", fp=fp,
+                                   insights=insights)
                 for i in part:
                     try:
                         t1 = time.time()
