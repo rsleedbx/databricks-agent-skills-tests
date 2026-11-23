@@ -259,7 +259,8 @@ class FirstAndLater(unittest.TestCase):
         spark.sql = lambda q: R(collect=lambda: [R(target_table=t, source=x, version=v, table_id=i, updated_at=at,
                                                    key_columns='["n_nationkey"]', snapshots=None)
                                                  for (t, x), (v, i) in spark.state.items()]) \
-            if q.startswith("SELECT target_table, source, version") else real(q)
+            if q.startswith("SELECT target_table, source, version") else R(collect=lambda: []) \
+            if q.startswith("SELECT t.table_schema, t.table_name, t.created") else real(q)   # none recreated
         real_ctx = merge_mod.load_context
         def ctx(*a, **k):   # the route's changed_since leaves each pair's last ingestion event in the context
             c = real_ctx(*a, **k)
@@ -272,6 +273,29 @@ class FirstAndLater(unittest.TestCase):
         self.assertEqual(len(merges), 1)
         self.assertIn("TIMESTAMP'2026-11-23T11:58:00.000000Z' + INTERVAL 1 MICROSECOND", merges[0])
         self.assertFalse(any("DESCRIBE HISTORY" in q and "shop_bronze_" in q for q in spark.reads))   # no history read
+
+    def test_a_table_created_after_its_saved_time_is_read_by_version(self):   # recreated: copied, not read by time
+        import datetime as dt
+        saved_at, later = dt.datetime(2026, 11, 23, 12, 0, 0), dt.datetime(2026, 11, 23, 12, 5, 0)
+        saved = (5, "id-east", ["n_nationkey"], saved_at, None)
+        args = ("main", "shop_bronze_", "nation", "all_nation", "east", None, None, {("all_nation", "east"): saved},
+                False, COLS)
+        ok = merge_mod._inspect(None, *args, by_time=True, event_at=later, created=None)          # not recent
+        self.assertIn("after_ts", ok)
+        for created in (later, merge_mod._recreated(None, ("nation", "east"))):   # recreated; or the catalog can't say
+            class NoReads:
+                def sql(self, q):
+                    raise AssertionError("read by version")
+            with self.assertRaises(AssertionError):
+                merge_mod._inspect(NoReads(), *args, by_time=True, event_at=later, created=created)
+        seen = []
+        class Ask:
+            def sql(self, q):
+                seen.append(q)
+                return R(collect=lambda: [R(table_schema="shop_bronze_east", table_name="nation", created=later)])
+        self.assertEqual(merge_mod._created(Ask(), "main", "shop_bronze_", "shop_silver"), {("nation", "east"): later})
+        self.assertIn("t.created > s.updated_at", seen[0])   # only the recreated come back, at any table count
+        self.assertIn("s.target_table = concat('all_', t.table_name, '')", seen[0])
 
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},

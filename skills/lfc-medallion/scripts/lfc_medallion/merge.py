@@ -474,7 +474,7 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
             _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                          fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed,
                          ctx.get("cols"), keep_gone, planner, read_by, ctx.get("refreshed") or set(),
-                         ctx.get("event_at") or {})
+                         ctx.get("event_at") or {}, ctx.get("created"))
         finally:
             _log_rows(spark, fq_log, logged)
     return report
@@ -488,20 +488,40 @@ def load_context(spark, catalog: str, prefix: str, target: str, only=None) -> di
     kinds = {r.table_name: r.table_type for r in _rows(
         spark, f"SELECT table_name, table_type FROM {_q(catalog)}.information_schema.tables "
                f"WHERE table_schema = {spark_string(target)}")}
-    return {"names": names, "held": held, "cols": cols, "state": _state_full(spark, catalog, target), "kinds": kinds}
+    return {"names": names, "held": held, "cols": cols, "state": _state_full(spark, catalog, target), "kinds": kinds,
+            "created": _created(spark, catalog, prefix, target)}
+
+
+def _created(spark, catalog: str, prefix: str, target: str, name: str = "all_{table}") -> dict | None:
+    """{(table, source): when it was created} for each source table created after its own saved time: recreated, so
+    reading it by time is refused (the version path copies it). One query joins the catalog's tables with the state,
+    so only the recreated come back, at any table count; None when it can't run (then no source is read by time).
+    (last_altered isn't used: it lags the table's commits by minutes.)"""
+    head, _, tail = name.partition("{table}")
+    like = spark_string(prefix.replace("_", "\\_") + "%")
+    try:
+        return {(r.table_name, r.table_schema[len(prefix):]): r.created for r in _rows(
+            spark, f"SELECT t.table_schema, t.table_name, t.created FROM {_q(catalog)}.information_schema.tables t "
+                   f"JOIN {_fq(catalog, target, STATE)} s ON s.source = substr(t.table_schema, {len(prefix) + 1}) "
+                   f"AND s.target_table = concat({spark_string(head)}, t.table_name, {spark_string(tail)}) "
+                   f"WHERE t.table_schema LIKE {like} AND t.created > s.updated_at")}
+    except Exception:  # noqa: BLE001  no information_schema, or no state table yet: no source is read by time
+        return None
 
 
 def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state, fresh, cols_known=None,
-             by_time=False, event_at=None) -> dict:
+             by_time=False, event_at=None, created=None) -> dict:
     """One source of one table, read only (metadata: no data, no writes): its columns, key, version, table id, the
     version last merged and what changed since. Run for every source at once (threads). by_time: a source the event
     logs flag as changed (no snapshot) and with a saved state is read from its saved time (after_ts), with no history
-    or table id read, when it's SCD type 1 (no __START_AT); its saved version stays as it was (a lower bound)."""
+    or table id read, when it's SCD type 1 (no __START_AT), its last ingestion event is after its saved time
+    (event_at) and the table was created before it (created: not recreated since); its saved version stays as it
+    was (a lower bound)."""
     src = _fq(catalog, f"{prefix}{s}", table)
     saved = state.get((out_name, s))
     cols = [(c, t) for c, t in (cols_known or columns(spark, src)) if c not in CHANGE_COLUMNS]
     if (by_time and not fresh and saved and len(saved) > 3 and saved[0] is not None and saved[1] and saved[3]
-            and START not in {c for c, _ in cols} and _after(event_at, saved[3])):
+            and START not in {c for c, _ in cols} and _after(event_at, saved[3]) and not _after(created, saved[3])):
         key = list((keys or {}).get(table) or (saved[2] if len(saved) > 2 and saved[2] else None) or [])
         if key:
             from .route import MARGIN_S
@@ -545,14 +565,23 @@ def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
     return info
 
 
-def _after(event_at, saved_at) -> bool:
-    """Whether the source's last ingestion event is after its saved time: then a commit is after the start (the saved
-    time less the margin, so event lag under the margin is covered). A source flagged only within the margin (its
-    rows may be those already merged) is read by version instead: a start after its last commit would fail."""
-    if event_at is None or saved_at is None:
+def _after(t, saved_at) -> bool:
+    """Whether time t (a source's last ingestion event, or when its table was created) is after its saved time.
+    By time, a source is read only when its last event is after it (a commit is then after the start, the saved time
+    less the margin; one flagged only within the margin, its rows maybe already merged, is read by version: a start
+    after its last commit would fail) and its table wasn't created after it (recreated: the version path copies)."""
+    if t is None or saved_at is None:
         return False
-    utc = lambda t: t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)  # noqa: E731  Spark: naive, UTC
-    return utc(event_at) > utc(saved_at)
+    utc = lambda x: x if x.tzinfo else x.replace(tzinfo=dt.timezone.utc)  # noqa: E731  Spark: naive, UTC
+    return utc(t) > utc(saved_at)
+
+
+_UNKNOWN = dt.datetime.max.replace(tzinfo=dt.timezone.utc)   # creation unknown: taken as after any saved time
+
+
+def _recreated(created: dict | None, pair: tuple):
+    """When the pair's table was created, if after the oldest saved time; _UNKNOWN when the catalog couldn't say."""
+    return _UNKNOWN if created is None else created.get(pair)
 
 
 def _current(spark, i: dict) -> dict:
@@ -676,7 +705,7 @@ def _insights(spark, tgt: str) -> list[str]:
 def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                  fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed=None,
                  cols_known=None, keep_gone=False, planner=None, read_by="version", refreshed=frozenset(),
-                 event_at=None):
+                 event_at=None, created_at=None):
     """merge_all's work on one table: every source read at once (metadata, threads), then a whole copy for each source
     that needs one, ONE MERGE for all the sources whose changes come from the change feed, and one state write: so a
     table of hundreds of sources costs a few statements, not a few per source (logged: what it copied or merged)."""
@@ -703,7 +732,8 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
         info = list(ex.map(lambda s: _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
                                               fresh, (cols_known or {}).get(s, {}).get(table),
                                               by_time and (table, s) not in refreshed,
-                                              (event_at or {}).get((table, s))), look))
+                                              (event_at or {}).get((table, s)),
+                                              _recreated(created_at, (table, s))), look))
     shapes = {tuple(i["cols"]) for i in info}   # names and types: a source holding a column wider widens the target
     for i in (info if len(shapes) > 1 or created else info[:1]) if info else []:   # every source's columns in the target
         have = {} if out_name not in existing else dict(columns(spark, tgt))
