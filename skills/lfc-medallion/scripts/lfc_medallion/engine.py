@@ -87,10 +87,12 @@ class Warehouse:
         return str(self.w.warehouses.get(self.id).state).split(".")[-1]
 
     def units(self) -> float:
-        """Its capacity for paths.py: its most clusters times its size (2X-Small = 1, each size up doubles)."""
+        """Its capacity for paths.py: the clusters running now (stopped: its minimum) times its size (2X-Small = 1,
+        each size up doubles). Not its maximum: autoscaling adds a cluster only after queries have queued a while
+        (2026-11-23: 1 to 2 clusters a minute into a burst, never the 4 allowed), too late for MERGEs of a minute."""
         from .paths import units
         w = self.w.warehouses.get(self.id)
-        return units(w.cluster_size, w.max_num_clusters)
+        return units(w.cluster_size, max(w.num_clusters or 0, w.min_num_clusters or 1))
 
     def sql(self, query: str, args: dict | None = None) -> _Result:
         from databricks.sdk.service.sql import (Disposition, ExecuteStatementRequestOnWaitTimeout, Format,
