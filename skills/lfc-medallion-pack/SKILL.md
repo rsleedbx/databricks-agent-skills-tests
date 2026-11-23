@@ -103,6 +103,13 @@ lfc-medallion's merge task (`merge_route`) reads only what changed, and each thi
   the merge log from the target's own change feed for that commit (only the files the MERGE wrote), one state write;
   tables at once (`parallel`, 8), metadata reads on threads (16): all on the task's one compute.
 
+Each LOB's change feed costs about 0.5 s to plan (its log and version range), and a UNION ALL plans them one after
+another, so a table's MERGE grows with its LOBs: 14 s at 10, 78 s at 62, 141 s at 124 (`scale1`, 2026-11-22).
+Staging each LOB's changes into one table on threads first was slower (303 s at 124: every INSERT is a commit to
+that table, and its log takes them one at a time). The gateway's staging volume holds every LOB's changes of a
+pipeline together ([references/gateway-staging.md](references/gateway-staging.md)): read from there, one read
+would cover them all.
+
 Measured on TPC-B, 10 LOBs, 3 merge-route tables (2026-11-22): the task 516 s before, 85 s after a batch, 64 s with
 nothing to merge (its start: installing and reading the catalog); a batch to gold 875 s before, about 370 s after.
 
