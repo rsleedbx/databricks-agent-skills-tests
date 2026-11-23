@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-change-source", "scripts"))
 from lfc_medallion import evidence, merge, merge_all, stack_all
 from lfc_medallion import merge as merge_mod
 from lfc_medallion.merge import STATE, merge_sql
@@ -583,7 +584,8 @@ class Shapes(unittest.TestCase):
 
     def test_replacement_in_one_version_keeps_the_insert(self):
         sql = merge_sql("`c`.`s`.`t`", "`c`.`b`.`t`", "east", "division", ["k"], ["k", "v"], 1, 2)
-        self.assertIn("ORDER BY _commit_version DESC, CASE _change_type WHEN 'delete' THEN 1 ELSE 0 END", sql)
+        self.assertIn("ORDER BY _seq DESC", sql)   # the version, then the insert after the delete: the insert wins
+        self.assertIn("named_struct('v', _commit_version, 'o', CASE _change_type WHEN 'delete' THEN 0 ELSE 1 END)", sql)
 
 
 def _h(version, operation, ts="2026-11-22T17:00:00.000Z"):
@@ -663,11 +665,13 @@ class Scd2AcrossRefresh(unittest.TestCase):
                                 merge.start_sql("cdc", "T0"))
         # the filled start in the outer SELECT; the inner dedup partitions by the raw start (a range never crosses a
         # refresh, so its snapshot rows share one snapshot)
-        self.assertIn("TIMESTAMP 'T0') ELSE `__START_AT` END AS `__START_AT`, _change_type AS `__lfc_change`", sql)
+        self.assertIn("TIMESTAMP 'T0') ELSE `__START_AT` END AS `__START_AT`, CASE _change_type", sql)   # filled
+        self.assertIn("_change_type AS `__lfc_change`", sql)
 
     def test_a_column_added_since_is_null_in_an_older_copy(self):
         sql = merge.changes_sql("`c`.`b`.`t`", "east", "division", ["k"], ["k", "v", "c"], None, 8, absent={"c": "int"})
-        self.assertIn("`k`, `v`, CAST(NULL AS int) AS `c`, 'insert' AS `__lfc_change` FROM `c`.`b`.`t` VERSION AS OF 8", sql)
+        self.assertIn("`k`, `v`, CAST(NULL AS int) AS `c`, 'insert' AS `__lfc_change` FROM (SELECT `k`, `v`, "
+                      "CAST(NULL AS int) AS `c`, 'upsert' AS _op FROM `c`.`b`.`t` VERSION AS OF 8)", sql)
 
     def test_close_time_is_the_refresh_after_the_last_read(self):
         i = {"last": 2, "gens": merge.generations(TWO_REFRESHES), "end_kind": "cdc",

@@ -36,6 +36,7 @@ layers:
     skills:
       - lfc-source-contract
       - lfc-workload-contract
+      - lfc-change-source
 
   sources:
     may_use: [shape, contract, common]

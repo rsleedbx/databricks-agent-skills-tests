@@ -45,6 +45,9 @@ TABLES_PER_PIPELINE = 250      # recommended; a pipeline takes at most 999 sourc
 HARD_TABLES = 999
 
 
+MEDALLION = ("lfc-change-source", "lfc-medallion")   # the packages the jobs and pipelines install from the archive
+
+
 def lob_groups(lobs: int, tables: int, limit: int) -> list[tuple[int, int]]:
     """The LOBs [first, end) of each ingestion pipeline of one class (`tables` per LOB, at most `limit` a pipeline)."""
     per = max(1, limit // tables)
@@ -183,7 +186,7 @@ def resources(m: dict, archive: str) -> dict:
         "name": f"${{var.prefix}}_{n}_transform", "catalog": "${var.catalog}",
         "schema": f"${{resources.schemas.{n}_silver.name}}", "serverless": True, "photon": True,
         "event_log": log(f"{n}_transform"),
-        "environment": {"dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]},
+        "environment": {"dependencies": [f"{archive}#subdirectory=skills/{d}/scripts" for d in MEDALLION]},
         "configuration": conf,
         "libraries": [{"file": {"path": "../transform/n1.py"}}] +
                      [{"file": {"path": f"../marts/{m['pack']}/{f}"}} for f in m["marts"]]}
@@ -217,7 +220,7 @@ def resources(m: dict, archive: str) -> dict:
     jobs = {f"{n}_refresh": {
         "name": f"${{var.prefix}}_{n}_refresh",
         "environments": [{"environment_key": "medallion", "spec": {
-            "client": "2", "dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]}}],
+            "client": "2", "dependencies": [f"{archive}#subdirectory=skills/{d}/scripts" for d in MEDALLION]}}],
         "tasks": ingest_tasks + [merge_task,
             {"task_key": "transform", "depends_on": [{"task_key": "merge"}],   # waits for a facts cycle running
              "notebook_task": {"notebook_path": "../transform/refresh.py", "base_parameters": {

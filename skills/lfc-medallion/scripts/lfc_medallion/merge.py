@@ -369,21 +369,22 @@ def changes_sql(src: str, source: str, source_column: str, key: list[str], cols:
     last change, update pre-images dropped), with the source column and the change in `__lfc_change`. start: the
     SELECT expression for __START_AT (start_sql: a snapshot row's start filled), in place of the column. absent:
     {column: type} the table didn't have yet at `until` (a column added since): NULL of that type."""
+    from lfc_change_source.contract import Position, last_change_sql
+    from lfc_change_source.lfc_bronze import KIND, Bronze
     lit = spark_string(source)
     absent = absent or {}
     data = ", ".join(f"CAST(NULL AS {absent[c]}) AS {_q(c)}" if c in absent else start if start and c == START
                      else _q(c) for c in cols)
+    bronze = Bronze(source, src, "", list(key), list(cols))
+    at = Position(KIND, str(int(until)))
     if since is None:
         # pinned to the version saved in the state, so a commit in between isn't applied twice
         return (f"SELECT {lit} AS {_q(source_column)}, {data}, 'insert' AS `__lfc_change` "
-                f"FROM {src} VERSION AS OF {int(until)}")
-    part = ", ".join(_q(k) for k in key)
-    return (f"SELECT {lit} AS {_q(source_column)}, {data}, _change_type AS `__lfc_change` FROM ("
-            # each key's last change; in one version a delete and an insert of a key is a replacement: the insert
-            f"SELECT *, ROW_NUMBER() OVER (PARTITION BY {part} ORDER BY _commit_version DESC, "
-            "CASE _change_type WHEN 'delete' THEN 1 ELSE 0 END) AS `__lfc_n` "
-            f"FROM table_changes({spark_string(src.replace('`', ''))}, {int(since) + 1}, {int(until)}) "
-            "WHERE _change_type != 'update_preimage') WHERE `__lfc_n` = 1")
+                f"FROM ({bronze.snapshot_sql(at, data)})")
+    # each key's last change (the change source's _seq: the version, a delete before an insert in one version)
+    names = ", ".join(_q(c) for c in cols)
+    return (f"SELECT {lit} AS {_q(source_column)}, {names}, _change_type AS `__lfc_change` FROM ("
+            f"{last_change_sql(bronze.changes_sql(Position(KIND, str(int(since))), at, data), list(key))})")
 
 
 def merge_into(tgt: str, rows: str, source_column: str, key: list[str], cols: list[str],
