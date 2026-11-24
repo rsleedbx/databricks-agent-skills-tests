@@ -30,10 +30,10 @@ Roles, and the silver each gets (the plan's `silver`, which the pipeline builds;
   queue      inserts and deletes, few updates (activity only)  scd1
 Each table gets its evidence (`why`), a confidence, and a question to ask (`ask`) where a guess rests on little.
 
-Each table also gets a `route` (lfc-change-source routing.py): its class (dimension: small and slow; big_slow: a big
-snapshot, few changes; big_fast: many changes), its snapshot's path (log: landed into the change log; direct: read where
-the producer wrote it; auto: set by its real bytes when it lands), its change log (shared, or own for big_fast) and
-shards. From stats.yaml's data_size_bytes (else row_count x the columns' avg_width_bytes) and the activity's changes over
+Each table also gets a `route` (lfc-change-source routing.py): its class (small_slow, small_fast, big_slow, big_fast),
+its snapshot's path (log: landed into the change log; direct: read where the producer wrote it; auto: set by its real
+bytes when it lands), its change log (shared, or own for big_fast and very busy tables), shards, and its silver method
+(view, merge_round, merge_changed, auto_cdc). From stats.yaml's data_size_bytes (else row_count x the columns' avg_width_bytes) and the activity's changes over
 --activity-seconds (how long the counts cover: since the statistics were reset). Edit it like silver; plan.py diff says
 what a change of route takes.
 """

@@ -1,4 +1,4 @@
-"""log_silver: a typed silver table per source table, kept current from a change source (lfc-change-source: the shared
+"""silver: a typed silver table per source table, kept current from a change source (lfc-change-source: the shared
 change log a gateway, Debezium or a changefeed lands into) by one MERGE a table, SCD type 1.
 
   build  each silver table from its source's current rows (snapshot_sql: the snapshot and the changes so far), and
@@ -9,9 +9,9 @@ change log a gateway, Debezium or a changefeed lands into) by one MERGE a table,
 A table's MERGE reads only its destination's events (the log is clustered by destination). Tables run `threads` at
 once; the warehouse's clusters set how many run without queueing.
 
-    from lfc_medallion import log_silver
-    log_silver.build(session, sources, "`main`.`silver`", threads=16)    # sources: {name: an lfc_change_source source}
-    log_silver.apply(session, sources, "`main`.`silver`", to=position)
+    from lfc_log_silver import silver
+    silver.build(session, sources, "`main`.`silver`", threads=16)    # sources: {name: an lfc_change_source source}
+    silver.apply(session, sources, "`main`.`silver`", to=position)
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _lit(text: str) -> str:
 
 def ensure_state(session, schema: str) -> None:
     session.sql(f"CREATE TABLE IF NOT EXISTS {schema}.{STATE} (target STRING, kind STRING, position STRING, "
-                "rows BIGINT, seconds DOUBLE, updated_at TIMESTAMP) COMMENT 'log_silver: each silver table''s "
+                "rows BIGINT, seconds DOUBLE, updated_at TIMESTAMP) COMMENT 'lfc_log_silver: each silver table''s "
                 "position in its change source'")
 
 
@@ -76,9 +76,11 @@ def _target(schema: str, name: str) -> str:
     return f"{schema}.{_q(name)}"
 
 
-def build(session, sources: dict, schema: str, to, threads: int = 16) -> dict:
+def build(session, sources: dict, schema: str, to, threads: int = 16, at: dict | None = None) -> dict:
     """Every silver table from its source's current rows; each kept at position `to` (read before the builds: a change
-    after it is applied again by the next apply, the same result for SCD type 1). {target: seconds}."""
+    after it is applied again by the next apply, the same result for SCD type 1), or at its own position in `at`: a
+    source whose snapshot is given (read in place, routing's direct path) is built from that snapshot alone and kept
+    at the snapshot's position, so the next apply adds every change after it. {target: seconds}."""
     ensure_state(session, schema)
 
     def one(item):
@@ -88,8 +90,82 @@ def build(session, sources: dict, schema: str, to, threads: int = 16) -> dict:
         return name, time.time() - t0
     with ThreadPoolExecutor(threads) as pool:
         done = dict(pool.map(one, sources.items()))
-    _save(session, schema, [(n, to.kind, to.value, 0, s) for n, s in done.items()])
+    at = at or {}
+    _save(session, schema, [(n, (at.get(n) or to).kind, (at.get(n) or to).value, 0, s) for n, s in done.items()])
     return done
+
+
+def views(session, sources: dict, schema: str, threads: int = 16) -> dict:
+    """Silver as a view per table over its current rows from the change log (snapshot_sql): no work a round, the read
+    rebuilds the table (routing's small_slow: little data, few changes). {target: seconds to create}."""
+    def one(item):
+        name, src = item
+        t0 = time.time()
+        cols = ", ".join(_q(c) for c in src.columns)
+        session.sql(f"CREATE OR REPLACE VIEW {_target(schema, name)} AS SELECT {cols} FROM ({src.snapshot_sql()})")
+        return name, time.time() - t0
+    with ThreadPoolExecutor(threads) as pool:
+        return dict(pool.map(one, sources.items()))
+
+
+def changed(session, sources: dict, schema: str, to) -> list:
+    """The tables with a change event after their kept position, up to `to`: one grouped query over the log they share
+    (each table's newest position against its kept one). A table never built counts as changed."""
+    from lfc_change_source.cdc_log import SEQUENCES, TEXT
+    if not sources:
+        return []
+    kept = positions(session, schema)
+    one = next(iter(sources.values()))
+    seq = SEQUENCES[one.seq]
+    lit = (lambda v: "'" + str(v).replace("'", "") + "'") if one.seq in TEXT else (lambda v: str(int(v)))
+    by_dest = {s.destination: n for n, s in sources.items()}
+    rows = session.sql(f"SELECT destination, max({seq}) FROM {one.fq} WHERE operation NOT IN ('read', 'resolved') "
+                       f"AND destination IN ({', '.join(_lit(d) for d in by_dest)}) AND {seq} <= {lit(to.value)} "
+                       "GROUP BY destination").collect()
+    newest = {by_dest[r[0]]: r[1] for r in rows}
+    order = (lambda v: str(v)) if one.seq in TEXT else (lambda v: int(v))
+    return [n for n in sources if n not in kept or kept[n][1] is None
+            or (n in newest and order(newest[n]) > order(kept[n][1]))]
+
+
+def auto_cdc_tables(sources: dict, per_pipeline: int = 999) -> list:
+    """The table lists for this skill's pipelines/auto_cdc_from_log.py, `per_pipeline` tables each (a pipeline
+    takes at most 1,000 tables; its setup grows with its flows, paid once in continuous mode): [[{destination, target,
+    keys, exprs, seq}]]."""
+    from lfc_change_source.cdc_log import SEQUENCES
+    items = [{"destination": s.destination, "target": n, "keys": list(s.keys), "exprs": s.column_exprs(),
+              "seq": SEQUENCES[s.seq]} for n, s in sources.items()]
+    return [items[i:i + per_pipeline] for i in range(0, len(items), per_pipeline)]
+
+
+def run(session, sources: dict, routes: dict, schema: str, to, threads: int = 16, first: bool = False,
+        at: dict | None = None) -> dict:
+    """One round of silver for every table by its route's method (lfc-change-source routing: view, merge_round,
+    merge_changed, auto_cdc): views created on the first round only, merge_round tables merged, merge_changed tables
+    merged only if changed, auto_cdc tables left to their pipelines (auto_cdc_tables). first: build the merged
+    tables (and the views) instead of merging; at: {table: position} for tables built from a snapshot read in place
+    (build). {method: {"tables": n, "merged": n, "seconds": s}}."""
+    by = {}
+    for n, s in sources.items():
+        by.setdefault(routes[n].silver if n in routes else "merge_round", {})[n] = s
+    out = {}
+    t0 = time.time()
+    if by.get("view") and first:
+        views(session, by["view"], schema, threads)
+    out["view"] = {"tables": len(by.get("view", {})), "merged": 0, "seconds": round(time.time() - t0, 1)}
+    for method in ("merge_round", "merge_changed"):
+        group = by.get(method, {})
+        t0 = time.time()
+        if first and group:
+            build(session, group, schema, to, threads, at)
+            todo = group
+        else:
+            todo = group if method == "merge_round" else {n: group[n] for n in changed(session, group, schema, to)}
+            if todo:
+                apply(session, todo, schema, to, threads)
+        out[method] = {"tables": len(group), "merged": len(todo), "seconds": round(time.time() - t0, 1)}
+    out["auto_cdc"] = {"tables": len(by.get("auto_cdc", {})), "merged": 0, "seconds": 0.0}
+    return out
 
 
 BATCH = "_log_silver_batch"

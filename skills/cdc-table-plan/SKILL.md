@@ -49,8 +49,8 @@ little, `ask`: the question to put to the customer ("Is page_hits insert-only?")
 
 ## Routes: which log, which snapshot path
 
-Each table in the plan also gets a `route`: its class (`dimension`, `big_slow`, `big_fast`), its snapshot's path and
-its change log, suggested from `--stats` (bytes) and `--activity` over `--activity-seconds` (rate). Edit it like
+Each table in the plan also gets a `route`: its class (`small_slow`, `small_fast`, `big_slow`, `big_fast`), its snapshot's
+path, its change log and its silver method, suggested from `--stats` (bytes) and `--activity` over `--activity-seconds` (rate). Edit it like
 `silver`; `plan.py diff` names what each route change takes (most are a cut-over at a position, with no new snapshot).
 The rules and what to choose at the start: lfc-change-source's
 [references/routing.md](../lfc-change-source/references/routing.md).

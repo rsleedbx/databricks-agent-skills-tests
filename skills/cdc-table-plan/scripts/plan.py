@@ -24,9 +24,8 @@ targets to full-refresh, and whether everything can go ahead without asking. Exi
 """
 import argparse
 import json
-import sys
-
 import os
+import sys
 
 import yaml
 

@@ -109,6 +109,15 @@ class GatewayStaging(unittest.TestCase):
         with self.assertRaises(ValueError):
             src.changes_sql(Position("lsn", "1"), None)
 
+    def test_version_1_layout_says_why(self):   # by name, no table ids: the gateway had no applier manifest
+        from lfc_change_source import gateway_staging as gs
+        row = lambda p: types.SimpleNamespace(p=p, value="{}")   # noqa: E731
+        s = types.SimpleNamespace(sql=lambda q: types.SimpleNamespace(collect=lambda: [
+            row("/V/g/metadata/table_schemas/all_tables.json")]))
+        with self.assertRaises(ValueError) as e:
+            gs.schemas(s, "/V/g")
+        self.assertIn("table ids off", str(e.exception))
+
     def test_cursor_sorts_as_text(self):   # fixed width: text order is commit order
         from lfc_change_source.gateway_staging import _cursor
         cs = [_cursor(0x9FD60E90, 0x4c8), _cursor(0x8F63FB10, 1), _cursor(0x9FD60E90, 0x4c7), _cursor(0xA0847CE0)]
@@ -208,26 +217,30 @@ class Land(unittest.TestCase):
 
 
 class Routing(unittest.TestCase):
-    def test_three_classes_by_rate_then_size(self):
+    def test_four_classes_by_size_and_rate(self):
         from lfc_change_source import routing
-        p = routing.Policy(shared_log="`m`.`c`.`cdc_log`", fast_events_per_s=1000)
-        got = routing.plan({"db.s.region": (4096, 0.01), "db.s.history": (5 << 40, 2.0),
-                            "db.s.orders": (5 << 40, 250_000), "db.s.ticks": (100, 5_000)}, p)
-        self.assertEqual({t: (r.cls, r.snapshot, r.log, r.shards) for t, r in got.items()}, {
-            "db.s.region": ("dimension", "log", "`m`.`c`.`cdc_log`", 1),
-            "db.s.history": ("big_slow", "direct", "`m`.`c`.`cdc_log`", 1),
-            "db.s.orders": ("big_fast", "direct", "`m`.`c`.`cdc_log_orders`", 3),   # 250,000 / 100,000 a stream
-            "db.s.ticks": ("big_fast", "direct", "`m`.`c`.`cdc_log_ticks`", 1)})    # fast by rate, small or not
+        p = routing.Policy(shared_log="`m`.`c`.`cdc_log`", fast_events_per_s=1, own_log_events_per_s=10_000)
+        got = routing.plan({"db.s.region": (4096, 0.01), "db.s.carts": (64 << 20, 50.0),
+                            "db.s.ledger": (5 << 40, 0.2), "db.s.orders": (5 << 40, 250_000),
+                            "db.s.queue": (100, 20_000)}, p)
+        self.assertEqual({t: (r.cls, r.snapshot, r.log, r.shards, r.silver) for t, r in got.items()}, {
+            "db.s.region": ("small_slow", "log", "`m`.`c`.`cdc_log`", 1, "view"),
+            "db.s.carts": ("small_fast", "log", "`m`.`c`.`cdc_log`", 1, "merge_round"),
+            "db.s.ledger": ("big_slow", "direct", "`m`.`c`.`cdc_log`", 1, "merge_changed"),
+            "db.s.orders": ("big_fast", "direct", "`m`.`c`.`cdc_log_orders`", 3, "auto_cdc"),   # 250,000 / 100,000
+            "db.s.queue": ("small_fast", "log", "`m`.`c`.`cdc_log_queue`", 1, "merge_round")})   # busy: own log
 
     def test_suggest_from_statistics_says_why(self):
         from lfc_change_source import routing
         got = routing.suggest({"region": {"bytes": 2048, "events_per_s": 0.0},
-                               "lineitem": {"bytes": 80 << 30, "events_per_s": 3.5},
+                               "lineitem": {"bytes": 80 << 30, "events_per_s": 0.5},
                                "ticks": {"bytes": None, "events_per_s": 150_000.0},
                                "orders": {"bytes": None, "events_per_s": None}}, routing.Policy("shared"))
-        self.assertEqual({t: (r["class"], r["snapshot"], r["log"], r["shards"]) for t, r in got.items()}, {
-            "region": ("dimension", "log", "shared", 1), "lineitem": ("big_slow", "direct", "shared", 1),
-            "ticks": ("big_fast", "direct", "own", 2), "orders": ("auto", "auto", "shared", 1)})
+        self.assertEqual({t: (r["class"], r["snapshot"], r["log"], r["shards"], r["silver"]) for t, r in got.items()}, {
+            "region": ("small_slow", "log", "shared", 1, "view"),
+            "lineitem": ("big_slow", "direct", "shared", 1, "merge_changed"),
+            "ticks": ("auto_fast", "auto", "own", 2, "merge_round"),           # its size decides: small_fast or big_fast
+            "orders": ("auto_slow", "auto", "shared", 1, "view")})
         self.assertIn("80.0 GiB snapshot", got["lineitem"]["why"])
         self.assertIn("change rate unknown", got["orders"]["why"])
 
@@ -252,16 +265,20 @@ class Routing(unittest.TestCase):
 
     def test_transitions_name_what_a_route_change_takes(self):
         from lfc_change_source import routing
-        same = {"class": "dimension", "snapshot": "log", "log": "shared", "shards": 1}
+        same = {"class": "small_slow", "snapshot": "log", "log": "shared", "shards": 1, "silver": "view"}
         self.assertEqual(routing.transitions(same, same), [])
-        hot = {"class": "big_fast", "snapshot": "direct", "log": "own", "shards": 3}
-        self.assertEqual([a for a, _ in routing.transitions(same, hot)], ["snapshot", "cutover", "reshard"])
+        hot = {"class": "big_fast", "snapshot": "direct", "log": "own", "shards": 3, "silver": "auto_cdc"}
+        self.assertEqual([a for a, _ in routing.transitions(same, hot)], ["snapshot", "cutover", "silver", "reshard"])
+        busy = dict(same, **{"class": "small_fast", "silver": "merge_round"})
+        self.assertIn("build the table from the log once", dict(routing.transitions(same, busy))["silver"])
         self.assertIn("no new snapshot", dict(routing.transitions(same, hot))["cutover"])
 
     def test_chosen_by_name_and_rates_from_counts(self):
         from lfc_change_source import routing
-        p = routing.Policy(shared_log="`m`.`c`.`cdc_log`", chosen={"db.s.region": "big_fast"})
+        p = routing.Policy(shared_log="`m`.`c`.`cdc_log`", chosen={"db.s.region": "big_fast"},
+                           silver_chosen={"db.s.nation": "merge_round"})
         self.assertEqual(routing.log_for("db.s.region", 10, 0, p).cls, "big_fast")
+        self.assertEqual(routing.log_for("db.s.nation", 10, 0, p).silver, "merge_round")   # a view by class, chosen
         with self.assertRaises(ValueError):
             routing.classify(1, 1, routing.Policy("x", chosen={"t": "huge"}), "t")
         self.assertEqual(routing.rates({"a": 100}, {"a": 700, "b": 30}, 60), {"a": 10.0, "b": 0.5})

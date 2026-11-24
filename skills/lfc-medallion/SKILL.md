@@ -163,7 +163,8 @@ full refreshes as above. Route switches never release it, and a source that goes
 only when every source's plan says so), apply the routes kept or tagged (below), record the plan in
 `<target>._lfc_medallion_plan`, release, merge (each table's MERGE by the cheapest path: engine and how many at once,
 by its changed sources: [references/merge-paths.md](references/merge-paths.md); predicting a method's time:
-[performance-reasoning.md](references/performance-reasoning.md)). The pipeline's source file reads its
+[performance-reasoning.md](references/performance-reasoning.md); change-log silver: **lfc-log-silver**). The
+pipeline's source file reads its
 side with `merged_tables()`. A
 bundle job runs it from the package, with no copy of the code:
 

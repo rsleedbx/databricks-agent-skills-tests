@@ -2,8 +2,9 @@
 # change log (lfc_change_source), all tables in one pipeline update. Configuration:
 #   cdc.logs     the change log tables, comma separated (a table moved between logs: each log's events are read;
 #                positions order them)
-#   cdc.tables   a JSON file (workspace path): [{"destination", "target", "keys": [...], "columns": [[name, type, id]]}]
-#                (auto_cdc_tables.py writes it from a gateway's schema files)
+#   cdc.tables   a JSON file (workspace path): [{"destination", "target", "keys": [...], "exprs": [...], "seq": ...}]:
+#                each column's SQL from an event and the position's SQL (lfc_log_silver.silver.auto_cdc_tables writes it
+#                from any lfc_change_source source)
 #   cdc.package  the folder holding lfc_change_source, a workspace path
 import json
 import sys
@@ -12,13 +13,11 @@ from pyspark import pipelines as dp
 
 conf = spark.conf  # noqa: F821  spark: the pipeline's session
 sys.path.insert(0, conf.get("cdc.package"))
-from lfc_change_source.cdc_log import SEQUENCES  # noqa: E402
 from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT  # noqa: E402
 
 LOGS = [x.strip() for x in conf.get("cdc.logs").split(",") if x.strip()]
 with open(conf.get("cdc.tables")) as f:
     TABLES = json.load(f)
-SEQ_SQL = SEQUENCES["gateway_cursor"]
 
 
 def changes(t: dict):
@@ -26,9 +25,9 @@ def changes(t: dict):
     before an insert at one cursor); snapshot rows (operation read) are upserts that sort first (cursor '' or the
     snapshot's own)."""
     from functools import reduce
-    cols = [f"value:data.`{cid}`::{typ} AS `{name}`" for name, typ, cid in t["columns"]]
+    cols = t["exprs"]
     op = f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}"
-    seq = f"named_struct('v', {SEQ_SQL}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ}"
+    seq = f"named_struct('v', {t['seq']}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ}"
     dest = t["destination"].replace("'", "")
     parts = [spark.readStream.table(log).where(  # noqa: F821
         f"destination = '{dest}' AND operation <> 'resolved'").selectExpr(*cols, op, seq) for log in LOGS]

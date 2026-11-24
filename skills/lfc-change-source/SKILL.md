@@ -44,13 +44,14 @@ same reduction for every transport (conformance `gateway_log`). A CockroachDB ch
 number's text, so other readers get wrong numbers.
 
 **Which log, which snapshot path.** [routing.py](scripts/lfc_change_source/routing.py) gives each table a class
-from its snapshot's bytes and its change rate, or by name:
+from its snapshot's bytes and its change rate, or by name, and with it how its silver is kept:
 
-| Class | Snapshot | Changes |
-|---|---|---|
-| `dimension`: small, slow | landed into the log (`log`) | the shared log |
-| `big_slow`: big, few changes | read where the gateway wrote it (`direct`) | the shared log |
-| `big_fast`: many changes | read in place | a log of its own, sharded by key hash once one stream can't carry it |
+| Class | Snapshot | Changes | Silver |
+|---|---|---|---|
+| `small_slow` | landed into the log (`log`) | the shared log | a view |
+| `small_fast` | `log` | the shared log | a MERGE every round |
+| `big_slow` | read where the gateway wrote it (`direct`) | the shared log | a MERGE when changed |
+| `big_fast` | read in place | a log of its own, sharded by key hash once one stream can't carry it | AUTO CDC, a continuous pipeline |
 
 A busy table in the shared log makes every other table's read skip its events, so a fast table gets its own log, and
 its own gateway or Debezium target table, since a gateway's change files mix its tables. `land.gateway_snapshots`

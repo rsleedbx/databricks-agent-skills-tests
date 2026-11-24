@@ -74,8 +74,12 @@ class CdcLog:
             raise ValueError(f"{self.destination}: a position is a {self.seq}, not {p.kind}")
         return "'" + p.value.replace("'", "") + "'" if self.seq in TEXT else str(int(p.value))
 
+    def column_exprs(self) -> list[str]:
+        """Each column's SQL from an event (`<expression> AS <name>`), in order."""
+        return [self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items()]
+
     def _cols(self) -> str:
-        return ", ".join(self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items())
+        return ", ".join(self.column_exprs())
 
     def snapshot_sql(self, at: Position | None = None) -> str:
         """The snapshot given (its own as-of time: the log starts after it), else the table as of `at` (None: the

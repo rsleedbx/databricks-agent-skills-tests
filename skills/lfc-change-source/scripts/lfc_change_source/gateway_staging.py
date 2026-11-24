@@ -11,6 +11,10 @@ of the gateway (shared). The layout (lfc-medallion-pack's references/gateway-sta
                                                              cursor.sequence, operation (INSERT, UPDATE, DELETE), data
                                                              (columns by id)
 
+This is the layout of a gateway with table ids on. A gateway with them off lays staging out by name instead
+(snapshot/<catalog>/<schema>/<table>/, metadata/general_table_schemas/), and for SQL Server change tracking it then
+captures no changes (its event: "requires a non-null UOID"). schemas() says so rather than read it.
+
 Positions are the gateway's cursor (`cursor.sequence`, text of fixed width: <commit LSN>-<counter>, so it sorts in
 commit order). A snapshot's rows carry the cursor it was taken at, so the changes after a snapshot are exactly those
 with a larger sequence. The newest snapshot of a table is the one read; target_schema.<n> with the largest n is the
@@ -48,6 +52,10 @@ def schemas(session, root: str) -> dict:
         m = re.search(r"/table_schemas/([^/]+)/target_schema\.(\d+)\.json$", r.p)
         if m and int(m.group(2)) >= latest.get(m.group(1), (-1, None))[0]:
             latest[m.group(1)] = (int(m.group(2)), r.value)
+    if not latest and any("/general_table_schemas/" in r.p or r.p.endswith("/all_tables.json") for r in rows):
+        raise ValueError(f"{root}: staging laid out by name, not by table id (no table_schemas/<table id>/"
+                         "target_schema.<n>.json): the gateway runs with table ids off. Seen when its task came from "
+                         "no ingestion pipeline; with table ids on and the tables snapshotted again, it's by id")
     out = {}
     for tid, (_, text) in latest.items():
         for s in json.loads(text)["schemas"]:
