@@ -91,6 +91,20 @@ class CdcLog:
         return (f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({last_change_sql(self.changes_sql(None, at), self.keys)}) "
                 f"WHERE {OP} <> '{DELETE}'")
 
+    def current_sql(self, snapshot_sql: str | None = None, position: Position | None = None) -> str:
+        """The table's current rows (its columns, _op upsert), wherever its snapshot is: with no snapshot given (here or
+        in `snapshot`), from the log alone (snapshot_sql); else that snapshot's rows at its position (`position`; None:
+        before every change) and each key's last change after it, deletes dropped. Every reader of a table's rows (a
+        view, a build, a check) calls this, so a snapshot in the log and one read in place give the same table."""
+        snap = snapshot_sql or self.snapshot
+        if not snap:
+            return self.snapshot_sql()
+        cols = ", ".join(quote(c) for c in self.columns)
+        v = self._kind(position) if position is not None else ("''" if self.seq in TEXT else "-1")
+        both = (f"SELECT {cols}, '{UPSERT}' AS {OP}, named_struct('v', {v}, 'o', 0) AS {SEQ} FROM ({snap}) "
+                f"UNION ALL SELECT {cols}, {OP}, {SEQ} FROM ({self.changes_sql(position, None)})")
+        return f"SELECT {cols}, {OP} FROM ({last_change_sql(both, self.keys)}) WHERE {OP} <> '{DELETE}'"
+
     def changes_sql(self, after: Position | None, to: Position | None) -> str:
         """Its events after `after` up to `to` (None: from the start, to the latest); _seq: the source's order, then
         a delete before an insert at one position. A snapshot event (read) is an upsert."""

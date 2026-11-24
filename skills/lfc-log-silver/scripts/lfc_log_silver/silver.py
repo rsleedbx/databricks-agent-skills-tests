@@ -1,24 +1,58 @@
-"""silver: a typed silver table per source table, kept current from a change source (lfc-change-source: the shared
-change log a gateway, Debezium or a changefeed lands into) by one MERGE a table, SCD type 1.
+"""silver: a typed silver table per source table from a change source (lfc-change-source: the shared change log a
+gateway, Debezium or a changefeed lands into), SCD type 1.
 
-  build  each silver table from its source's current rows (snapshot_sql: the snapshot and the changes so far), and
-         the position it's current to, kept in <silver schema>._log_silver
-  apply  each table: one MERGE of each key's last change after its kept position, up to one position read once for
-         the run (a watermark every table shares), deletes included; then the new position
+A table's code path follows two things only, its silver method and where its snapshot is:
 
-A table's MERGE reads only its destination's events (the log is clustered by destination). Tables run `threads` at
-once; the warehouse's clusters set how many run without queueing.
+                     view (at read)   merge (each round)   auto_cdc (continuous)
+  snapshot in log         1                  2                     3
+  snapshot in place       4                  5                     6
+
+Every method reads the table's current rows the same way, the source's current_sql (the snapshot wherever it is, then
+each key's last change after it), so every cell gives the same table. routing.py's classes only pick a cell (and,
+for merge, whether to skip a round with no change); no class name appears here.
+
+  view      CREATE VIEW over the current rows: no work a round
+  merge     build: CREATE TABLE from the current rows, kept at the run's position (in <schema>._log_silver);
+            apply: one MERGE a table of each key's last change after its kept position; only_changed skips a table
+            with no event past it (one grouped query for all)
+  auto_cdc  auto_cdc_tables: the lists for pipelines/auto_cdc_from_log.py (a snapshot in place: a one-time flow)
 
     from lfc_log_silver import silver
-    silver.build(session, sources, "`main`.`silver`", threads=16)    # sources: {name: an lfc_change_source source}
-    silver.apply(session, sources, "`main`.`silver`", to=position)
+    tables = {"orders": silver.Table(src, "merge"), "ledger": silver.Table(src2, "merge", only_changed=True,
+              snapshot_sql=..., position=..., snapshot_files={"path": ..., "exprs": [...]})}
+    silver.run(session, tables, "`main`.`silver`", to, first=True)    # views created, merged tables built
+    silver.run(session, tables, "`main`.`silver`", to)                # a round
 """
 from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 STATE = "_log_silver"
+METHODS = ("view", "merge", "auto_cdc")
+# routing.py's silver names onto the methods here: merge_changed is merge with only_changed
+FROM_ROUTE = {"view": ("view", False), "merge_round": ("merge", False), "merge_changed": ("merge", True),
+              "auto_cdc": ("auto_cdc", False)}
+
+
+@dataclass
+class Table:
+    src: object                          # an lfc_change_source source: columns, keys, changes_sql, current_sql
+    method: str = "merge"                # one of METHODS
+    only_changed: bool = False           # merge: skip a round with no event past the kept position
+    snapshot_sql: str | None = None      # its snapshot read in place, as SQL (None: the snapshot is in the log)
+    position: object = None              # that snapshot's position (a Position; None: before every change)
+    snapshot_files: dict | None = None   # auto_cdc: {"path", "exprs"} of that snapshot, for the pipeline's batch read
+
+    def current_sql(self) -> str:
+        return self.src.current_sql(self.snapshot_sql, self.position)
+
+
+def from_route(src, route, snapshot_sql=None, position=None, snapshot_files=None) -> Table:
+    """A Table from a routing.Route: its silver name as a method here."""
+    method, only = FROM_ROUTE[route.silver]
+    return Table(src, method, only, snapshot_sql, position, snapshot_files)
 
 
 def _q(name: str) -> str:
@@ -27,6 +61,10 @@ def _q(name: str) -> str:
 
 def _lit(text: str) -> str:
     return "'" + str(text).replace("'", "''") + "'"
+
+
+def _target(schema: str, name: str) -> str:
+    return f"{schema}.{_q(name)}"
 
 
 def ensure_state(session, schema: str) -> None:
@@ -52,10 +90,14 @@ def _save(session, schema: str, rows: list) -> None:
                 "n.position, n.rows, n.seconds, current_timestamp())")
 
 
-def build_sql(src, target: str) -> str:
-    """A silver table from the source's current rows, typed by its columns."""
-    cols = ", ".join(_q(c) for c in src.columns)
-    return f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({src.snapshot_sql()})"
+def view_sql(t: Table, target: str) -> str:
+    cols = ", ".join(_q(c) for c in t.src.columns)
+    return f"CREATE OR REPLACE VIEW {target} AS SELECT {cols} FROM ({t.current_sql()})"
+
+
+def build_sql(t: Table, target: str) -> str:
+    cols = ", ".join(_q(c) for c in t.src.columns)
+    return f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({t.current_sql()})"
 
 
 def merge_sql(src, target: str, after, to) -> str:
@@ -72,156 +114,104 @@ def merge_sql(src, target: str, after, to) -> str:
             + f"WHEN NOT MATCHED AND c.{OP} <> '{DELETE}' THEN INSERT ({names}) VALUES ({vals})")
 
 
-def _target(schema: str, name: str) -> str:
-    return f"{schema}.{_q(name)}"
-
-
-def build(session, sources: dict, schema: str, to, threads: int = 16, at: dict | None = None) -> dict:
-    """Every silver table from its source's current rows; each kept at position `to` (read before the builds: a change
-    after it is applied again by the next apply, the same result for SCD type 1), or at its own position in `at`: a
-    source whose snapshot is given (read in place, routing's direct path) is built from that snapshot alone and kept
-    at the snapshot's position, so the next apply adds every change after it. {target: seconds}."""
-    ensure_state(session, schema)
-
+def _each(session, statements: dict, threads: int) -> dict:
+    """{name: statement} run `threads` at once: {name: (affected rows or None, seconds)}."""
     def one(item):
-        name, src = item
+        name, sql = item
         t0 = time.time()
-        session.sql(build_sql(src, _target(schema, name)))
-        return name, time.time() - t0
+        r = session.sql(sql).collect()
+        n = None
+        try:
+            n = int(r[0].asDict().get("num_affected_rows")) if r else 0
+        except Exception:  # noqa: BLE001  a statement or session that returns no counts
+            pass
+        return name, (n, time.time() - t0)
     with ThreadPoolExecutor(threads) as pool:
-        done = dict(pool.map(one, sources.items()))
-    at = at or {}
-    _save(session, schema, [(n, (at.get(n) or to).kind, (at.get(n) or to).value, 0, s) for n, s in done.items()])
+        return dict(pool.map(one, statements.items()))
+
+
+def views(session, tables: dict, schema: str, threads: int = 16) -> dict:
+    """A view per table over its current rows. {name: (None, seconds)}."""
+    return _each(session, {n: view_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
+
+
+def build(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+    """Each table built from its current rows, kept at `to` (read before the builds: a change after it is applied
+    again by the next apply, the same result for SCD type 1). {name: (None, seconds)}."""
+    ensure_state(session, schema)
+    done = _each(session, {n: build_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
+    _save(session, schema, [(n, to.kind, to.value, 0, s) for n, (_, s) in done.items()])
     return done
 
 
-def views(session, sources: dict, schema: str, threads: int = 16) -> dict:
-    """Silver as a view per table over its current rows from the change log (snapshot_sql): no work a round, the read
-    rebuilds the table (routing's small_slow: little data, few changes). {target: seconds to create}."""
-    def one(item):
-        name, src = item
-        t0 = time.time()
-        cols = ", ".join(_q(c) for c in src.columns)
-        session.sql(f"CREATE OR REPLACE VIEW {_target(schema, name)} AS SELECT {cols} FROM ({src.snapshot_sql()})")
-        return name, time.time() - t0
-    with ThreadPoolExecutor(threads) as pool:
-        return dict(pool.map(one, sources.items()))
-
-
-def changed(session, sources: dict, schema: str, to) -> list:
+def changed(session, tables: dict, schema: str, to) -> list:
     """The tables with a change event after their kept position, up to `to`: one grouped query over the log they share
     (each table's newest position against its kept one). A table never built counts as changed."""
     from lfc_change_source.cdc_log import SEQUENCES, TEXT
-    if not sources:
+    if not tables:
         return []
     kept = positions(session, schema)
-    one = next(iter(sources.values()))
+    one = next(iter(tables.values())).src
     seq = SEQUENCES[one.seq]
     lit = (lambda v: "'" + str(v).replace("'", "") + "'") if one.seq in TEXT else (lambda v: str(int(v)))
-    by_dest = {s.destination: n for n, s in sources.items()}
+    by_dest = {t.src.destination: n for n, t in tables.items()}
     rows = session.sql(f"SELECT destination, max({seq}) FROM {one.fq} WHERE operation NOT IN ('read', 'resolved') "
                        f"AND destination IN ({', '.join(_lit(d) for d in by_dest)}) AND {seq} <= {lit(to.value)} "
                        "GROUP BY destination").collect()
     newest = {by_dest[r[0]]: r[1] for r in rows}
     order = (lambda v: str(v)) if one.seq in TEXT else (lambda v: int(v))
-    return [n for n in sources if n not in kept or kept[n][1] is None
+    return [n for n in tables if n not in kept or kept[n][1] is None
             or (n in newest and order(newest[n]) > order(kept[n][1]))]
 
 
-def auto_cdc_tables(sources: dict, per_pipeline: int = 999) -> list:
-    """The table lists for this skill's pipelines/auto_cdc_from_log.py, `per_pipeline` tables each (a pipeline
-    takes at most 1,000 tables; its setup grows with its flows, paid once in continuous mode): [[{destination, target,
-    keys, exprs, seq}]]."""
-    from lfc_change_source.cdc_log import SEQUENCES
-    items = [{"destination": s.destination, "target": n, "keys": list(s.keys), "exprs": s.column_exprs(),
-              "seq": SEQUENCES[s.seq]} for n, s in sources.items()]
+def apply(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+    """Each table: one MERGE of its changes after its kept position up to `to`; a table with only_changed and no
+    event past its position is skipped. {name: (rows, seconds)} for the tables merged."""
+    from lfc_change_source.contract import Position
+    skip_ok = {n: t for n, t in tables.items() if t.only_changed}
+    todo = {n: t for n, t in tables.items() if not t.only_changed}
+    todo.update({n: skip_ok[n] for n in changed(session, skip_ok, schema, to)})
+    kept = positions(session, schema)
+
+    def after(n):
+        kind, pos = kept.get(n, (to.kind, None))
+        return Position(kind, pos) if pos is not None else None
+    done = _each(session, {n: merge_sql(t.src, _target(schema, n), after(n), to) for n, t in todo.items()}, threads)
+    _save(session, schema, [(n, to.kind, to.value, r, s) for n, (r, s) in done.items()])
+    return done
+
+
+def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
+    """The table lists for this skill's pipelines/auto_cdc_from_log.py, `per_pipeline` tables each (a pipeline takes
+    at most 1,000 tables; its setup grows with its flows, paid once in continuous mode): [[{destination, target, keys,
+    exprs, seq, seq_type[, snapshot]}]]; a snapshot in place (snapshot_files) adds a flow reading it in the pipeline,
+    sequenced by the same type (seq_type: the position's SQL type)."""
+    from lfc_change_source.cdc_log import SEQUENCES, TEXT
+    items = []
+    for n, t in tables.items():
+        item = {"destination": t.src.destination, "target": n, "keys": list(t.src.keys),
+                "exprs": t.src.column_exprs(), "seq": SEQUENCES[t.src.seq],
+                "seq_type": "STRING" if t.src.seq in TEXT else "BIGINT"}
+        if t.snapshot_files:
+            item["snapshot"] = {**t.snapshot_files, "position": "" if t.position is None else t.position.value}
+        items.append(item)
     return [items[i:i + per_pipeline] for i in range(0, len(items), per_pipeline)]
 
 
-def run(session, sources: dict, routes: dict, schema: str, to, threads: int = 16, first: bool = False,
-        at: dict | None = None) -> dict:
-    """One round of silver for every table by its route's method (lfc-change-source routing: view, merge_round,
-    merge_changed, auto_cdc): views created on the first round only, merge_round tables merged, merge_changed tables
-    merged only if changed, auto_cdc tables left to their pipelines (auto_cdc_tables). first: build the merged
-    tables (and the views) instead of merging; at: {table: position} for tables built from a snapshot read in place
-    (build). {method: {"tables": n, "merged": n, "seconds": s}}."""
-    by = {}
-    for n, s in sources.items():
-        by.setdefault(routes[n].silver if n in routes else "merge_round", {})[n] = s
+def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False) -> dict:
+    """One round for every table by its method: views created on the first round only; merged tables built on the
+    first round, merged after it (only_changed: only those with events past their position); auto_cdc tables left to
+    their pipelines. {method: {"tables": n, "done": n, "seconds": s}}."""
+    by = {m: {n: t for n, t in tables.items() if t.method == m} for m in METHODS}
+    bad = [n for n, t in tables.items() if t.method not in METHODS]
+    if bad:
+        raise ValueError(f"tables with no method here: {bad[:5]} (one of {', '.join(METHODS)})")
     out = {}
     t0 = time.time()
-    if by.get("view") and first:
-        views(session, by["view"], schema, threads)
-    out["view"] = {"tables": len(by.get("view", {})), "merged": 0, "seconds": round(time.time() - t0, 1)}
-    for method in ("merge_round", "merge_changed"):
-        group = by.get(method, {})
-        t0 = time.time()
-        if first and group:
-            build(session, group, schema, to, threads, at)
-            todo = group
-        else:
-            todo = group if method == "merge_round" else {n: group[n] for n in changed(session, group, schema, to)}
-            if todo:
-                apply(session, todo, schema, to, threads)
-        out[method] = {"tables": len(group), "merged": len(todo), "seconds": round(time.time() - t0, 1)}
-    out["auto_cdc"] = {"tables": len(by.get("auto_cdc", {})), "merged": 0, "seconds": 0.0}
-    return out
-
-
-BATCH = "_log_silver_batch"
-
-
-def stage_sql(sources: dict, schema: str, after, to) -> str:
-    """One scan of the change log for the run: every source's change events after `after` (the oldest kept position)
-    up to `to`, into a batch table clustered by destination, so each table's MERGE reads its own slice of a small
-    table instead of the log's newest, unclustered files. The sources share one log (their fq) and one kind."""
-    from lfc_change_source.cdc_log import SEQUENCES, TEXT
-    one = next(iter(sources.values()))
-    seq = SEQUENCES[one.seq]
-    lit = (lambda v: "'" + str(v).replace("'", "") + "'") if one.seq in TEXT else (lambda v: str(int(v)))
-    dests = ", ".join(_lit(s.destination) for s in sources.values())
-    cut = ([f"{seq} > {lit(after.value)}"] if after is not None else []) + [f"{seq} <= {lit(to.value)}"]
-    return (f"CREATE OR REPLACE TABLE {schema}.{BATCH} CLUSTER BY (destination) AS SELECT * FROM {one.fq} "
-            f"WHERE operation NOT IN ('read', 'resolved') AND destination IN ({dests}) AND {' AND '.join(cut)}")
-
-
-def apply_staged(session, sources: dict, schema: str, to, threads: int = 16) -> dict:
-    """apply, with the run's changes read from the log once (stage_sql) and each table merged from that batch:
-    {target: (rows, seconds)}, and "_stage" (None, the batch's seconds). A table built after the oldest kept position
-    still starts at its own."""
-    import dataclasses
-
-    from lfc_change_source.contract import Position
-    kept = positions(session, schema)
-    olds = [kept[n][1] for n in sources if n in kept and kept[n][1] is not None]
-    oldest = Position(to.kind, min(olds)) if olds and len(olds) == len(sources) else None
+    done = views(session, by["view"], schema, threads) if first and by["view"] else {}
+    out["view"] = {"tables": len(by["view"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
-    session.sql(stage_sql(sources, schema, oldest, to))
-    stage_s = time.time() - t0
-    staged = {n: dataclasses.replace(s, fq=f"{schema}.{BATCH}") for n, s in sources.items()}
-    done = apply(session, staged, schema, to, threads)
-    done["_stage"] = (None, stage_s)
-    return done
-
-
-def apply(session, sources: dict, schema: str, to, threads: int = 16) -> dict:
-    """Every silver table: one MERGE of its changes after its kept position up to `to`. {target: (rows, seconds)}."""
-    from lfc_change_source.contract import Position
-    kept = positions(session, schema)
-
-    def one(item):
-        name, src = item
-        kind, pos = kept.get(name, (to.kind, None))
-        after = Position(kind, pos) if pos is not None else None
-        t0 = time.time()
-        r = session.sql(merge_sql(src, _target(schema, name), after, to)).collect()
-        n = None
-        try:
-            n = int(r[0].asDict().get("num_affected_rows")) if r else 0
-        except Exception:  # noqa: BLE001  a session that doesn't return the counts
-            pass
-        return name, (n, time.time() - t0)
-    with ThreadPoolExecutor(threads) as pool:
-        done = dict(pool.map(one, sources.items()))
-    _save(session, schema, [(n, to.kind, to.value, r, s) for n, (r, s) in done.items()])
-    return done
+    done = (build if first else apply)(session, by["merge"], schema, to, threads) if by["merge"] else {}
+    out["merge"] = {"tables": len(by["merge"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
+    out["auto_cdc"] = {"tables": len(by["auto_cdc"]), "done": 0, "seconds": 0.0}
+    return out

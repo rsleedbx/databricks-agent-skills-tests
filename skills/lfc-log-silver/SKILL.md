@@ -5,23 +5,25 @@ description: "Silver from a change log: a typed silver table per source table, k
 
 # Silver from a change log
 
-A change log holds every table's events in one place. Silver is a table per source table, typed, current. How each
-table's silver is kept follows its route (lfc-change-source `routing.py`), because a small table costs per object and a
-big one per byte:
+A change log holds every table's events in one place. Silver is a table per source table, typed, current. A table's
+code path follows two things only, how its silver is kept and where its snapshot is:
 
-| Route's silver | What a round does | For |
-|---|---|---|
-| `view` | nothing: a view over the table's current rows from the log (created once) | `small_slow`: most tables, almost no data |
-| `merge_round` | one MERGE of each key's last change since the table's kept position | `small_fast` |
-| `merge_changed` | the same MERGE, only for tables with events past their kept position (one grouped query finds them) | `big_slow` |
-| `auto_cdc` | nothing here: flows in a continuous pipeline, its setup paid once | `big_fast` |
+| | `view` (at read) | `merge` (each round) | `auto_cdc` (continuous) |
+|---|---|---|---|
+| snapshot in the log | 1 | 2 | 3 |
+| snapshot read in place | 4 | 5 | 6 |
 
-A MERGE has a fixed floor of seconds whatever it merges (planning, a small write, a commit), and running many at once
-raises throughput but slows each, so skipping the tables that didn't change matters more than merging faster.
+Every method reads a table's current rows one way, the source's `current_sql` (the snapshot wherever it is, then each
+key's last change after it), so every cell gives the same table. lfc-change-source `routing.py`'s classes pick the
+cell: `small_slow` 1, `small_fast` 2, `big_slow` 5 (merged only in a round that changed it), `big_fast` 6. A small table
+costs per object (a MERGE has a fixed floor of seconds whatever it merges), a big one per byte; transport and how many
+sources feed a table don't change the cell.
 
 Code: [scripts/lfc_log_silver/silver.py](scripts/lfc_log_silver/silver.py), installed as the package `lfc-log-silver`
 (`pip install <archive>#subdirectory=skills/lfc-log-silver/scripts`), with lfc-change-source beside it. The AUTO CDC
 pipeline source: [scripts/pipelines/auto_cdc_from_log.py](scripts/pipelines/auto_cdc_from_log.py).
+
+The four layers, transport, a table's silver, many sources into one, and gold, each in one table: [docs/design.md](../../docs/design.md).
 
 ## Use
 
@@ -29,27 +31,24 @@ pipeline source: [scripts/pipelines/auto_cdc_from_log.py](scripts/pipelines/auto
 from lfc_change_source import routing
 from lfc_log_silver import silver
 
-# sources: {table: an lfc_change_source source (cdc_log, gateway_log, changefeed_log)}; to: the run's position
-routes = {t: routing.log_for(t, size, rate, policy) for t, (size, rate) in stats.items()}
-silver.run(session, sources, routes, "`main`.`silver`", to, first=True)    # build the merged tables, create the views
-silver.run(session, sources, routes, "`main`.`silver`", to)                # a round
-lists = silver.auto_cdc_tables({t: s for t, s in sources.items() if routes[t].silver == "auto_cdc"})
+# a Table: its change source, its method, and (snapshot read in place) that snapshot's SQL, position and files
+tables = {t: silver.from_route(src[t], routing.log_for(t, size, rate, policy)) for t, (size, rate) in stats.items()}
+silver.run(session, tables, "`main`.`silver`", to, first=True)    # views created, merged tables built
+silver.run(session, tables, "`main`.`silver`", to)                # a round
+lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "auto_cdc"})
 ```
 
-- `build` makes each merged table from its source's current rows and keeps the position it's current to, in
-  `<silver schema>._log_silver`. A table whose snapshot is read in place (routing's `direct` path) is built from that
-  snapshot and kept at the snapshot's position (`at=`), so its first MERGE adds every change after it.
-- `apply` runs a MERGE per table, `threads` at once. `apply_staged` first copies the run's changes from the log once
-  into a batch table; it didn't help when measured (the log read was about 70 KB a MERGE), and stays for logs where the
-  read does cost.
-- `auto_cdc_tables` writes the table lists for `pipelines/auto_cdc_from_log.py`, at most 999 tables a pipeline (a
-  pipeline takes up to 1,000 tables, and its setup grows with its flows). Each entry carries each column's SQL from an
-  event and the position's SQL, so the pipeline reads any change source.
+- `build` makes each merged table from its current rows and keeps the run's position in `<silver schema>._log_silver`;
+  `apply` runs one MERGE a table of each key's last change after it, `threads` at once; `only_changed` skips a table
+  with no event past its position (one grouped query finds them).
+- `auto_cdc_tables` writes the lists for `pipelines/auto_cdc_from_log.py`, at most 999 tables a pipeline (a pipeline
+  takes up to 1,000 tables, and its setup grows with its flows). A snapshot read in place adds a second flow that
+  streams its parquet files (an AUTO CDC flow reads its source as a stream, so a batch view is refused), sequenced by
+  the snapshot's position in the change flow's type (`seq_type`).
 - A table read across logs (a cut-over: lfc-change-source `routing.history_fq`) is a source like any other.
 
 ## Checks
 
-`python3 -m unittest skills/lfc-log-silver/tests/test_log_silver.py` checks, offline (fake session): the build and
-MERGE SQL (deletes first, a null-safe key match), each table read from its own kept position, the staged apply reading
-the log once, a round by method (views on the first round only, `merge_changed` only for changed tables), the AUTO CDC
-lists, and a table built from a snapshot read in place kept at the snapshot's position.
+`python3 -m unittest skills/lfc-log-silver/tests/test_log_silver.py` checks, offline (fake session): each of the six
+cells reads the snapshot and the changes, the MERGE SQL (deletes first, a null-safe key match), each table merged from
+its own kept position, `only_changed`, a round by method (views on the first round only) and the AUTO CDC lists.
