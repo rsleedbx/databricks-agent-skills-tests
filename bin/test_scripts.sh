@@ -155,7 +155,7 @@ check "zerobus-debezium-test canonical_sql: the column SQL the scripts share, ag
 check "pipeline-diagram.py on saved pipeline JSON (gateway on an AG, integrated, Kafka)" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_pipeline_diagram.py"
 check "lfc_medallion merge_route: one route per table across sources, last run's routes, the plan written, released and merged; merged_tables; the entry point (stubs)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_route.py"
 check "lfc_medallion merge_all: copy, change-feed MERGE, unchanged, full refresh, new column, SCD type 2 key, stack_all skip (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_merge.py"
-check "lfc_medallion coltypes: the widening rule across sources, schema-union's answers kept, Spark types, aligned() on local Spark (skipped without it)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_coltypes.py"
+check "lfc_medallion coltypes: the widening rule across sources, schema-union's answers kept, Spark types, aligned() on local Spark (pyspark through uv: Databricks Connect's pyspark opens no local session)" uv run -q --no-project --with pyspark python -m unittest -q "$SK/lfc-medallion/tests/test_coltypes.py"
 check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
   check "classify.py $m: every role as the schema's role: says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth schema
