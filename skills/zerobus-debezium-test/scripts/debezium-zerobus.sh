@@ -1237,10 +1237,12 @@ have() { q "SELECT destination, operation, COUNT(*) FROM $LOGQ GROUP BY 1, 2 ORD
 short() { # short <round><part>: the destinations and operations with fewer events than every source's manifest expects
   have > "$W/have.tsv"
   for i in $(seq 1 "$NSRC"); do DP=${DESTP[$i]} jq -r '.expect | to_entries[] | .key as $t | .value | to_entries[]
-    | select(.value > 0) | [strenv(DP) + "." + $t, .key, .value] | @tsv' "$W/m$1-$i.json"; done \
-    | awk -F'\t' 'FILENAME == ARGV[1] {h[$1 FS $2] = $3; next} (h[$1 FS $2] + 0) < $3 {printf "%s %s %d of %d; ", $1, $2, h[$1 FS $2], $3}' "$W/have.tsv" -; }
+    | select(.value > 0) | [$ENV.DP + "." + $t, .key, .value] | @tsv' "$W/m$1-$i.json"; done > "$W/want.tsv"
+  [ -s "$W/want.tsv" ] || { echo "no expected events read from the manifests $W/m$1-*.json; "; return; }
+  awk -F'\t' 'FILENAME == ARGV[1] {h[$1 FS $2] = $3; next} (h[$1 FS $2] + 0) < $3 {printf "%s %s %d of %d; ", $1, $2, h[$1 FS $2], $3}' "$W/have.tsv" "$W/want.tsv"; }
 # (FILENAME, not NR == FNR: with no events yet, have.tsv is empty, and NR == FNR held for every expected line, so a
-# log with nothing in it passed)
+# log with nothing in it passed. An empty want.tsv is a shortfall: when jq failed on the manifests, nothing was
+# expected, and an empty log passed)
 expect() { # expect <round><part>: "ok <seconds>" once every expected event is in the log, or the shortfalls after WAIT
   local t0=$SECONDS r; while :; do r=$(short "$1"); [ -z "$r" ] && { echo "ok $((SECONDS - t0))"; return; }
     [ $((SECONDS - t0)) -ge "$WAIT" ] && { echo "$r"; return; }; sleep 5; done; }
