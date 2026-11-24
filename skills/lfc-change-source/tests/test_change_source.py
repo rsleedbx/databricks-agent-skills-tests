@@ -81,6 +81,35 @@ class CdcLog(unittest.TestCase):
         self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn"})
 
 
+class GatewayStaging(unittest.TestCase):
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples", "gateway")
+
+    def test_schema_file_to_columns_and_changes_sql(self):   # from the captured schema file
+        from lfc_change_source import gateway_staging as gs
+        text = open(os.path.join(self.here, "target_schema.0.json")).read()
+        p = "/Volumes/c/s/staging/g/metadata/table_schemas/T_HuC79qK_50284_50300/target_schema.0.json"
+        session = types.SimpleNamespace(sql=lambda q: types.SimpleNamespace(
+            collect=lambda: [types.SimpleNamespace(p=p, value=text)]))
+        t = gs.schemas(session, "/Volumes/c/s/staging/g")[("src_db", "lob_124", "history")]
+        self.assertEqual(t["id"], "T_HuC79qK_50284_50300")
+        self.assertEqual(t["keys"], ["h_t_id", "h_b_id", "h_a_id", "h_delta", "h_time", "h_filler"])   # keyless: all
+        self.assertIn(("h_delta", "DECIMAL(12,2)", "C_HuC79qK_50284_50300_4"), t["columns"])
+        self.assertEqual(gs.sql_type("INTEGER"), "INT")
+        src = gs.Staging("lob_124", "/Volumes/c/s/staging/g", t)
+        q = src.changes_sql(Position("cursor", "00000000/8F63FB10-0000000000000000000"), None)
+        self.assertIn("data.`C_HuC79qK_50284_50300_4`::DECIMAL(12,2) AS `h_delta`", q)
+        self.assertIn("table_id.uoid = 'T_HuC79qK_50284_50300' AND cursor.sequence > '00000000/8F63FB10-0000000000000000000'", q)
+        self.assertIn("CASE operation WHEN 'DELETE' THEN 0 ELSE 1 END) AS _seq", q)   # the sample's DELETE first
+        self.assertIn("/snapshot/T_HuC79qK_50284_50300/", src.snapshot_sql())
+        with self.assertRaises(ValueError):
+            src.changes_sql(Position("lsn", "1"), None)
+
+    def test_cursor_sorts_as_text(self):   # fixed width: text order is commit order
+        from lfc_change_source.gateway_staging import _cursor
+        cs = [_cursor(0x9FD60E90, 0x4c8), _cursor(0x8F63FB10, 1), _cursor(0x9FD60E90, 0x4c7), _cursor(0xA0847CE0)]
+        self.assertEqual(sorted(cs), [cs[1], cs[2], cs[0], cs[3]])
+
+
 class Conformance(unittest.TestCase):
     def test_scenario_truth(self):
         from lfc_change_source import conformance
