@@ -107,3 +107,5 @@ layers:
       - test_results_dir.py
       - test_shape_order.py
       - test_scripts.sh
+      - test_timings.py
+      - genie_skills_sync.sh

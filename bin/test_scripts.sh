@@ -18,7 +18,14 @@ R=$(cd "$(dirname "$0")/.." && pwd); SK=$R/skills; SS=$SK/lfc-source-statschema/
 T=$(mktemp -d); fails=0
 ok() { printf "  ok    %s\n" "$1"; }
 no() { printf "  FAIL  %s\n" "$1"; fails=$((fails + 1)); }
-run_check() { local name=$1; shift; if "$@" > "$T/out" 2>&1; then ok "$name"; return 0; else no "$name"; sed 's/^/        /' "$T/out" | tail -5; return 1; fi; }
+# TEST_TIMINGS: each check's seconds, result and run time are appended there (default ~/.cache/test_scripts/timings.tsv):
+# which checks cost what, to run fewer of them with reason (bin/test_timings.py summarizes it)
+TIMINGS=${TEST_TIMINGS:-$HOME/.cache/test_scripts/timings.tsv}; mkdir -p "$(dirname "$TIMINGS")"; RUN_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+timing() { printf '%s\t%s\t%s\t%s\n' "$RUN_AT" "$2" "$3" "$1" >> "$TIMINGS"; }   # name seconds result
+run_check() {
+  local name=$1 t0=$SECONDS dur; shift
+  if "$@" > "$T/out" 2>&1; then dur=$((SECONDS - t0)); ok "$name$([ "$dur" -ge 2 ] && echo " (${dur}s)")"; timing "$name" "$dur" pass; return 0
+  else dur=$((SECONDS - t0)); no "$name (${dur}s)"; timing "$name" "$dur" fail; sed 's/^/        /' "$T/out" | tail -5; return 1; fi; }
 # A check runs only when what it depends on changed since it last passed (bin/test_gate.py: its command, its repo
 # paths widened to the skills they reference, or the whole repo for a bin tool); one that names no repo path always
 # runs: a shell function such as tpc_dialects or wl_offline (its body may write $T for a later check, so it must
@@ -39,7 +46,7 @@ check() {
     esac; return;; esac
   d=$(python3 "$R/bin/test_gate.py" decide "$name" --value "$GATE_ENV" --value "$*" --cache "$T/edges.json" -- "$@")
   case "$d" in
-    skip*) printf "  skip  %s (unchanged since %s)\n" "$name" "${d#skip }"; skipped=$((skipped + 1)); return;;
+    skip*) printf "  skip  %s (unchanged since %s)\n" "$name" "${d#skip }"; skipped=$((skipped + 1)); timing "$name" 0 skip; return;;
     "run -") run_check "$name" "$@"; return;;
   esac
   if run_check "$name" "$@"; then python3 "$R/bin/test_gate.py" record "$name" "${d#run }" pass
@@ -63,6 +70,7 @@ check "layers: every skill and bin script is in layers.yaml, every cross-skill r
 check "check_layers: unit tests on a fixture tree" python3 -m unittest -q "$R/bin/test_check_layers.py"
 check "test_gate: a check's inputs (skill, its code references, a bin tool, none) and the \$T group" python3 -m unittest -q "$R/bin/test_test_gate.py"
 check "test_skip: fingerprints, passes, failures, TEST_SKIP_AGAIN" python3 -m unittest -q "$R/bin/test_skip/tests/test_test_skip.py"
+check "repo_reuse_hook: the repo's reuse hook on fixtures" python3 -m unittest -q "$R/bin/repo_reuse_hook/tests/test_repo_reuse_hook.py"
 check "shape.py order between columns: offset spread, GREATEST fallback, a rejected offset rule (fixture, every row)" python3 -m unittest -q "$R/bin/test_shape_order.py"
 for w in tpcb tpcc tpch tpcdi tpcds tpce; do
   check "shape.py $w" sh -c "uv run -q '$SS/shape.py' '$SK/lfc-source-statschema/schemas/$w.yaml' --sf 0.1 --expected '$T/$w.exp.json' > '$T/$w.yaml'"
@@ -102,6 +110,7 @@ check "statschema.tools: ddl(), ddl_to_schema() and shape() give the wrappers' t
 check "lfc_source_contract.jdbc: Maven driver and allow-list, TLS URLs, guarded() DO block, JdbcSql, dbapi reads through remote_query and writes through JDBC (fake spark)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_jdbc.py"
 check "lfc_source_contract.cdc: publication FOR TABLE created, kept, tables added, a failed add explained; the slot (fake cursor)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_cdc.py"
 check "lfc-saas-pipeline: package calls (fake API), each notebook and its bundle read the same tables through the same connection" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
+check "lfc_saas_pipeline: the package's pipeline specs, runs and checks (fakes)" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
   sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
 check "size_query.py: the sizing statement size.sh and a notebook run (each engine's arguments, MariaDB on the MySQL query, missing --database / --service)" python3 -m unittest -q "$SK/lfc-source-sizing/scripts/test_size_query.py"
@@ -142,9 +151,11 @@ export WANT="10.0.0.0/24 10.9.0.0/24" HAVE="10.0.0.0/16"
 check "q.sh missing.sql" sh -c "'$SK/shell-json-scripting/scripts/q.sh' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
 check "q.py missing.sql" sh -c "uv run -q '$SK/shell-json-scripting/scripts/q.py' '$SK/lfc-source-firewall/scripts/missing.sql' | grep -qE \"^MISSING='?10.9.0.0/24'?$\""
 check "zerobus-sdk-freshness-test: producer.py's run file (dups_sent, Kafka errors, a dead stream, a failed flush), report.py's counts, the probe's timeout (fake SDKs)" python3 -m unittest -q "$SK/zerobus-sdk-freshness-test/tests/test_scripts.py"
+check "zerobus-debezium-test canonical_sql: the column SQL the scripts share, against the copies it replaced" python3 -m unittest -q "$SK/zerobus-debezium-test/tests/test_canonical_sql.py"
 check "pipeline-diagram.py on saved pipeline JSON (gateway on an AG, integrated, Kafka)" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_pipeline_diagram.py"
 check "lfc_medallion merge_route: one route per table across sources, last run's routes, the plan written, released and merged; merged_tables; the entry point (stubs)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_route.py"
 check "lfc_medallion merge_all: copy, change-feed MERGE, unchanged, full refresh, new column, SCD type 2 key, stack_all skip (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_merge.py"
+check "lfc_medallion coltypes: the widening rule across sources, schema-union's answers kept, Spark types, aligned() on local Spark (skipped without it)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_coltypes.py"
 check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
   check "classify.py $m: every role as the schema's role: says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth schema
