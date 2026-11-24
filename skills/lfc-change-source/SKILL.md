@@ -29,8 +29,8 @@ the package `lfc-change-source` (`pip install <archive>#subdirectory=skills/lfc-
 
 | Adapter | Carries | Positions | Watermark | Shared | State |
 |---|---|---|---|---|---|
-| `lfc_bronze` | a Lakeflow Connect bronze table: the ingestion pipeline's streaming table, one a source and table; changes from its change data feed (`table_changes`) | Delta versions | the latest version | no | built; lfc-medallion's merge route reads through it |
-| change log | an append-only table of Debezium change events (through Zerobus), every table's: `destination`, `key:`, `value:after:`, op | the source's position (LSN, HLC) | the highest committed position | yes | next: from **zerobus-debezium-test**'s silver generator |
+| `lfc_bronze` | a Lakeflow Connect bronze table: the ingestion pipeline's streaming table, one a source and table; changes from its change data feed (`table_changes`) | Delta versions, or commit times | the latest version | no | built; lfc-medallion's merge route reads through it |
+| `cdc_log` | an append-only table of Debezium change events (through Zerobus), every table's: `destination`, `key:`, `value:after:`, op | the source's own order (`SEQUENCES`: LSN, binlog position, SCN, event time) | the latest event's position | yes | built; passes conformance; **zerobus-debezium-test**'s silver generator to read through it |
 | gateway staging | the gateway's staging volume: `snapshot/<T>/*.parquet`, `cdc/<segment>/<n>` JSON lines with columns by id | the gateway's cursor | the extraction watermark, the committed LSN | yes: one folder a pipeline | then: formats in **lfc-medallion-pack**'s `references/gateway-staging.md` |
 | object storage | a changefeed's files in cloud storage or a Volume (CockroachDB): `__crdb__updated` (HLC), `__crdb__event_type`; column families merged first | HLC | the newest `.RESOLVED` file | a folder a table | last |
 

@@ -61,6 +61,26 @@ class LfcBronze(unittest.TestCase):
         self.assertIn("FROM (DESCRIBE HISTORY `c`.`s`.`account`) WHERE version > 16", seen[-1])
 
 
+class CdcLog(unittest.TestCase):
+    def test_changes_from_the_shared_log_by_destination_and_sequence(self):
+        from lfc_change_source.cdc_log import SEQUENCES, CdcLog as Log
+        src = Log("crdb1", "`m`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", ["id"],
+                  {"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="lsn", snapshot="SELECT * FROM `m`.`zb`.`snap`")
+        q = src.changes_sql(Position("lsn", "100"), Position("lsn", "200"))
+        self.assertIn("key:id::BIGINT AS `id`", q)                       # a delete has only its key
+        self.assertIn("value:after:total::DECIMAL(12,2) AS `total`", q)
+        self.assertIn("destination = 'crdb1.public.orders' AND value:source:lsn::BIGINT > 100 AND "
+                      "value:source:lsn::BIGINT <= 200", q)
+        self.assertIn("CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS _seq", q)   # a delete before an insert
+        self.assertTrue(src.shared)
+        self.assertIn("'upsert' AS _op FROM (SELECT * FROM `m`.`zb`.`snap`)", src.snapshot_sql())
+        with self.assertRaises(ValueError):
+            src.changes_sql(Position("ts_ns", "1"), None)   # another source's kind of position
+        with self.assertRaises(ValueError):
+            Log("x", "t", "t", "d", ["id"], {"id": "INT"}, seq="gtid")
+        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn"})
+
+
 class Conformance(unittest.TestCase):
     def test_scenario_truth(self):
         from lfc_change_source import conformance

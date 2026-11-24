@@ -1,0 +1,123 @@
+"""cdc_log: an append-only change log of Debezium events as a change source: one Delta table for every table (and
+source), as Debezium Server writes it through its Zerobus sink (zerobus-debezium-test). Each row is one event:
+`destination` (<prefix>.<schema>.<table>), `operation` (create, update, delete, read), `key` and `value` (VARIANT: the
+event's key and its envelope, value:after, value:before, value:source). shared: one scan serves every table.
+
+Positions are the source's own order for its changes, a kind from SEQUENCES (the event field that gives commit order:
+an LSN, a binlog position, an SCN, the event time); its value is that number. The snapshot is the table's rows as of
+the time the change log starts from (T), wherever they are (a Delta table, read_files of a Volume), as SQL.
+
+    from lfc_change_source.cdc_log import CdcLog
+    src = CdcLog("crdb1", "`main`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", keys=["id"],
+                 columns={"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="ts_ns",
+                 snapshot="SELECT * FROM read_files('/Volumes/main/zb/snap/orders', format => 'parquet')")
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from .contract import DELETE, OP, SEQ, UPSERT, Position, Stats, quote
+
+# the event field that orders a source's changes, as a BIGINT (moved from zerobus-debezium-test's silver generator)
+SEQUENCES = {
+    "ts_ns": "value:ts_ns::BIGINT",
+    "binlog": "CAST(regexp_extract(value:source:file::STRING, '([0-9]+)$', 1) AS BIGINT) * 17592186044416"
+              " + value:source:pos::BIGINT * 4096 + COALESCE(value:source:row::BIGINT, 0)",
+    "lsn": "value:source:lsn::BIGINT",
+    "scn": "value:source:scn::BIGINT",
+    "ifx_lsn": "value:source:change_lsn::BIGINT",
+    "db2_lsn": "CAST(conv(substring(split_part(COALESCE(value:source:change_lsn, value:source:commit_lsn)::STRING, "
+               "':', 3), -15), 16, 10) AS BIGINT)",
+    "change_lsn": "CAST(conv(split_part(value:source:change_lsn::STRING, ':', 1), 16, 10) AS BIGINT) * 281474976710656"
+                  " + CAST(conv(split_part(value:source:change_lsn::STRING, ':', 2), 16, 10) AS BIGINT) * 65536"
+                  " + CAST(conv(split_part(value:source:change_lsn::STRING, ':', 3), 16, 10) AS BIGINT)",
+}
+
+
+def column_sql(name: str, sql_type: str, keys: list[str]) -> str:
+    """A column from an event: a key column from the event's key (a delete has no after image), the rest from the
+    after image, cast to its type."""
+    src = f"key:{name}" if name in keys else f"value:after:{name}"
+    return f"{src}::{sql_type} AS {quote(name)}"
+
+
+@dataclass
+class CdcLog:
+    name: str                       # the source (the destination's prefix)
+    fq: str                         # the change log table, quoted
+    table: str
+    destination: str                # <prefix>.<schema>.<table> as the events name it
+    keys: list[str]
+    columns: dict                   # {column: SQL type}, in order
+    seq: str = "ts_ns"              # a SEQUENCES kind
+    snapshot: str | None = None     # the snapshot's rows as SQL (columns by name)
+    exprs: dict = field(default_factory=dict)   # {column: SQL expression AS column}: a caller's own typing
+    shared: bool = True
+
+    def __post_init__(self):
+        if self.seq not in SEQUENCES:
+            raise ValueError(f"seq {self.seq!r}: one of {', '.join(SEQUENCES)}")
+
+    def _kind(self, p: Position | None) -> int | None:
+        if p is None:
+            return None
+        if p.kind != self.seq:
+            raise ValueError(f"{self.destination}: a position is a {self.seq}, not {p.kind}")
+        return int(p.value)
+
+    def _cols(self) -> str:
+        return ", ".join(self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items())
+
+    def snapshot_sql(self, at: Position | None = None) -> str:
+        """The snapshot's rows (its own as-of time: the log starts after it)."""
+        if not self.snapshot:
+            raise ValueError(f"{self.destination}: no snapshot given")
+        names = ", ".join(quote(c) for c in self.columns)
+        return f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({self.snapshot})"
+
+    def changes_sql(self, after: Position | None, to: Position | None) -> str:
+        """Its events after `after` up to `to` (None: from the start, to the latest); _seq: the source's order, then
+        a delete before an insert at one position. A snapshot event (read) is an upsert."""
+        seq = SEQUENCES[self.seq]
+        lo, hi = self._kind(after), self._kind(to)
+        where = [f"destination = '{self.destination}'"] + ([f"{seq} > {lo}"] if lo is not None else []) + \
+                ([f"{seq} <= {hi}"] if hi is not None else [])
+        return (f"SELECT {self._cols()}, CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
+                f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
+                f"FROM {self.fq} WHERE {' AND '.join(where)}")
+
+    def watermark(self, session, kind: str | None = None) -> Position:
+        """The latest event's position for this table (the log is append-only: every earlier event is in)."""
+        rows = session.sql(f"SELECT max({SEQUENCES[self.seq]}) AS v FROM {self.fq} "
+                           f"WHERE destination = '{self.destination}'").collect()
+        return Position(self.seq, str(rows[0][0]))
+
+    def stats(self, session, after: Position | None) -> Stats:
+        lo = self._kind(after)
+        cut = f" AND {SEQUENCES[self.seq]} > {lo}" if lo is not None else ""
+        rows = session.sql(f"SELECT count(*) FROM {self.fq} WHERE destination = '{self.destination}'{cut}").collect()
+        return Stats(int(rows[0][0]), None, None)
+
+
+def build(session, schema: str, snapshot: list, steps: list, columns: list[str], keys: list[str]):
+    """The conformance scenario as a change log: the snapshot as a Delta table (the rows as of T), then each step's
+    events, one source position a step (ts_ns: 1000 a step), as Debezium writes them (key and value as VARIANT)."""
+    cat, sch = schema.split(".", 1)
+    log = f"{quote(cat)}.{quote(sch)}.{quote('lfc_change_source_cdc_log')}"
+    snap = f"{quote(cat)}.{quote(sch)}.{quote('lfc_change_source_cdc_snapshot')}"
+    k, v = columns
+    session.sql(f"CREATE OR REPLACE TABLE {snap} ({quote(k)} INT, {quote(v)} STRING)")
+    session.sql(f"INSERT INTO {snap} VALUES " + ", ".join(f"({a}, '{b}')" for a, b in snapshot))
+    session.sql(f"CREATE OR REPLACE TABLE {log} (destination STRING, operation STRING, key VARIANT, value VARIANT)")
+    dest = "conformance.public.t"
+    rows = []
+    for n, step in enumerate(steps, start=1):
+        for op, key, val in step:
+            after = "null" if op == "delete" else f'{{"{k}": {key}, "{v}": "{val}"}}'
+            operation = {"insert": "create", "update": "update", "delete": "delete"}[op]
+            rows.append(f"('{dest}', '{operation}', parse_json('{{\"{k}\": {key}}}'), "
+                        f"parse_json('{{\"after\": {after}, \"ts_ns\": {n * 1000}}}'))")
+    session.sql(f"INSERT INTO {log} VALUES " + ", ".join(rows))
+    src = CdcLog("conformance", log, "t", dest, list(keys), {k: "INT", v: "STRING"}, seq="ts_ns",
+                 snapshot=f"SELECT * FROM {snap}")
+    return src, [Position("ts_ns", str(n * 1000)) for n in range(len(steps) + 1)]
