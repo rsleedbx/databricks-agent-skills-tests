@@ -48,8 +48,8 @@ from its snapshot's bytes and its change rate, or by name, and with it how its s
 
 | Class | Snapshot | Changes | Silver |
 |---|---|---|---|
-| `small_slow` | landed into the log (`log`) | the shared log | a view |
-| `small_fast` | `log` | the shared log | a MERGE every round |
+| `small_slow` | landed into the log (`log`) | the shared log | shared: a group's table, a view a table |
+| `small_fast` | `log` | the shared log | shared, or a MERGE of its own every round |
 | `big_slow` | read where the gateway wrote it (`direct`) | the shared log | a MERGE when changed |
 | `big_fast` | read in place | a log of its own, sharded by key hash once one stream can't carry it | AUTO CDC, a continuous pipeline |
 
@@ -57,7 +57,7 @@ A busy table in the shared log makes every other table's read skip its events, s
 its own gateway or Debezium target table, since a gateway's change files mix its tables. `land.gateway_snapshots`
 takes each table's snapshot path; `gateway_log.current_sql` reads a table on either path. The suggestion from a
 source's statistics, and what changing a route later takes (most changes are a cut-over at a position, no new
-snapshot): [references/routing.md](references/routing.md).
+snapshot), and when a small table leaves its group (`routing.plan`): [references/routing.md](references/routing.md).
 
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).

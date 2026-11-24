@@ -33,6 +33,8 @@ def session(seen, kept=(), newest=()):
             rows = list(kept)
         elif q.startswith("SELECT destination, max("):
             rows = list(newest)
+        elif "information_schema" in q:
+            rows = []
         else:
             rows = [types.SimpleNamespace(asDict=lambda: {"num_affected_rows": 1})]
         return types.SimpleNamespace(collect=lambda: rows)
@@ -64,9 +66,44 @@ class SixCells(unittest.TestCase):
 
     def test_from_route(self):
         p = routing.Policy(LOG, chosen={"a": "big_slow", "b": "small_slow"})
-        t = silver.from_route(src(), routing.log_for("a", 0, 0, p))
+        routes = routing.plan({"a": (0, 0), "b": (0, 0)}, p)
+        t = silver.from_route(src(), routes["a"])
         self.assertEqual((t.method, t.only_changed), ("merge", True))
-        self.assertEqual(silver.from_route(src(), routing.log_for("b", 0, 0, p)).method, "view")
+        self.assertEqual((silver.from_route(src(), routes["b"]).method, silver.from_route(src(), routes["b"]).group),
+                         ("shared", "0"))
+
+
+class Shared(unittest.TestCase):
+    def test_one_scan_one_merge_a_group_and_typed_views(self):
+        tables = {n: silver.Table(src(n), "shared", group="0") for n in "ab"}
+        q = silver.shared_changes_sql([t.src for t in tables.values()], Position("gateway_cursor", "05"),
+                                      Position("gateway_cursor", "09"))
+        self.assertEqual(q.count("FROM `c`.`x`.`cdc_log`"), 1)                               # one scan
+        self.assertIn("WHEN 'db.s.a' THEN to_json(named_struct('id', value:data.`C1`::INT))", q)
+        self.assertIn("to_variant_object(named_struct('id', value:data.`C1`::INT, 'v', value:data.`C2`::STRING))", q)
+        self.assertIn("value:cursor.sequence::STRING > '05'", q)
+        v = silver.shared_view_sql(tables["a"], "`c`.`s`", "`c`.`s`.`a`")
+        self.assertIn("data:`id`::INT AS `id`, data:`v`::STRING AS `v` FROM `c`.`s`.`_shared_0` "
+                      "WHERE destination = 'db.s.a'", v)
+        seen = []
+        silver.run(session(seen), tables, "`c`.`s`", Position("gateway_cursor", "09"), threads=1, first=True)
+        self.assertEqual(sum(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`_shared_0`") for q in seen), 1)
+        self.assertEqual(sum(q.startswith("CREATE OR REPLACE VIEW") for q in seen), 2)
+        seen.clear()
+        got = silver.run(session(seen, kept=[("_shared_0", "gateway_cursor", "05")]), tables, "`c`.`s`",
+                         Position("gateway_cursor", "12"), threads=1)
+        merges = [q for q in seen if q.startswith("MERGE INTO `c`.`s`.`_shared_0`")]
+        self.assertEqual((len(merges), got["shared"]["groups"], got["shared"]["done"]), (1, 1, 1))  # one MERGE
+        self.assertIn("ON t.destination = c.destination AND t.k = c.k", merges[0])
+        self.assertIn("> '05'", merges[0])
+
+    def test_a_group_needs_keys_one_log_and_its_snapshot_in_the_log(self):
+        keyless = from_gateway("gw", LOG, dict(ENTRY, id="k", keys=[]), "db.s.k")
+        with self.assertRaises(ValueError):
+            silver.shared_changes_sql([src("a"), keyless], None, None)
+        with self.assertRaises(ValueError):
+            silver.run(session([]), {"a": silver.Table(src("a"), "shared", snapshot_sql=SNAP)}, "`c`.`s`",
+                       Position("gateway_cursor", "1"), first=True)
 
 
 class Merge(unittest.TestCase):
@@ -99,7 +136,7 @@ class Round(unittest.TestCase):
         seen = []
         got = silver.run(session(seen), tables, "`c`.`silver`", Position("gateway_cursor", "09"), threads=1, first=True)
         self.assertEqual({m: (v["tables"], v["done"]) for m, v in got.items()},
-                         {"view": (1, 1), "merge": (1, 1), "auto_cdc": (1, 0)})
+                         {"shared": (0, 0), "view": (1, 1), "merge": (1, 1), "auto_cdc": (1, 0)})
         self.assertTrue(any(q.startswith("CREATE OR REPLACE VIEW `c`.`silver`.`v`") for q in seen))
         self.assertTrue(any(q.startswith("CREATE OR REPLACE TABLE `c`.`silver`.`m`") for q in seen))
         seen.clear()

@@ -1,10 +1,17 @@
 """routing: each table's class, and from it its snapshot's path, its change log, its shards and how its silver is kept:
 
   class       size, changes  snapshot  log                    silver
-  small_slow  small, few     log       shared                 view: no work a round (the table read from the log)
-  small_fast  small, many    log       shared                 merge_round: a MERGE every round
+  small_slow  small, few     log       shared                 shared: in a group's table, one MERGE a round for all
+  small_fast  small, many    log       shared                 shared, unless it carries much of its group's changes
   big_slow    big, few       direct    shared                 merge_changed: a MERGE only in a round that changed it
   big_fast    big, many      direct    its own, sharded       auto_cdc: flows in a continuous pipeline (setup paid once)
+
+A small table leaves its group (shared) for a table of its own (small_slow: view, small_fast: merge_round) when it:
+- needs what only a table of its own gives (Policy.own_table: streaming reads, its own change data feed, time
+  travel);
+- carries more than shared_max_share of its group's changes (its rows would make every member's MERGE slower);
+- is read more than shared_max_reads_per_day (each read casts its row from VARIANT, with no column statistics).
+plan() applies these rules (they need the group's numbers); log_for() alone leaves group empty.
 
 The costs behind it (lfc-medallion references/performance-reasoning.md): a small table costs per object (a MERGE has a
 fixed floor of seconds whatever it merges), a big one per byte. Most tables are small and slow and hold almost no data,
@@ -31,8 +38,9 @@ from .cdc_log import SEQUENCES, TEXT
 from .land import MAX_LOG_SNAPSHOT_BYTES, snapshot_path
 
 CLASSES = ("small_slow", "small_fast", "big_slow", "big_fast")
-SILVER = {"small_slow": "view", "small_fast": "merge_round", "big_slow": "merge_changed", "big_fast": "auto_cdc"}
-METHODS = ("view", "merge_round", "merge_changed", "auto_cdc")
+SILVER = {"small_slow": "shared", "small_fast": "shared", "big_slow": "merge_changed", "big_fast": "auto_cdc"}
+OWN = {"small_slow": "view", "small_fast": "merge_round"}   # a small table's method out of its group
+METHODS = ("shared", "view", "merge_round", "merge_changed", "auto_cdc")
 # Zerobus Ingest's documented default per stream (gRPC): 100,000 records a second (benchmarked with 1 KB messages)
 STREAM_RECORDS_PER_S = 100_000
 
@@ -45,6 +53,8 @@ class Route:
     log: str              # the change log its changes go to, quoted
     shards: int = 1       # streams (and reader tasks) its changes are split into, by key hash
     silver: str = "view"  # one of METHODS
+    group: str = ""       # shared: its group (plan() sets it)
+    why: str = ""         # out of its group: the rule that took it out
 
 
 @dataclass
@@ -57,6 +67,11 @@ class Policy:
     shard_events_per_s: float = STREAM_RECORDS_PER_S  # events a second one stream (and one reader) carries
     chosen: dict = field(default_factory=dict)        # {table: class}: chosen instead of by the numbers
     silver_chosen: dict = field(default_factory=dict)  # {table: method}: chosen instead of by its class
+    own_table: dict = field(default_factory=dict)     # {table: need}: a small table kept out of a group (a need
+    #                                                   only its own table meets: streaming reads, change feed, ...)
+    shared_group_size: int = 1000                     # tables a group (its MERGE's CASE has a branch a table)
+    shared_max_share: float = 0.10                    # of its group's change events: more, and it leaves the group
+    shared_max_reads_per_day: float | None = None     # reads a day (query history): more, and it leaves (None: off)
 
     def log_name(self, table: str) -> str:
         shared = self.shared_log.rstrip("`")
@@ -81,15 +96,41 @@ def log_for(table: str, snapshot_bytes: int, events_per_s: float, policy: Policy
     own = cls == "big_fast" or events_per_s >= policy.own_log_events_per_s
     shards = max(1, math.ceil(events_per_s / policy.shard_events_per_s)) if own else 1
     snap = snapshot_path(snapshot_bytes, policy.max_log_snapshot_bytes, "log" if cls.startswith("small") else "direct")
-    silver = policy.silver_chosen.get(table, SILVER[cls])
+    default = OWN[cls] if own and SILVER[cls] == "shared" else SILVER[cls]   # a busy table with its own log: no group
+    silver = policy.silver_chosen.get(table, default)
     if silver not in METHODS:
         raise ValueError(f"{table}: silver {silver!r}, one of {', '.join(METHODS)}")
     return Route(table, cls, snap, policy.log_name(table) if own else policy.shared_log, shards, silver)
 
 
-def plan(tables: dict, policy: Policy) -> dict:
-    """{table: Route} for {table: (snapshot bytes, change events a second)}."""
-    return {t: log_for(t, b, r, policy) for t, (b, r) in tables.items()}
+def plan(tables: dict, policy: Policy, reads_per_day: dict | None = None) -> dict:
+    """{table: Route} for {table: (snapshot bytes, change events a second)}: each table's route, then the shared
+    tables out of their group by the rules above (reads_per_day: {table: reads}, from query history), and the rest in
+    groups of shared_group_size by name, each group's tables in one log."""
+    from dataclasses import replace
+    routes = {t: log_for(t, b, r, policy) for t, (b, r) in tables.items()}
+    reads = reads_per_day or {}
+    rate = {t: r for t, (_, r) in tables.items()}
+    shared = [t for t in sorted(routes) if routes[t].silver == "shared"]
+    for log in sorted({routes[t].log for t in shared}):
+        members = [t for t in shared if routes[t].log == log]
+        total = sum(rate[t] for t in members)
+        for t in members:
+            why = (f"needs its own table: {policy.own_table[t]}" if t in policy.own_table else
+                   f"{rate[t] / total:.0%} of its group's changes (over {policy.shared_max_share:.0%})"
+                   if len(members) > 1 and total > 0 and rate[t] / total > policy.shared_max_share
+                   and rate[t] >= policy.fast_events_per_s else
+                   f"{reads[t]:,.0f} reads a day (over {policy.shared_max_reads_per_day:,.0f})"
+                   if policy.shared_max_reads_per_day is not None and reads.get(t, 0) > policy.shared_max_reads_per_day
+                   else "")
+            if why:
+                routes[t] = replace(routes[t], silver=OWN.get(routes[t].cls, "merge_round"),
+                                    why=why)
+        kept = [t for t in members if routes[t].silver == "shared"]
+        tag = "" if log == policy.shared_log else log.strip("`").split(".")[-1] + "_"
+        for i, t in enumerate(kept):
+            routes[t] = replace(routes[t], group=f"{tag}{i // policy.shared_group_size}")
+    return routes
 
 
 def suggest(tables: dict, policy: Policy) -> dict:
@@ -98,19 +139,23 @@ def suggest(tables: dict, policy: Policy) -> dict:
     "events_per_s": change rate or None}}. A table of unknown size is class `auto` (small or big, set by its real bytes
     when the snapshot lands: land.snapshot_path), its snapshot `auto` too. An unknown rate counts as slow, and says so."""
     out = {}
+    routes = plan({t: (s.get("bytes") or 0, s.get("events_per_s") or 0.0) for t, s in tables.items()}, policy,
+                  {t: s["reads_per_day"] for t, s in tables.items() if s.get("reads_per_day") is not None})
     for t, s in tables.items():
         b, r = s.get("bytes"), s.get("events_per_s")
-        route = log_for(t, b if b is not None else 0, r or 0.0, policy)
+        route = routes[t]
         why = [f"{_size(b)} snapshot" if b is not None else "size unknown: the snapshot's path is set by its real bytes",
                f"{r:,.1f} changes/s" if r is not None else "change rate unknown: taken as slow"]
         if t in policy.chosen:
             why.append(f"chosen: {policy.chosen[t]}")
+        if route.why:
+            why.append(f"out of its group: {route.why}")
         unknown = b is None and t not in policy.chosen   # small or big: its bytes say, when the snapshot lands
         speed = route.cls.split("_")[1]
         out[t] = {"class": f"auto_{speed}" if unknown else route.cls, "snapshot": "auto" if unknown else route.snapshot,
                   "log": "own" if route.log != policy.shared_log else "shared", "shards": route.shards,
-                  "silver": route.silver if not unknown else ("merge_round" if speed == "fast" else "view"),
-                  "why": "; ".join(why)}
+                  "silver": route.silver if not unknown or route.silver == "shared" else
+                  ("merge_round" if speed == "fast" else "view"), "group": route.group, "why": "; ".join(why)}
     return out
 
 
@@ -165,7 +210,16 @@ def transitions(old: dict, new: dict) -> list:
                                "to P and the new one after it (routing.history_fq); no new snapshot"))
     a, b = old.get("silver"), new.get("silver")
     if a and b and a != b:
-        how = {("view", "merge_round"): "build the table from the log once, then MERGE every round",
+        how = {("shared", "view"): "its view over the log instead of its group's table; its rows left in the group "
+                                   "until the group is rebuilt",
+               ("shared", "merge_round"): "build its own table from the log once, its view replaced by it; then MERGE "
+                                          "every round",
+               ("shared", "merge_changed"): "build its own table from the log once; then MERGE in rounds that change it",
+               ("view", "shared"): "its rows into its group's table at the group's position (one INSERT from the "
+                                   "log), its view over the group",
+               ("merge_round", "shared"): "its rows into its group's table at the group's position, its table "
+                                          "replaced by a view over the group",
+               ("view", "merge_round"): "build the table from the log once, then MERGE every round",
                ("view", "merge_changed"): "build the table from the log once, then MERGE in rounds that change it",
                ("merge_round", "view"): "drop the table, create the view: no work a round from then on",
                ("merge_changed", "view"): "drop the table, create the view",

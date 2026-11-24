@@ -78,6 +78,15 @@ class CdcLog:
         """Each column's SQL from an event (`<expression> AS <name>`), in order."""
         return [self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items()]
 
+    def column_values(self) -> dict:
+        """{column: its SQL expression from an event}, column_exprs without the alias, in order."""
+        return {c: e[:-len(f" AS {quote(c)}")] if e.endswith(f" AS {quote(c)}") else e
+                for c, e in zip(self.columns, self.column_exprs())}
+
+    def position_sql(self, p: Position | None) -> str | None:
+        """A position as a SQL literal of this source's kind (None: None)."""
+        return self._kind(p)
+
     def _cols(self) -> str:
         return ", ".join(self.column_exprs())
 

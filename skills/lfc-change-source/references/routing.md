@@ -23,14 +23,22 @@ Each route says why (`why`: the bytes, the rate, or that one is unknown). A tabl
 
 | Class | Snapshot | Changes | Silver |
 |---|---|---|---|
-| `small_slow` (small, few changes) | `log`: landed into the change log | the shared log | `view`: no work a round |
-| `small_fast` (small, many changes) | `log` | the shared log | `merge_round`: a MERGE every round |
+| `small_slow` (small, few changes) | `log`: landed into the change log | the shared log | `shared`: a group's table, one MERGE a round |
+| `small_fast` (small, many changes) | `log` | the shared log | `shared`, or `merge_round` out of its group |
 | `big_slow` (big, few changes) | `direct`: read where the producer wrote it | the shared log | `merge_changed`: a MERGE in rounds that change it |
 | `big_fast` (big, many changes) | `direct` | its own log, sharded by key hash once one stream can't carry it | `auto_cdc`: flows in a continuous pipeline, setup paid once |
 
 A small table costs per object (a MERGE has a fixed floor of seconds whatever it merges), a big one per byte. Most
 tables are small and slow and hold almost no data; most bytes are in a few big, fast tables. Any table whose rate
 passes `own_log_events_per_s` also gets its own log.
+
+`plan` puts the shared tables of a log in groups of `shared_group_size` (1,000) by name, each `Route.group`, and takes
+a small table out of its group (a `view` if slow, `merge_round` if fast; `Route.why` says which rule) when:
+- it's named in `own_table` with a need only its own table meets (streaming reads, its own change data feed, time
+  travel);
+- its rate is over `shared_max_share` (10%) of its group's, and fast: its rows would slow every member's MERGE;
+- its reads a day (`plan`'s `reads_per_day`, from query history) are over `shared_max_reads_per_day` (off by default);
+- it has a log of its own.
 
 Thresholds (`Policy`): `fast_events_per_s` (default 1), `own_log_events_per_s` (10,000), `max_log_snapshot_bytes` (1 GiB), and
 `shard_events_per_s` (Zerobus's documented 100,000 records a second per stream). They are starting points, set per

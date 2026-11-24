@@ -224,8 +224,8 @@ class Routing(unittest.TestCase):
                             "db.s.ledger": (5 << 40, 0.2), "db.s.orders": (5 << 40, 250_000),
                             "db.s.queue": (100, 20_000)}, p)
         self.assertEqual({t: (r.cls, r.snapshot, r.log, r.shards, r.silver) for t, r in got.items()}, {
-            "db.s.region": ("small_slow", "log", "`m`.`c`.`cdc_log`", 1, "view"),
-            "db.s.carts": ("small_fast", "log", "`m`.`c`.`cdc_log`", 1, "merge_round"),
+            "db.s.region": ("small_slow", "log", "`m`.`c`.`cdc_log`", 1, "shared"),
+            "db.s.carts": ("small_fast", "log", "`m`.`c`.`cdc_log`", 1, "merge_round"),   # most of its group's changes
             "db.s.ledger": ("big_slow", "direct", "`m`.`c`.`cdc_log`", 1, "merge_changed"),
             "db.s.orders": ("big_fast", "direct", "`m`.`c`.`cdc_log_orders`", 3, "auto_cdc"),   # 250,000 / 100,000
             "db.s.queue": ("small_fast", "log", "`m`.`c`.`cdc_log_queue`", 1, "merge_round")})   # busy: own log
@@ -237,12 +237,31 @@ class Routing(unittest.TestCase):
                                "ticks": {"bytes": None, "events_per_s": 150_000.0},
                                "orders": {"bytes": None, "events_per_s": None}}, routing.Policy("shared"))
         self.assertEqual({t: (r["class"], r["snapshot"], r["log"], r["shards"], r["silver"]) for t, r in got.items()}, {
-            "region": ("small_slow", "log", "shared", 1, "view"),
+            "region": ("small_slow", "log", "shared", 1, "shared"),
             "lineitem": ("big_slow", "direct", "shared", 1, "merge_changed"),
             "ticks": ("auto_fast", "auto", "own", 2, "merge_round"),           # its size decides: small_fast or big_fast
-            "orders": ("auto_slow", "auto", "shared", 1, "view")})
+            "orders": ("auto_slow", "auto", "shared", 1, "shared")})
         self.assertIn("80.0 GiB snapshot", got["lineitem"]["why"])
         self.assertIn("change rate unknown", got["orders"]["why"])
+
+    def test_small_tables_in_groups_and_the_rules_out(self):
+        from lfc_change_source import routing
+        p = routing.Policy("`m`.`c`.`cdc_log`", shared_group_size=2, own_table={"db.s.d": "streaming reads"},
+                           shared_max_reads_per_day=100)
+        tables = {f"db.s.{t}": (4096, 0.0) for t in "abcdef"}
+        tables["db.s.e"] = (4096, 5.0)                                      # all of its group's changes
+        tables.update({f"db.s.q{i}": (4096, 1.0) for i in range(20)})      # 5% each
+        got = routing.plan(tables, p, reads_per_day={"db.s.f": 500})
+        self.assertEqual({t: (r.silver, r.group) for t, r in got.items() if t in ("db.s.a", "db.s.b", "db.s.c")},
+                         {"db.s.a": ("shared", "0"), "db.s.b": ("shared", "0"), "db.s.c": ("shared", "1")})
+        self.assertEqual((got["db.s.d"].silver, got["db.s.d"].why), ("view", "needs its own table: streaming reads"))
+        self.assertEqual(got["db.s.e"].silver, "merge_round")                # over shared_max_share
+        self.assertIn("20% of its group's changes", got["db.s.e"].why)
+        self.assertEqual(got["db.s.f"].silver, "view")                       # read often
+        self.assertEqual(got["db.s.q3"].silver, "shared")                    # fast, but 4% of the changes
+        self.assertEqual(routing.log_for("db.s.x", 4096, 20_000, p).silver, "merge_round")   # its own log: no group
+        tr = routing.transitions({"silver": "shared"}, {"silver": "merge_round"})
+        self.assertIn("build its own table from the log once", tr[0][1])
 
     def test_cutover_reads_each_log_for_its_positions(self):   # shared up to P, its own after, no new snapshot
         from lfc_change_source import land, routing

@@ -3,14 +3,18 @@ gateway, Debezium or a changefeed lands into), SCD type 1.
 
 A table's code path follows two things only, its silver method and where its snapshot is:
 
-                     view (at read)   merge (each round)   auto_cdc (continuous)
-  snapshot in log         1                  2                     3
-  snapshot in place       4                  5                     6
+                     shared (a group)   view (at read)   merge (each round)   auto_cdc (continuous)
+  snapshot in log           0                 1                  2                     3
+  snapshot in place         -                 4                  5                     6
 
 Every method reads the table's current rows the same way, the source's current_sql (the snapshot wherever it is, then
 each key's last change after it), so every cell gives the same table. routing.py's classes only pick a cell (and,
 for merge, whether to skip a round with no change); no class name appears here.
 
+  shared    a group of small tables (up to 1,000) in one table, <schema>._shared_<group> (destination, k, data
+            VARIANT: the typed row), and a typed view a table over it: one MERGE a round for the whole group, from one
+            kept position (a statement has a fixed floor of seconds; a warehouse runs a few a second). The tables share
+            one log and need keys
   view      CREATE VIEW over the current rows: no work a round
   merge     build: CREATE TABLE from the current rows, kept at the run's position (in <schema>._log_silver);
             apply: one MERGE a table of each key's last change after its kept position; only_changed skips a table
@@ -30,10 +34,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 STATE = "_log_silver"
-METHODS = ("view", "merge", "auto_cdc")
+METHODS = ("shared", "view", "merge", "auto_cdc")
 # routing.py's silver names onto the methods here: merge_changed is merge with only_changed
-FROM_ROUTE = {"view": ("view", False), "merge_round": ("merge", False), "merge_changed": ("merge", True),
-              "auto_cdc": ("auto_cdc", False)}
+FROM_ROUTE = {"shared": ("shared", False), "view": ("view", False), "merge_round": ("merge", False),
+              "merge_changed": ("merge", True), "auto_cdc": ("auto_cdc", False)}
+SHARED = "_shared_{group}"   # a group's table in the silver schema
 
 
 @dataclass
@@ -44,15 +49,16 @@ class Table:
     snapshot_sql: str | None = None      # its snapshot read in place, as SQL (None: the snapshot is in the log)
     position: object = None              # that snapshot's position (a Position; None: before every change)
     snapshot_files: dict | None = None   # auto_cdc: {"path", "exprs"} of that snapshot, for the pipeline's batch read
+    group: str = ""                      # shared: its group (routing.Route.group)
 
     def current_sql(self) -> str:
         return self.src.current_sql(self.snapshot_sql, self.position)
 
 
 def from_route(src, route, snapshot_sql=None, position=None, snapshot_files=None) -> Table:
-    """A Table from a routing.Route: its silver name as a method here."""
+    """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
     method, only = FROM_ROUTE[route.silver]
-    return Table(src, method, only, snapshot_sql, position, snapshot_files)
+    return Table(src, method, only, snapshot_sql, position, snapshot_files, getattr(route, "group", "") or "")
 
 
 def _q(name: str) -> str:
@@ -181,6 +187,100 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     return done
 
 
+def shared_changes_sql(members: list, after, to) -> str:
+    """Every member's events after `after` up to `to` in one scan of the log they share: destination, k (the key as
+    JSON), data (the typed row as a VARIANT), _op, _seq. A row's key and values are each source's own (column_values),
+    picked by destination."""
+    from lfc_change_source.cdc_log import EVENT, SEQUENCES
+    from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT
+    one = members[0]
+    bad = [m.destination for m in members if m.fq != one.fq or m.seq != one.seq or not m.keys]
+    if bad:
+        raise ValueError(f"shared: every table in a group needs keys and the same log and position kind: {bad[:5]}")
+
+    def struct(m, cols):
+        vals = m.column_values()
+        return "named_struct(" + ", ".join(f"{_lit(c)}, {vals[c]}" for c in cols) + ")"
+
+    def case(f):
+        return "CASE destination " + " ".join(f"WHEN {_lit(m.destination)} THEN {f(m)}" for m in members) + " END"
+    seq = SEQUENCES[one.seq]
+    lo, hi = one.position_sql(after), one.position_sql(to)
+    where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT] + \
+        ([f"{seq} > {lo}"] if lo is not None else []) + ([f"{seq} <= {hi}"] if hi is not None else [])
+    return (f"SELECT destination, {case(lambda m: 'to_json(' + struct(m, m.keys) + ')')} AS k, "
+            f"{case(lambda m: 'to_variant_object(' + struct(m, list(m.columns)) + ')')} AS data, "
+            f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
+            f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
+            f"FROM {one.fq} WHERE {' AND '.join(where)}")
+
+
+def shared_view_sql(t: Table, schema: str, target: str) -> str:
+    """A member's typed view over its group's table."""
+    cols = ", ".join(f"data:{_q(c)}::{typ} AS {_q(c)}" for c, typ in t.src.columns.items())
+    return (f"CREATE OR REPLACE VIEW {target} AS SELECT {cols} FROM {_target(schema, SHARED.format(group=t.group))} "
+            f"WHERE destination = {_lit(t.src.destination)}")
+
+
+def _groups(tables: dict) -> dict:
+    out: dict = {}
+    for n, t in tables.items():
+        if t.snapshot_sql:
+            raise ValueError(f"{n}: shared reads its snapshot from the log (a snapshot read in place: merge or auto_cdc)")
+        out.setdefault(t.group or "0", {})[n] = t
+    return out
+
+
+def _drop_tables(session, schema: str, names: list) -> None:
+    """Drop those of `names` that are tables, not views (a table moved into a group: its view takes the name)."""
+    cat, sch = [x.strip("`").replace("``", "`") for x in schema.split("`.`")]
+    rows = session.sql(f"SELECT table_name FROM {_q(cat)}.information_schema.tables WHERE table_schema = {_lit(sch)} "
+                       f"AND table_type <> 'VIEW' AND table_name IN ({', '.join(_lit(n.lower()) for n in names)})"
+                       ).collect()
+    for r in rows:
+        session.sql(f"DROP TABLE {_target(schema, r[0])}").collect()
+
+
+def build_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+    """Each group's table from its members' current rows up to `to`, a view per member, the group kept at `to`.
+    {group: (members, seconds)}."""
+    from lfc_change_source.contract import DELETE, OP, last_change_sql
+    ensure_state(session, schema)
+    groups = _groups(tables)
+
+    def one(g, members):
+        t0 = time.time()
+        cur = last_change_sql(shared_changes_sql([m.src for m in members.values()], None, to), ["destination", "k"])
+        session.sql(f"CREATE OR REPLACE TABLE {_target(schema, SHARED.format(group=g))} CLUSTER BY (destination) AS "
+                    f"SELECT destination, k, data FROM ({cur}) WHERE {OP} <> '{DELETE}'").collect()
+        return g, (len(members), time.time() - t0)
+    with ThreadPoolExecutor(threads) as pool:
+        done = dict(pool.map(lambda kv: one(*kv), groups.items()))
+    _drop_tables(session, schema, list(tables))
+    _each(session, {n: shared_view_sql(t, schema, _target(schema, n)) for n, t in tables.items()}, threads)
+    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, n, s) for g, (n, s) in done.items()])
+    return done
+
+
+def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+    """One MERGE a group: each key's last change after the group's kept position up to `to`. {group: (rows, s)}."""
+    from lfc_change_source.contract import DELETE, OP, Position, last_change_sql
+    groups = _groups(tables)
+    kept = positions(session, schema)
+    stmts = {}
+    for g, members in groups.items():
+        kind, pos = kept.get(SHARED.format(group=g), (to.kind, None))
+        after = Position(kind, pos) if pos is not None else None
+        c = last_change_sql(shared_changes_sql([m.src for m in members.values()], after, to), ["destination", "k"])
+        stmts[g] = (f"MERGE INTO {_target(schema, SHARED.format(group=g))} t USING ({c}) c ON t.destination = "
+                    f"c.destination AND t.k = c.k WHEN MATCHED AND c.{OP} = '{DELETE}' THEN DELETE WHEN MATCHED THEN "
+                    f"UPDATE SET t.data = c.data WHEN NOT MATCHED AND c.{OP} <> '{DELETE}' THEN INSERT (destination, "
+                    "k, data) VALUES (c.destination, c.k, c.data)")
+    done = _each(session, stmts, threads)
+    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, r, s) for g, (r, s) in done.items()])
+    return done
+
+
 def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
     """The table lists for this skill's pipelines/auto_cdc_from_log.py, `per_pipeline` tables each (a pipeline takes
     at most 1,000 tables; its setup grows with its flows, paid once in continuous mode): [[{destination, target, keys,
@@ -199,14 +299,18 @@ def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
 
 
 def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False) -> dict:
-    """One round for every table by its method: views created on the first round only; merged tables built on the
-    first round, merged after it (only_changed: only those with events past their position); auto_cdc tables left to
-    their pipelines. {method: {"tables": n, "done": n, "seconds": s}}."""
+    """One round for every table by its method: shared groups built (with their views) on the first round, one MERGE
+    a group after it; views created on the first round only; merged tables built on the first round, merged after it (only_changed: only those with events past their position); auto_cdc tables left to
+    their pipelines. {method: {"tables": n, "done": n, "seconds": s}} (shared: "done" counts groups)."""
     by = {m: {n: t for n, t in tables.items() if t.method == m} for m in METHODS}
     bad = [n for n, t in tables.items() if t.method not in METHODS]
     if bad:
         raise ValueError(f"tables with no method here: {bad[:5]} (one of {', '.join(METHODS)})")
     out = {}
+    t0 = time.time()
+    done = (build_shared if first else apply_shared)(session, by["shared"], schema, to, threads) if by["shared"] else {}
+    out["shared"] = {"tables": len(by["shared"]), "groups": len(_groups(by["shared"])) if by["shared"] else 0,
+                     "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
     done = views(session, by["view"], schema, threads) if first and by["view"] else {}
     out["view"] = {"tables": len(by["view"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
