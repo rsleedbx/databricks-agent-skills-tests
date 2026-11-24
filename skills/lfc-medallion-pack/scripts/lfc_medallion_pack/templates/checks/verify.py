@@ -39,7 +39,12 @@ from lfc_medallion_pack import cdc
 cdc.save(spark, cdc.run(spark, plan, w["prefix"], c["connection"], c["database"]), w["catalog"], c["control"])
 from lfc_medallion_pack import observe
 observe.ensure_tables(spark, plan, w["catalog"], c["control"])
-cdc.capture(spark, plan, w["prefix"], w["catalog"], c["control"])   # the gateways' telemetry and staged change files
+got = cdc.capture(spark, plan, w["prefix"], w["catalog"], c["control"])   # the gateways' telemetry and change files
+print("capture:", got)
+lost = [g for g in got if not g["found"]]
+rows.append({"check": "gateway capture (telemetry and change files, every gateway)", "want": f"{len(got)} found",
+             "got": f"{len(got) - len(lost)} found", "ok": not lost and bool(got),
+             "detail": "; ".join(f"{g['gateway']}: {g.get('why')}" for g in lost[:5])})
 observe.create_views(spark, plan, w["catalog"], w["prefix"], c["control"])   # v_changes, v_updates, v_latency, ...
 off = [x for x in sums if x["status"] != "match"]
 rows.append({"check": "checksums (rows and contents: source, bronze, n:1)", "want": f"{len(sums)} match",

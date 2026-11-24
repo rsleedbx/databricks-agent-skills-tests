@@ -122,9 +122,19 @@ def save(spark, rows: list[dict], catalog: str, schema: str) -> None:
         f"`{catalog}`.`{schema}`.cdc_positions")
 
 
-def capture(spark, plan: dict, prefix: str, catalog: str, control: str, workspace=None) -> list[str]:
+def _added(result) -> int | None:
+    """The rows an INSERT added, from its result (num_inserted_rows), where the session gives it."""
+    try:
+        rows = result.collect()
+        return int(rows[0][-1]) if rows else 0
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def capture(spark, plan: dict, prefix: str, catalog: str, control: str, workspace=None) -> list[dict]:
     """The gateway's own timings into <control>.gateway_events and .staged_files (the module's docstring), one
-    INSERT ... SELECT FROM read_files each per gateway, the files read before left out; the gateways done."""
+    INSERT ... SELECT FROM read_files each per gateway, the files read before left out. One row per gateway: found
+    (its staging volume, else why not), and the rows each INSERT added, so a gateway skipped or empty shows."""
     from lfc_medallion.stack import spark_string
     if workspace is None:
         from databricks.sdk import WorkspaceClient
@@ -137,12 +147,18 @@ def capture(spark, plan: dict, prefix: str, catalog: str, control: str, workspac
         for g in m["groups"]:
             gw = f"{mod}_gw_{g['k']}"
             found = staging(w, f"{prefix}_{gw}")
+            row = {"module": mod, "gateway": gw, "found": bool(found), "events": None, "files": None}
+            done.append(row)
             if not found:
+                row["why"] = f"no gateway pipeline named {prefix}_{gw} visible to this identity"
+                continue
+            if not os.path.isdir(found[1]):
+                row["why"] = f"its staging folder isn't readable here: {found[1]}"
                 continue
             root, lit = found[1], spark_string
             lob = f"substr({{col}}, {len(mod) + 2})"
             if os.path.isdir(f"{root}/telemetry"):
-                spark.sql(f"INSERT INTO {ctl}.gateway_events SELECT {lit(mod)}, {lit(gw)}, "
+                row["events"] = _added(spark.sql(f"INSERT INTO {ctl}.gateway_events SELECT {lit(mod)}, {lit(gw)}, "
                           "CASE event_subtype WHEN 'CDC_EXTRACTION' THEN 'extraction' ELSE 'flow' END, "
                           f"timestamp_seconds(event_timestamp_seconds), {lob.format(col='schema_name')}, table_name, "
                           "timestamp_millis(CAST(operation_details.cdc_extraction_report"
@@ -156,15 +172,14 @@ def capture(spark, plan: dict, prefix: str, catalog: str, control: str, workspac
                           "WHERE (event_subtype = 'CDC_EXTRACTION' OR (event_subtype = 'REALTIME_PROGRESS' AND "
                           "CAST(statistics.insertCount AS BIGINT) + CAST(statistics.updateCount AS BIGINT) + "
                           "CAST(statistics.deleteCount AS BIGINT) > 0)) AND _metadata.file_path NOT IN "
-                          f"(SELECT file FROM {ctl}.gateway_events WHERE gateway = {lit(gw)})")
+                          f"(SELECT file FROM {ctl}.gateway_events WHERE gateway = {lit(gw)})"))
             if os.path.isdir(f"{root}/cdc"):
-                spark.sql(f"INSERT INTO {ctl}.staged_files SELECT {lit(mod)}, {lit(gw)}, "
+                row["files"] = _added(spark.sql(f"INSERT INTO {ctl}.staged_files SELECT {lit(mod)}, {lit(gw)}, "
                           f"{lob.format(col='table_id.schema')}, _metadata.file_path, "
                           "_metadata.file_modification_time, COUNT(*), "
                           "MAX(timestamp_millis(CAST(cursor.timestampUtc AS BIGINT))), "
                           "MIN(timestamp_millis(CAST(cursor.timestampUtc AS BIGINT))) "
                           f"FROM read_files({lit(root + '/cdc/')}, format => 'json') "
                           f"WHERE startswith(table_id.schema, {lit(mod + '_')}) AND _metadata.file_path NOT IN "
-                          f"(SELECT file FROM {ctl}.staged_files WHERE gateway = {lit(gw)}) GROUP BY 1, 2, 3, 4, 5")
-            done.append(gw)
+                          f"(SELECT file FROM {ctl}.staged_files WHERE gateway = {lit(gw)}) GROUP BY 1, 2, 3, 4, 5"))
     return done

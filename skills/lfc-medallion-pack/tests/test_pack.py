@@ -251,7 +251,11 @@ class Capture(unittest.TestCase):
         with mock.patch.object(cdc, "staging", lambda w, name: ("id", f"/Volumes/c/s/{name}")), \
                 mock.patch.object(cdc.os.path, "isdir", lambda p: True):
             done = cdc.capture(spark, pl, "p", "main", "ctl", workspace=object())
-        self.assertEqual(done, ["bank_gw_1", "bank_gw_2"])
+        self.assertEqual([(g["gateway"], g["found"]) for g in done], [("bank_gw_1", True), ("bank_gw_2", True)])
+        with mock.patch.object(cdc, "staging", lambda w, name: None):   # a gateway it can't see: said, not skipped
+            lost = cdc.capture(types.SimpleNamespace(sql=ran.append), pl, "p", "main", "ctl", workspace=object())
+        self.assertEqual([g["found"] for g in lost], [False, False])
+        self.assertIn("no gateway pipeline named p_bank_gw_1", lost[0]["why"])
         self.assertEqual(len(ran), 4)   # two gateways x (telemetry, change files): not a statement per LOB or file
         ev, staged = ran[0], ran[1]
         self.assertIn("read_files('/Volumes/c/s/p_bank_gw_1/telemetry/', format => 'json')", ev)
