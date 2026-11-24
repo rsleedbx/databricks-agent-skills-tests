@@ -126,27 +126,3 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
                  snapshot=f"SELECT * FROM {snap}")
     return src, [Position("ts_ns", str(n * 1000)) for n in range(len(steps) + 1)]
 
-
-def from_gateway(name: str, log: str, entry: dict, destination: str, snapshot: str | None = None) -> CdcLog:
-    """A gateway's table in a landed change log (land.gateway): its columns from the event's data by column id
-    (gateway_staging.schemas()'s entry), positions the gateway's cursor, the snapshot (gateway_staging's
-    snapshot_sql) as given."""
-    cols = {c: t for c, t, _ in entry["columns"]}
-    exprs = {c: f"value:data.{quote(cid)}::{t} AS {quote(c)}" for c, t, cid in entry["columns"]}
-    return CdcLog(name, log, destination.split(".")[-1], destination, list(entry["keys"]), cols,
-                  seq="gateway_cursor", snapshot=snapshot, exprs=exprs)
-
-
-def build_gateway(session, schema: str, snapshot: list, steps: list, columns: list[str], keys: list[str]):
-    """The conformance scenario as a gateway's staging folder (gateway_staging.build), landed into a change log,
-    read as a change log."""
-    from . import gateway_staging as gs
-    from . import land
-    staged, positions = gs.build(session, schema, snapshot, steps, columns, keys)
-    cat, sch = schema.split(".", 1)
-    log = f"{quote(cat)}.{quote(sch)}.{quote('lfc_change_source_landed')}"
-    session.sql(f"DROP TABLE IF EXISTS {log}")
-    land.ensure_log(session, log)
-    land.gateway(session, staged.root, log, "conformance")
-    src = from_gateway("conformance", log, staged.entry, "conformance.public.t", snapshot=staged.snapshot_sql())
-    return src, [Position("gateway_cursor", p.value) for p in positions]

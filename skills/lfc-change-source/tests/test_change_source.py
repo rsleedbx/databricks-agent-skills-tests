@@ -78,7 +78,8 @@ class CdcLog(unittest.TestCase):
             src.changes_sql(Position("ts_ns", "1"), None)   # another source's kind of position
         with self.assertRaises(ValueError):
             Log("x", "t", "t", "d", ["id"], {"id": "INT"}, seq="gtid")
-        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn"})
+        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn",
+                                          "gateway_cursor"})
 
 
 class GatewayStaging(unittest.TestCase):
@@ -113,7 +114,7 @@ class GatewayStaging(unittest.TestCase):
 class Land(unittest.TestCase):
     def test_copy_into_the_shared_log_and_read_by_cursor(self):   # a gateway's files in the Debezium log's shape
         from lfc_change_source import land
-        from lfc_change_source.cdc_log import from_gateway
+        from lfc_change_source.gateway_log import from_gateway
         seen = []
         s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(
             collect=lambda: [types.SimpleNamespace(asDict=lambda: {"num_inserted_rows": 7})]))
