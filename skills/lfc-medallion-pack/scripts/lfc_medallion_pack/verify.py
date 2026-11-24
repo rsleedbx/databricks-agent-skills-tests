@@ -157,3 +157,39 @@ def run(spark, plan: dict, module: str, catalog: str, prefix: str, marts: dict[s
     out.append(_row("readout tiers in order", by_want, by_got, by_want == by_got,
                     ", ".join(f"{t} {means[t][1]:.4f} (want {means[t][0]:.4f})" for t in by_want)))
     return out
+
+
+def job(spark, w: dict, plan_path: str, marts_dir: str | None = None, show=None) -> list[dict]:
+    """The verify job's whole notebook, so a project's notebook is one call and every fix arrives with the package:
+    the checks (run, each LOB's signal numbers as built), the checksums (source, bronze, n:1), the source and gateway
+    positions, the gateways' telemetry and change files (cdc.capture: every gateway found), the dashboard's views.
+    w: the notebook's widgets (module, catalog, prefix, connection, database, control); show: display. Raises
+    AssertionError naming the failed checks."""
+    from . import cdc, checksum, observe
+    from .plan import read_plan
+    plan = read_plan(plan_path)
+    built = built_signals(spark, plan, w["module"], w["connection"], w["database"])
+    rows = run(spark, plan, w["module"], catalog=w["catalog"], prefix=w["prefix"], marts_dir=marts_dir, built=built)
+    sums = checksum.run(spark, plan, w["module"], w["catalog"], w["prefix"], w["connection"], w["database"])
+    checksum.save(spark, sums, w["catalog"], w["control"])   # the dashboard reads <control>.checksums
+    cdc.save(spark, cdc.run(spark, plan, w["prefix"], w["connection"], w["database"]), w["catalog"], w["control"])
+    observe.ensure_tables(spark, plan, w["catalog"], w["control"])
+    got = cdc.capture(spark, plan, w["prefix"], w["catalog"], w["control"])
+    print("capture:", got)
+    lost = [g for g in got if not g["found"]]
+    rows.append(_row("gateway capture (telemetry and change files, every gateway)", f"{len(got)} found",
+                     f"{len(got) - len(lost)} found", not lost and bool(got),
+                     "; ".join(f"{g['gateway']}: {g.get('why')}" for g in lost[:5])))
+    observe.create_views(spark, plan, w["catalog"], w["prefix"], w["control"])   # v_changes, v_latency, ...
+    off = [x for x in sums if x["status"] != "match"]
+    rows.append(_row("checksums (rows and contents: source, bronze, n:1)", f"{len(sums)} match",
+                     f"{len(sums) - len(off)} match", not off,
+                     "; ".join(f"{x['lob']}.{x['table']}: {x['status']}" for x in off[:5])))
+    if show:
+        show(spark.createDataFrame(rows))
+    bad = [r for r in rows if not r["ok"]]
+    if bad:
+        raise AssertionError(f"{len(bad)} of {len(rows)} checks failed: " + "; ".join(
+            f"{r['check']}: want {r['want']}, got {r['got']} {r['detail']}" for r in bad[:10]))
+    print(f"all {len(rows)} checks passed")
+    return rows

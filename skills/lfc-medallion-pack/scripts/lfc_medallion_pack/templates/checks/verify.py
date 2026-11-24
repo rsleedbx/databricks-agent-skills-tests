@@ -15,7 +15,8 @@ for name in ("module", "catalog", "prefix", "archive", "connection", "database",
 ARCHIVE = dbutils.widgets.get("archive")
 import subprocess, sys
 PKGS = {"lfc-statschema": "lfc-source-statschema", "lfc-source-contract": "lfc-source-contract/scripts",
-        "lfc-source-datagen": "lfc-source-datagen/scripts", "lfc-medallion": "lfc-medallion/scripts",
+        "lfc-source-datagen": "lfc-source-datagen/scripts", "lfc-change-source": "lfc-change-source/scripts",
+        "lfc-medallion": "lfc-medallion/scripts",
         "lfc-medallion-pack": "lfc-medallion-pack/scripts"}
 # every tests-repo package from the one archive (--no-deps: their own pins point at main), then what they need
 subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "--no-deps"] +
@@ -25,33 +26,6 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
-from lfc_medallion_pack.plan import read_plan
-from lfc_medallion_pack.verify import built_signals, run
-w = {k: dbutils.widgets.get(k) for k in ("module", "catalog", "prefix")}
-c = {k: dbutils.widgets.get(k) for k in ("connection", "database", "control")}
-plan = read_plan("../source/plan.json")
-built = built_signals(spark, plan, w["module"], c["connection"], c["database"])   # each LOB's numbers as built
-rows = run(spark, plan, w["module"], catalog=w["catalog"], prefix=w["prefix"], marts_dir="../marts", built=built)
-from lfc_medallion_pack import checksum
-sums = checksum.run(spark, plan, w["module"], w["catalog"], w["prefix"], c["connection"], c["database"])
-checksum.save(spark, sums, w["catalog"], c["control"])   # the dashboard reads <control>.checksums
-from lfc_medallion_pack import cdc
-cdc.save(spark, cdc.run(spark, plan, w["prefix"], c["connection"], c["database"]), w["catalog"], c["control"])
-from lfc_medallion_pack import observe
-observe.ensure_tables(spark, plan, w["catalog"], c["control"])
-got = cdc.capture(spark, plan, w["prefix"], w["catalog"], c["control"])   # the gateways' telemetry and change files
-print("capture:", got)
-lost = [g for g in got if not g["found"]]
-rows.append({"check": "gateway capture (telemetry and change files, every gateway)", "want": f"{len(got)} found",
-             "got": f"{len(got) - len(lost)} found", "ok": not lost and bool(got),
-             "detail": "; ".join(f"{g['gateway']}: {g.get('why')}" for g in lost[:5])})
-observe.create_views(spark, plan, w["catalog"], w["prefix"], c["control"])   # v_changes, v_updates, v_latency, ...
-off = [x for x in sums if x["status"] != "match"]
-rows.append({"check": "checksums (rows and contents: source, bronze, n:1)", "want": f"{len(sums)} match",
-             "got": f"{len(sums) - len(off)} match", "ok": not off,
-             "detail": "; ".join(f"{x['lob']}.{x['table']}: {x['status']}" for x in off[:5])})
-display(spark.createDataFrame(rows))
-bad = [r for r in rows if not r["ok"]]
-if bad:
-    raise AssertionError(f"{len(bad)} of {len(rows)} checks failed: " + "; ".join(f"{r['check']}: want {r['want']}, got {r['got']} {r['detail']}" for r in bad[:10]))
-print(f"all {len(rows)} checks passed")
+from lfc_medallion_pack.verify import job
+job(spark, {k: dbutils.widgets.get(k) for k in ("module", "catalog", "prefix", "connection", "database", "control")},
+    plan_path="../source/plan.json", marts_dir="../marts", show=display)
