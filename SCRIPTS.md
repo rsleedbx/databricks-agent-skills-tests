@@ -190,6 +190,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 - `skills/lfc-source-sizing/scripts/limits-check.py` Check a limits file against the documentation it cites: each row's quote must appear in its page's text.
 - `skills/lfc-source-sizing/scripts/size.sh` <profile> <connection> <postgres|mysql|mariadb|sqlserver|oracle|cockroachdb|yugabytedb> [--database D | --service S] ...
+- `skills/lfc-source-sizing/scripts/size_query.py` the sizing query for one engine, as one statement: the engine's catalog SQL (<engine>.sql beside this file) run throu...
 
 ## lfc-source-statschema
 

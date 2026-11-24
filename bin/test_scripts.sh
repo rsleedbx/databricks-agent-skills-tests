@@ -104,6 +104,7 @@ check "lfc_source_contract.cdc: publication FOR TABLE created, kept, tables adde
 check "lfc-saas-pipeline: package calls (fake API), each notebook and its bundle read the same tables through the same connection" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
   sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
+check "size_query.py: the sizing statement size.sh and a notebook run (each engine's arguments, MariaDB on the MySQL query, missing --database / --service)" python3 -m unittest -q "$SK/lfc-source-sizing/scripts/test_size_query.py"
 WC=$SK/lfc-workload-contract/scripts
 check "workload contract: every statschema schema is model format 1 (validate-model.py)" python3 "$WC/validate-model.py" "$SK"/lfc-source-statschema/schemas/*.yaml
 check "workload contract: workload-env.sh and validate-model.py on their fixtures" sh -c "'$WC/test-workload-env.sh' > /dev/null"
