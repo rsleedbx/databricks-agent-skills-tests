@@ -5,6 +5,8 @@
 # Usage:
 #   bin/genie_skills_sync.sh <profile> [--dest <workspace dir>] [--adopt] [--prune] [--dry-run]
 #
+# Each copied SKILL.md gets genie-skill-note.md after its frontmatter: run the skill's Python in the notebook's
+# own process, never through a shell.
 # --dest defaults to /Workspace/.assistant/skills (workspace-wide; needs workspace admin).
 # Each copied folder gets a .synced-from file (repo commit). A folder already there
 # without one belongs to someone else and is left alone, unless --adopt (it was copied
@@ -29,6 +31,7 @@ done
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 LIST=$ROOT/genie-skills.txt
+NOTE=$ROOT/genie-skill-note.md     # added to each copied SKILL.md (the repo's SKILL.md files stay as they are)
 SKILLS=()
 while IFS= read -r s; do
   case $s in ''|'#'*) continue;; esac
@@ -72,6 +75,12 @@ for s in ${SKILLS[@]+"${SKILLS[@]}"}; do
   # only the files git tracks (their working-tree text), so nothing untracked or ignored is published
   (cd "$ROOT/skills/$s" && git ls-files -z) | rsync -a --from0 --files-from=- "$ROOT/skills/$s/" "$STAGE/$s/"
   printf 'databricks-agent-skills-tests %s\n' "$COMMIT" > "$STAGE/$s/.synced-from"
+  # genie-skill-note.md right after the frontmatter, the first thing Genie Code reads: no shell in a notebook
+  awk 'FNR == NR { note = note $0 "\n"; next }
+       FNR == 1 && /^---$/ { fm = 1; print; next }
+       fm && /^---$/ { print; printf "\n%s", note; fm = 0; next }
+       { print }' "$NOTE" "$ROOT/skills/$s/SKILL.md" > "$STAGE/$s/SKILL.md"
+  grep -q 'In Genie Code or a notebook' "$STAGE/$s/SKILL.md" || { echo "$s: no frontmatter for the note" >&2; exit 1; }
   echo "copy $s -> $DEST/$s"
 done
 
