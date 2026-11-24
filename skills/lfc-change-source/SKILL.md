@@ -43,6 +43,21 @@ same reduction for every transport (conformance `gateway_log`). A CockroachDB ch
 (`land.changefeed`, read by `changefeed_log`). Use `format='json'`: its parquet writer fills a DECIMAL with the
 number's text, so other readers get wrong numbers.
 
+**Which log, which snapshot path.** [routing.py](scripts/lfc_change_source/routing.py) gives each table a class
+from its snapshot's bytes and its change rate, or by name:
+
+| Class | Snapshot | Changes |
+|---|---|---|
+| `dimension`: small, slow | landed into the log (`log`) | the shared log |
+| `big_slow`: big, few changes | read where the gateway wrote it (`direct`) | the shared log |
+| `big_fast`: many changes | read in place | a log of its own, sharded by key hash once one stream can't carry it |
+
+A busy table in the shared log makes every other table's read skip its events, so a fast table gets its own log, and
+its own gateway or Debezium target table, since a gateway's change files mix its tables. `land.gateway_snapshots`
+takes each table's snapshot path; `gateway_log.current_sql` reads a table on either path. The suggestion from a
+source's statistics, and what changing a route later takes (most changes are a cut-over at a position, no new
+snapshot): [references/routing.md](references/routing.md).
+
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).
 

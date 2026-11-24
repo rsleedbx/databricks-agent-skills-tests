@@ -11,7 +11,7 @@ transport is read one way.
 from __future__ import annotations
 
 from .cdc_log import CdcLog
-from .contract import Position, quote
+from .contract import DELETE, OP, SEQ, Position, last_change_sql, quote
 
 
 class GatewayLog(CdcLog):
@@ -39,3 +39,22 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
     land.gateway(session, staged.root, log, "conformance")
     src = from_gateway("conformance", log, staged.entry, "conformance.public.t", snapshot=staged.snapshot_sql())
     return src, [Position("gateway_cursor", p.value) for p in positions]
+
+
+def current_sql(name: str, log: str, entry: dict, destination: str, root: str, path: str, position: str = "") -> str:
+    """The table's current rows (its columns and _op upsert) for either snapshot path (land.snapshot_path): `log`, from
+    the change log alone (its landed snapshot and changes); `direct`, its snapshot read in place where the gateway
+    wrote it, then each key's last change in the log after the snapshot's position (gateway_staging's
+    snapshot_position; '' when the change files start before the snapshot, SQL Server change tracking)."""
+    from . import gateway_staging as gs
+    src = from_gateway(name, log, entry, destination)
+    if path == "log":
+        return src.snapshot_sql()
+    if path != "direct":
+        raise ValueError(f"snapshot path {path!r}: log or direct")
+    snap = gs.Staging(name, root, entry).snapshot_sql()
+    cols = ", ".join(quote(c) for c in src.columns)
+    lit = "'" + position.replace("'", "") + "'"
+    both = (f"SELECT {cols}, {OP}, named_struct('v', {lit}, 'o', 0) AS {SEQ} FROM ({snap}) UNION ALL "
+            f"SELECT {cols}, {OP}, {SEQ} FROM ({src.changes_sql(Position('gateway_cursor', position), None)})")
+    return f"SELECT {cols}, {OP} FROM ({last_change_sql(both, src.keys)}) WHERE {OP} <> '{DELETE}'"

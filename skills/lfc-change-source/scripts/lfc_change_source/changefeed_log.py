@@ -21,22 +21,14 @@ from __future__ import annotations
 import json
 
 from .cdc_log import CdcLog
-from .contract import DELETE, OP, UPSERT, Position, last_change_sql, quote
+from .contract import Position, quote
 
 KIND = "hlc"
 
 
 class ChangefeedLog(CdcLog):
-    """A CdcLog of a CockroachDB changefeed: HLC positions, the watermark from RESOLVED, the snapshot from the log."""
-
-    def snapshot_sql(self, at: Position | None = None) -> str:
-        """The given snapshot, else the table as of `at` from the log itself (the initial scan and the changes up to
-        `at`): each key's last change, deletes dropped."""
-        if self.snapshot:
-            return super().snapshot_sql(at)
-        names = ", ".join(quote(c) for c in self.columns)
-        return (f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({last_change_sql(self.changes_sql(None, at), self.keys)}) "
-                f"WHERE {OP} <> '{DELETE}'")
+    """A CdcLog of a CockroachDB changefeed: HLC positions, the watermark from RESOLVED, the snapshot from the log
+    (CdcLog.snapshot_sql with no snapshot given: the initial scan is in the log)."""
 
 
 def from_changefeed(name: str, log: str, destination: str, keys: list[str], columns: dict,

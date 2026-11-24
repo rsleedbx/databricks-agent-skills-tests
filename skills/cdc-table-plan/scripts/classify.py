@@ -3,7 +3,7 @@
 # ///
 """classify.py: a first guess at each table's role and silver, from a canonical schema.yaml, for the customer to check.
 
-    classify.py <schema.yaml> [--activity activity.yaml] [--sf 1] > plan.yaml
+    classify.py <schema.yaml> [--activity activity.yaml [--activity-seconds S]] [--stats stats.yaml] [--sf 1] > plan.yaml
     classify.py <schema.yaml> --truth <truth.yaml>        # compare the guess with known roles (exit 1 if any differ)
     classify.py <schema.yaml> --truth schema              # the same against the roles the schema itself carries (role:)
     classify.py <schema.yaml> --review schema             # the plan with the schema's role: lines as the corrections
@@ -29,6 +29,13 @@ Roles, and the silver each gets (the plan's `silver`, which the pipeline builds;
              append
   queue      inserts and deletes, few updates (activity only)  scd1
 Each table gets its evidence (`why`), a confidence, and a question to ask (`ask`) where a guess rests on little.
+
+Each table also gets a `route` (lfc-change-source routing.py): its class (dimension: small and slow; big_slow: a big
+snapshot, few changes; big_fast: many changes), its snapshot's path (log: landed into the change log; direct: read where
+the producer wrote it; auto: set by its real bytes when it lands), its change log (shared, or own for big_fast) and
+shards. From stats.yaml's data_size_bytes (else row_count x the columns' avg_width_bytes) and the activity's changes over
+--activity-seconds (how long the counts cover: since the statistics were reset). Edit it like silver; plan.py diff says
+what a change of route takes.
 """
 import argparse
 import os
@@ -37,9 +44,13 @@ import sys
 
 import yaml
 
-# the rules live in lfc-medallion's package (lfc_medallion.roles), so a pipeline or job can use them too
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-medallion", "scripts"))
-from lfc_medallion.roles import SILVER, plan
+# the rules live in lfc-medallion's package (lfc_medallion.roles), so a pipeline or job can use them too; the route's
+# in lfc-change-source's (lfc_change_source.routing)
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-medallion", "scripts"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-change-source", "scripts"))
+from lfc_change_source import routing  # noqa: E402
+from lfc_medallion.roles import SILVER, plan  # noqa: E402
 
 
 def load(p):
@@ -47,9 +58,34 @@ def load(p):
         return yaml.safe_load(f)
 
 
+def table_bytes(stats: dict | None, schema: dict, sf: float) -> dict:
+    """{table: bytes or None}: stats.yaml's data_size_bytes, else row_count x the columns' avg_width_bytes."""
+    by = {t["name"]: t for t in (stats or {}).get("tables") or []}
+    out = {}
+    for t in schema.get("tables") or []:
+        s = by.get(t["name"]) or {}
+        rows = t.get("row_count") or (t.get("row_count_per_sf") or 0) * sf or s.get("row_count")
+        width = sum(c.get("avg_width_bytes") or 0 for c in s.get("columns") or [])
+        out[t["name"]] = s.get("data_size_bytes") or (int(rows * width) if rows and width else None)
+    return out
+
+
+def routes(schema: dict, stats: dict | None, activity: dict | None, seconds: float | None, sf: float) -> dict:
+    """Each table's suggested route (lfc_change_source.routing.suggest) from its bytes and change rate."""
+    size = table_bytes(stats, schema, sf)
+    rate = {}
+    for n, a in (activity or {}).items():
+        if isinstance(a, dict) and seconds:
+            rate[n] = sum(a.get(k) or 0 for k in ("inserts", "updates", "deletes")) / seconds
+    return routing.suggest({n: {"bytes": size.get(n), "events_per_s": rate.get(n)} for n in size},
+                           routing.Policy(shared_log="shared"))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("schema"); ap.add_argument("--activity"); ap.add_argument("--sf", type=float, default=1)
+    ap.add_argument("--stats", help="statschema's stats.yaml: each table's data_size_bytes, columns' avg_width_bytes")
+    ap.add_argument("--activity-seconds", type=float, help="how many seconds the activity's counts cover")
     ap.add_argument("--truth"); ap.add_argument("--review"); ap.add_argument("--model")
     a = ap.parse_args()
     schema = load(a.schema)
@@ -57,6 +93,9 @@ def main():
     act = load(a.activity) if a.activity else None
     model = a.model or re.sub(r"\.ya?ml$", "", a.schema.rsplit("/", 1)[-1])
     p = plan(blind, a.sf, act, model)   # never the answer it's scored against
+    for n, r in routes(blind, load(a.stats) if a.stats else None, act, a.activity_seconds, a.sf).items():
+        if n in p["tables"]:
+            p["tables"][n]["route"] = r
     if a.review:   # corrections from the docs or the code: role (and silver, else the role's), with the citation
         roles = {t["name"]: {"role": t["role"], "cite": "the schema's role: (its specification)"}
                  for t in schema.get("tables") or [] if t.get("role")}

@@ -111,8 +111,10 @@ class Warehouse:
                                                 StatementParameterListItem, StatementState)
         params = [StatementParameterListItem(name=k, value=None if v is None else str(v))
                   for k, v in (args or {}).items()] or None
+        # wait_timeout 0s: the POST returns at once and the statement is polled; a POST held open longer than the
+        # client's read timeout (60 s, a statement with a long plan) was retried, and a retried POST can start it again
         r = self.w.statement_execution.execute_statement(
-            statement=query, warehouse_id=self.id, parameters=params, wait_timeout="50s",
+            statement=query, warehouse_id=self.id, parameters=params, wait_timeout="0s",
             on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CONTINUE, disposition=Disposition.INLINE,
             format=Format.JSON_ARRAY)
         while r.status.state in (StatementState.PENDING, StatementState.RUNNING):

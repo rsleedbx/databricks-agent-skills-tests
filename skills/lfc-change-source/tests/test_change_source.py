@@ -134,6 +134,50 @@ class Land(unittest.TestCase):
         self.assertIn("value:data.`C2`::STRING AS `v`", q)
         self.assertIn("value:cursor.sequence::STRING > '00000000/8F63FB10-0000000000000000001'", q)   # text order
 
+    def test_gateway_snapshot_paths_log_and_direct(self):   # small: into the log; large or chosen: read in place
+        from lfc_change_source import land
+        from lfc_change_source.gateway_log import current_sql, from_gateway
+        seen = []
+        d = lambda n: types.SimpleNamespace(name=n, is_directory=True, file_size=None)   # noqa: E731
+        f = lambda n, b: types.SimpleNamespace(name=n, path=n, is_directory=False, file_size=b)   # noqa: E731
+        sizes = {"T1": 4096, "T2": 5 << 30, "T3": 100}
+
+        def ls(p):
+            tid = p.split("/snapshot/")[1].split("/")[0]
+            if p.endswith(f"/{tid}"):
+                return [d("100/"), d("250/"), d("qbc_checkpoint/")] if tid in sizes else []
+            return [f("part-0.snappy.parquet", sizes[tid]), f("_SUCCESS", 0)]
+        count = [types.SimpleNamespace(asDict=lambda: {"num_inserted_rows": 4})]
+        s = types.SimpleNamespace(w=types.SimpleNamespace(files=types.SimpleNamespace(list_directory_contents=ls)),
+                                  sql=lambda q: seen.append(q) or types.SimpleNamespace(
+                                      collect=lambda: [] if "SELECT DISTINCT" in q else count))   # nothing landed yet
+        entry = {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]}
+        tables = {("db", "s", "t"): entry, ("db", "s", "big"): dict(entry, id="T2"),
+                  ("db", "s", "chosen"): dict(entry, id="T3"), ("db", "s", "none"): dict(entry, id="T9")}
+        got = land.gateway_snapshots(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", tables, paths={"db.s.chosen": "direct"})
+        self.assertEqual({k: (v["path"], v["rows"]) for k, v in got.items()},
+                         {"db.s.t": ("log", 4), "db.s.big": ("direct", None), "db.s.chosen": ("direct", None),
+                          "db.s.none": (None, None)})
+        self.assertEqual(got["db.s.big"]["bytes"], 5 << 30)
+        self.assertEqual(len(seen), 2)                    # what's landed already (one query), then only the small one
+        self.assertIn("WHERE operation = 'read' AND gateway = 'gw_1'", seen[0])
+        self.assertIn("read_files('/V/g/snapshot/T1/250/', format => 'parquet', pathGlobFilter => '*.parquet')",
+                      seen[1])                                             # the newest, not checkpoints
+        self.assertIn("SELECT 'db.s.t', 'read',", seen[1])
+        self.assertIn("struct(* EXCEPT (__sequence, __operation, _rescued_data))", seen[1])
+        landed = {("db.s.t", 250)}
+        again = land.gateway_snapshot(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", "db.s.t", entry, landed=landed)
+        self.assertEqual((again["rows"], len(seen)), (0, 2))               # in the log already: no statement
+        self.assertEqual(land.snapshot_path(10, max_bytes=5), "direct")
+        with self.assertRaises(ValueError):
+            land.snapshot_path(1, chosen="both")
+        q = from_gateway("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t").snapshot_sql()   # no snapshot given: the log
+        self.assertIn("ROW_NUMBER() OVER (PARTITION BY `id`", q)
+        self.assertEqual(current_sql("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t", "/V/g", "log"), q)
+        direct = current_sql("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t", "/V/g", "direct")
+        self.assertIn("read_files('/V/g/snapshot/T1/'", direct)                # the snapshot in place
+        self.assertIn("operation <> 'resolved'", direct)                         # and the log's changes
+
     def test_changefeed_files_land_and_read_by_hlc(self):   # captured CockroachDB JSON files: tests/samples/object_store
         from lfc_change_source import land
         from lfc_change_source.changefeed_log import from_changefeed, hlc
@@ -160,6 +204,67 @@ class Land(unittest.TestCase):
         self.assertEqual(sorted(e["updated"] for e in events if "updated" in e),
                          [e["updated"] for e in events if "updated" in e])
         self.assertTrue(any(e.get("after") is None and "key" in e for e in events))   # a delete: no after image
+
+
+
+class Routing(unittest.TestCase):
+    def test_three_classes_by_rate_then_size(self):
+        from lfc_change_source import routing
+        p = routing.Policy(shared_log="`m`.`c`.`cdc_log`", fast_events_per_s=1000)
+        got = routing.plan({"db.s.region": (4096, 0.01), "db.s.history": (5 << 40, 2.0),
+                            "db.s.orders": (5 << 40, 250_000), "db.s.ticks": (100, 5_000)}, p)
+        self.assertEqual({t: (r.cls, r.snapshot, r.log, r.shards) for t, r in got.items()}, {
+            "db.s.region": ("dimension", "log", "`m`.`c`.`cdc_log`", 1),
+            "db.s.history": ("big_slow", "direct", "`m`.`c`.`cdc_log`", 1),
+            "db.s.orders": ("big_fast", "direct", "`m`.`c`.`cdc_log_orders`", 3),   # 250,000 / 100,000 a stream
+            "db.s.ticks": ("big_fast", "direct", "`m`.`c`.`cdc_log_ticks`", 1)})    # fast by rate, small or not
+
+    def test_suggest_from_statistics_says_why(self):
+        from lfc_change_source import routing
+        got = routing.suggest({"region": {"bytes": 2048, "events_per_s": 0.0},
+                               "lineitem": {"bytes": 80 << 30, "events_per_s": 3.5},
+                               "ticks": {"bytes": None, "events_per_s": 150_000.0},
+                               "orders": {"bytes": None, "events_per_s": None}}, routing.Policy("shared"))
+        self.assertEqual({t: (r["class"], r["snapshot"], r["log"], r["shards"]) for t, r in got.items()}, {
+            "region": ("dimension", "log", "shared", 1), "lineitem": ("big_slow", "direct", "shared", 1),
+            "ticks": ("big_fast", "direct", "own", 2), "orders": ("auto", "auto", "shared", 1)})
+        self.assertIn("80.0 GiB snapshot", got["lineitem"]["why"])
+        self.assertIn("change rate unknown", got["orders"]["why"])
+
+    def test_cutover_reads_each_log_for_its_positions(self):   # shared up to P, its own after, no new snapshot
+        from lfc_change_source import land, routing
+        from lfc_change_source.cdc_log import CdcLog
+        fq = routing.history_fq([("`m`.`c`.`cdc_log`", None), ("`m`.`c`.`cdc_log_t`", "00000000000000000042")],
+                                "gateway_cursor")
+        self.assertIn("FROM `m`.`c`.`cdc_log` WHERE operation IN ('resolved', 'read') OR "
+                      "(value:cursor.sequence::STRING <= '00000000000000000042')", fq)
+        self.assertIn("FROM `m`.`c`.`cdc_log_t` WHERE operation IN ('resolved', 'read') OR "
+                      "(value:cursor.sequence::STRING > '00000000000000000042')", fq)
+        self.assertEqual(routing.history_fq([("`m`.`c`.`cdc_log`", None)], "lsn"), "`m`.`c`.`cdc_log`")
+        q = CdcLog("s", fq, "t", "db.s.t", ["id"], {"id": "INT"}, seq="gateway_cursor").changes_sql(None, None)
+        self.assertIn(f"FROM {fq} WHERE destination = 'db.s.t'", q)
+        seen = []
+        s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: []))
+        land.gateway(s, "/V/g", "`m`.`c`.`cdc_log_t`", "gw", only=["db.s.t"])
+        land.gateway(s, "/V/g", "`m`.`c`.`cdc_log`", "gw", skip=["db.s.t"])
+        self.assertIn("event:table_id.name::STRING) IN ('db.s.t')) FILEFORMAT", seen[0])
+        self.assertIn("event:table_id.name::STRING) NOT IN ('db.s.t')) FILEFORMAT", seen[1])
+
+    def test_transitions_name_what_a_route_change_takes(self):
+        from lfc_change_source import routing
+        same = {"class": "dimension", "snapshot": "log", "log": "shared", "shards": 1}
+        self.assertEqual(routing.transitions(same, same), [])
+        hot = {"class": "big_fast", "snapshot": "direct", "log": "own", "shards": 3}
+        self.assertEqual([a for a, _ in routing.transitions(same, hot)], ["snapshot", "cutover", "reshard"])
+        self.assertIn("no new snapshot", dict(routing.transitions(same, hot))["cutover"])
+
+    def test_chosen_by_name_and_rates_from_counts(self):
+        from lfc_change_source import routing
+        p = routing.Policy(shared_log="`m`.`c`.`cdc_log`", chosen={"db.s.region": "big_fast"})
+        self.assertEqual(routing.log_for("db.s.region", 10, 0, p).cls, "big_fast")
+        with self.assertRaises(ValueError):
+            routing.classify(1, 1, routing.Policy("x", chosen={"t": "huge"}), "t")
+        self.assertEqual(routing.rates({"a": 100}, {"a": 700, "b": 30}, 60), {"a": 10.0, "b": 0.5})
 
 
 class Conformance(unittest.TestCase):

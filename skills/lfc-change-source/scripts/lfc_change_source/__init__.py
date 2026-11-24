@@ -2,6 +2,7 @@
 
 ADAPTERS: each adapter module by name. A module has its source class (snapshot_sql, changes_sql, watermark, stats,
 shared) and build(session, schema, snapshot, steps, columns, keys) for the conformance scenario (conformance.py).
+routing.py says which log and snapshot path each table takes, by its class (dimension, big_slow, big_fast).
 """
 from . import cdc_log, changefeed_log, gateway_log, gateway_staging, lfc_bronze
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .contract import DELETE, OP, SEQ, UPSERT, Position, Stats, quote
+from .contract import DELETE, OP, SEQ, UPSERT, Position, Stats, last_change_sql, quote
 
 # the event field that orders a source's changes, as a BIGINT (moved from zerobus-debezium-test's silver generator)
 SEQUENCES = {
@@ -78,11 +78,14 @@ class CdcLog:
         return ", ".join(self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items())
 
     def snapshot_sql(self, at: Position | None = None) -> str:
-        """The snapshot's rows (its own as-of time: the log starts after it)."""
-        if not self.snapshot:
-            raise ValueError(f"{self.destination}: no snapshot given")
+        """The snapshot given (its own as-of time: the log starts after it), else the table as of `at` (None: the
+        latest) from the log itself, its snapshot rows (operation read: a CockroachDB initial scan, a gateway's
+        snapshot landed by land.gateway_snapshots) and changes: each key's last change, deletes dropped."""
         names = ", ".join(quote(c) for c in self.columns)
-        return f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({self.snapshot})"
+        if self.snapshot:
+            return f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({self.snapshot})"
+        return (f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({last_change_sql(self.changes_sql(None, at), self.keys)}) "
+                f"WHERE {OP} <> '{DELETE}'")
 
     def changes_sql(self, after: Position | None, to: Position | None) -> str:
         """Its events after `after` up to `to` (None: from the start, to the latest); _seq: the source's order, then
