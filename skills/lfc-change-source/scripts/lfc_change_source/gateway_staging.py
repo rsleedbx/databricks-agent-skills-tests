@@ -4,6 +4,9 @@ of the gateway (shared). The layout (lfc-medallion-pack's references/gateway-sta
 
   metadata/table_schemas/<table id>/target_schema.<n>.json   each table's columns: name, type, and the column id
   snapshot/<table id>/<snapshot time>/part_*.parquet         the snapshot, columns by id, with __sequence: its cursor
+                                                             (empty for SQL Server change tracking: the change files
+                                                             start before the snapshot); also qbc_checkpoint/ and
+                                                             _spark_metadata/, not parquet: reads take *.parquet only
   cdc/<producer start>/<segment>                             JSON lines, one change each, every table's: table_id,
                                                              cursor.sequence, operation (INSERT, UPDATE, DELETE), data
                                                              (columns by id)
@@ -83,14 +86,14 @@ class Staging:
         """The table's newest snapshot (its rows carry the cursor it was taken at: snapshot_position)."""
         cols = ", ".join(f"{quote(cid)}::{t} AS {quote(c)}" for c, t, cid in self.entry["columns"])
         return (f"SELECT {cols}, '{UPSERT}' AS {OP} FROM read_files('{self.root}/snapshot/{self.entry['id']}/', "
-                "format => 'parquet') WHERE _metadata.file_path LIKE concat('%/', (SELECT max(regexp_extract("
+                "format => 'parquet', pathGlobFilter => '*.parquet') WHERE _metadata.file_path LIKE concat('%/', (SELECT max(regexp_extract("
                 f"_metadata.file_path, '/snapshot/{self.entry['id']}/([0-9]+)/', 1)) FROM read_files("
-                f"'{self.root}/snapshot/{self.entry['id']}/', format => 'parquet')), '/%')")
+                f"'{self.root}/snapshot/{self.entry['id']}/', format => 'parquet', pathGlobFilter => '*.parquet')), '/%')")
 
     def snapshot_position(self, session) -> Position:
         """The cursor the newest snapshot was taken at: the changes after it start there."""
         rows = session.sql(f"SELECT max(__sequence) FROM read_files('{self.root}/snapshot/{self.entry['id']}/', "
-                           "format => 'parquet')").collect()
+                           "format => 'parquet', pathGlobFilter => '*.parquet')").collect()
         return Position(KIND, str(rows[0][0]))
 
     def changes_sql(self, after: Position | None, to: Position | None) -> str:

@@ -32,14 +32,16 @@ the package `lfc-change-source` (`pip install <archive>#subdirectory=skills/lfc-
 | `lfc_bronze` | a Lakeflow Connect bronze table: the ingestion pipeline's streaming table, one a source and table; changes from its change data feed (`table_changes`) | Delta versions, or commit times | the latest version | no | built; lfc-medallion's merge route reads through it |
 | `cdc_log` | an append-only table of Debezium change events (through Zerobus), every table's: `destination`, `key:`, `value:after:`, op | the source's own order (`SEQUENCES`: LSN, binlog position, SCN, event time) | the latest event's position | yes | built; passes conformance; **zerobus-debezium-test**'s silver generator to read through it |
 | `gateway_staging` | the gateway's staging volume, read-only: `snapshot/<table id>/<time>/*.parquet` (with the cursor it was taken at), `cdc/` JSON lines, columns by id through `metadata/table_schemas/` | the gateway's cursor (`cursor.sequence`) | the newest cursor in the change files or the table's snapshot | yes: one folder a gateway | built; passes conformance; a table rebuilt from staging alone (snapshot and the changes after it) equals bronze |
-| object storage | a changefeed's files in cloud storage or a Volume (CockroachDB): `__crdb__updated` (HLC), `__crdb__event_type`; column families merged first | HLC | the newest `.RESOLVED` file | a folder a table | last |
+| `changefeed_log` | a CockroachDB changefeed's files (`format='json', updated, resolved`) in cloud storage or a Volume, one folder a table, landed by `land.changefeed` into the shared log: `after` (null: a delete), `key` (an array in key order), `updated` | the HLC (`hlc`, text of fixed width) | the newest `.RESOLVED` landed | yes, once landed | built; the initial scan is in the log, so the snapshot is the log up to a position |
 
 **One log for every transport.** `land.gateway` copies a gateway's change files, each file once (`COPY INTO`), into
 the shared append-only change log a Debezium source writes through Zerobus, in the same shape (`destination`,
 `operation`, `value`; clustered by destination). Then `cdc_log.from_gateway` reads a gateway's table from it, columns
 by id from the gateway's schema files and positions the gateway's cursor (`gateway_cursor`). A table is its snapshot
 (with the position it was taken at) and the changes after that position, each key's last one, deletes dropped: the
-same reduction for every transport (conformance `gateway_log`).
+same reduction for every transport (conformance `gateway_log`). A CockroachDB changefeed lands the same way
+(`land.changefeed`, read by `changefeed_log`). Use `format='json'`: its parquet writer fills a DECIMAL with the
+number's text, so other readers get wrong numbers.
 
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).

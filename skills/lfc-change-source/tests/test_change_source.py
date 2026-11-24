@@ -2,6 +2,7 @@
 
     python3 -m unittest skills/lfc-change-source/tests/test_change_source.py
 """
+import json
 import os
 import sys
 import types
@@ -11,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from lfc_change_source.contract import Position, Stats, last_change_sql  # noqa: E402
 from lfc_change_source.lfc_bronze import Bronze  # noqa: E402
 
+SAMPLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")
 V = lambda n: Position("delta_version", str(n))  # noqa: E731
 
 
@@ -69,7 +71,7 @@ class CdcLog(unittest.TestCase):
         q = src.changes_sql(Position("lsn", "100"), Position("lsn", "200"))
         self.assertIn("key:id::BIGINT AS `id`", q)                       # a delete has only its key
         self.assertIn("value:after:total::DECIMAL(12,2) AS `total`", q)
-        self.assertIn("destination = 'crdb1.public.orders' AND value:source:lsn::BIGINT > 100 AND "
+        self.assertIn("destination = 'crdb1.public.orders' AND operation <> 'resolved' AND value:source:lsn::BIGINT > 100 AND "
                       "value:source:lsn::BIGINT <= 200", q)
         self.assertIn("CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS _seq", q)   # a delete before an insert
         self.assertTrue(src.shared)
@@ -79,7 +81,7 @@ class CdcLog(unittest.TestCase):
         with self.assertRaises(ValueError):
             Log("x", "t", "t", "d", ["id"], {"id": "INT"}, seq="gtid")
         self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn",
-                                          "gateway_cursor"})
+                                          "gateway_cursor", "hlc"})
 
 
 class GatewayStaging(unittest.TestCase):
@@ -102,6 +104,8 @@ class GatewayStaging(unittest.TestCase):
         self.assertIn("table_id.uoid = 'T_HuC79qK_50284_50300' AND cursor.sequence > '00000000/8F63FB10-0000000000000000000'", q)
         self.assertIn("CASE operation WHEN 'DELETE' THEN 0 ELSE 1 END) AS _seq", q)   # the sample's DELETE first
         self.assertIn("/snapshot/T_HuC79qK_50284_50300/", src.snapshot_sql())
+        self.assertNotIn("format => 'parquet')", src.snapshot_sql())   # the folder also holds qbc_checkpoint/ (not parquet)
+        self.assertIn("pathGlobFilter => '*.parquet'", src.snapshot_sql())
         with self.assertRaises(ValueError):
             src.changes_sql(Position("lsn", "1"), None)
 
@@ -123,11 +127,39 @@ class Land(unittest.TestCase):
         self.assertIn("PATTERN = '*/*'", seen[0])                       # cdc/<producer>/<segment>
         self.assertIn("'singleVariantColumn' = 'event'", seen[0])
         self.assertIn("WHEN 'INSERT' THEN 'create'", seen[0])           # Debezium's words
+        self.assertIn("WHEN 'REPLACE' THEN 'update'", seen[0])          # change tracking's insert: never a NULL operation
         entry = {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]}
         src = from_gateway("lob_1", "`c`.`x`.`cdc_log`", entry, "db.lob_1.t")
         q = src.changes_sql(Position("gateway_cursor", "00000000/8F63FB10-0000000000000000001"), None)
         self.assertIn("value:data.`C2`::STRING AS `v`", q)
         self.assertIn("value:cursor.sequence::STRING > '00000000/8F63FB10-0000000000000000001'", q)   # text order
+
+    def test_changefeed_files_land_and_read_by_hlc(self):   # captured CockroachDB JSON files: tests/samples/object_store
+        from lfc_change_source import land
+        from lfc_change_source.changefeed_log import from_changefeed, hlc
+        seen = []
+        s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(
+            collect=lambda: [types.SimpleNamespace(asDict=lambda: {"num_inserted_rows": 3})]))
+        land.changefeed(s, "/Volumes/c/s/l/orders", "`c`.`x`.`cdc_log`", "shop.public.orders", ["id", "k2"], "crdb1")
+        self.assertIn("'shop.public.orders' AS destination", seen[0])
+        self.assertIn("named_struct('id', event:key[0], 'k2', event:key[1])", seen[0])   # the key array by name
+        self.assertIn("is_variant_null(event:after) THEN 'delete'", seen[0])
+        self.assertIn("PATTERN = '*/*{.ndjson,.RESOLVED}'", seen[0])
+        src = from_changefeed("crdb1", "`c`.`x`.`cdc_log`", "shop.public.orders", ["id"],
+                              {"id": "BIGINT", "total": "DECIMAL(12,2)"})
+        q = src.changes_sql(Position("hlc", hlc(5)), None)
+        self.assertIn("value:updated::STRING > '0000000000000000005.0000000000'", q)
+        self.assertIn("operation <> 'resolved'", q)
+        self.assertIn("WHERE _op <> 'delete'", src.snapshot_sql(Position("hlc", hlc(9))))   # from the log itself
+        w = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: [[hlc(7)]]))
+        self.assertEqual(src.watermark(w), Position("hlc", hlc(7)))
+        self.assertIn("max(value:resolved::STRING)", seen[-1])                 # RESOLVED, not the newest event
+        self.assertLess(hlc(9, 3), hlc(10))                                       # fixed width: text order is HLC order
+        with open(os.path.join(SAMPLES, "object_store", "changefeed_orders.ndjson")) as f:
+            events = [json.loads(line) for line in f]
+        self.assertEqual(sorted(e["updated"] for e in events if "updated" in e),
+                         [e["updated"] for e in events if "updated" in e])
+        self.assertTrue(any(e.get("after") is None and "key" in e for e in events))   # a delete: no after image
 
 
 class Conformance(unittest.TestCase):

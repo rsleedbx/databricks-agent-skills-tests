@@ -33,8 +33,13 @@ SEQUENCES = {
                   " + CAST(conv(split_part(value:source:change_lsn::STRING, ':', 3), 16, 10) AS BIGINT)",
     # a Lakeflow Connect gateway's events landed by land.gateway: its cursor, text of fixed width in commit order
     "gateway_cursor": "value:cursor.sequence::STRING",
+    # a CockroachDB changefeed's events landed by land.changefeed: the HLC, <wall ns>.<logical>, fixed width
+    "hlc": "value:updated::STRING",
 }
-TEXT = {"gateway_cursor"}   # positions compared as text
+TEXT = {"gateway_cursor", "hlc"}   # positions compared as text
+# a kind whose transport says how far every change has arrived (CockroachDB's RESOLVED files, landed as rows)
+RESOLVED = {"hlc": "value:resolved::STRING"}
+EVENT = "operation <> 'resolved'"   # a change event, not a landed watermark
 
 
 def column_sql(name: str, sql_type: str, keys: list[str]) -> str:
@@ -84,22 +89,29 @@ class CdcLog:
         a delete before an insert at one position. A snapshot event (read) is an upsert."""
         seq = SEQUENCES[self.seq]
         lo, hi = self._kind(after), self._kind(to)
-        where = [f"destination = '{self.destination}'"] + ([f"{seq} > {lo}"] if lo is not None else []) + \
+        where = [f"destination = '{self.destination}'", EVENT] + ([f"{seq} > {lo}"] if lo is not None else []) + \
                 ([f"{seq} <= {hi}"] if hi is not None else [])
         return (f"SELECT {self._cols()}, CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
                 f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
                 f"FROM {self.fq} WHERE {' AND '.join(where)}")
 
     def watermark(self, session, kind: str | None = None) -> Position:
-        """The latest event's position for this table (the log is append-only: every earlier event is in)."""
-        rows = session.sql(f"SELECT max({SEQUENCES[self.seq]}) AS v FROM {self.fq} "
-                           f"WHERE destination = '{self.destination}'").collect()
+        """The latest event's position for this table (the log is append-only: every earlier event is in), or, for a
+        kind with RESOLVED, the newest resolved position landed for it (later events can still arrive below the
+        newest event's: a changefeed's files from several nodes)."""
+        if self.seq in RESOLVED:
+            rows = session.sql(f"SELECT max({RESOLVED[self.seq]}) AS v FROM {self.fq} "
+                               f"WHERE destination = '{self.destination}' AND operation = 'resolved'").collect()
+        else:
+            rows = session.sql(f"SELECT max({SEQUENCES[self.seq]}) AS v FROM {self.fq} "
+                               f"WHERE destination = '{self.destination}'").collect()
         return Position(self.seq, str(rows[0][0]))
 
     def stats(self, session, after: Position | None) -> Stats:
         lo = self._kind(after)
         cut = f" AND {SEQUENCES[self.seq]} > {lo}" if lo is not None else ""
-        rows = session.sql(f"SELECT count(*) FROM {self.fq} WHERE destination = '{self.destination}'{cut}").collect()
+        rows = session.sql(f"SELECT count(*) FROM {self.fq} WHERE destination = '{self.destination}' AND {EVENT}{cut}"
+                           ).collect()
         return Stats(int(rows[0][0]), None, None)
 
 
