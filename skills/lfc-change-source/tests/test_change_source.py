@@ -110,6 +110,25 @@ class GatewayStaging(unittest.TestCase):
         self.assertEqual(sorted(cs), [cs[1], cs[2], cs[0], cs[3]])
 
 
+class Land(unittest.TestCase):
+    def test_copy_into_the_shared_log_and_read_by_cursor(self):   # a gateway's files in the Debezium log's shape
+        from lfc_change_source import land
+        from lfc_change_source.cdc_log import from_gateway
+        seen = []
+        s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(
+            collect=lambda: [types.SimpleNamespace(asDict=lambda: {"num_inserted_rows": 7})]))
+        self.assertEqual(land.gateway(s, "/Volumes/c/s/st/g", "`c`.`x`.`cdc_log`", "gw_1"), 7)
+        self.assertIn("COPY INTO `c`.`x`.`cdc_log`", seen[0])          # each file once
+        self.assertIn("PATTERN = '*/*'", seen[0])                       # cdc/<producer>/<segment>
+        self.assertIn("'singleVariantColumn' = 'event'", seen[0])
+        self.assertIn("WHEN 'INSERT' THEN 'create'", seen[0])           # Debezium's words
+        entry = {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]}
+        src = from_gateway("lob_1", "`c`.`x`.`cdc_log`", entry, "db.lob_1.t")
+        q = src.changes_sql(Position("gateway_cursor", "00000000/8F63FB10-0000000000000000001"), None)
+        self.assertIn("value:data.`C2`::STRING AS `v`", q)
+        self.assertIn("value:cursor.sequence::STRING > '00000000/8F63FB10-0000000000000000001'", q)   # text order
+
+
 class Conformance(unittest.TestCase):
     def test_scenario_truth(self):
         from lfc_change_source import conformance

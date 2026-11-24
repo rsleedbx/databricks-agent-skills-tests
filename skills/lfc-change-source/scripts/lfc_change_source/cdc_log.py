@@ -31,7 +31,10 @@ SEQUENCES = {
     "change_lsn": "CAST(conv(split_part(value:source:change_lsn::STRING, ':', 1), 16, 10) AS BIGINT) * 281474976710656"
                   " + CAST(conv(split_part(value:source:change_lsn::STRING, ':', 2), 16, 10) AS BIGINT) * 65536"
                   " + CAST(conv(split_part(value:source:change_lsn::STRING, ':', 3), 16, 10) AS BIGINT)",
+    # a Lakeflow Connect gateway's events landed by land.gateway: its cursor, text of fixed width in commit order
+    "gateway_cursor": "value:cursor.sequence::STRING",
 }
+TEXT = {"gateway_cursor"}   # positions compared as text
 
 
 def column_sql(name: str, sql_type: str, keys: list[str]) -> str:
@@ -58,12 +61,13 @@ class CdcLog:
         if self.seq not in SEQUENCES:
             raise ValueError(f"seq {self.seq!r}: one of {', '.join(SEQUENCES)}")
 
-    def _kind(self, p: Position | None) -> int | None:
+    def _kind(self, p: Position | None) -> str | None:
+        """A position as a SQL literal of its kind (a number, or text for TEXT kinds)."""
         if p is None:
             return None
         if p.kind != self.seq:
             raise ValueError(f"{self.destination}: a position is a {self.seq}, not {p.kind}")
-        return int(p.value)
+        return "'" + p.value.replace("'", "") + "'" if self.seq in TEXT else str(int(p.value))
 
     def _cols(self) -> str:
         return ", ".join(self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items())
@@ -121,3 +125,28 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
     src = CdcLog("conformance", log, "t", dest, list(keys), {k: "INT", v: "STRING"}, seq="ts_ns",
                  snapshot=f"SELECT * FROM {snap}")
     return src, [Position("ts_ns", str(n * 1000)) for n in range(len(steps) + 1)]
+
+
+def from_gateway(name: str, log: str, entry: dict, destination: str, snapshot: str | None = None) -> CdcLog:
+    """A gateway's table in a landed change log (land.gateway): its columns from the event's data by column id
+    (gateway_staging.schemas()'s entry), positions the gateway's cursor, the snapshot (gateway_staging's
+    snapshot_sql) as given."""
+    cols = {c: t for c, t, _ in entry["columns"]}
+    exprs = {c: f"value:data.{quote(cid)}::{t} AS {quote(c)}" for c, t, cid in entry["columns"]}
+    return CdcLog(name, log, destination.split(".")[-1], destination, list(entry["keys"]), cols,
+                  seq="gateway_cursor", snapshot=snapshot, exprs=exprs)
+
+
+def build_gateway(session, schema: str, snapshot: list, steps: list, columns: list[str], keys: list[str]):
+    """The conformance scenario as a gateway's staging folder (gateway_staging.build), landed into a change log,
+    read as a change log."""
+    from . import gateway_staging as gs
+    from . import land
+    staged, positions = gs.build(session, schema, snapshot, steps, columns, keys)
+    cat, sch = schema.split(".", 1)
+    log = f"{quote(cat)}.{quote(sch)}.{quote('lfc_change_source_landed')}"
+    session.sql(f"DROP TABLE IF EXISTS {log}")
+    land.ensure_log(session, log)
+    land.gateway(session, staged.root, log, "conformance")
+    src = from_gateway("conformance", log, staged.entry, "conformance.public.t", snapshot=staged.snapshot_sql())
+    return src, [Position("gateway_cursor", p.value) for p in positions]

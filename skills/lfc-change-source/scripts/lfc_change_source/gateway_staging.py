@@ -154,7 +154,8 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
         lines = []
         for i, (op, key, val) in enumerate(step):
             data = {cid[k]: key} | ({} if op == "delete" else {cid[v]: val})
-            lines.append(json.dumps({"table_id": {"uoid": tid, "name": "t"}, "operation": op.upper(),
+            lines.append(json.dumps({"table_id": {"uoid": tid, "catalog": "conformance", "schema": "public",
+                                                  "name": "t"}, "operation": op.upper(),
                                      "cursor": {"sequence": _cursor(n)}, "data": data}))
         _put(w, f"{root}/cdc/1/{n}", "\n".join(lines) + "\n")
     src = Staging("conformance", root, schemas(session, root)[("conformance", "public", "t")])
