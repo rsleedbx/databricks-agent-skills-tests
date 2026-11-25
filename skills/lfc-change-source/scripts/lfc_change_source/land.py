@@ -6,7 +6,9 @@ log, each event as it is (VARIANT):
   destination   <catalog>.<schema>.<table>, from the event's table_id
   operation     create, update or delete (the gateway's INSERT, UPDATE, DELETE, in Debezium's words; REPLACE, a SQL Server
                 change-tracking gateway's insert or upsert, is an update)
-  key           NULL (a gateway event's data holds the key)
+  key           the key's values as a JSON array of text, in key order (gateway_keys: each table's key columns by
+                id, from its schema files), or NULL when landed without them; a gateway event's data holds the
+                columns
   value         the whole event: table_id, cursor.sequence, operation, data (columns by id)
   gateway, file where it came from
 
@@ -47,16 +49,48 @@ GATEWAY_OPERATION = ("CASE event:operation::STRING WHEN 'INSERT' THEN 'create' W
                      "WHEN 'REPLACE' THEN 'update' WHEN 'DELETE' THEN 'delete' END")
 
 
-def gateway(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None) -> int | None:
+def gateway_keys(entries: dict) -> dict:
+    """{table id: [its key columns' ids, in key order]} from gateway_staging.schemas()'s entries (keyless tables
+    left out)."""
+    out = {}
+    for e in entries.values():
+        ids = {c: cid for c, _, cid in e["columns"]}
+        if e["keys"]:
+            out[e["id"]] = [ids[k] for k in e["keys"]]
+    return out
+
+
+def gateway_key_sql(keys: dict | None, event: str = "event") -> str:
+    """A gateway event's key as a VARIANT (a JSON array of each key column's value as text), from `keys`
+    (gateway_keys) by the event's table id: one expression for every table (a map literal, no branch a table), the
+    same text for a snapshot row and a change of the same key. NULL with no keys, or for a table not in them. Column
+    ids are letters, digits and underscores, so a plain $.<id> path needs no quoting."""
+    if not keys:
+        return "CAST(NULL AS VARIANT)"
+    m = "map(" + ", ".join(f"{_lit(t)}, array({', '.join(_lit(c) for c in cols)})" for t, cols in keys.items()) + ")"
+    return (f"parse_json(to_json(transform({m}[{event}:table_id.uoid::STRING], c -> "
+            f"variant_get({event}:data, concat('$.', c), 'string'))))")
+
+
+def backfill_keys(session, log: str, name: str, keys: dict) -> int | None:
+    """Fill the key of this gateway's rows landed without one (before gateway_keys): one UPDATE; rows changed."""
+    rows = session.sql(f"UPDATE {log} SET key = {gateway_key_sql(keys, 'value')} WHERE gateway = {_lit(name)} AND "
+                       "key IS NULL AND operation <> 'resolved'").collect()
+    return _inserted(rows, "num_affected_rows")
+
+
+def gateway(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None,
+            keys: dict | None = None) -> int | None:
     """The gateway's change files not landed before into the log; the rows added. only / skip: the tables
     (<catalog>.<schema>.<table>) whose events go to this log, or don't: one gateway's events split between logs (a
-    big_fast table's own log, routing.py), each log landing whole files with its own filter."""
+    big_fast table's own log, routing.py), each log landing whole files with its own filter. keys (gateway_keys):
+    each row's key filled in (silver's shared groups need it)."""
     where = ""
     if only:
         where = f" WHERE {GATEWAY_DESTINATION} IN ({', '.join(_lit(t) for t in only)})"
     elif skip:
         where = f" WHERE {GATEWAY_DESTINATION} NOT IN ({', '.join(_lit(t) for t in skip)})"
-    return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, "CAST(NULL AS VARIANT)", name, f"{root}/cdc/",
+    return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql(keys), name, f"{root}/cdc/",
                  "*/*", where)
 
 
@@ -113,9 +147,13 @@ def gateway_snapshot(session, root: str, log: str, name: str, destination: str, 
     if landed is not None and (destination, newest) in landed:
         out["rows"] = 0
         return out
+    ids = {c: cid for c, _, cid in entry["columns"]}
+    key = ("parse_json(to_json(array(" + ", ".join(
+        f"variant_get(to_variant_object(named_struct('k', `{ids[k]}`)), '$.k', 'string')" for k in entry["keys"])
+        + ")))") if entry.get("keys") else "CAST(NULL AS VARIANT)"   # the text gateway_key_sql gives a change
     rows = session.sql(
         f"INSERT INTO {log} (destination, operation, key, value, gateway, file) SELECT {_lit(destination)}, 'read', "
-        f"CAST(NULL AS VARIANT), {value}, {_lit(name)}, _metadata.file_path FROM read_files("
+        f"{key}, {value}, {_lit(name)}, _metadata.file_path FROM read_files("
         f"'{root}/snapshot/{tid}/{newest}/', format => 'parquet', pathGlobFilter => '*.parquet')").collect()
     out["rows"] = _inserted(rows)
     return out
@@ -144,9 +182,9 @@ def gateway_snapshots(session, root: str, log: str, name: str, tables: dict, thr
         return dict(pool.map(one, tables.items()))
 
 
-def _inserted(rows) -> int | None:
+def _inserted(rows, field: str = "num_inserted_rows") -> int | None:
     try:
-        return int(rows[0].asDict().get("num_inserted_rows")) if rows else 0
+        return int(rows[0].asDict().get(field)) if rows else 0
     except Exception:  # noqa: BLE001  a session that doesn't return the counts
         return None
 

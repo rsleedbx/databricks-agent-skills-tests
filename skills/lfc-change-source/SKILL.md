@@ -36,7 +36,9 @@ the package `lfc-change-source` (`pip install <archive>#subdirectory=skills/lfc-
 
 **One log for every transport.** `land.gateway` copies a gateway's change files, each file once (`COPY INTO`), into
 the shared append-only change log a Debezium source writes through Zerobus, in the same shape (`destination`,
-`operation`, `value`; clustered by destination). Then `cdc_log.from_gateway` reads a gateway's table from it, columns
+`operation`, `key`, `value`; clustered by destination). With `keys=land.gateway_keys(schemas)` each row's key is filled
+in by one expression for every table (a map of key columns by table id), as Debezium and a changefeed fill theirs;
+`land.backfill_keys` fills rows landed without. Then `cdc_log.from_gateway` reads a gateway's table from it, columns
 by id from the gateway's schema files and positions the gateway's cursor (`gateway_cursor`). A table is its snapshot
 (with the position it was taken at) and the changes after that position, each key's last one, deletes dropped: the
 same reduction for every transport (conformance `gateway_log`). A CockroachDB changefeed lands the same way

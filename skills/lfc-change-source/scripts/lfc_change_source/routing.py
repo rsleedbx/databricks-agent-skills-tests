@@ -69,7 +69,7 @@ class Policy:
     silver_chosen: dict = field(default_factory=dict)  # {table: method}: chosen instead of by its class
     own_table: dict = field(default_factory=dict)     # {table: need}: a small table kept out of a group (a need
     #                                                   only its own table meets: streaming reads, change feed, ...)
-    shared_group_size: int = 1000                     # tables a group (its MERGE's CASE has a branch a table)
+    shared_group_size: int = 1000                     # tables a group (a cost choice: its SQL has nothing a table)
     shared_max_share: float = 0.10                    # of its group's change events: more, and it leaves the group
     shared_max_reads_per_day: float | None = None     # reads a day (query history): more, and it leaves (None: off)
 

@@ -11,10 +11,10 @@ Every method reads the table's current rows the same way, the source's current_s
 each key's last change after it), so every cell gives the same table. routing.py's classes only pick a cell (and,
 for merge, whether to skip a round with no change); no class name appears here.
 
-  shared    a group of small tables (up to 1,000) in one table, <schema>._shared_<group> (destination, k, data
-            VARIANT: the typed row), and a typed view a table over it: one MERGE a round for the whole group, from one
-            kept position (a statement has a fixed floor of seconds; a warehouse runs a few a second). The tables share
-            one log and need keys
+  shared    a group of small tables in one table, <schema>._shared_<group> (destination, k: the key the landing
+            filled in, data VARIANT: the event's row), and a typed view a table over it: one MERGE a round for the
+            whole group, from one kept position (a statement has a fixed floor of seconds; a warehouse runs a few a
+            second). The tables share one log and one transport, and need keys in the log
   view      CREATE VIEW over the current rows: no work a round
   merge     build: CREATE TABLE from the current rows, kept at the run's position (in <schema>._log_silver);
             apply: one MERGE a table of each key's last change after its kept position; only_changed skips a table
@@ -188,36 +188,40 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
 
 
 def shared_changes_sql(members: list, after, to) -> str:
-    """Every member's events after `after` up to `to` in one scan of the log they share: destination, k (the key as
-    JSON), data (the typed row as a VARIANT), _op, _seq. A row's key and values are each source's own (column_values),
-    picked by destination."""
+    """Every member's events after `after` up to `to` in one scan of the log they share: destination, k (the key the
+    landing filled in, as text), data (the event's row, row_sql: the same expression for every table of a transport),
+    _op, _seq. No expression a table, so a group's size isn't bound by its SQL."""
     from lfc_change_source.cdc_log import EVENT, SEQUENCES
     from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT
     one = members[0]
-    bad = [m.destination for m in members if m.fq != one.fq or m.seq != one.seq or not m.keys]
+    bad = [m.destination for m in members if m.fq != one.fq or m.seq != one.seq or m.row_sql() != one.row_sql()
+           or not m.keys]
     if bad:
-        raise ValueError(f"shared: every table in a group needs keys and the same log and position kind: {bad[:5]}")
-
-    def struct(m, cols):
-        vals = m.column_values()
-        return "named_struct(" + ", ".join(f"{_lit(c)}, {vals[c]}" for c in cols) + ")"
-
-    def case(f):
-        return "CASE destination " + " ".join(f"WHEN {_lit(m.destination)} THEN {f(m)}" for m in members) + " END"
+        raise ValueError(f"shared: every table in a group needs keys and the same log, position kind and transport: "
+                         f"{bad[:5]}")
     seq = SEQUENCES[one.seq]
     lo, hi = one.position_sql(after), one.position_sql(to)
     where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT] + \
         ([f"{seq} > {lo}"] if lo is not None else []) + ([f"{seq} <= {hi}"] if hi is not None else [])
-    return (f"SELECT destination, {case(lambda m: 'to_json(' + struct(m, m.keys) + ')')} AS k, "
-            f"{case(lambda m: 'to_variant_object(' + struct(m, list(m.columns)) + ')')} AS data, "
+    return (f"SELECT destination, key::STRING AS k, {one.row_sql()} AS data, "
             f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
             f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
             f"FROM {one.fq} WHERE {' AND '.join(where)}")
 
 
+def missing_keys(session, members: list) -> int:
+    """Members' events with no key (landed before the landing filled keys in: land.backfill_keys fills them)."""
+    one = members[0]
+    from lfc_change_source.cdc_log import EVENT
+    r = session.sql(f"SELECT count(*) FROM {one.fq} WHERE destination IN "
+                    f"({', '.join(_lit(m.destination) for m in members)}) AND {EVENT} AND key IS NULL").collect()
+    return int(r[0][0]) if r else 0
+
+
 def shared_view_sql(t: Table, schema: str, target: str) -> str:
-    """A member's typed view over its group's table."""
-    cols = ", ".join(f"data:{_q(c)}::{typ} AS {_q(c)}" for c, typ in t.src.columns.items())
+    """A member's typed view over its group's table: its columns from the stored row, typed as its source types them
+    (stored_values)."""
+    cols = ", ".join(f"{e} AS {_q(c)}" for c, e in t.src.stored_values("data").items())
     return (f"CREATE OR REPLACE VIEW {target} AS SELECT {cols} FROM {_target(schema, SHARED.format(group=t.group))} "
             f"WHERE destination = {_lit(t.src.destination)}")
 
@@ -247,6 +251,12 @@ def build_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
     from lfc_change_source.contract import DELETE, OP, last_change_sql
     ensure_state(session, schema)
     groups = _groups(tables)
+
+    for g, members in groups.items():
+        n = missing_keys(session, [m.src for m in members.values()])
+        if n:
+            raise ValueError(f"shared group {g}: {n:,} events with no key: land with keys (lfc_change_source "
+                             "land.gateway_keys), or fill them in (land.backfill_keys)")
 
     def one(g, members):
         t0 = time.time()

@@ -35,6 +35,8 @@ def session(seen, kept=(), newest=()):
             rows = list(newest)
         elif "information_schema" in q:
             rows = []
+        elif q.startswith("SELECT count(*)"):
+            rows = [(0,)]
         else:
             rows = [types.SimpleNamespace(asDict=lambda: {"num_affected_rows": 1})]
         return types.SimpleNamespace(collect=lambda: rows)
@@ -79,12 +81,12 @@ class Shared(unittest.TestCase):
         q = silver.shared_changes_sql([t.src for t in tables.values()], Position("gateway_cursor", "05"),
                                       Position("gateway_cursor", "09"))
         self.assertEqual(q.count("FROM `c`.`x`.`cdc_log`"), 1)                               # one scan
-        self.assertIn("WHEN 'db.s.a' THEN to_json(named_struct('id', value:data.`C1`::INT))", q)
-        self.assertIn("to_variant_object(named_struct('id', value:data.`C1`::INT, 'v', value:data.`C2`::STRING))", q)
+        self.assertIn("SELECT destination, key::STRING AS k, value:data AS data", q)        # nothing a table
+        self.assertNotIn("CASE destination", q)
         self.assertIn("value:cursor.sequence::STRING > '05'", q)
         v = silver.shared_view_sql(tables["a"], "`c`.`s`", "`c`.`s`.`a`")
-        self.assertIn("data:`id`::INT AS `id`, data:`v`::STRING AS `v` FROM `c`.`s`.`_shared_0` "
-                      "WHERE destination = 'db.s.a'", v)
+        self.assertIn("data:`C1`::INT AS `id`, data:`C2`::STRING AS `v` FROM `c`.`s`.`_shared_0` "
+                      "WHERE destination = 'db.s.a'", v)                                      # typed as the source
         seen = []
         silver.run(session(seen), tables, "`c`.`s`", Position("gateway_cursor", "09"), threads=1, first=True)
         self.assertEqual(sum(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`_shared_0`") for q in seen), 1)
@@ -96,6 +98,14 @@ class Shared(unittest.TestCase):
         self.assertEqual((len(merges), got["shared"]["groups"], got["shared"]["done"]), (1, 1, 1))  # one MERGE
         self.assertIn("ON t.destination = c.destination AND t.k = c.k", merges[0])
         self.assertIn("> '05'", merges[0])
+
+    def test_a_debezium_member_reads_its_after_image(self):
+        from lfc_change_source.cdc_log import CdcLog
+        d = CdcLog("pg1", LOG, "t", "pg1.public.t", ["id"], {"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="lsn")
+        self.assertEqual(d.row_sql(), "value:after")
+        self.assertEqual(d.stored_values(), {"id": "data:`id`::BIGINT", "total": "data:`total`::DECIMAL(12,2)"})
+        with self.assertRaises(ValueError):                                                  # one transport a group
+            silver.shared_changes_sql([src("a"), d], None, None)
 
     def test_a_group_needs_keys_one_log_and_its_snapshot_in_the_log(self):
         keyless = from_gateway("gw", LOG, dict(ENTRY, id="k", keys=[]), "db.s.k")

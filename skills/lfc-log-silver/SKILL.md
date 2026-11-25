@@ -39,9 +39,11 @@ silver.run(session, tables, "`main`.`silver`", to)                # a round
 lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "auto_cdc"})
 ```
 
-- `shared`: a group's tables (up to 1,000, one log, with keys) keep their current rows in `<schema>._shared_<group>`
-  (destination, key, the typed row as a VARIANT), one scan of the log and one MERGE a round for the group, and a typed
-  view a table; a table moved into a group has its own table dropped for the view.
+- `shared`: a group's tables (one log and transport, keys landed: lfc-change-source `land.gateway_keys`) keep their
+  current rows in `<schema>._shared_<group>` (destination, key, the event's row as a VARIANT): one scan of the log and
+  one MERGE a round for the group, with nothing a table in its SQL, and a typed view a table (the source's own typing,
+  `stored_values`). A table moved into a group has its own table dropped for the view; a group with unkeyed events is
+  refused (`land.backfill_keys` fills them in).
 - `build` makes each merged table from its current rows and keeps the run's position in `<silver schema>._log_silver`;
   `apply` runs one MERGE a table of each key's last change after it, `threads` at once; `only_changed` skips a table
   with no event past its position (one grouped query finds them).

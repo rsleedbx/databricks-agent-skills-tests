@@ -32,7 +32,7 @@ A small table costs per object (a MERGE has a fixed floor of seconds whatever it
 tables are small and slow and hold almost no data; most bytes are in a few big, fast tables. Any table whose rate
 passes `own_log_events_per_s` also gets its own log.
 
-`plan` puts the shared tables of a log in groups of `shared_group_size` (1,000) by name, each `Route.group`, and takes
+`plan` puts the shared tables of a log in groups of `shared_group_size` (1,000 to start; a group's SQL has nothing a table, so it's a cost choice) by name, each `Route.group`, and takes
 a small table out of its group (a `view` if slow, `merge_round` if fast; `Route.why` says which rule) when:
 - it's named in `own_table` with a need only its own table meets (streaming reads, its own change data feed, time
   travel);

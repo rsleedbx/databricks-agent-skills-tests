@@ -9,13 +9,14 @@ into a Delta sink (the log).
 """
 from __future__ import annotations
 
-from .land import GATEWAY_DESTINATION, GATEWAY_OPERATION
+from .land import GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql
 
 COLUMNS = ("destination", "operation", "key", "value", "gateway", "file")   # the log's, land.ensure_log
 
 
-def gateway_stream(spark, root: str, name: str, schema_location: str | None = None):
-    """A streaming DataFrame of the gateway's change events from <root>/cdc/, in the change log's columns."""
+def gateway_stream(spark, root: str, name: str, schema_location: str | None = None, keys: dict | None = None):
+    """A streaming DataFrame of the gateway's change events from <root>/cdc/, in the change log's columns (keys:
+    land.gateway_keys, to fill each row's key)."""
     from pyspark.sql import functions as F
     reader = (spark.readStream.format("cloudFiles").option("cloudFiles.format", "json")
               .option("singleVariantColumn", "event"))
@@ -23,5 +24,5 @@ def gateway_stream(spark, root: str, name: str, schema_location: str | None = No
         reader = reader.option("cloudFiles.schemaLocation", schema_location)
     return (reader.load(f"{root}/cdc/")
             .select(F.expr(GATEWAY_DESTINATION).alias("destination"), F.expr(GATEWAY_OPERATION).alias("operation"),
-                    F.expr("CAST(NULL AS VARIANT)").alias("key"), F.col("event").alias("value"),
+                    F.expr(gateway_key_sql(keys)).alias("key"), F.col("event").alias("value"),
                     F.lit(name).alias("gateway"), F.col("_metadata.file_path").alias("file")))

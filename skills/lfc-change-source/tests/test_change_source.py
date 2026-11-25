@@ -174,6 +174,8 @@ class Land(unittest.TestCase):
                       seen[1])                                             # the newest, not checkpoints
         self.assertIn("SELECT 'db.s.t', 'read',", seen[1])
         self.assertIn("struct(* EXCEPT (__sequence, __operation, _rescued_data))", seen[1])
+        self.assertIn("parse_json(to_json(array(variant_get(to_variant_object(named_struct('k', `C1`)), '$.k', "
+                      "'string'))))", seen[1])                              # the snapshot row's key, as a change's
         landed = {("db.s.t", 250)}
         again = land.gateway_snapshot(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", "db.s.t", entry, landed=landed)
         self.assertEqual((again["rows"], len(seen)), (0, 2))               # in the log already: no statement
@@ -186,6 +188,28 @@ class Land(unittest.TestCase):
         direct = current_sql("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t", "/V/g", "direct")
         self.assertIn("read_files('/V/g/snapshot/T1/'", direct)                # the snapshot in place
         self.assertIn("operation <> 'resolved'", direct)                         # and the log's changes
+
+    def test_gateway_keys_one_expression_for_every_table(self):   # a map literal by table id, no branch a table
+        from lfc_change_source import land
+        from lfc_change_source.gateway_log import from_gateway
+        entries = {("db", "s", "a"): {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]},
+                   ("db", "s", "b"): {"id": "T2", "keys": ["k2", "k1"], "columns": [("k1", "INT", "D1"), ("k2", "INT", "D2")]},
+                   ("db", "s", "keyless"): {"id": "T3", "keys": [], "columns": [("x", "INT", "E1")]}}
+        keys = land.gateway_keys(entries)
+        self.assertEqual(keys, {"T1": ["C1"], "T2": ["D2", "D1"]})                 # key order, by column id
+        q = land.gateway_key_sql(keys)
+        self.assertNotIn("CASE", q)
+        self.assertIn("map('T1', array('C1'), 'T2', array('D2', 'D1'))[event:table_id.uoid::STRING]", q)
+        self.assertIn("variant_get(event:data, concat('$.', c), 'string')", q)
+        self.assertEqual(land.gateway_key_sql(None), "CAST(NULL AS VARIANT)")
+        self.assertIn("[value:table_id.uoid::STRING]", land.gateway_key_sql(keys, "value"))   # backfill_keys
+        seen = []
+        s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: []))
+        land.gateway(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", keys=keys)
+        self.assertIn("map('T1', array('C1')", seen[0])                            # COPY INTO fills the key
+        src = from_gateway("gw_1", "`c`.`x`.`cdc_log`", entries[("db", "s", "a")], "db.s.a")
+        self.assertEqual(src.row_sql(), "value:data")
+        self.assertEqual(src.stored_values(), {"id": "data:`C1`::INT", "v": "data:`C2`::STRING"})
 
     def test_changefeed_files_land_and_read_by_hlc(self):   # captured CockroachDB JSON files: tests/samples/object_store
         from lfc_change_source import land

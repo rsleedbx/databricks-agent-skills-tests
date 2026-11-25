@@ -80,8 +80,23 @@ class CdcLog:
 
     def column_values(self) -> dict:
         """{column: its SQL expression from an event}, column_exprs without the alias, in order."""
-        return {c: e[:-len(f" AS {quote(c)}")] if e.endswith(f" AS {quote(c)}") else e
-                for c, e in zip(self.columns, self.column_exprs())}
+        return {c: e.removesuffix(f" AS {quote(c)}") for c, e in zip(self.columns, self.column_exprs())}
+
+    ROW = "value:after"   # the event's row, the same expression for every table of the transport
+
+    def row_sql(self) -> str:
+        """The event's row as a VARIANT (one expression for every table of this log's transport)."""
+        return self.ROW
+
+    def stored_values(self, col: str = "data") -> dict:
+        """{column: its SQL expression} over a stored row (row_sql's value kept in a column `col`): the same typing as
+        column_values, read from that column."""
+        out = {}
+        for c, t in self.columns.items():
+            e = self.exprs.get(c)
+            out[c] = (e.removesuffix(f" AS {quote(c)}").replace(self.ROW + ":", col + ":").replace(self.ROW + ".", col + ":")
+                      if e else f"{col}:{quote(c)}::{t}")
+        return out
 
     def position_sql(self, p: Position | None) -> str | None:
         """A position as a SQL literal of this source's kind (None: None)."""

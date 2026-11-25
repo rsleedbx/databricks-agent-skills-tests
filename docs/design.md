@@ -54,7 +54,7 @@ The four classes in lfc-change-source `routing.py` pick a cell from a table's sn
 - `big_fast` is big and realtime: few tables, most of the bytes.
 
 A small table costs per statement (a MERGE has a fixed floor of seconds whatever it merges; a warehouse runs a few a
-second), a big one per byte. So small tables share: a group of up to 1,000 keeps its current rows in one table (the
+second), a big one per byte. So small tables share: a group keeps its current rows in one table (the
 row as a VARIANT, clustered by table), one MERGE a round for the group, and each table is a typed view over it.
 
 `routing.plan` takes a small table out of its group, for a table of its own (a view if slow, a MERGE if fast), when:
@@ -76,7 +76,7 @@ What each cell can carry, and what sets its latency and throughput:
 
 | Cell | Limited by | Tables per unit | Latency, change to silver | Throughput |
 |---|---|---|---|---|
-| shared | one MERGE a group a round, growing with the group's changed rows | tables per group (up to 1,000: the MERGE has a branch a table) | the log's latency + one MERGE | per MERGE: the group's changed rows |
+| shared | one MERGE a group a round, growing with the group's changed rows | tables per group (no SQL a table: the key is filled in when landing, the row kept as the event has it) | the log's latency + one MERGE | per MERGE: the group's changed rows |
 | view | nothing a round; a read rebuilds the table | tables per schema (Unity Catalog: 10,000) | the log's latency; each read pays its rebuild | per read: the table's events in the log |
 | MERGE every round | a fixed cost per MERGE; MERGEs at once per cluster | tables per cluster per round | the log's latency + tables / (clusters x MERGEs a second per cluster) | per MERGE: its changed rows (and the files they touch, for a big table) |
 | MERGE when changed | the same, for changed tables only | changed tables per cluster per round | the same, over the changed tables | the same |
