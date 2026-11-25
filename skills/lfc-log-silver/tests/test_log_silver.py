@@ -86,7 +86,6 @@ class Shared(unittest.TestCase):
         self.assertIn("SELECT destination, key::STRING AS k, value:data AS data", q)        # nothing a table
         self.assertNotIn("CASE destination", q)
         self.assertIn("value:cursor.sequence::STRING > '05'", q)
-        self.assertIn("operation <> 'read'", q)                                             # changes only
         v = silver.shared_view_sql(tables["a"], "`c`.`s`", "`c`.`s`.`a`")
         self.assertIn("data:`C1`::INT AS `id`, data:`C2`::STRING AS `v` FROM `c`.`s`.`_shared_0` "
                       "WHERE destination = 'db.s.a' AND NOT coalesce(deleted, false)", v)     # typed as the source

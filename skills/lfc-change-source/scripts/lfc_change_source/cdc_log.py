@@ -1,21 +1,20 @@
 """cdc_log: an append-only change log of Debezium events as a change source: one Delta table for every table (and
 source), as Debezium Server writes it through its Zerobus sink (zerobus-debezium-test). Each row is one event:
-`destination` (<prefix>.<schema>.<table>), `operation` (create, update, delete, read), `key` and `value` (VARIANT: the
+`destination` (<prefix>.<schema>.<table>), `operation` (create, update, delete), `key` and `value` (VARIANT: the
 event's key and its envelope, value:after, value:before, value:source). shared: one scan serves every table.
 
 Positions are the source's own order for its changes, a kind from SEQUENCES (the event field that gives commit order:
 an LSN, a binlog position, an SCN, the event time); its value is that number. The snapshot is the table's rows as of
-the time the change log starts from (T), wherever they are (a Delta table, read_files of a Volume), as SQL.
+the time the change log starts from (T), a Delta table of its own (the snapshot contract: intake, qbc), as SQL.
 
     from lfc_change_source.cdc_log import CdcLog
     src = CdcLog("crdb1", "`main`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", keys=["id"],
                  columns={"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="ts_ns",
-                 snapshot="SELECT * FROM read_files('/Volumes/main/zb/snap/orders', format => 'parquet')")
+                 snapshot="SELECT * FROM `main`.`zb_snap`.`orders`")
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import ClassVar
 
 from . import debezium
 from .contract import DELETE, OP, SEQ, UPSERT, Position, Stats, last_change_sql, quote
@@ -89,30 +88,6 @@ class CdcLog:
         return {c: e.removesuffix(f" AS {quote(c)}") for c, e in zip(self.columns, self.column_exprs())}
 
     ROW = "value:after"   # the event's row, the same expression for every table of the transport
-    # a snapshot row's id (operation read), where the transport tags them: then a newer snapshot replaces the older
-    # ones (newest_snapshot_cond); None: the log holds one snapshot (Debezium's, a changefeed's initial scan)
-    SNAPSHOT_ID: ClassVar[str | None] = None   # a class setting, not a field: a subclass's value must win
-
-    def newest_snapshot_sql(self) -> str | None:
-        """The newest snapshot's id in the log for this table (a scalar subquery), or None."""
-        if not self.SNAPSHOT_ID:
-            return None
-        return (f"(SELECT max({self.SNAPSHOT_ID}) FROM {self.fq} WHERE destination = '{self.destination}' "
-                "AND operation = 'read')")
-
-    def newest_snapshot_cond(self) -> str | None:
-        """Only the newest snapshot's rows and the changes after its position (its rows' newest), so a key a newer
-        snapshot doesn't have is gone, deletes or no deletes; a snapshot with no position (SQL Server change
-        tracking: '') keeps every change. None when the transport doesn't tag snapshots."""
-        snap = self.newest_snapshot_sql()
-        if not snap:
-            return None
-        seq = SEQUENCES[self.seq]
-        pos = (f"(SELECT max({seq}) FROM {self.fq} WHERE destination = '{self.destination}' AND operation = 'read' "
-               f"AND {self.SNAPSHOT_ID} = {snap})")
-        none = f"coalesce({pos}, '') = ''" if self.seq in TEXT else f"{pos} IS NULL"
-        return (f"((operation = 'read' AND {self.SNAPSHOT_ID} = {snap}) OR "
-                f"(operation <> 'read' AND ({none} OR {seq} > {pos})))")
 
     def row_sql(self) -> str:
         """The event's row as a VARIANT (one expression for every table of this log's transport)."""
@@ -143,12 +118,12 @@ class CdcLog:
 
     def snapshot_sql(self, at: Position | None = None) -> str:
         """The snapshot given (its own as-of time: the log starts after it), else the table as of `at` (None: the
-        latest) from the log itself, its snapshot rows (operation read: a CockroachDB initial scan, a gateway's
-        snapshot landed by land.gateway_snapshots) and changes: each key's last change, deletes dropped."""
+        latest) from the log's changes alone (a log that starts with the table: each key's last change, deletes
+        dropped). The log carries changes only: a snapshot is a table of its own (docs/design.md)."""
         names = ", ".join(quote(c) for c in self.columns)
         if self.snapshot:
             return f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({self.snapshot})"
-        changes = self.changes_sql(None, at, self.newest_snapshot_cond())
+        changes = self.changes_sql(None, at)
         return (f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({last_change_sql(changes, self.keys)}) "
                 f"WHERE {OP} <> '{DELETE}'")
 
@@ -156,7 +131,7 @@ class CdcLog:
         """The table's current rows (its columns, _op upsert), wherever its snapshot is: with no snapshot given (here or
         in `snapshot`), from the log alone (snapshot_sql); else that snapshot's rows at its position (`position`; None:
         before every change) and each key's last change after it, deletes dropped. Every reader of a table's rows (a
-        view, a build, a check) calls this, so a snapshot in the log and one read in place give the same table."""
+        view, a build, a check) calls this, so every method gives the same table."""
         snap = snapshot_sql or self.snapshot
         if not snap:
             return self.snapshot_sql()
@@ -166,13 +141,13 @@ class CdcLog:
                 f"UNION ALL SELECT {cols}, {OP}, {SEQ} FROM ({self.changes_sql(position, None)})")
         return f"SELECT {cols}, {OP} FROM ({last_change_sql(both, self.keys)}) WHERE {OP} <> '{DELETE}'"
 
-    def changes_sql(self, after: Position | None, to: Position | None, extra: str | None = None) -> str:
+    def changes_sql(self, after: Position | None, to: Position | None) -> str:
         """Its events after `after` up to `to` (None: from the start, to the latest); _seq: the source's order, then
-        a delete before an insert at one position. A snapshot event (read) is an upsert. extra: one more condition."""
+        a delete before an insert at one position. Any event but a delete is an upsert."""
         seq = SEQUENCES[self.seq]
         lo, hi = self._kind(after), self._kind(to)
         where = [f"destination = '{self.destination}'", EVENT] + ([f"{seq} > {lo}"] if lo is not None else []) + \
-                ([f"{seq} <= {hi}"] if hi is not None else []) + ([extra] if extra else [])
+                ([f"{seq} <= {hi}"] if hi is not None else [])
         return (f"SELECT {self._cols()}, CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
                 f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
                 f"FROM {self.fq} WHERE {' AND '.join(where)}")

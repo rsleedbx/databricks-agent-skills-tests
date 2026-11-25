@@ -53,20 +53,20 @@ def save(session, schema: str, routes: dict, counts: dict, at: float) -> None:
 
 
 def counts(session, sources: dict) -> dict:
-    """{name: its change events in its log} (snapshot rows and resolved marks left out), one grouped query a log."""
+    """{name: its change events in its log} (resolved marks left out), one grouped query a log."""
     by_log: dict = {}
     for n, s in sources.items():
         by_log.setdefault(s.fq, {})[s.destination] = n
     out = {}
     for fq, dests in by_log.items():
-        rows = session.sql(f"SELECT destination, count(*) FROM {fq} WHERE operation NOT IN ('read', 'resolved') AND "
+        rows = session.sql(f"SELECT destination, count(*) FROM {fq} WHERE operation <> 'resolved' AND "
                            f"destination IN ({', '.join(silver._lit(d) for d in dests)}) GROUP BY destination").collect()
         out.update({dests[r[0]]: int(r[1]) for r in rows})
     return out
 
 
 def route_dict(r) -> dict:
-    return {"class": r.cls, "snapshot": r.snapshot, "log": r.log, "shards": r.shards, "silver": r.silver,
+    return {"class": r.cls, "log": r.log, "shards": r.shards, "silver": r.silver,
             "group": r.group, "why": r.why,
             "snapshot_by": r.snapshot_by}
 
@@ -107,7 +107,7 @@ def observe(session, schema: str, sources: dict, policy, ready: dict | None = No
             if n not in pinned and (n not in prev or prev[n][0].get("snapshot_table") != ready.get(n))}
     if made:
         silver.views(session, made, schema, threads)
-    routes = {n: {"class": plan[n].cls, "snapshot": plan[n].snapshot, "log": plan[n].log, "shards": plan[n].shards,
+    routes = {n: {"class": plan[n].cls, "log": plan[n].log, "shards": plan[n].shards,
                   "silver": "view", "group": "", "why": "observing", "snapshot_table": ready.get(n),
                   "destination": sources[n].destination,
                   "proposed": route_dict(plan[n])} for n in sources if n not in pinned}

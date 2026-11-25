@@ -17,7 +17,6 @@ from .contract import Position, quote
 class GatewayLog(CdcLog):
     """A CdcLog whose positions are the gateway's cursor and whose columns come from the event's data by id."""
     ROW = "value:data"
-    SNAPSHOT_ID = "value:snapshot::BIGINT"   # land.gateway_snapshot tags each row with its snapshot folder's time
 
     def stored_key_values(self, col: str = "k") -> dict:
         """The key land.gateway_key_sql filled in: a JSON array of each key column's value as text, in key order."""
@@ -47,16 +46,3 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
     land.gateway(session, staged.root, log, "conformance")
     src = from_gateway("conformance", log, staged.entry, "conformance.public.t", snapshot=staged.snapshot_sql())
     return src, [Position("gateway_cursor", p.value) for p in positions]
-
-
-def current_sql(name: str, log: str, entry: dict, destination: str, root: str, path: str, position: str = "") -> str:
-    """The table's current rows for either snapshot path (land.snapshot_path): `log`, from the change log alone;
-    `direct`, its snapshot read in place where the gateway wrote it (position: gateway_staging's snapshot_position; ''
-    when the change files start before the snapshot, SQL Server change tracking). CdcLog.current_sql does the work."""
-    from . import gateway_staging as gs
-    src = from_gateway(name, log, entry, destination)
-    if path == "log":
-        return src.current_sql()
-    if path != "direct":
-        raise ValueError(f"snapshot path {path!r}: log or direct")
-    return src.current_sql(gs.Staging(name, root, entry).snapshot_sql(), Position("gateway_cursor", position))

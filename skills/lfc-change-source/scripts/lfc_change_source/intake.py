@@ -9,7 +9,8 @@ text decoding, no folder listing. One function a kind of arrival; each returns {
   files(path, fmt, ...)       any files read_files reads (Parquet, CSV with its options, JSON) copied once into a
                               table, each column typed as the source's (Debezium's text and number encodings decoded,
                               lfc_change_source.debezium): an export in a Volume, a changefeed's initial scan
-  gateway(staging, ...)       a gateway's snapshot in its staging (columns by id) copied once into a table by name
+  gateway(staging, ...)       a gateway's snapshot in its staging (columns by id) copied once into a table by name,
+                              with its position (the gateway's cursor at the snapshot: changes after it apply)
 
 Every function takes a session with .sql() (a SQL warehouse: engine.Warehouse, or Spark) and runs once a snapshot.
 A column is {"name", "type" (Databricks SQL), "kind" (a debezium.TEMPORAL kind or None), "precision"}.
@@ -107,4 +108,5 @@ def gateway(session, staging, target: str) -> dict:
     t0, target = time.time(), quoted(target)
     cols = ", ".join(_q(c) for c in staging.columns)
     session.sql(f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({staging.snapshot_sql()})").collect()
-    return _done(session, target, t0, "gateway snapshot copied")
+    # its position: the gateway's cursor the snapshot was taken at; its changes are the log's after it
+    return {**_done(session, target, t0, "gateway snapshot copied"), "position": staging.snapshot_position(session)}

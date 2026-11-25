@@ -225,7 +225,7 @@ def changed(session, tables: dict, schema: str, to) -> list:
     seq = SEQUENCES[one.seq]
     lit = (lambda v: "'" + str(v).replace("'", "") + "'") if one.seq in TEXT else (lambda v: str(int(v)))
     by_dest = {t.src.destination: n for n, t in tables.items()}
-    rows = session.sql(f"SELECT destination, max({seq}) FROM {one.fq} WHERE operation NOT IN ('read', 'resolved') "
+    rows = session.sql(f"SELECT destination, max({seq}) FROM {one.fq} WHERE operation <> 'resolved' "
                        f"AND destination IN ({', '.join(_lit(d) for d in by_dest)}) AND {seq} <= {lit(to.value)} "
                        "GROUP BY destination").collect()
     newest = {by_dest[r[0]]: r[1] for r in rows}
@@ -258,8 +258,7 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_sch
 def shared_changes_sql(members: list, after, to) -> str:
     """Every member's change events after `after` up to `to` in one scan of the log they share: destination, k (the
     key the landing filled in, as text), data (the event's row, row_sql: the same expression for every table of a
-    transport), _op, _seq. Snapshot rows (operation read) are left out: a member's snapshot is its snapshot table,
-    read by its view. No expression a table, so a group's size isn't bound by its SQL."""
+    transport), _op, _seq. A member's snapshot is its snapshot table, read by its view. No expression a table, so a group's size isn't bound by its SQL."""
     from lfc_change_source.cdc_log import EVENT, SEQUENCES
     from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT
     one = members[0]
@@ -270,7 +269,7 @@ def shared_changes_sql(members: list, after, to) -> str:
                          f"{bad[:5]}")
     seq = SEQUENCES[one.seq]
     lo, hi = one.position_sql(after), one.position_sql(to)
-    where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT, "operation <> 'read'"] + \
+    where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT] + \
         ([f"{seq} > {lo}"] if lo is not None else []) + ([f"{seq} <= {hi}"] if hi is not None else [])
     return (f"SELECT destination, key::STRING AS k, {one.row_sql()} AS data, "
             f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "

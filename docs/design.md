@@ -108,8 +108,9 @@ member's view is its rows in the group plus its snapshot table's rows for the ke
 deleted, matched by the key typed from the group's stored key (`stored_key_values`). So the group's table and its one
 MERGE stay the same for every member, and a member's new snapshot only recreates its view.
 
-Still in the log today, being moved out: a gateway's snapshot landed by `land.gateway_snapshots`, a changefeed's
-initial scan landed by `land.changefeed`, and the conformance scenarios, which build snapshots in the log.
+A changefeed for CDC runs with `initial_scan = 'no'` (an initial scan would land every row as an update). The code
+that kept snapshots in the log (`read` rows, the newest-snapshot rule, `land.gateway_snapshots`) was removed; it is
+at the tag `snapshot-in-log-last` if it's ever needed again.
 
 ## Layer 2: one table's silver
 

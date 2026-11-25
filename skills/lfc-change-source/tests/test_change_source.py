@@ -97,17 +97,16 @@ class CdcLog(unittest.TestCase):
         self.assertEqual(e["b"], "unhex(value:after:b::STRING) AS `b`")
         self.assertEqual(e["id"], "CAST(key:id AS BIGINT) AS `id`")
 
-    def test_a_newer_gateway_snapshot_replaces_the_older(self):   # a key it lacks is gone, with no delete event
+    def test_the_log_is_changes_only(self):   # a snapshot is a table of its own: no snapshot rows to choose between
         from lfc_change_source.cdc_log import CdcLog
         from lfc_change_source.gateway_log import from_gateway
         src = from_gateway("gw", "`c`.`x`.`log`", {"id": "T", "keys": ["id"], "columns": [("id", "INT", "C1")]}, "db.s.t")
-        q = src.current_sql()
-        self.assertIn("operation = 'read' AND value:snapshot::BIGINT = (SELECT max(value:snapshot::BIGINT)", q)
-        self.assertIn("coalesce((SELECT max(value:cursor.sequence::STRING)", q)   # changes after that snapshot's position
-        dbz = CdcLog("pg1", "`c`.`x`.`log`", "t", "pg1.public.t", ["id"], {"id": "INT"}, seq="lsn")
-        self.assertIsNone(dbz.newest_snapshot_cond())                              # one snapshot: nothing to choose
-        self.assertNotIn("value:snapshot", dbz.current_sql())
-
+        self.assertNotIn("'read'", src.current_sql())
+        dbz = CdcLog("pg1", "`c`.`x`.`log`", "t", "pg1.public.t", ["id"], {"id": "INT"}, seq="lsn",
+                     snapshot="SELECT * FROM `c`.`snap`.`t`")
+        q = dbz.current_sql()
+        self.assertIn("FROM (SELECT * FROM `c`.`snap`.`t`)", q)                     # the snapshot table
+        self.assertIn("UNION ALL", q)                                                # and the log's changes over it
 
 class GatewayStaging(unittest.TestCase):
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples", "gateway")
@@ -168,102 +167,18 @@ class Land(unittest.TestCase):
         self.assertIn("value:data.`C2`::STRING AS `v`", q)
         self.assertIn("value:cursor.sequence::STRING > '00000000/8F63FB10-0000000000000000001'", q)   # text order
 
-    def test_gateway_snapshot_paths_log_and_direct(self):   # small: into the log; large or chosen: read in place
-        from lfc_change_source import land
-        from lfc_change_source.gateway_log import current_sql, from_gateway
-        seen = []
-        d = lambda n: types.SimpleNamespace(name=n, is_directory=True, file_size=None)   # noqa: E731
-        f = lambda n, b: types.SimpleNamespace(name=n, path=n, is_directory=False, file_size=b)   # noqa: E731
-        sizes = {"T1": 4096, "T2": 5 << 30, "T3": 100}
-
-        def ls(p):
-            tid = p.split("/snapshot/")[1].split("/")[0]
-            if p.endswith(f"/{tid}"):
-                return [d("100/"), d("250/"), d("qbc_checkpoint/")] if tid in sizes else []
-            return [f("part-0.snappy.parquet", sizes[tid]), f("_SUCCESS", 0)]
-        count = [types.SimpleNamespace(asDict=lambda: {"num_inserted_rows": 4})]
-        s = types.SimpleNamespace(w=types.SimpleNamespace(files=types.SimpleNamespace(list_directory_contents=ls)),
-                                  sql=lambda q: seen.append(q) or types.SimpleNamespace(
-                                      collect=lambda: [] if "SELECT DISTINCT" in q else count))   # nothing landed yet
-        entry = {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]}
-        tables = {("db", "s", "t"): entry, ("db", "s", "big"): dict(entry, id="T2"),
-                  ("db", "s", "chosen"): dict(entry, id="T3"), ("db", "s", "none"): dict(entry, id="T9")}
-        got = land.gateway_snapshots(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", tables, paths={"db.s.chosen": "direct"})
-        self.assertEqual({k: (v["path"], v["rows"]) for k, v in got.items()},
-                         {"db.s.t": ("log", 4), "db.s.big": ("direct", None), "db.s.chosen": ("direct", None),
-                          "db.s.none": (None, None)})
-        self.assertEqual(got["db.s.big"]["bytes"], 5 << 30)
-        self.assertEqual(len(seen), 2)                    # what's landed already (one query), then only the small one
-        self.assertIn("WHERE operation = 'read' AND gateway = 'gw_1'", seen[0])
-        self.assertIn("read_files('/V/g/snapshot/T1/250/', format => 'parquet', pathGlobFilter => '*.parquet')",
-                      seen[1])                                             # the newest, not checkpoints
-        self.assertIn("SELECT 'db.s.t', 'read',", seen[1])
-        self.assertIn("struct(* EXCEPT (__sequence, __operation, _rescued_data))", seen[1])
-        self.assertIn("parse_json(to_json(array(variant_get(to_variant_object(named_struct('k', `C1`)), '$.k', "
-                      "'string'))))", seen[1])                              # the snapshot row's key, as a change's
-        landed = {("db.s.t", 250)}
-        again = land.gateway_snapshot(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", "db.s.t", entry, landed=landed)
-        self.assertEqual((again["rows"], len(seen)), (0, 2))               # in the log already: no statement
-        self.assertEqual(land.snapshot_path(10, max_bytes=5), "direct")
-        with self.assertRaises(ValueError):
-            land.snapshot_path(1, chosen="both")
-        q = from_gateway("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t").snapshot_sql()   # no snapshot given: the log
-        self.assertIn("ROW_NUMBER() OVER (PARTITION BY `id`", q)
-        self.assertEqual(current_sql("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t", "/V/g", "log"), q)
-        direct = current_sql("gw_1", "`c`.`x`.`cdc_log`", entry, "db.s.t", "/V/g", "direct")
-        self.assertIn("read_files('/V/g/snapshot/T1/'", direct)                # the snapshot in place
-        self.assertIn("operation <> 'resolved'", direct)                         # and the log's changes
-
-    def test_gateway_keys_one_expression_for_every_table(self):   # a map literal by table id, no branch a table
-        from lfc_change_source import land
-        from lfc_change_source.gateway_log import from_gateway
-        entries = {("db", "s", "a"): {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]},
-                   ("db", "s", "b"): {"id": "T2", "keys": ["k2", "k1"], "columns": [("k1", "INT", "D1"), ("k2", "INT", "D2")]},
-                   ("db", "s", "keyless"): {"id": "T3", "keys": [], "columns": [("x", "INT", "E1")]}}
-        keys = land.gateway_keys(entries)
-        self.assertEqual(keys, {"T1": ["C1"], "T2": ["D2", "D1"]})                 # key order, by column id
-        q = land.gateway_key_sql(keys)
-        self.assertNotIn("CASE", q)
-        self.assertIn("map('T1', array('C1'), 'T2', array('D2', 'D1'))[event:table_id.uoid::STRING]", q)
-        self.assertIn("variant_get(event:data, concat('$.', c), 'string')", q)
-        self.assertEqual(land.gateway_key_sql(None), "CAST(NULL AS VARIANT)")
-        self.assertIn("[value:table_id.uoid::STRING]", land.gateway_key_sql(keys, "value"))   # backfill_keys
-        seen = []
-        s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: []))
-        land.gateway(s, "/V/g", "`c`.`x`.`cdc_log`", "gw_1", keys=keys)
-        self.assertIn("map('T1', array('C1')", seen[0])                            # COPY INTO fills the key
-        src = from_gateway("gw_1", "`c`.`x`.`cdc_log`", entries[("db", "s", "a")], "db.s.a")
-        self.assertEqual(src.row_sql(), "value:data")
-        self.assertEqual(src.stored_values(), {"id": "data:`C1`::INT", "v": "data:`C2`::STRING"})
-
-    def test_changefeed_files_land_and_read_by_hlc(self):   # captured CockroachDB JSON files: tests/samples/object_store
-        from lfc_change_source import land
-        from lfc_change_source.changefeed_log import from_changefeed, hlc
+    def test_a_gateway_snapshot_goes_to_a_table_with_its_position(self):
+        from lfc_change_source import gateway_staging as gs
+        from lfc_change_source import intake
         seen = []
         s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(
-            collect=lambda: [types.SimpleNamespace(asDict=lambda: {"num_inserted_rows": 3})]))
-        land.changefeed(s, "/Volumes/c/s/l/orders", "`c`.`x`.`cdc_log`", "shop.public.orders", ["id", "k2"], "crdb1")
-        self.assertIn("'shop.public.orders' AS destination", seen[0])
-        self.assertIn("named_struct('id', event:key[0], 'k2', event:key[1])", seen[0])   # the key array by name
-        self.assertIn("is_variant_null(event:after) THEN 'delete'", seen[0])
-        self.assertIn("PATTERN = '*/*{.ndjson,.RESOLVED}'", seen[0])
-        src = from_changefeed("crdb1", "`c`.`x`.`cdc_log`", "shop.public.orders", ["id"],
-                              {"id": "BIGINT", "total": "DECIMAL(12,2)"})
-        q = src.changes_sql(Position("hlc", hlc(5)), None)
-        self.assertIn("value:updated::STRING > '0000000000000000005.0000000000'", q)
-        self.assertIn("operation <> 'resolved'", q)
-        self.assertIn("WHERE _op <> 'delete'", src.snapshot_sql(Position("hlc", hlc(9))))   # from the log itself
-        w = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: [[hlc(7)]]))
-        self.assertEqual(src.watermark(w), Position("hlc", hlc(7)))
-        self.assertIn("max(value:resolved::STRING)", seen[-1])                 # RESOLVED, not the newest event
-        self.assertLess(hlc(9, 3), hlc(10))                                       # fixed width: text order is HLC order
-        with open(os.path.join(SAMPLES, "object_store", "changefeed_orders.ndjson")) as f:
-            events = [json.loads(line) for line in f]
-        self.assertEqual(sorted(e["updated"] for e in events if "updated" in e),
-                         [e["updated"] for e in events if "updated" in e])
-        self.assertTrue(any(e.get("after") is None and "key" in e for e in events))   # a delete: no after image
-
-
+            collect=lambda: [("00000042",)] if "max(__sequence)" in q else [(4,)]))
+        entry = {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]}
+        got = intake.gateway(s, gs.Staging("gw_1", "/V/g", entry), "c.s_snap.t")
+        self.assertTrue(seen[0].startswith("CREATE OR REPLACE TABLE `c`.`s_snap`.`t` AS SELECT `id`, `v` FROM ("))
+        self.assertIn("read_files('/V/g/snapshot/T1/'", seen[0])                     # the newest snapshot folder
+        self.assertEqual((got["rows"], got["how"]), (4, "gateway snapshot copied"))
+        self.assertIn("position", got)
 
 class Routing(unittest.TestCase):
     def test_four_classes_by_size_and_rate(self):
@@ -272,12 +187,12 @@ class Routing(unittest.TestCase):
         got = routing.plan({"db.s.region": (4096, 0.01), "db.s.carts": (64 << 20, 50.0),
                             "db.s.ledger": (5 << 40, 0.2), "db.s.orders": (5 << 40, 250_000),
                             "db.s.queue": (100, 20_000)}, p)
-        self.assertEqual({t: (r.cls, r.snapshot, r.log, r.shards, r.silver) for t, r in got.items()}, {
-            "db.s.region": ("small_slow", "log", "`m`.`c`.`cdc_log`", 1, "shared"),
-            "db.s.carts": ("small_fast", "log", "`m`.`c`.`cdc_log`", 1, "merge_round"),   # most of its group's changes
-            "db.s.ledger": ("big_slow", "direct", "`m`.`c`.`cdc_log`", 1, "merge_changed"),
-            "db.s.orders": ("big_fast", "direct", "`m`.`c`.`cdc_log_orders`", 3, "auto_cdc"),   # 250,000 / 100,000
-            "db.s.queue": ("small_fast", "log", "`m`.`c`.`cdc_log_queue`", 1, "merge_round")})   # busy: own log
+        self.assertEqual({t: (r.cls, r.log, r.shards, r.silver) for t, r in got.items()}, {
+            "db.s.region": ("small_slow", "`m`.`c`.`cdc_log`", 1, "shared"),
+            "db.s.carts": ("small_fast", "`m`.`c`.`cdc_log`", 1, "merge_round"),   # most of its group's changes
+            "db.s.ledger": ("big_slow", "`m`.`c`.`cdc_log`", 1, "merge_changed"),
+            "db.s.orders": ("big_fast", "`m`.`c`.`cdc_log_orders`", 3, "auto_cdc"),   # 250,000 / 100,000
+            "db.s.queue": ("small_fast", "`m`.`c`.`cdc_log_queue`", 1, "merge_round")})   # busy: own log
 
     def test_suggest_from_statistics_says_why(self):
         from lfc_change_source import routing
@@ -285,11 +200,11 @@ class Routing(unittest.TestCase):
                                "lineitem": {"bytes": 80 << 30, "events_per_s": 0.5},
                                "ticks": {"bytes": None, "events_per_s": 150_000.0},
                                "orders": {"bytes": None, "events_per_s": None}}, routing.Policy("shared"))
-        self.assertEqual({t: (r["class"], r["snapshot"], r["log"], r["shards"], r["silver"]) for t, r in got.items()}, {
-            "region": ("small_slow", "log", "shared", 1, "shared"),
-            "lineitem": ("big_slow", "direct", "shared", 1, "merge_changed"),
-            "ticks": ("auto_fast", "auto", "own", 2, "merge_round"),           # its size decides: small_fast or big_fast
-            "orders": ("auto_slow", "auto", "shared", 1, "shared")})
+        self.assertEqual({t: (r["class"], r["log"], r["shards"], r["silver"]) for t, r in got.items()}, {
+            "region": ("small_slow", "shared", 1, "shared"),
+            "lineitem": ("big_slow", "shared", 1, "merge_changed"),
+            "ticks": ("auto_fast", "own", 2, "merge_round"),           # its size decides: small_fast or big_fast
+            "orders": ("auto_slow", "shared", 1, "shared")})
         self.assertIn("80.0 GiB snapshot", got["lineitem"]["why"])
         self.assertIn("change rate unknown", got["orders"]["why"])
 
@@ -317,9 +232,9 @@ class Routing(unittest.TestCase):
         from lfc_change_source.cdc_log import CdcLog
         fq = routing.history_fq([("`m`.`c`.`cdc_log`", None), ("`m`.`c`.`cdc_log_t`", "00000000000000000042")],
                                 "gateway_cursor")
-        self.assertIn("FROM `m`.`c`.`cdc_log` WHERE operation IN ('resolved', 'read') OR "
+        self.assertIn("FROM `m`.`c`.`cdc_log` WHERE operation = 'resolved' OR "
                       "(value:cursor.sequence::STRING <= '00000000000000000042')", fq)
-        self.assertIn("FROM `m`.`c`.`cdc_log_t` WHERE operation IN ('resolved', 'read') OR "
+        self.assertIn("FROM `m`.`c`.`cdc_log_t` WHERE operation = 'resolved' OR "
                       "(value:cursor.sequence::STRING > '00000000000000000042')", fq)
         self.assertEqual(routing.history_fq([("`m`.`c`.`cdc_log`", None)], "lsn"), "`m`.`c`.`cdc_log`")
         q = CdcLog("s", fq, "t", "db.s.t", ["id"], {"id": "INT"}, seq="gateway_cursor").changes_sql(None, None)
@@ -333,10 +248,10 @@ class Routing(unittest.TestCase):
 
     def test_transitions_name_what_a_route_change_takes(self):
         from lfc_change_source import routing
-        same = {"class": "small_slow", "snapshot": "log", "log": "shared", "shards": 1, "silver": "view"}
+        same = {"class": "small_slow", "log": "shared", "shards": 1, "silver": "view"}
         self.assertEqual(routing.transitions(same, same), [])
-        hot = {"class": "big_fast", "snapshot": "direct", "log": "own", "shards": 3, "silver": "auto_cdc"}
-        self.assertEqual([a for a, _ in routing.transitions(same, hot)], ["snapshot", "cutover", "silver", "reshard"])
+        hot = {"class": "big_fast", "log": "own", "shards": 3, "silver": "auto_cdc"}
+        self.assertEqual([a for a, _ in routing.transitions(same, hot)], ["cutover", "silver", "reshard"])
         busy = dict(same, **{"class": "small_fast", "silver": "merge_round"})
         self.assertIn("build the table from the log once", dict(routing.transitions(same, busy))["silver"])
         self.assertIn("no new snapshot", dict(routing.transitions(same, hot))["cutover"])

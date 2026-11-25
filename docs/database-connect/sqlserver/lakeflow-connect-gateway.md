@@ -18,8 +18,9 @@ tracking, the utility objects for schema changes), and a Unity Catalog connectio
    [integrated CDC pipeline](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/sql-server-integrated-pipeline)
    (`connector_type: CDC`).
 2. **Land the staging into the change log.** Each round, `land.gateway` copies the new change files once each
-   (`COPY INTO`), with each row's key filled in (`land.gateway_keys`), and `land.gateway_snapshots` lands the small
-   tables' snapshots (a big one stays where the gateway wrote it and is read in place):
+   (`COPY INTO`), with each row's key filled in (`land.gateway_keys`). Each table's snapshot goes to a Delta table
+   of its own, never the log: QBC through a UC connection (the gateway's task then takes none), or the gateway's own
+   copied by name (`intake.gateway`):
    [lfc-change-source](../../../skills/lfc-change-source/SKILL.md).
 3. **Silver,** the same as the Zerobus route: [lfc-log-silver](../../../skills/lfc-log-silver/SKILL.md).
 
@@ -31,11 +32,11 @@ pipeline), unchanged; then a job that runs the landing and silver rounds below o
 **From a notebook or job:**
 
 ```python
-from lfc_change_source import gateway_staging as gs, land
+from lfc_change_source import gateway_staging as gs, intake, land
 root = "/Volumes/<catalog>/<staging schema>/<gateway staging volume>/<gateway id>"
 entries = gs.schemas(spark, root)
 land.ensure_log(spark, "`main`.`ctl`.`cdc_log`")
-land.gateway_snapshots(spark, root, "`main`.`ctl`.`cdc_log`", "sales_gw", entries)
+snap = {t: intake.gateway(spark, gs.Staging("sales_gw", root, e), f"main.sales_snap.{t[2]}") for t, e in entries.items()}
 land.gateway(spark, root, "`main`.`ctl`.`cdc_log`", "sales_gw", keys=land.gateway_keys(entries))
 ```
 

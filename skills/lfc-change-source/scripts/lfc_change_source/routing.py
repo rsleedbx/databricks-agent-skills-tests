@@ -1,10 +1,11 @@
-"""routing: each table's class, and from it its snapshot's path, its change log, its shards and how its silver is kept:
+"""routing: each table's class, and from it its change log, its shards, how its silver is kept and how its snapshot
+is taken:
 
-  class       size, changes  snapshot  log                    silver
-  small_slow  small, few     log       shared                 shared: in a group's table, one MERGE a round for all
-  small_fast  small, many    log       shared                 shared, unless it carries much of its group's changes
-  big_slow    big, few       direct    shared                 merge_changed: a MERGE only in a round that changed it
-  big_fast    big, many      direct    its own, sharded       auto_cdc: flows in a continuous pipeline (setup paid once)
+  class       size, changes  log                    silver
+  small_slow  small, few     shared                 shared: in a group's table, one MERGE a round for all
+  small_fast  small, many    shared                 shared, unless it carries much of its group's changes
+  big_slow    big, few       shared                 merge_changed: a MERGE only in a round that changed it
+  big_fast    big, many      its own, sharded       auto_cdc: flows in a continuous pipeline (setup paid once)
 
 Each table's snapshot also has a method of its own, apart from the transport carrying its changes (docs/design.md,
 layer 1): `qbc` (a query-based pipeline through a UC connection, the default), `transport` (the transport's own: a
@@ -42,12 +43,12 @@ import math
 from dataclasses import dataclass, field
 
 from .cdc_log import SEQUENCES, TEXT
-from .land import MAX_LOG_SNAPSHOT_BYTES, snapshot_path
 
 CLASSES = ("small_slow", "small_fast", "big_slow", "big_fast")
 SILVER = {"small_slow": "shared", "small_fast": "shared", "big_slow": "merge_changed", "big_fast": "auto_cdc"}
 OWN = {"small_slow": "view", "small_fast": "merge_round"}   # a small table's method out of its group
 METHODS = ("shared", "view", "merge_round", "merge_changed", "auto_cdc")
+SMALL_MAX_BYTES = 1 << 30   # 1 GiB: a small table costs per statement, a big one per byte
 SNAPSHOT_METHODS = ("qbc", "transport", "files")   # each ends as a Delta table (silver.Table.snapshot_table)
 # Zerobus Ingest's documented default per stream (gRPC): 100,000 records a second (benchmarked with 1 KB messages)
 STREAM_RECORDS_PER_S = 100_000
@@ -57,7 +58,6 @@ STREAM_RECORDS_PER_S = 100_000
 class Route:
     table: str            # <catalog>.<schema>.<table>
     cls: str              # one of CLASSES
-    snapshot: str         # land.snapshot_path: log or direct
     log: str              # the change log its changes go to, quoted
     shards: int = 1       # streams (and reader tasks) its changes are split into, by key hash
     silver: str = "view"  # one of METHODS
@@ -72,7 +72,7 @@ class Policy:
     fast_log: str = "{shared}_{table}"                # a table's own log: {shared} and {table} filled in
     fast_events_per_s: float = 1.0                    # change events a second at which a table is fast
     own_log_events_per_s: float = 10_000.0            # ... at which any table gets a log of its own
-    max_log_snapshot_bytes: int = MAX_LOG_SNAPSHOT_BYTES   # bigger: big (and its snapshot read in place)
+    small_max_bytes: int = SMALL_MAX_BYTES            # a snapshot this size or less: small, else big
     shard_events_per_s: float = STREAM_RECORDS_PER_S  # events a second one stream (and one reader) carries
     chosen: dict = field(default_factory=dict)        # {table: class}: chosen instead of by the numbers
     silver_chosen: dict = field(default_factory=dict)  # {table: method}: chosen instead of by its class
@@ -99,21 +99,20 @@ def classify(snapshot_bytes: int, events_per_s: float, policy: Policy, table: st
         if policy.chosen[table] not in CLASSES:
             raise ValueError(f"{table}: class {policy.chosen[table]!r}, one of {', '.join(CLASSES)}")
         return policy.chosen[table]
-    size = "small" if snapshot_bytes <= policy.max_log_snapshot_bytes else "big"
+    size = "small" if snapshot_bytes <= policy.small_max_bytes else "big"
     return f"{size}_{'fast' if events_per_s >= policy.fast_events_per_s else 'slow'}"
 
 
 def log_for(table: str, snapshot_bytes: int, events_per_s: float, policy: Policy) -> Route:
-    """Where one table goes: its class, its snapshot's path, its change log, its shards and its silver method."""
+    """Where one table goes: its class, its change log, its shards, its silver method and its snapshot method."""
     cls = classify(snapshot_bytes, events_per_s, policy, table)
     own = cls == "big_fast" or events_per_s >= policy.own_log_events_per_s
     shards = max(1, math.ceil(events_per_s / policy.shard_events_per_s)) if own else 1
-    snap = snapshot_path(snapshot_bytes, policy.max_log_snapshot_bytes, "log" if cls.startswith("small") else "direct")
     default = OWN[cls] if own and SILVER[cls] == "shared" else SILVER[cls]   # a busy table with its own log: no group
     silver = policy.silver_chosen.get(table, default)
     if silver not in METHODS:
         raise ValueError(f"{table}: silver {silver!r}, one of {', '.join(METHODS)}")
-    return Route(table, cls, snap, policy.log_name(table) if own else policy.shared_log, shards, silver,
+    return Route(table, cls, policy.log_name(table) if own else policy.shared_log, shards, silver,
                  snapshot_by=snapshot_method(table, snapshot_bytes, policy))
 
 
@@ -158,16 +157,16 @@ def plan(tables: dict, policy: Policy, reads_per_day: dict | None = None) -> dic
 
 def suggest(tables: dict, policy: Policy) -> dict:
     """A route to suggest per table from the source's statistics, for the user to check and change: {table: {class,
-    snapshot, log (shared or own), shards, silver, why}}. tables: {table: {"bytes": snapshot bytes or None,
+    snapshot_by, log (shared or own), shards, silver, why}}. tables: {table: {"bytes": snapshot bytes or None,
     "events_per_s": change rate or None}}. A table of unknown size is class `auto` (small or big, set by its real bytes
-    when the snapshot lands: land.snapshot_path), its snapshot `auto` too. An unknown rate counts as slow, and says so."""
+    once its snapshot is taken). An unknown rate counts as slow, and says so."""
     out = {}
     routes = plan({t: (s.get("bytes") or 0, s.get("events_per_s") or 0.0) for t, s in tables.items()}, policy,
                   {t: s["reads_per_day"] for t, s in tables.items() if s.get("reads_per_day") is not None})
     for t, s in tables.items():
         b, r = s.get("bytes"), s.get("events_per_s")
         route = routes[t]
-        why = [f"{_size(b)} snapshot" if b is not None else "size unknown: the snapshot's path is set by its real bytes",
+        why = [f"{_size(b)} snapshot" if b is not None else "size unknown: its class is set by its snapshot's real bytes",
                f"{r:,.1f} changes/s" if r is not None else "change rate unknown: taken as slow"]
         if t in policy.chosen:
             why.append(f"chosen: {policy.chosen[t]}")
@@ -175,7 +174,7 @@ def suggest(tables: dict, policy: Policy) -> dict:
             why.append(f"out of its group: {route.why}")
         unknown = b is None and t not in policy.chosen   # small or big: its bytes say, when the snapshot lands
         speed = route.cls.split("_")[1]
-        out[t] = {"class": f"auto_{speed}" if unknown else route.cls, "snapshot": "auto" if unknown else route.snapshot, "snapshot_by": route.snapshot_by,
+        out[t] = {"class": f"auto_{speed}" if unknown else route.cls, "snapshot_by": route.snapshot_by,
                   "log": "own" if route.log != policy.shared_log else "shared", "shards": route.shards,
                   "silver": route.silver if not unknown or route.silver == "shared" else
                   ("merge_round" if speed == "fast" else "view"), "group": route.group, "why": "; ".join(why)}
@@ -209,8 +208,8 @@ def history_fq(segments: list, kind: str) -> str:
     for i, (log, frm) in enumerate(segments):
         nxt = segments[i + 1][1] if i + 1 < len(segments) else None
         cond = ([f"{seq} > {lit(frm)}"] if frm is not None else []) + ([f"{seq} <= {lit(nxt)}"] if nxt is not None else [])
-        # a log's resolved and snapshot rows belong to it whatever their position: only change events are cut
-        keep = f" WHERE operation IN ('resolved', 'read') OR ({' AND '.join(cond)})" if cond else ""
+        # a log's resolved marks belong to it whatever their position: only change events are cut
+        keep = f" WHERE operation = 'resolved' OR ({' AND '.join(cond)})" if cond else ""
         parts.append(f"SELECT * FROM {log}{keep}")
     if len(segments) == 1 and segments[0][1] is None:
         return segments[0][0]   # one log from the start: the log itself
@@ -218,15 +217,10 @@ def history_fq(segments: list, kind: str) -> str:
 
 
 def transitions(old: dict, new: dict) -> list:
-    """What changing a table's route takes, from one plan's route to another's ({class, snapshot, log, shards}):
+    """What changing a table's route takes, from one plan's route to another's ({class, log, shards, silver}):
     [(action, why)]. None of these takes a new snapshot of the source or a rebuild of the pipeline; changing the
     gateway (or Debezium target) a table is on does, and isn't a route change (the applier's task)."""
     out = []
-    if old.get("snapshot") != new.get("snapshot") and "auto" not in (old.get("snapshot"), new.get("snapshot")):
-        how = ("landed into the log once (land.gateway_snapshots), from the snapshot the producer kept"
-               if new.get("snapshot") == "log" else "read where the producer wrote it; its rows in the log are ignored")
-        out.append(("snapshot", f"snapshot {old.get('snapshot')} -> {new.get('snapshot')}: {how}; needs the "
-                                "producer's snapshot kept (staging cleanup leaves snapshots)"))
     if old.get("log") != new.get("log"):
         out.append(("cutover", f"log {old.get('log')} -> {new.get('log')} at a position P: events after P land in the "
                                f"{new.get('log')} log (land.gateway only=/skip=), readers read the {old.get('log')} log up "
