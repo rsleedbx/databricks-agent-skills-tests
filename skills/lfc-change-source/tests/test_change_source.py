@@ -336,7 +336,7 @@ class Intake(unittest.TestCase):
         self.assertIn("date_add(DATE'1970-01-01'", q)                      # a date from days or text
         self.assertIn("unhex(CAST(`b` AS STRING))", q)                       # binary from hex text
         self.assertIn("CAST(7 AS INT) AS `added`", q)                        # a column the files lack: its default
-        self.assertIn("read_files('/Volumes/c/s/v/t/p1', format => 'csv', recursiveFileLookup => 'true', header => 'true')", q)
+        self.assertIn("read_files('/Volumes/c/s/v/t/p1', format => 'csv', recursiveFileLookup => 'true', inferColumnTypes => 'false', header => 'true')", q)
         self.assertEqual((got["rows"], got["how"]), (3, "csv files copied"))
 
     def test_no_files_is_an_empty_table(self):

@@ -68,6 +68,10 @@ def table(session, name: str) -> dict:
 
 
 def _reader(path: str, fmt: str, options: dict | None) -> str:
+    """read_files over the files; CSV and JSON as text (no type inference: digit strings like '0000001' would turn
+    into numbers), typed afterwards by the source's columns (value_sql)."""
+    if fmt in ("csv", "json"):
+        options = {"inferColumnTypes": "false", **(options or {})}
     opts = "".join(f", {k} => {_lit(str(v).lower() if isinstance(v, bool) else v)}" for k, v in (options or {}).items())
     return f"read_files({_lit(path)}, format => {_lit(fmt)}, recursiveFileLookup => 'true'{opts})"
 
