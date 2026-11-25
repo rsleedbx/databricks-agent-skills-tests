@@ -36,7 +36,9 @@ TERMINAL = ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
 
 
 def results_dir() -> Path:
-    d = Path(os.environ.get("RESULTS") or Path.home() / ".lfc-test/results/fanin").expanduser()
+    """FANIN_RESULTS (what engine passes to its round hook: debezium-zerobus.sh keeps its claims in an array named
+    RESULTS, which bash doesn't export), else RESULTS, else ~/.lfc-test/results/fanin."""
+    d = Path(os.environ.get("FANIN_RESULTS") or os.environ.get("RESULTS") or Path.home() / ".lfc-test/results/fanin").expanduser()
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -129,7 +131,7 @@ def engine(source: str, source_type: str) -> dict:
     t0 = time.time()
     rc = run(["bash", "scripts/debezium-zerobus.sh"], res / f"{source}-skill.log", copy / "skills/zerobus-debezium-test",
              {"SOURCE": source, "MODEL": "tpch", "NSRC": "1", "PHASE": "2", "KEEP": "1", "OUT": str(res / f"{source}-skill.md"),
-              "ROUND_HOOK": hook})
+              "ROUND_HOOK": hook, "FANIN_RESULTS": str(res)})
     text = (res / f"{source}-skill.log").read_text(errors="replace")
     e = (re.search(r"run (\d+):", text) or [None, ""])[1]
     schema = (re.search(rf"schema {re.escape(os.environ['CATALOG'])}\.([a-z0-9_]+)", text) or [None, ""])[1]
