@@ -66,16 +66,19 @@ class Page(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             w = lambda n, v: open(os.path.join(d, n), "w").write(v if isinstance(v, str) else json.dumps(v))  # noqa: E731
             w("pg-skill.json", {"skill_exit": 0, "skill_pass": 23, "skill_fail": 0})
-            w("pg-fanin.json", {"fanin_job": "TERMINATED SUCCESS"})
-            w("pg-compare.json", {"tables": 2, "equal": 2, "by_table": {"orders": {}, "orders_history": {}}})
+            r = lambda n, eq: {"round": n, "fanin_job": "TERMINATED SUCCESS", "job_s": 300, "compare": {"tables": 2, "equal": eq}}  # noqa: E731
+            w("pg-rounds.jsonl", json.dumps(r(1, 2)) + "\n" + json.dumps(r(2, 2)) + "\n")
+            w("pg-times.json", {"skill": [{"total_s": 270, "running_s": 145}, {"total_s": 190, "running_s": 120}],
+                                "fanin": [{"total_s": 260, "running_s": 140}, {"total_s": 185, "running_s": 118}]})
             w("pg-skill.md", "- Date (UTC): 2026-11-25\n- Source: PostgreSQL PostgreSQL 16.15 (Debian) on x86, image docker.io/library/postgres:16 (sha256:ab)\n"
                               "- Debezium: quay.io/debezium/server:3.7.0.Final (sha256:cd), PostgreSQL connector\n")
             folder, text = fanin_page.page(d, "pg")
             self.assertEqual(folder, "postgresql")
             self.assertIn("2026-11-25: PostgreSQL 16.15 (docker.io/library/postgres:16)", text)
-            self.assertIn("all 2 tables (1 tables and their `_history`) equal", text)
+            self.assertIn("all 2 tables (1 tables and their `_history`) equal to the skill's, every round", text)
+            self.assertIn("| 2 | 190 (120) | 185 (118) | 300 |", text)
             self.assertIn("SOURCE=pg SOURCE_TYPE=POSTGRESQL", text)
-            w("pg-compare.json", {"tables": 2, "equal": 1, "by_table": {}})
+            w("pg-rounds.jsonl", json.dumps(r(1, 2)) + "\n" + json.dumps(r(2, 1)) + "\n")   # round 2 differs
             with self.assertRaises(SystemExit):
                 fanin_page.page(d, "pg")
 

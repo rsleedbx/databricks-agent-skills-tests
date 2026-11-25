@@ -26,19 +26,25 @@ def header(md: str, key: str) -> str:
 def page(res: str, src: str) -> tuple[str, str]:
     folder, name, st = ENGINES[src]
     skill = json.load(open(os.path.join(res, f"{src}-skill.json")))
-    fanin = json.load(open(os.path.join(res, f"{src}-fanin.json")))
-    cmp_ = json.load(open(os.path.join(res, f"{src}-compare.json")))
+    rounds = [json.loads(x) for x in open(os.path.join(res, f"{src}-rounds.jsonl")) if x.strip()]
+    times = json.load(open(os.path.join(res, f"{src}-times.json")))
     md = open(os.path.join(res, f"{src}-skill.md")).read()
-    if skill["skill_exit"] != 0 or skill["skill_fail"] or not fanin.get("fanin_job", "").startswith("TERMINATED SUCCESS") \
-            or not cmp_["tables"] or cmp_["equal"] != cmp_["tables"]:
-        raise SystemExit(f"{src}: not passed end to end ({skill}, {fanin}, {cmp_.get('equal')}/{cmp_.get('tables')}): no page")
+    ok = lambda r: r["fanin_job"].startswith("TERMINATED SUCCESS") and r["compare"]["tables"] and \
+        r["compare"]["equal"] == r["compare"]["tables"]   # noqa: E731
+    if skill["skill_exit"] != 0 or skill["skill_fail"] or len(rounds) < 2 or not all(ok(r) for r in rounds):
+        raise SystemExit(f"{src}: not passed end to end ({skill}, rounds {rounds}): no page")
+    cmp_ = rounds[-1]["compare"]
+    sk, fa = times.get("skill") or [], times.get("fanin") or []
+    cell = lambda u: f"{u['total_s']} ({u['running_s']})" if u else "-"   # noqa: E731
+    rows = "\n".join(f"| {r['round']} | {cell(sk[i] if i < len(sk) else None)} | {cell(fa[i] if i < len(fa) else None)} | "
+                     f"{r['job_s']} |" for i, r in enumerate(rounds))
     date = header(md, "Date (UTC)")
     raw = header(md, "Source")
     ver = re.search(r"\d+\.\d+(?:\.\d+)*", raw.replace(name, "", 1))
     img = re.search(r"image (\S+)", raw)
     source = f"{name} {ver.group(0) if ver else ''}".strip() + (f" ({img.group(1)})" if img else "")
     dbz = header(md, "Debezium").split(",")[0]
-    base = [t for t in cmp_["by_table"] if not t.endswith("_history")]
+    base_n = cmp_["tables"] // 2   # each table and its _history
     text = f"""# {name}: create an ingestion pipeline with Debezium through Zerobus
 
 You run Debezium Server next to {name}; its Zerobus sink writes every change into one append-only change log in
@@ -48,13 +54,19 @@ builds silver from that log. Back to [database connectors](../README.md).
 ## Tested
 
 {date}: {source}, and Debezium Server ({dbz}, Zerobus sink), in containers on a cloud VM, into a serverless
-workspace. The source holds [TPC-H](../../tpc-models.md#tpc-h) at SF 0.001 ({len(base)} tables).
+workspace. The source holds [TPC-H](../../tpc-models.md#tpc-h) at SF 0.001 ({base_n} tables).
 
 | Step | Result |
 |---|---|
 | Your side: snapshot, Debezium, Zerobus, the change log | {skill['skill_pass']} checks passed, none failed (zerobus-debezium-test, its silver equal to the source after two rounds) |
-| The fan-in bundle: `bundle deploy`, `bundle run fanin_job` | the view `cdc_log` over your log and the silver pipeline; one update |
-| The fan-in's silver | all {cmp_['tables']} tables ({len(base)} tables and their `_history`) equal to the skill's (row count and a hash of every row) |
+| The fan-in bundle: `bundle deploy`, then `bundle run fanin_job` after each round | the view `cdc_log` over your log and the silver pipeline |
+| The fan-in's silver, after each round | all {cmp_['tables']} tables ({base_n} tables and their `_history`) equal to the skill's, every round (row count and a hash of every row) |
+
+Silver update times, the skill's pipeline and the fan-in's (the same pipeline code; seconds, of which its flows ran):
+
+| Round | zerobus-debezium-test's silver | The fan-in's silver | The fan-in's job, all of it |
+|---|---|---|---|
+{rows}
 
 Repeat the whole test, both sides and the check: [test-engine.sh](../../../skills/lfc-fanin/scripts/test-engine.sh)
 (`SOURCE={src} SOURCE_TYPE={st}`); this page is written from its results by `fanin_page.py`.
@@ -85,7 +97,7 @@ It creates, in `<catalog>.<fan-in schema>`: a view `cdc_log` over your log, the 
 table per source table, SCD type 1, and `<table>_history`, SCD type 2; `schema_drift` records values that didn't
 fit), and `_fanin`. Running it again changes nothing it made, and runs one silver update.
 """
-    return folder, text
+    return folder, text.replace("{rows}", rows)
 
 
 if __name__ == "__main__":
