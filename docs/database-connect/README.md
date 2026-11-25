@@ -30,6 +30,8 @@ gateway, in [lakeflow-connect-database.md](../lakeflow-connect-database.md).
 | Change log | one append-only Delta table (`destination`, `operation`, `key`, `value`), clustered by destination | the same table, with the staging files landed into it |
 | Silver | lfc-log-silver: each table a view, a MERGE, AUTO CDC, or a group's shared table | the same |
 
+The tests fill their sources with the TPC models; each model's tables and keys: [tpc-models.md](../tpc-models.md).
+
 Every route gives the change log the same columns, so silver doesn't know which route a table came from. The four
 layers, transport to gold: [design.md](../design.md).
 
