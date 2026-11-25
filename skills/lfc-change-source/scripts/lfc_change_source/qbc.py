@@ -1,5 +1,5 @@
 """qbc: a snapshot method, a Lakeflow Connect query-based pipeline through a UC connection reading each table once, for
-any transport (docs/design.md, layer 1: the snapshot is chosen apart from how changes arrive). Debezium through
+any transport (docs/design-no-full-refresh.md: the snapshot is chosen apart from how changes arrive). Debezium through
 Zerobus uses it so nothing outside Databricks exports or uploads files; a gateway can use it too, its task set to take
 no snapshot of its own.
 

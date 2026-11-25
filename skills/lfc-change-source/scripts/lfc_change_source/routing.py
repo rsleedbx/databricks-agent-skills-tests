@@ -7,8 +7,8 @@ is taken:
   big_slow    big, few       shared                 merge_changed: a MERGE only in a round that changed it
   big_fast    big, many      its own, sharded       auto_cdc: flows in a continuous pipeline (setup paid once)
 
-Each table's snapshot also has a method of its own, apart from the transport carrying its changes (docs/design.md,
-layer 1): `qbc` (a query-based pipeline through a UC connection, the default), `transport` (the transport's own: a
+Each table's snapshot also has a method of its own, apart from the transport carrying its changes
+(docs/design-no-full-refresh.md): `qbc` (a query-based pipeline through a UC connection, the default), `transport` (the transport's own: a
 gateway's, a changefeed's initial scan), or `files` (files the customer makes and names, such as a CockroachDB
 changefeed with initial_scan = 'only' into object storage as Parquet, made a Delta table in place with CONVERT TO DELTA). Tables past snapshot_big_bytes
 (10 TB) default to snapshot_big; any table's method can be chosen by name (snapshot_chosen). Whatever the method, the

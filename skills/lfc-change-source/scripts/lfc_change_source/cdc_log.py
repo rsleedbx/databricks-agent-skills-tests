@@ -119,7 +119,7 @@ class CdcLog:
     def snapshot_sql(self, at: Position | None = None) -> str:
         """The snapshot given (its own as-of time: the log starts after it), else the table as of `at` (None: the
         latest) from the log's changes alone (a log that starts with the table: each key's last change, deletes
-        dropped). The log carries changes only: a snapshot is a table of its own (docs/design.md)."""
+        dropped). The log carries changes only: a snapshot is a table of its own (docs/design-no-full-refresh.md)."""
         names = ", ".join(quote(c) for c in self.columns)
         if self.snapshot:
             return f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({self.snapshot})"

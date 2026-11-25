@@ -1,4 +1,4 @@
-"""intake: every way a snapshot arrives, turned into the snapshot contract (docs/design.md, layer 1): a Delta table
+"""intake: every way a snapshot arrives, turned into the snapshot contract (docs/design-no-full-refresh.md): a Delta table
 with the source's column names and types, which every silver cell reads (lfc_log_silver Table.snapshot_table,
 zerobus-debezium-test's silver through _sources.yaml snapshot_table). Silver then reads tables only: no format, no
 text decoding, no folder listing. One function a kind of arrival; each returns {"table", "rows", "seconds", "how"}.

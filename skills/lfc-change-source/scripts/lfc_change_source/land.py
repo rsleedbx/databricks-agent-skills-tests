@@ -17,7 +17,7 @@ log, each event as it is (VARIANT):
     land.gateway(spark, "/Volumes/.../<gateway id>", "`main`.`ctl`.`cdc_log`", "sales_gw_1")   # rows added
 
 The log carries changes only: a gateway's snapshot goes to a Delta table of its own (intake.gateway), never into
-the log (docs/design.md, Snapshot and CDC).
+the log (docs/design-no-full-refresh.md).
 
 A CockroachDB changefeed (format='json', updated, resolved) into object storage or a Volume, one folder a table
 (<date>/<files>.ndjson and <time>.RESOLVED), lands the same way (land.changefeed): the key as an object by the key
