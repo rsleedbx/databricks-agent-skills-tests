@@ -394,5 +394,53 @@ class Samples(unittest.TestCase):
             self.assertEqual(set(x["data"]) - set(cols), set())                 # every column id has a name
 
 
+class Intake(unittest.TestCase):
+    """intake: each kind of snapshot arrival into a Delta table with the source's columns (the snapshot contract)."""
+
+    def session(self, have=None, fail=None):
+        seen = []
+
+        def sql(q):
+            seen.append(q)
+            if q.startswith("DESCRIBE QUERY"):
+                if fail:
+                    raise RuntimeError(fail)
+                return types.SimpleNamespace(collect=lambda: [(c,) for c in have])
+            return types.SimpleNamespace(collect=lambda: [(3,)])
+        return types.SimpleNamespace(sql=sql), seen
+
+    COLS = [{"name": "id", "type": "BIGINT"}, {"name": "d", "type": "DATE", "kind": "date"},
+            {"name": "b", "type": "BINARY"}, {"name": "added", "type": "INT", "default": "7"}]
+
+    def test_files_are_typed_as_the_source(self):
+        from lfc_change_source import intake
+        s, seen = self.session(have=["id", "d", "b"])
+        got = intake.files(s, "/Volumes/c/s/v/t/p1", "csv", "c.s_snap1.t", self.COLS, {"header": "true"}, binhex=True)
+        q = next(x for x in seen if x.startswith("CREATE OR REPLACE TABLE"))
+        self.assertIn("`c`.`s_snap1`.`t` AS SELECT CAST(`id` AS BIGINT) AS `id`", q)
+        self.assertIn("date_add(DATE'1970-01-01'", q)                      # a date from days or text
+        self.assertIn("unhex(CAST(`b` AS STRING))", q)                       # binary from hex text
+        self.assertIn("CAST(7 AS INT) AS `added`", q)                        # a column the files lack: its default
+        self.assertIn("read_files('/Volumes/c/s/v/t/p1', format => 'csv', recursiveFileLookup => 'true', header => 'true')", q)
+        self.assertEqual((got["rows"], got["how"]), (3, "csv files copied"))
+
+    def test_no_files_is_an_empty_table(self):
+        from lfc_change_source import intake
+        s, seen = self.session(fail="[CANNOT_INFER_EMPTY_SCHEMA] no files")
+        got = intake.files(s, "/V/t/p1", "parquet", "c.s.t", self.COLS)
+        self.assertIn("CREATE OR REPLACE TABLE `c`.`s`.`t` (`id` BIGINT, `d` DATE, `b` BINARY, `added` INT)", seen)
+        self.assertEqual(got["how"], "no parquet files: empty")
+        with self.assertRaises(RuntimeError):
+            intake.files(self.session(fail="PERMISSION_DENIED")[0], "/V/t/p1", "parquet", "c.s.t", self.COLS)
+
+    def test_a_table_and_parquet_in_place(self):
+        from lfc_change_source import intake, qbc
+        s, seen = self.session()
+        self.assertEqual(intake.table(s, qbc.snapshot_table("c-1", "s", "t"))["table"], "`c-1`.`s`.`t`")
+        intake.parquet_in_place(s, "s3://b/snap/t", "c.s.t")
+        self.assertIn("CONVERT TO DELTA parquet.`s3://b/snap/t`", seen)
+        self.assertIn("CREATE TABLE IF NOT EXISTS `c`.`s`.`t` USING DELTA LOCATION 's3://b/snap/t'", seen)
+
+
 if __name__ == "__main__":
     unittest.main()

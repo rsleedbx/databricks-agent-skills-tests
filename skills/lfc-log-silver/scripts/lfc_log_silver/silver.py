@@ -23,7 +23,7 @@ for merge, whether to skip a round with no change); no class name appears here.
 
     from lfc_log_silver import silver
     tables = {"orders": silver.Table(src, "merge"), "ledger": silver.Table(src2, "merge", only_changed=True,
-              snapshot_sql=..., position=..., snapshot_files={"path": ..., "exprs": [...]})}
+              snapshot_table="`main`.`snap`.`ledger`", position=...)}
     silver.run(session, tables, "`main`.`silver`", to, first=True)    # views created, merged tables built
     silver.run(session, tables, "`main`.`silver`", to)                # a round
 """
@@ -46,19 +46,25 @@ class Table:
     src: object                          # an lfc_change_source source: columns, keys, changes_sql, current_sql
     method: str = "merge"                # one of METHODS
     only_changed: bool = False           # merge: skip a round with no event past the kept position
-    snapshot_sql: str | None = None      # its snapshot read in place, as SQL (None: the snapshot is in the log)
+    # its snapshot read in place: a Delta table (a streaming table too) with the source's column names and types,
+    # whatever took it (routing's snapshot_by: qbc's table, files converted with CONVERT TO DELTA or landed). None:
+    # the snapshot is in the log. Views and MERGE read it in batch, AUTO CDC as a stream
+    snapshot_table: str | None = None
     position: object = None              # that snapshot's position (a Position; None: before every change)
-    snapshot_files: dict | None = None   # auto_cdc: {"path", "exprs"} of that snapshot, for the pipeline's batch read
     group: str = ""                      # shared: its group (routing.Route.group)
 
     def current_sql(self) -> str:
         return self.src.current_sql(self.snapshot_sql, self.position)
 
+    @property
+    def snapshot_sql(self) -> str | None:
+        return f"SELECT * FROM {self.snapshot_table}" if self.snapshot_table else None
 
-def from_route(src, route, snapshot_sql=None, position=None, snapshot_files=None) -> Table:
+
+def from_route(src, route, snapshot_table=None, position=None) -> Table:
     """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
     method, only = FROM_ROUTE[route.silver]
-    return Table(src, method, only, snapshot_sql, position, snapshot_files, getattr(route, "group", "") or "")
+    return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "")
 
 
 def _q(name: str) -> str:
@@ -75,14 +81,15 @@ def _target(schema: str, name: str) -> str:
 
 def ensure_state(session, schema: str) -> None:
     session.sql(f"CREATE TABLE IF NOT EXISTS {schema}.{STATE} (target STRING, kind STRING, position STRING, "
-                "rows BIGINT, seconds DOUBLE, updated_at TIMESTAMP, snapshot BIGINT) COMMENT 'lfc_log_silver: each "
-                "silver table''s position in its change source, and the snapshot it was built from'")
-    try:   # a state table from before the snapshot column
+                "rows BIGINT, seconds DOUBLE, updated_at TIMESTAMP, snapshot_table STRING) COMMENT 'lfc_log_silver: "
+                "each silver table''s position in its change log, and the snapshot table it was built from'")
+    try:   # a state table from before the snapshot_table column
         cols = [r[0] for r in session.sql(f"DESCRIBE {schema}.{STATE}").collect()]
-        if cols and "snapshot" not in cols:
-            session.sql(f"ALTER TABLE {schema}.{STATE} ADD COLUMNS (snapshot BIGINT)").collect()
+        if cols and "snapshot_table" not in cols:
+            session.sql(f"ALTER TABLE {schema}.{STATE} ADD COLUMNS (snapshot_table STRING)").collect()
     except Exception:  # noqa: BLE001  a session that can't describe it: the CREATE above has the column
         pass
+
 
 
 def positions(session, schema: str) -> dict:
@@ -91,38 +98,25 @@ def positions(session, schema: str) -> dict:
 
 
 def snapshots(session, schema: str) -> dict:
-    """{target: the snapshot id it was built from} (None: not recorded)."""
-    return {r[1]: r[0] for r in session.sql(f"SELECT snapshot, target FROM {schema}.{STATE}").collect()}
+    """{target: the snapshot table it was built from} (None: none, its snapshot was in the log)."""
+    return {r[1]: r[0] for r in session.sql(f"SELECT snapshot_table, target FROM {schema}.{STATE}").collect()}
 
 
-def newest_snapshots(session, tables: dict) -> dict:
-    """{name: the newest snapshot id in the log} for the tables whose transport tags snapshots (one grouped query a
-    log)."""
-    by_log: dict = {}
-    for n, t in tables.items():
-        if getattr(t.src, "SNAPSHOT_ID", None):
-            by_log.setdefault((t.src.fq, t.src.SNAPSHOT_ID), {})[t.src.destination] = n
-    out = {}
-    for (fq, sid), dests in by_log.items():
-        rows = session.sql(f"SELECT max({sid}) AS snapshot, destination FROM {fq} WHERE operation = 'read' AND "
-                           f"destination IN ({', '.join(_lit(d) for d in dests)}) GROUP BY destination").collect()
-        out.update({dests[r[1]]: r[0] for r in rows if r[0] is not None})
-    return out
 
 
 def _save(session, schema: str, rows: list) -> None:
-    """[(target, kind, position, rows, seconds[, snapshot])] into the state, one MERGE for the run (no snapshot:
-    the one kept stays)."""
+    """[(target, kind, position, rows, seconds, snapshot table or None)] into the state, one MERGE for the run."""
     if not rows:
         return
-    snap = lambda r: str(int(r[5])) if len(r) > 5 and r[5] is not None else "CAST(NULL AS BIGINT)"
+    snap = lambda r: _lit(r[5]) if len(r) > 5 and r[5] else "CAST(NULL AS STRING)"
     vals = ", ".join(f"({_lit(r[0])}, {_lit(r[1])}, {_lit(r[2])}, {int(r[3] or 0)}, {r[4]:.3f}, {snap(r)})" for r in rows)
     session.sql(f"MERGE INTO {schema}.{STATE} s USING (SELECT * FROM VALUES {vals} AS n(target, kind, position, rows, "
-                "seconds, snapshot)) n ON s.target = n.target WHEN MATCHED THEN UPDATE SET s.kind = n.kind, s.position = "
-                "n.position, s.rows = n.rows, s.seconds = n.seconds, s.updated_at = current_timestamp(), s.snapshot = "
-                "coalesce(n.snapshot, s.snapshot) WHEN NOT MATCHED THEN INSERT (target, kind, position, rows, seconds, "
-                "updated_at, snapshot) VALUES (n.target, n.kind, n.position, n.rows, n.seconds, current_timestamp(), "
-                "n.snapshot)")
+                "seconds, snapshot_table)) n ON s.target = n.target WHEN MATCHED THEN UPDATE SET s.kind = n.kind, "
+                "s.position = n.position, s.rows = n.rows, s.seconds = n.seconds, s.updated_at = current_timestamp(), "
+                "s.snapshot_table = n.snapshot_table WHEN NOT MATCHED THEN INSERT (target, kind, position, rows, "
+                "seconds, updated_at, snapshot_table) VALUES (n.target, n.kind, n.position, n.rows, n.seconds, "
+                "current_timestamp(), n.snapshot_table)")
+
 
 
 def view_sql(t: Table, target: str) -> str:
@@ -165,18 +159,23 @@ def _each(session, statements: dict, threads: int) -> dict:
         return dict(pool.map(one, statements.items()))
 
 
-def views(session, tables: dict, schema: str, threads: int = 16) -> dict:
-    """A view per table over its current rows. {name: (None, seconds)}."""
-    return _each(session, {n: view_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
+def views(session, tables: dict, schema: str, threads: int = 16, to=None) -> dict:
+    """A view per table over its current rows, its snapshot table recorded (a different one later: recreated).
+    {name: (None, seconds)}."""
+    done = _each(session, {n: view_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
+    if to is not None and done:
+        ensure_state(session, schema)
+        _save(session, schema, [(n, to.kind, to.value, 0, sec, tables[n].snapshot_table) for n, (_, sec) in done.items()])
+    return done
+
 
 
 def build(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     """Each table built from its current rows, kept at `to` (read before the builds: a change after it is applied
     again by the next apply, the same result for SCD type 1). {name: (None, seconds)}."""
     ensure_state(session, schema)
-    newest = newest_snapshots(session, tables)
     done = _each(session, {n: build_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
-    _save(session, schema, [(n, to.kind, to.value, 0, s, newest.get(n)) for n, (_, s) in done.items()])
+    _save(session, schema, [(n, to.kind, to.value, 0, s, tables[n].snapshot_table) for n, (_, s) in done.items()])
     return done
 
 
@@ -208,10 +207,11 @@ def schema_changed(session, tables: dict, schema: str) -> list:
     return out
 
 
-def renewed(newest: dict, kept_snap: dict, names) -> list:
-    """The tables whose newest snapshot is newer than the one they were built from (a recorded one: a table with
-    none recorded, from before the column, just records it)."""
-    return [n for n in names if n in newest and kept_snap.get(n) is not None and newest[n] > kept_snap[n]]
+def renewed(tables: dict, kept_snap: dict) -> list:
+    """The tables kept from a snapshot table other than the one they have now (a new snapshot is a new table; a
+    table built before its snapshot was ready, from the log alone, counts too): rebuilt, or its view recreated."""
+    return [n for n, t in tables.items() if n in kept_snap and kept_snap[n] != t.snapshot_table]
+
 
 
 def changed(session, tables: dict, schema: str, to) -> list:
@@ -242,8 +242,7 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_sch
     todo = {n: t for n, t in tables.items() if not t.only_changed}
     todo.update({n: skip_ok[n] for n in changed(session, skip_ok, schema, to)})
     kept = positions(session, schema)
-    newest = newest_snapshots(session, tables)
-    redo = set(renewed(newest, snapshots(session, schema), tables))   # a newer snapshot: rebuilt from the log
+    redo = set(renewed(tables, snapshots(session, schema)))          # a new snapshot table: rebuilt from it and the log
     redo |= set(changed_schema or ()) & set(tables)                    # a schema change: rebuilt from the log too
 
     def after(n):
@@ -252,15 +251,16 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_sch
     stmts = {n: build_sql(tables[n], _target(schema, n)) for n in redo}
     stmts.update({n: merge_sql(t.src, _target(schema, n), after(n), to) for n, t in todo.items() if n not in redo})
     done = _each(session, stmts, threads)
-    _save(session, schema, [(n, to.kind, to.value, r, s, newest.get(n)) for n, (r, s) in done.items()])
+    _save(session, schema, [(n, to.kind, to.value, r, s, tables[n].snapshot_table) for n, (r, s) in done.items()])
     return done
 
 
 def shared_changes_sql(members: list, after, to) -> str:
-    """Every member's events after `after` up to `to` in one scan of the log they share: destination, k (the key the
-    landing filled in, as text), data (the event's row, row_sql: the same expression for every table of a transport),
-    _op, _seq. No expression a table, so a group's size isn't bound by its SQL."""
-    from lfc_change_source.cdc_log import EVENT, SEQUENCES, TEXT
+    """Every member's change events after `after` up to `to` in one scan of the log they share: destination, k (the
+    key the landing filled in, as text), data (the event's row, row_sql: the same expression for every table of a
+    transport), _op, _seq. Snapshot rows (operation read) are left out: a member's snapshot is its snapshot table,
+    read by its view. No expression a table, so a group's size isn't bound by its SQL."""
+    from lfc_change_source.cdc_log import EVENT, SEQUENCES
     from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT
     one = members[0]
     bad = [m.destination for m in members if m.fq != one.fq or m.seq != one.seq or m.row_sql() != one.row_sql()
@@ -270,22 +270,13 @@ def shared_changes_sql(members: list, after, to) -> str:
                          f"{bad[:5]}")
     seq = SEQUENCES[one.seq]
     lo, hi = one.position_sql(after), one.position_sql(to)
-    where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT] + \
+    where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT, "operation <> 'read'"] + \
         ([f"{seq} > {lo}"] if lo is not None else []) + ([f"{seq} <= {hi}"] if hi is not None else [])
-    src = f"{one.fq} WHERE {' AND '.join(where)}"
-    sid = getattr(one, "SNAPSHOT_ID", None)
-    if sid and after is None:   # a build: each table's newest snapshot only, and the changes after its position
-        none = "coalesce(_pos, '') = ''" if one.seq in TEXT else "_pos IS NULL"   # a position with no value: every change
-        src = (f"(SELECT * FROM (SELECT *, max(CASE WHEN operation = 'read' AND {sid} = _snap THEN {seq} END) OVER "
-               f"(PARTITION BY destination) AS _pos FROM (SELECT *, max(CASE WHEN operation = 'read' THEN {sid} END) "
-               f"OVER (PARTITION BY destination) AS _snap FROM {src})) WHERE (operation = 'read' AND {sid} = _snap) OR "
-               f"(operation <> 'read' AND ({none} OR {seq} > _pos)))")
-    else:
-        src = f"(SELECT * FROM {src})"
     return (f"SELECT destination, key::STRING AS k, {one.row_sql()} AS data, "
             f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
             f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
-            f"FROM {src}")
+            f"FROM {one.fq} WHERE {' AND '.join(where)}")
+
 
 
 def missing_keys(session, members: list) -> int:
@@ -298,20 +289,28 @@ def missing_keys(session, members: list) -> int:
 
 
 def shared_view_sql(t: Table, schema: str, target: str) -> str:
-    """A member's typed view over its group's table: its columns from the stored row, typed as its source types them
-    (stored_values)."""
+    """A member's typed view: its rows in the group's table (each key's last change, typed as its source types them:
+    stored_values; a delete kept as a marker), and its snapshot table's rows for the keys the group hasn't changed or
+    deleted (matched by the key typed from the group's stored key: stored_key_values). The view is a table's own SQL;
+    the group's table and MERGE stay the same for every member."""
+    g, d = _target(schema, SHARED.format(group=t.group or "0")), _lit(t.src.destination)
     cols = ", ".join(f"{e} AS {_q(c)}" for c, e in t.src.stored_values("data").items())
-    return (f"CREATE OR REPLACE VIEW {target} AS SELECT {cols} FROM {_target(schema, SHARED.format(group=t.group))} "
-            f"WHERE destination = {_lit(t.src.destination)}")
+    live = f"SELECT {cols} FROM {g} WHERE destination = {d} AND NOT coalesce(deleted, false)"
+    if not t.snapshot_table:
+        return f"CREATE OR REPLACE VIEW {target} AS {live}"
+    same = " AND ".join(f"{e} <=> s.{_q(c)}" for c, e in t.src.stored_key_values("x.k").items())
+    snap = (f"SELECT {', '.join('s.' + _q(c) for c in t.src.columns)} FROM {t.snapshot_table} s WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {g} x WHERE x.destination = {d} AND {same})")
+    return f"CREATE OR REPLACE VIEW {target} AS {live} UNION ALL {snap}"
+
 
 
 def _groups(tables: dict) -> dict:
     out: dict = {}
     for n, t in tables.items():
-        if t.snapshot_sql:
-            raise ValueError(f"{n}: shared reads its snapshot from the log (a snapshot read in place: merge or auto_cdc)")
         out.setdefault(t.group or "0", {})[n] = t
     return out
+
 
 
 def _drop_tables(session, schema: str, names: list) -> None:
@@ -338,62 +337,61 @@ def build_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
             raise ValueError(f"shared group {g}: {n:,} events with no key: land with keys (lfc_change_source "
                              "land.gateway_keys), or fill them in (land.backfill_keys)")
 
-    newest = newest_snapshots(session, tables)
     with ThreadPoolExecutor(threads) as pool:
         done = dict(pool.map(lambda kv: (kv[0], _build_group(session, schema, kv[0], kv[1], to)), groups.items()))
     _drop_tables(session, schema, list(tables))
-    _each(session, {n: shared_view_sql(t, schema, _target(schema, n)) for n, t in tables.items()}, threads)
-    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, n, s, _group_snapshot(newest, groups[g]))
-                            for g, (n, s) in done.items()])
+    _member_views(session, tables, schema, to, threads)
+    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, n, s) for g, (n, s) in done.items()])
     return done
 
 
+def _member_views(session, tables: dict, schema: str, to, threads: int) -> None:
+    """Each member's view, and its snapshot table recorded (a different one later: the view recreated, no rebuild)."""
+    done = _each(session, {n: shared_view_sql(t, schema, _target(schema, n)) for n, t in tables.items()}, threads)
+    _save(session, schema, [(n, to.kind, to.value, 0, s, tables[n].snapshot_table) for n, (_, s) in done.items()])
+
+
 def _build_group(session, schema: str, g: str, members: dict, to) -> tuple:
-    """A group's table from its members' current rows up to `to` (each one's newest snapshot): (members, seconds)."""
+    """A group's table from its members' changes up to `to`: each key's last change, a delete kept as a marker (it
+    hides the key's snapshot row). (members, seconds)."""
     from lfc_change_source.contract import DELETE, OP, last_change_sql
     t0 = time.time()
     cur = last_change_sql(shared_changes_sql([m.src for m in members.values()], None, to), ["destination", "k"])
     session.sql(f"CREATE OR REPLACE TABLE {_target(schema, SHARED.format(group=g))} CLUSTER BY (destination) AS "
-                f"SELECT destination, k, data FROM ({cur}) WHERE {OP} <> '{DELETE}'").collect()
+                f"SELECT destination, k, data, {OP} = '{DELETE}' AS deleted FROM ({cur})").collect()
     return len(members), time.time() - t0
 
 
-def _group_snapshot(newest: dict, members: dict):
-    """A group's snapshot mark: its members' newest snapshot ids' maximum (a member's new snapshot raises it)."""
-    got = [newest[n] for n in members if n in newest]
-    return max(got) if got else None
 
 
 def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
-    """One MERGE a group: each key's last change after the group's kept position up to `to`. {group: (rows, s)}."""
+    """One MERGE a group: each key's last change after the group's kept position up to `to` (a delete: its marker).
+    A member whose snapshot table changed gets its view recreated. {group: (rows, s)}."""
     from lfc_change_source.contract import DELETE, OP, Position, last_change_sql
     groups = _groups(tables)
     kept = positions(session, schema)
-    newest, kept_snap = newest_snapshots(session, tables), snapshots(session, schema)
-    redo = {g for g, members in groups.items() if (snap := _group_snapshot(newest, members)) is not None and
-            kept_snap.get(SHARED.format(group=g)) is not None and snap > kept_snap[SHARED.format(group=g)]}
-    rebuilt = {g: _build_group(session, schema, g, groups[g], to) for g in redo}   # a member's newer snapshot
     stmts = {}
     for g, members in groups.items():
-        if g in redo:
-            continue
         kind, pos = kept.get(SHARED.format(group=g), (to.kind, None))
         after = Position(kind, pos) if pos is not None else None
         c = last_change_sql(shared_changes_sql([m.src for m in members.values()], after, to), ["destination", "k"])
         stmts[g] = (f"MERGE INTO {_target(schema, SHARED.format(group=g))} t USING ({c}) c ON t.destination = "
-                    f"c.destination AND t.k = c.k WHEN MATCHED AND c.{OP} = '{DELETE}' THEN DELETE WHEN MATCHED THEN "
-                    f"UPDATE SET t.data = c.data WHEN NOT MATCHED AND c.{OP} <> '{DELETE}' THEN INSERT (destination, "
-                    "k, data) VALUES (c.destination, c.k, c.data)")
-    done = {**_each(session, stmts, threads), **rebuilt}
-    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, r, s, _group_snapshot(newest, groups[g]))
-                            for g, (r, s) in done.items()])
+                    f"c.destination AND t.k = c.k WHEN MATCHED THEN UPDATE SET t.data = c.data, t.deleted = "
+                    f"c.{OP} = '{DELETE}' WHEN NOT MATCHED THEN INSERT (destination, k, data, deleted) VALUES "
+                    f"(c.destination, c.k, c.data, c.{OP} = '{DELETE}')")
+    done = _each(session, stmts, threads)
+    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, r, s) for g, (r, s) in done.items()])
+    again = renewed(tables, snapshots(session, schema))
+    if again:
+        _member_views(session, {n: tables[n] for n in again}, schema, to, threads)
     return done
+
 
 
 def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
     """The table lists for this skill's pipelines/auto_cdc_from_log.py, `per_pipeline` tables each (a pipeline takes
     at most 1,000 tables; its setup grows with its flows, paid once in continuous mode): [[{destination, target, keys,
-    exprs, seq, seq_type[, snapshot]}]]; a snapshot in place (snapshot_files) adds a flow reading it in the pipeline,
+    exprs, seq, seq_type[, snapshot]}]]; a snapshot in place (snapshot_table) adds a flow streaming it in the pipeline,
     sequenced by the same type (seq_type: the position's SQL type)."""
     from lfc_change_source.cdc_log import SEQUENCES, TEXT
     items = []
@@ -401,8 +399,9 @@ def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
         item = {"destination": t.src.destination, "target": n, "keys": list(t.src.keys),
                 "exprs": t.src.column_exprs(), "seq": SEQUENCES[t.src.seq],
                 "seq_type": "STRING" if t.src.seq in TEXT else "BIGINT"}
-        if t.snapshot_files:
-            item["snapshot"] = {**t.snapshot_files, "position": "" if t.position is None else t.position.value}
+        if t.snapshot_table:
+            item["snapshot"] = {"table": t.snapshot_table, "columns": list(t.src.columns),
+                                "position": "" if t.position is None else t.position.value}
         items.append(item)
     return [items[i:i + per_pipeline] for i in range(0, len(items), per_pipeline)]
 
@@ -412,6 +411,7 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     a group after it; views created on the first round (and again after a schema change); merged tables built on the
     first round, merged after it (only_changed: only those with events past their position; rebuilt from the log
     after a schema change or a newer snapshot); auto_cdc tables left to their pipelines. {method: {"tables": n, "done": n, "seconds": s}} (shared: "done" counts groups)."""
+    ensure_state(session, schema)
     by = {m: {n: t for n, t in tables.items() if t.method == m} for m in METHODS}
     moved = [] if first else schema_changed(session, {n: t for n, t in tables.items() if t.method != "auto_cdc"}, schema)
     bad = [n for n, t in tables.items() if t.method not in METHODS]
@@ -426,8 +426,10 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     out["shared"] = {"tables": len(by["shared"]), "groups": len(_groups(by["shared"])) if by["shared"] else 0,
                      "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
+    if by["view"] and not first:
+        moved = list(dict.fromkeys(moved + renewed(by["view"], snapshots(session, schema))))
     done = views(session, by["view"] if first else {n: by["view"][n] for n in moved if n in by["view"]}, schema,
-                 threads) if by["view"] else {}
+                 threads, to) if by["view"] else {}
     out["view"] = {"tables": len(by["view"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
     done = (build(session, by["merge"], schema, to, threads) if first else

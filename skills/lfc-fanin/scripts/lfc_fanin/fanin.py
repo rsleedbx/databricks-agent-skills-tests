@@ -23,7 +23,8 @@ d) fills p["parts"], land(w, spark, p) returns what it landed.
 from __future__ import annotations
 
 import json
-import time
+
+from lfc_change_source.pipeline import run_pipeline, upsert_pipeline
 
 # silver-from-schema.py's settings for each source_type, as zerobus-debezium-test sets them: cdc.seq, the event field
 # that orders a source's changes (ts_ns, the default, for CockroachDB and YugabyteDB); MySQL: binary values as hex
@@ -114,26 +115,7 @@ def silver_pipeline(w, name: str, catalog: str, schema: str, log: str, volume: s
             "configuration": {"cdc.volume": volume, "cdc.bronze": "zerobus", "cdc.bronze_table": log,
                               "cdc.code": f"/Workspace{folder}", "cdc.bronze_shards": "1", "cdc.nodedup_table": "",
                               "cdc.history_suffix": "_history", "cdc.on_drift": "record", **conf}}
-    flt = "name LIKE '" + spec["name"].replace("'", "''") + "'"
-    have = [x.pipeline_id for x in w.pipelines.list_pipelines(filter=flt) if x.name == spec["name"]]
-    if have:
-        w.api_client.do("PUT", f"/api/2.0/pipelines/{have[0]}", body=spec)
-        return have[0]
-    return w.api_client.do("POST", "/api/2.0/pipelines", body=spec)["pipeline_id"]
-
-
-def run_pipeline(w, pid: str, timeout: int = 3600) -> str:
-    """One update of a triggered pipeline, waited for: its final state (an update still running from before, e.g.
-    on an older spec, is stopped first)."""
-    if w.pipelines.get(pid).state.value == "RUNNING":
-        w.pipelines.stop_and_wait(pid)
-    u = w.pipelines.start_update(pid).update_id
-    t0 = time.time()
-    while True:
-        st = w.pipelines.get_update(pid, u).update.state.value
-        if st in ("COMPLETED", "FAILED", "CANCELED") or time.time() - t0 > timeout:
-            return st
-        time.sleep(15)
+    return upsert_pipeline(w, spec)
 
 
 def _dbz_create(w, spark, p: dict, d: dict) -> None:

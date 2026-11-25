@@ -118,6 +118,12 @@ class CdcLog:
         """The event's row as a VARIANT (one expression for every table of this log's transport)."""
         return self.ROW
 
+    def stored_key_values(self, col: str = "k") -> dict:
+        """{key column: its SQL expression} over a stored key (the event's key::STRING kept in a column `col`, as a
+        shared group keeps it): typed as column_values types it, so a snapshot's row can be matched to its changes."""
+        return {c: debezium.typed(f"parse_json({col}):{c}", self.columns[c], precision=self.precision.get(c),
+                                  binhex=self.binhex) for c in self.keys}
+
     def stored_values(self, col: str = "data") -> dict:
         """{column: its SQL expression} over a stored row (row_sql's value kept in a column `col`): the same typing as
         column_values, read from that column."""

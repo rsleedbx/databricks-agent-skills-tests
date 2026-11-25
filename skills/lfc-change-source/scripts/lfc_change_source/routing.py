@@ -6,6 +6,13 @@
   big_slow    big, few       direct    shared                 merge_changed: a MERGE only in a round that changed it
   big_fast    big, many      direct    its own, sharded       auto_cdc: flows in a continuous pipeline (setup paid once)
 
+Each table's snapshot also has a method of its own, apart from the transport carrying its changes (docs/design.md,
+layer 1): `qbc` (a query-based pipeline through a UC connection, the default), `transport` (the transport's own: a
+gateway's, a changefeed's initial scan), or `files` (files the customer makes and names, such as a CockroachDB
+changefeed with initial_scan = 'only' into object storage as Parquet, made a Delta table in place with CONVERT TO DELTA). Tables past snapshot_big_bytes
+(10 TB) default to snapshot_big; any table's method can be chosen by name (snapshot_chosen). Whatever the method, the
+snapshot starts after the change capture's own change has landed in the log.
+
 A small table leaves its group (shared) for a table of its own (small_slow: view, small_fast: merge_round) when it:
 - needs what only a table of its own gives (Policy.own_table: streaming reads, its own change data feed, time
   travel);
@@ -41,6 +48,7 @@ CLASSES = ("small_slow", "small_fast", "big_slow", "big_fast")
 SILVER = {"small_slow": "shared", "small_fast": "shared", "big_slow": "merge_changed", "big_fast": "auto_cdc"}
 OWN = {"small_slow": "view", "small_fast": "merge_round"}   # a small table's method out of its group
 METHODS = ("shared", "view", "merge_round", "merge_changed", "auto_cdc")
+SNAPSHOT_METHODS = ("qbc", "transport", "files")   # each ends as a Delta table (silver.Table.snapshot_table)
 # Zerobus Ingest's documented default per stream (gRPC): 100,000 records a second (benchmarked with 1 KB messages)
 STREAM_RECORDS_PER_S = 100_000
 
@@ -55,6 +63,7 @@ class Route:
     silver: str = "view"  # one of METHODS
     group: str = ""       # shared: its group (plan() sets it)
     why: str = ""         # out of its group: the rule that took it out
+    snapshot_by: str = "qbc"   # one of SNAPSHOT_METHODS: how its snapshot is taken
 
 
 @dataclass
@@ -72,6 +81,10 @@ class Policy:
     shared_group_size: int = 1000                     # tables a group (a cost choice: its SQL has nothing a table)
     shared_max_share: float = 0.10                    # of its group's change events: more, and it leaves the group
     shared_max_reads_per_day: float | None = None     # reads a day (query history): more, and it leaves (None: off)
+    snapshot_method: str = "qbc"                      # how a table's snapshot is taken (SNAPSHOT_METHODS)
+    snapshot_big_bytes: int = 10 << 40              # bigger: snapshot_big (a query-based read of 10 TB is slow)
+    snapshot_big: str = "qbc"                         # ... e.g. files, when the customer exports such tables
+    snapshot_chosen: dict = field(default_factory=dict)   # {table: method}: chosen instead of by its size
 
     def log_name(self, table: str) -> str:
         shared = self.shared_log.rstrip("`")
@@ -100,7 +113,17 @@ def log_for(table: str, snapshot_bytes: int, events_per_s: float, policy: Policy
     silver = policy.silver_chosen.get(table, default)
     if silver not in METHODS:
         raise ValueError(f"{table}: silver {silver!r}, one of {', '.join(METHODS)}")
-    return Route(table, cls, snap, policy.log_name(table) if own else policy.shared_log, shards, silver)
+    return Route(table, cls, snap, policy.log_name(table) if own else policy.shared_log, shards, silver,
+                 snapshot_by=snapshot_method(table, snapshot_bytes, policy))
+
+
+def snapshot_method(table: str, snapshot_bytes: int, policy: Policy) -> str:
+    """How the table's snapshot is taken: chosen by name, else by its size (module doc)."""
+    m = policy.snapshot_chosen.get(table) or (policy.snapshot_big if snapshot_bytes > policy.snapshot_big_bytes
+                                              else policy.snapshot_method)
+    if m not in SNAPSHOT_METHODS:
+        raise ValueError(f"{table}: snapshot {m!r}, one of {', '.join(SNAPSHOT_METHODS)}")
+    return m
 
 
 def plan(tables: dict, policy: Policy, reads_per_day: dict | None = None) -> dict:
@@ -152,7 +175,7 @@ def suggest(tables: dict, policy: Policy) -> dict:
             why.append(f"out of its group: {route.why}")
         unknown = b is None and t not in policy.chosen   # small or big: its bytes say, when the snapshot lands
         speed = route.cls.split("_")[1]
-        out[t] = {"class": f"auto_{speed}" if unknown else route.cls, "snapshot": "auto" if unknown else route.snapshot,
+        out[t] = {"class": f"auto_{speed}" if unknown else route.cls, "snapshot": "auto" if unknown else route.snapshot, "snapshot_by": route.snapshot_by,
                   "log": "own" if route.log != policy.shared_log else "shared", "shards": route.shards,
                   "silver": route.silver if not unknown or route.silver == "shared" else
                   ("merge_round" if speed == "fast" else "view"), "group": route.group, "why": "; ".join(why)}

@@ -3,17 +3,16 @@
 # for every source, every model and every bronze layout: nothing in it names a table, a column or a type.
 #
 # Sources: <volume>/_sources.yaml lists every source database (host) feeding this silver, each with the change log's
-# destination prefix (destination = <prefix>.<table>, e.g. crdb1.public.orders), its T, and its snapshot format. The
+# destination prefix (destination = <prefix>.<table>, e.g. crdb1.public.orders), its T, and its snapshot_table. The
 # same logical table from many sources merges into one silver table; with source_key: true the key is (_source, the
 # primary key), so identical keys from different hosts stay apart, and each key's changes are ordered within its own
 # source only. Every silver row carries _source (the destination prefix).
 #
 # For every table in <volume>/_schema/schema.yaml (or _schema/tables/<table>.yaml, which wins: one table's evolved
 # schema, written without touching the others) it defines, when the pipeline starts:
-#   <table>_snapshot        every source's snapshot as of its T, from <volume>/<table>/<prefix>/ (Parquet or CSV); a
-#                           table with no files there (CockroachDB writes none for an empty table) has an empty one.
-#                           <volume>/_snapshot.tsv (table, prefix, format, files), when there is one, says which do,
-#                           so 10,000s of folders aren't listed when the pipeline starts
+#   <table>_snapshot        every source's snapshot as of its T: <snapshot_table>.<table>, the snapshot contract (a
+#                           Delta table with the source's columns and types, whatever took it: lfc-change-source
+#                           qbc.py, or intake.py from files), streamed
 #   <table>_changes         the table's events in the change log, sequenced by the event's position in its source
 #   <table>_changes_dedup   the same, producer replays removed
 #   <table>                 current rows (AUTO CDC, SCD type 1)
@@ -59,8 +58,6 @@
 #                         through 9.5, MariaDB), so silver derives them from each parent delete and the schema's
 #                         on_delete, into the child's targets and fk_actions (the trace); logged (default): it has them
 #   cdc.fk_depth          how many levels of derived deletes to follow (chains, a table referencing itself; default 4)
-# A source in _sources.yaml may carry csv: {option: value} for its CSV snapshot files (MySQL's INTO OUTFILE writes NULL
-# as \N and escapes with a backslash).
 #
 # The table plan: <volume>/_plan.yaml, when there is one (cdc-table-plan's classify.py, checked and edited by the
 # customer), says what each table gets: silver: [scd1] (current rows), [scd2] (history only), [scd1, scd2], or [append]
@@ -68,7 +65,6 @@
 # harness counts them). A table it doesn't list gets the default: scd1 and scd2 with a key, append without one.
 import functools
 import os
-import re
 import sys
 
 import yaml
@@ -135,23 +131,6 @@ INFO = {}   # per table: cols, pk, keys, targets [(name, scd type)], versions (a
 FK_VIEWS = set()   # the tables with derived foreign key changes (<table>_fk), filled before any view is evaluated
 
 
-def _snapshot_files():
-    """{(table, format)} with snapshot files: from _snapshot.tsv, else by listing the volume."""
-    m = f"{VOL}/_snapshot.tsv"
-    if os.path.exists(m):
-        with open(m) as f:
-            return {(r[0], r[2]) for r in (line.rstrip("\n").split("\t") for line in f) if len(r) == 4 and int(r[3]) > 0}
-    out = set()
-    for s in SOURCES:
-        fmt = s.get("format", "parquet")
-        for table in SCHEMA:
-            d = f"{VOL}/{table}/{s['prefix']}"
-            if os.path.isdir(d) and any(n.endswith(f".{fmt}") for n in os.listdir(d)):
-                out.add((table, fmt))
-    return out
-
-
-SNAPSHOT_FILES = _snapshot_files()
 
 
 def bronze_of(table):
@@ -224,25 +203,20 @@ def define(table, cols):
     mine = F.expr(f"substring_index(destination, '.', -1) = '{table}'")
 
     def snapshot_rows(stream):
-        """Every source's snapshot rows as of its T (_seq) or None: one Auto Loader stream per format over
-        <volume>/<table>/<prefix>/ (stream), or the files read as they are (the foreign key actions' versions)."""
+        """Every source's snapshot rows as of its T (_seq) or None: each source's snapshot table (the contract: a Delta
+        table with the source's columns and types, made by lfc-change-source intake.py or qbc.py; _sources.yaml
+        snapshot_table names its catalog.schema), streamed (skipChangeCommits: a later snapshot's rewrite doesn't stop
+        the stream), or read as it is (the foreign key actions' versions)."""
         parts = []
-        kinds = {(s.get("format", "parquet"), tuple(sorted((s.get("csv") or {}).items()))) for s in SOURCES
-                 if (table, s.get("format", "parquet")) in SNAPSHOT_FILES}
-        for fmt, opts in sorted(kinds):
-            r = (spark.readStream.format("cloudFiles").option("cloudFiles.format", fmt) if stream
-                 else spark.read.format(fmt).option("recursiveFileLookup", "true")).option("pathGlobFilter", f"*.{fmt}")
-            if fmt == "csv":
-                r = r.option("header", "true")
-                for k, v in opts:
-                    r = r.option(k, str(v).lower() if isinstance(v, bool) else str(v))
-            # the sources of this kind only, when the kinds differ (each source's files are under its own folder)
-            mine_src = [s["prefix"] for s in SOURCES if (s.get("format", "parquet"), tuple(sorted((s.get("csv") or {}).items()))) == (fmt, opts)]
-            df = r.load(f"{VOL}/{table}")
+        for s in SOURCES:
+            if not s.get("snapshot_table"):
+                continue
+            # every table has one (an empty table too); spark.catalog isn't callable in a serverless pipeline
+            name = ".".join(f"`{x}`" for x in f"{s['snapshot_table']}.{table}".split("."))
+            df = spark.readStream.option("skipChangeCommits", "true").table(name) if stream else spark.read.table(name)
             have = set(df.columns)
             parts.append(df.select(*[F.expr(snapshot_value(c, have, BINHEX)).alias(c["name"]) for c in cols],
-                                   F.regexp_extract(F.col("_metadata.file_path"), f"/{re.escape(table)}/([^/]+)/", 1)
-                                   .alias("_source")).where(F.col("_source").isin(mine_src)))
+                                   F.lit(s["prefix"]).alias("_source")))
         if not parts:
             return None
         t = spark.createDataFrame([(s["prefix"], int(s["t_ns"])) for s in SOURCES], "_source STRING, _seq BIGINT")

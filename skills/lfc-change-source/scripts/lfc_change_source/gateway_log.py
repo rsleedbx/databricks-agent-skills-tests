@@ -19,6 +19,11 @@ class GatewayLog(CdcLog):
     ROW = "value:data"
     SNAPSHOT_ID = "value:snapshot::BIGINT"   # land.gateway_snapshot tags each row with its snapshot folder's time
 
+    def stored_key_values(self, col: str = "k") -> dict:
+        """The key land.gateway_key_sql filled in: a JSON array of each key column's value as text, in key order."""
+        return {c: f"parse_json({col})[{i}]::{self.columns[c]}" for i, c in enumerate(self.keys)}
+
+
 def from_gateway(name: str, log: str, entry: dict, destination: str, snapshot: str | None = None) -> "GatewayLog":
     """A gateway's table in a landed change log (land.gateway): its columns from the event's data by column id
     (gateway_staging.schemas()'s entry), positions the gateway's cursor, the snapshot (gateway_staging's

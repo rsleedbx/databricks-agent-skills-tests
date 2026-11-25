@@ -28,6 +28,8 @@
 # it). Nothing secret is printed: the OAuth secret lives only in 0600 files (a temp dir here, a temp dir on the VM).
 #
 #   PHASE=1 stops after bronze, PHASE=2 after silver; PHASE=3 (the default) adds gold and rounds 3 to 5.
+#   SNAP=qbc (PostgreSQL so far): the snapshot is taken by a query-based pipeline through the UC connection after
+#   Debezium streams and a marker change of its own has landed in the log, instead of exported and uploaded (files)
 #   DROP_FIELDS drops top-level event fields with Kafka's ReplaceField transform (default before,transaction,ts_ms,ts_us,
 #   source for crdb, before,transaction,ts_ms,ts_us for yb); keep ts_ns, which silver sequences by.
 #   ENRICHED_PROPERTIES=source (crdb) asks CockroachDB for its source block (the 3.7.0.Final connector drops its commit
@@ -180,6 +182,7 @@ else
 fi
 # the schema: through a UC connection (remote_query, the source must be reachable from serverless), or as statschema's
 # canonical schema.yaml in the Volume, which the pipeline reads (the laptop)
+SNAP=${SNAP:-files}; case $SNAP:$SOURCE in files:*|qbc:pg) ;; *) echo "SNAP=$SNAP: files, or qbc for SOURCE=pg so far"; exit 2;; esac
 SCHEMA_VIA=${SCHEMA_VIA:-$([ -n "${LIMA:-}" ] || [ "$SOURCE" = mysql ] || [ "$SOURCE" = mssql ] || [ "$SOURCE" = oracle ] || [ "$SOURCE" = db2 ] || [ "$SOURCE" = informix ] && echo volume || echo connection)}   # MySQL: its collector; SQL Server, Oracle: the model
 STATSCHEMA=${STATSCHEMA:-$PWD/../lfc-source-statschema/scripts}; DATAGEN=${DATAGEN:-$PWD/../lfc-source-datagen/scripts}
 HERE=$(cd "$(dirname "$CHECK")" && pwd)
@@ -733,7 +736,7 @@ dump_schema() {
 }
 # MySQL: the snapshot comes after the producers start (take_snapshot, below): its position is T, and Debezium, started
 # first at an earlier one, sends the changes from there (silver orders them by position, so those before T lose)
-if [ "$PHASE" -ge 2 ] && [ "$SOURCE" != mysql ]; then
+if [ "$PHASE" -ge 2 ] && [ "$SOURCE" != mysql ] && [ "$SNAP" = files ]; then
   # the snapshot: every table of every source as of its T, onto the laptop, as <table>/<destination prefix>/ (the
   # layout silver reads: the folder names the source). CockroachDB: EXPORT INTO PARQUET; DECIMAL goes out as STRING
   # because v25.4.13 writes a DECIMAL column as BYTE_ARRAY annotated DECIMAL but filled with the number's text, so
@@ -1059,14 +1062,33 @@ case $SOURCE in mysql|crdb) ;; *) for c in $DBZS; do for try in 1 2 3; do t0=$SE
   echo "producer $c failed to start (attempt $try): $(vm "$PODMAN logs $c 2>&1 | grep 'Engine has failed' | tail -1" | jq -r '.exception.message // .message' 2>/dev/null | cut -c1-200); starting it again"
   nf0=$(vm "$PODMAN logs $c 2>&1 | grep -c 'Engine has failed'"); vm "$PODMAN restart $c >/dev/null"; sleep 10
 done; done;; esac
-if [ "$SOURCE" = mysql ] && [ "$PHASE" -ge 2 ]; then
-  # every producer past its own start (it read the binlog position it streams from, then "Starting streaming") before
-  # the snapshot: the snapshot's position is then at or after where each began
+# streaming_all: every producer past its own start (it read the position it streams from, then "Starting streaming")
+streaming_all() {
   for c in $DBZS; do t0=$SECONDS
     until vm "$PODMAN logs $c 2>&1 | grep -q -E 'Starting streaming|Engine has failed'"; do
       [ $((SECONDS - t0)) -ge "${DBZ_START_WAIT:-300}" ] && break; sleep 5; done
     vm "$PODMAN logs $c 2>&1 | grep -q 'Engine has failed'" && { echo "producer $c failed: $(vm "$PODMAN logs $c 2>&1 | grep -m1 -i -E 'error|exception' | cut -c1-300")"; exit 2; }
   done
+}
+# SNAP=qbc: the change capture first, proven by a change of its own in the log (a no-op UPDATE of one row of the first
+# table: PostgreSQL logs it with the whole row), then the snapshot in phase 2 (qbc.py). The rows at T for the history
+# check are read now, before round 1 writes anything
+if [ "$SNAP" = qbc ] && [ "$PHASE" -ge 2 ]; then
+  streaming_all; T0=$SECONDS
+  MT=$(yq -r '.tables[0].name' "$MODEL_YAML"); MC=$(yq -r '.tables[0].columns[0].name' "$MODEL_YAML")
+  for i in $(seq 1 "$NSRC"); do use "$i"
+    echo "UPDATE $SRC_SCHEMA.\"$MT\" SET \"$MC\" = \"$MC\" WHERE ctid = (SELECT ctid FROM $SRC_SCHEMA.\"$MT\" LIMIT 1);" | src >/dev/null \
+      || { echo "marker change in $SRC_DB failed"; exit 2; }
+    until [ "$(q "SELECT COUNT(*) FROM $LOGQ WHERE destination = '${DESTP[$i]}.$MT' AND operation = 'update'" 2>/dev/null)" -ge 1 ] 2>/dev/null; do
+      [ $((SECONDS - T0)) -ge "${MARKER_WAIT:-600}" ] && { claim cdc-before-snapshot FAIL "no marker change of ${DESTP[$i]}.$MT in the log after ${MARKER_WAIT:-600}s: no snapshot taken"; exit 1; }
+      sleep 5; done
+    for t in $TABLES; do msql select "$t" --side source | src > "$W/snapT-$i-$t.tsv" || { echo "rows at T of $t failed"; exit 2; }; done
+  done; use 1
+  claim cdc-before-snapshot PASS "Debezium streaming, and a no-op UPDATE of $MT in each source in the log $((SECONDS - T0))s later, before the snapshot"
+fi
+if [ "$SOURCE" = mysql ] && [ "$PHASE" -ge 2 ]; then
+  # the snapshot's position is then at or after where each began
+  streaming_all
   echo "producers streaming, $SECONDS s into the run"
   # T: one session for every database. A global read lock for a moment, so the position and a consistent read start
   # together; then the lock goes, and the transaction reads every table as of T into /snap/<i>/<table>.csv (binary as
@@ -1291,6 +1313,7 @@ if [ "$PHASE" -ge 2 ]; then
   VOL=/Volumes/$CATALOG/$S/snapshot
   q "CREATE VOLUME $T.snapshot COMMENT 'Snapshot as of T, one folder per source table, then one per source'" >/dev/null || exit 2
   link "volume $CATALOG.$S.snapshot" "$HOST/explore/data/volumes/$CATALOG/$S/snapshot"
+  if [ "$SNAP" = files ]; then
   # only folders with files (silver reads _snapshot.tsv for which tables have any): empty folders cost a call each
   T0=$SECONDS; find "$W/snap" -mindepth 1 -type d -empty -delete
   [ -z "$(ls -A "$W/snap")" ] || dbx fs cp -r "$W/snap" "dbfs:$VOL" --overwrite >/dev/null || { echo "snapshot upload failed"; exit 2; }
@@ -1303,18 +1326,15 @@ if [ "$PHASE" -ge 2 ]; then
   if [ -z "$NOFILES" ] && [ "$NF_VOL" = "$NF_LOCAL" ]; then
     claim snapshot-in-volume PASS "the tables as of T ($(case $SOURCE in (crdb) echo 'EXPORT INTO PARQUET ... AS OF SYSTEM TIME';; (mysql) echo "START TRANSACTION WITH CONSISTENT SNAPSHOT at binlog $BF:$BP, then SELECT ... INTO OUTFILE";; (pg) echo "COPY ... CSV at the slot's LSN, nothing writing";; (mssql) echo "export.py through mssql-python at the log's LSN, nothing writing";; (oracle) echo "export.py through python-oracledb at the SCN, nothing writing";; (db2) echo "export.py through ibm-db at the ASN synch point, nothing writing";; (informix) echo "export.py through informix-driver before Debezium's start, nothing writing";; (*) echo 'COPY ... CSV under yb_read_time';; esac), one session per source, ${SNAP_S}s), into $VOL/<table>/<source>/ (upload ${UP_S}s): $NF_LOCAL $SNAP_FMT files for $(wc -l < "$W/snapfiles.tsv" | tr -d ' ') table(s) and source(s)$([ "$NT" -le 20 ] && echo ": $(tr '\t\n' '= ' < "$W/snapfiles.tsv")"); a table with no rows may have none"
   else claim snapshot-in-volume FAIL "tables with rows but no $SNAP_FMT file: ${NOFILES:-none}; files here $NF_LOCAL, in the volume $NF_VOL"; fi
+  else mkdir -p "$W/snap"; : > "$W/snapfiles.tsv"; SNAP_FMT=table; fi
   # the sources silver merges: each one's destination prefix, T (its snapshot's sequence) and snapshot format
   { echo "# the sources feeding this silver (debezium-zerobus.sh run $E): destination = <prefix>.<table>"
     echo "source_key: $([ "$NSRC" -gt 1 ] && echo true || echo false)"; echo "sources:"
-    # MySQL's INTO OUTFILE: NULL as \N, a backslash escapes, a value may span lines
-    # export.py (SQL Server): NULL as \N, a quote doubled inside quotes, a value may span lines
-    CSVO=$(case $SOURCE in (mysql) echo ', csv: {nullValue: "\\N", escape: "\\", multiLine: true}';; (mssql|oracle|db2|informix) echo ', csv: {nullValue: "\\N", escape: "\"", multiLine: true}';; esac)
-    for i in $(seq 1 "$NSRC"); do printf '  - {prefix: "%s", t_ns: %s, format: %s, database: "%s"%s}\n' "${DESTP[$i]}" "${SNAPSEQ[$i]}" "$SNAP_FMT" "${SDB[$i]}" "$CSVO"; done
+    # snapshot_table: the snapshot contract's tables (snapshot-intake.py, below, after the schema)
+    for i in $(seq 1 "$NSRC"); do printf '  - {prefix: "%s", t_ns: %s, database: "%s", snapshot_table: "%s"}\n' "${DESTP[$i]}" "${SNAPSEQ[$i]}" "${SDB[$i]}" "$CATALOG.${S}_snap$i"; done
   } > "$W/_sources.yaml"
-  # _snapshot.tsv: table, prefix, format, files; silver reads it rather than list every table's folder
-  awk -F'\t' -v f="$SNAP_FMT" '{i = index($1, "/"); printf "%s\t%s\t%s\t%s\n", substr($1, 1, i - 1), substr($1, i + 1), f, $2}' "$W/snapfiles.tsv" > "$W/_snapshot.tsv"
   [ -n "$PLACEMENT" ] && cp "$W/placement.tsv" "$W/_placement.tsv"
-  for f in _sources.yaml _snapshot.tsv $([ -n "$PLACEMENT" ] && echo _placement.tsv); do dbx fs cp "$W/$f" "dbfs:$VOL/$f" --overwrite >/dev/null || { echo "$f upload failed"; exit 2; }; done
+  for f in _sources.yaml $([ -n "$PLACEMENT" ] && echo _placement.tsv); do dbx fs cp "$W/$f" "dbfs:$VOL/$f" --overwrite >/dev/null || { echo "$f upload failed"; exit 2; }; done
   # PLAN: what each table gets in silver (cdc-table-plan): auto (APP's default) classifies the collected schema from its
   # relations, then corrects it with the tables checked in the app's code (truth/<APP>.yaml, --review), else with the
   # roles the schema's tables carry (a TPC model's role: lines, --review schema); a file is used
@@ -1364,6 +1384,31 @@ if [ "$PHASE" -ge 2 ]; then
     claim schema-from-connection PASS "remote_query on a POSTGRESQL connection, each source, then schema-union.py: $(brief)"
   else claim schema-from-connection FAIL "$(cut -c1-300 "$W/schema.err")"; exit 1; fi
   fi
+  # SNAP=qbc: each source's snapshot by a query-based pipeline through the same connection, into <schema>_snap<i>,
+  # read in place by silver (lfc-change-source qbc.py); Debezium was streaming and its marker in the log before this
+  if [ "$SNAP" = qbc ]; then T0=$SECONDS
+    for i in $(seq 1 "$NSRC"); do use "$i"
+      q "CREATE SCHEMA IF NOT EXISTS \`$CATALOG\`.${S}_snap$i COMMENT 'QBC snapshot of source $i (debezium-zerobus.sh run $E)'" >/dev/null || exit 2
+      python3 -I "$HERE/../../lfc-change-source/scripts/lfc_change_source/qbc.py" --profile "$PROFILE" --name "$PREFIX-$SOURCE-snap-$E-$i" \
+        --connection "$CONN" --catalog "$CATALOG" --schema "${S}_snap$i" --source-catalog "$SRC_DB" --source-schema "$SRC_SCHEMA" \
+        --schema-tsv "$W/schema-$i.tsv" > "$W/qbc-$i.json" 2>"$W/qbc-$i.err" \
+        || { claim snapshot-qbc FAIL "source $i: $(cat "$W/qbc-$i.json" "$W/qbc-$i.err" | tail -3 | cut -c1-300)"; exit 1; }
+      QP=$(jq -r .pipeline_id "$W/qbc-$i.json"); PIPELINE_IDS+=("$QP")   # cleanup takes it too
+      link "snapshot pipeline (source $i)" "$HOST/pipelines/$QP"
+    done; use 1; SNAP_S=$((SECONDS - T0))
+    claim snapshot-qbc PASS "a query-based pipeline through $CONN per source, every table once (SCD type 1 on its key, no cursor), after the marker: ${SNAP_S}s; no file left Databricks or the source"
+  fi
+  # the snapshot contract: every source's snapshot as Delta tables in <schema>_snap<i> (QBC's as they are; the Volume's
+  # files copied once, typed by each source's canonical schema), and _snapshot.tsv, their rows (lfc-change-source intake)
+  T0=$SECONDS; SRCS=()
+  for i in $(seq 1 "$NSRC"); do q "CREATE SCHEMA IF NOT EXISTS \`$CATALOG\`.${S}_snap$i COMMENT 'Snapshot of source $i (debezium-zerobus.sh run $E)'" >/dev/null || exit 2
+    SPLIT_SCHEMAS+=("${S}_snap$i"); SRCS+=(--source "${DESTP[$i]}=$CATALOG.${S}_snap$i=$W/schema-$i.yaml"); done
+  CSVJ=$(case $SOURCE in (mysql) echo '{"nullValue": "\\N", "escape": "\\", "multiLine": "true"}';; (mssql|oracle|db2|informix) echo '{"nullValue": "\\N", "escape": "\"", "multiLine": "true"}';; (*) echo '{}';; esac)
+  python3 -I "$HERE/snapshot-intake.py" --profile "$PROFILE" --warehouse "$WAREHOUSE" --mode "$([ "$SNAP" = qbc ] && echo table || echo files)" \
+    --volume "$VOL" --format "$SNAP_FMT" --csv "$CSVJ" $([ "$SOURCE" = mysql ] && echo --binhex) ${SRCS[@]+"${SRCS[@]}"} --out "$W/_snapshot.tsv" \
+    > "$W/intake.jsonl" 2>"$W/intake.err" && dbx fs cp "$W/_snapshot.tsv" "dbfs:$VOL/_snapshot.tsv" --overwrite >/dev/null \
+    || { claim snapshot-contract FAIL "$(tail -3 "$W/intake.err" | cut -c1-300)"; exit 1; }
+  claim snapshot-contract PASS "$(wc -l < "$W/_snapshot.tsv" | tr -d ' ') Delta tables in ${S}_snap<i> ($(jq -r .how "$W/intake.jsonl" | sort | uniq -c | awk '{$1=$1; printf "%s%s", (n++ ? ", " : ""), $0}')), $(awk -F'\t' '{n += $4} END {print n + 0}' "$W/_snapshot.tsv") rows, in $((SECONDS - T0))s: silver reads tables only"
 
   # silver: one generator for every source, model and bronze layout, silver-from-schema.py, which reads the canonical
   # schema from the volume (_schema/, written by trace below) and the sources (_sources.yaml) when the pipeline starts

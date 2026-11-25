@@ -32,7 +32,7 @@ FlowThrough, the four layers (transport, a table's silver, many sources into one
 from lfc_change_source import routing
 from lfc_log_silver import silver
 
-# a Table: its change source, its method, and (snapshot read in place) that snapshot's SQL, position and files
+# a Table: its change source, its method, and (snapshot read in place) its snapshot_table and position
 tables = {t: silver.from_route(src[t], routing.log_for(t, size, rate, policy)) for t, (size, rate) in stats.items()}
 silver.run(session, tables, "`main`.`silver`", to, first=True)    # views created, merged tables built
 silver.run(session, tables, "`main`.`silver`", to)                # a round
@@ -55,8 +55,25 @@ lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "
   don't do either yet: a new snapshot or a type change there needs that table restarted from the log.
 - `auto_cdc_tables` writes the lists for `pipelines/auto_cdc_from_log.py`, at most 999 tables a pipeline (a pipeline
   takes up to 1,000 tables, and its setup grows with its flows). A snapshot read in place adds a second flow that
-  streams its parquet files (an AUTO CDC flow reads its source as a stream, so a batch view is refused), sequenced by
+  streams its snapshot table (an AUTO CDC flow reads its source as a stream, so a batch view is refused), sequenced by
   the snapshot's position in the change flow's type (`seq_type`).
+- A snapshot read in place is a Delta table with the source's column names and types (`snapshot_table`): whatever
+  took it, lfc-change-source `intake` or `qbc` made it one, so no cell reads files.
+- FlowThrough's runner (`flowthrough.step`) measures each table's rate from the log, routes it and moves it when its
+  route changes. Before the plan is pinned, `flowthrough.observe` keeps every table a view while its snapshot is
+  taken: a view over the log alone at first, recreated over its snapshot table once that is ready (a metadata change),
+  and the route the plan would give it kept as `proposed` in `<schema>._flowthrough`. `step` with the pinned policy
+  then moves each view to its route, from its snapshot and the log.
+- The dashboard [dashboard/flowthrough.lvdash.json](dashboard/flowthrough.lvdash.json) shows that schema: change events a
+  minute by table and the newest one's age (its `cdc_log`, a view over the log), snapshots waiting and ready, each
+  table's route now and proposed, and the stored tables' positions (`_log_silver`). Each table's row starts with
+  links to its raw CDC (the Raw CDC page, filtered to it), raw snapshot and silver (CDC + snapshot, Catalog Explorer's
+  sample data). `python3 -I scripts/lfc_log_silver/dashboard.py --profile <p> --warehouse <id> --catalog <c> --schema
+  <s> [--host https://<your workspace address>]` fills in the address, the workspace id and its own id, then creates or
+  updates it and publishes it. Its formats, read back from what the dashboard editor saves (the documented
+  `link.templatedURL` and `displayAs: link` are ignored): a column's link is
+  `"actions": {"click": {"type": "link", "urlTemplate": "{{ <url column> }}"}}`, the URL column only in the widget's
+  query fields; a filter preset in a link is `/published/pages/<page>?o=<workspace id>&f_<page>%7E<filter>.s=<value>`.
 - A table read across logs (a cut-over: lfc-change-source `routing.history_fq`) is a source like any other.
 
 ## Checks

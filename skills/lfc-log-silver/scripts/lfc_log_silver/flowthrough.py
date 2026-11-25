@@ -11,6 +11,11 @@ route changed, and its silver kept, so the code follows the design's routing ins
            table), to AUTO CDC (its own table or view dropped, and its pipeline list marked to recreate)
   keep     lfc-log-silver silver.run for every table; the AUTO CDC lists returned for the caller's pipelines
 
+Before a plan is pinned, observe() keeps every table a view while the snapshot is taken (CDC first, so its rates are
+measured meanwhile), records the route the plan would give each (`proposed`, in <schema>._flowthrough, what the
+dashboard shows), and recreates a table's view over its snapshot once that is ready; step() with the pinned policy
+then moves each view to its route.
+
     from lfc_log_silver import flowthrough
     got = flowthrough.step(session, "`main`.`silver`", sources, to, policy, sizes={"orders": 5 << 40})   # a round
 
@@ -62,7 +67,8 @@ def counts(session, sources: dict) -> dict:
 
 def route_dict(r) -> dict:
     return {"class": r.cls, "snapshot": r.snapshot, "log": r.log, "shards": r.shards, "silver": r.silver,
-            "group": r.group, "why": r.why}
+            "group": r.group, "why": r.why,
+            "snapshot_by": r.snapshot_by}
 
 
 def _drop(session, schema: str, names: list, kind: str) -> None:
@@ -70,18 +76,56 @@ def _drop(session, schema: str, names: list, kind: str) -> None:
         session.sql(f"DROP {kind} IF EXISTS {silver._target(schema, n)}").collect()
 
 
-def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = None, reads_per_day: dict | None = None,
-          extra: dict | None = None, threads: int = 16, now: float | None = None) -> dict:
-    """One round (module doc). sources: {name: an lfc_change_source source}; sizes: {name: snapshot bytes};
-    extra: {name: {snapshot_sql, position, snapshot_files}} for a snapshot read in place. Returns the routes by
-    method, the moves with what each took, silver.run's result and the AUTO CDC lists (changed: recreate them)."""
-    from lfc_change_source import routing
+def measure(session, schema: str, sources: dict, now: float | None = None) -> tuple:
+    """(now, the last round's state, each table's events in its log, each table's events a second since the last
+    round): the first round has no rate yet (0)."""
     ensure_state(session, schema)
     now = now or time.time()
     prev = load(session, schema)
     got = counts(session, sources)
     rates = {n: max(0, got.get(n, 0) - prev[n][1]) / max(now - prev[n][2], 1e-9) if n in prev else 0.0
              for n in sources}
+    return now, prev, got, rates
+
+
+def observe(session, schema: str, sources: dict, policy, ready: dict | None = None, sizes: dict | None = None,
+            reads_per_day: dict | None = None, threads: int = 16, now: float | None = None) -> dict:
+    """While the snapshot is taken and the plan isn't pinned: every table a view (no stored table, no MERGE), its rate
+    measured, and the route the plan would give it recorded as `proposed` for the customer to check. ready: {name: its
+    snapshot table} for each snapshot that is complete; a table's view is created on the first round over the log alone
+    (the rows changed so far), and recreated once over its snapshot when that becomes ready (a metadata change). Then
+    step() with the pinned policy moves each view to its route, from its snapshot and the log. Returns the proposal
+    by method, the rates, and the views made this round."""
+    from lfc_change_source import routing
+    ready = ready or {}
+    silver.ensure_state(session, schema)   # empty until step() stores a table: the dashboard reads it from the start
+    now, prev, got, rates = measure(session, schema, sources, now)
+    plan = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
+    # a table already pinned (step() gave it its route) is left as it is: its objects and its saved route
+    pinned = {n for n in sources if n in prev and prev[n][0].get("why") != "observing"}
+    made = {n: silver.Table(s, "view", snapshot_table=ready.get(n)) for n, s in sources.items()
+            if n not in pinned and (n not in prev or prev[n][0].get("snapshot_table") != ready.get(n))}
+    if made:
+        silver.views(session, made, schema, threads)
+    routes = {n: {"class": plan[n].cls, "snapshot": plan[n].snapshot, "log": plan[n].log, "shards": plan[n].shards,
+                  "silver": "view", "group": "", "why": "observing", "snapshot_table": ready.get(n),
+                  "destination": sources[n].destination,
+                  "proposed": route_dict(plan[n])} for n in sources if n not in pinned}
+    save(session, schema, routes, got, now)
+    by_method: dict = {}
+    for r in plan.values():
+        by_method[r.silver] = by_method.get(r.silver, 0) + 1
+    return {"proposed": by_method, "rates": {n: float(f"{r:.4g}") for n, r in rates.items() if r},
+            "views": sorted(made), "snapshots_ready": len(ready), "tables": len(sources), "pinned": len(pinned)}
+
+
+def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = None, reads_per_day: dict | None = None,
+          extra: dict | None = None, threads: int = 16, now: float | None = None) -> dict:
+    """One round (module doc). sources: {name: an lfc_change_source source}; sizes: {name: snapshot bytes};
+    extra: {name: {snapshot_table, position}} for a snapshot read in place (a Delta table). Returns the routes by
+    method, the moves with what each took, silver.run's result and the AUTO CDC lists (changed: recreate them)."""
+    from lfc_change_source import routing
+    now, prev, got, rates = measure(session, schema, sources, now)
     routes = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
     tables = {n: silver.from_route(s, routes[n], **(extra or {}).get(n, {})) for n, s in sources.items()}
     first = not prev
@@ -94,7 +138,9 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
                 moves.append((n, old, new))
         _move(session, schema, tables, moves, prev, to, threads)
     ran = silver.run(session, tables, schema, to, threads, first=first)
-    save(session, schema, {n: route_dict(r) for n, r in routes.items()}, got, now)
+    save(session, schema, {n: {**route_dict(r), "snapshot_table": tables[n].snapshot_table,
+                               "destination": sources[n].destination} for n, r in routes.items()},
+         got, now)   # snapshot_table, destination: where the dashboard's links go
     by_method: dict = {}
     for r in routes.values():
         by_method[r.silver] = by_method.get(r.silver, 0) + 1
@@ -127,7 +173,7 @@ def _move(session, schema: str, tables: dict, moves: list, prev: dict, to, threa
         _drop(session, schema, [n], "VIEW")
     silver._drop_tables(session, schema, autos)
     if views:
-        silver.views(session, {n: tables[n] for n in views}, schema, threads)
+        silver.views(session, {n: tables[n] for n in views}, schema, threads, to)
     if merges:
         silver.build(session, {n: tables[n] for n in merges}, schema, to, threads)
     for g in sorted(joined):   # a group a table joined: rebuilt with all its members

@@ -19,7 +19,7 @@ from lfc_log_silver import silver  # noqa: E402
 
 ENTRY = {"id": "T1", "keys": ["id"], "columns": [("id", "INT", "C1"), ("v", "STRING", "C2")]}
 LOG = "`c`.`x`.`cdc_log`"
-SNAP = "SELECT `C1`::INT AS `id`, `C2`::STRING AS `v` FROM read_files('/V/g/snapshot/T1/9/', format => 'parquet')"
+SNAP = "`c`.`snap`.`t`"   # the snapshot contract: a Delta table with the source's columns
 
 
 def src(name="t"):
@@ -37,7 +37,7 @@ def session(seen, kept=(), newest=()):
             rows = []
         elif q.startswith("SELECT count(*)"):
             rows = [(0,)]
-        elif q.startswith("SELECT snapshot, target") or q.startswith("SELECT max(") or q.startswith("DESCRIBE"):
+        elif q.startswith("SELECT snapshot_table, target") or q.startswith("SELECT max(") or q.startswith("DESCRIBE"):
             rows = []   # no snapshot ids kept or in the log
         else:
             rows = [types.SimpleNamespace(asDict=lambda: {"num_affected_rows": 1})]
@@ -49,24 +49,24 @@ class SixCells(unittest.TestCase):
     def test_every_cell_reads_the_snapshot_and_the_changes(self):
         at = Position("gateway_cursor", "04")
         for in_place in (False, True):
-            t = silver.Table(src(), "merge", snapshot_sql=SNAP if in_place else None, position=at if in_place else None,
-                             snapshot_files={"path": "/V/g/snapshot/T1/9/", "exprs": ["`C1`::INT AS `id`"]} if in_place
-                             else None)
+            t = silver.Table(src(), "merge", snapshot_table=SNAP if in_place else None, position=at if in_place else None)
             for method in silver.METHODS:
                 t.method = method
                 where = "in place" if in_place else "in log"
                 if method == "auto_cdc":
                     item = silver.auto_cdc_tables({"t": t})[0][0]
-                    self.assertEqual("snapshot" in item, in_place, where)          # a one-time flow reads it
+                    self.assertEqual("snapshot" in item, in_place, where)          # a flow streams it
+                    if in_place:
+                        self.assertEqual((item["snapshot"]["table"], item["snapshot"]["columns"]), (SNAP, ["id", "v"]))
                     self.assertIn("value:data.`C2`::STRING AS `v`", item["exprs"])  # and the flow reads the log
                     continue
                 q = (silver.view_sql if method == "view" else silver.build_sql)(t, "`c`.`s`.`t`")
                 self.assertIn("FROM `c`.`x`.`cdc_log` WHERE destination = 'db.s.t'", q, (method, where))   # changes
                 if in_place:
-                    self.assertIn("read_files('/V/g/snapshot/T1/9/'", q, method)                         # snapshot
+                    self.assertIn(f"FROM {SNAP}", q, method)                                             # snapshot
                     self.assertIn("value:cursor.sequence::STRING > '04'", q, method)                     # after it
                 else:
-                    self.assertNotIn("read_files", q, method)   # the snapshot rows are the log's read events
+                    self.assertNotIn(SNAP, q, method)   # the snapshot rows are the log's read events
 
     def test_from_route(self):
         p = routing.Policy(LOG, chosen={"a": "big_slow", "b": "small_slow"})
@@ -86,9 +86,11 @@ class Shared(unittest.TestCase):
         self.assertIn("SELECT destination, key::STRING AS k, value:data AS data", q)        # nothing a table
         self.assertNotIn("CASE destination", q)
         self.assertIn("value:cursor.sequence::STRING > '05'", q)
+        self.assertIn("operation <> 'read'", q)                                             # changes only
         v = silver.shared_view_sql(tables["a"], "`c`.`s`", "`c`.`s`.`a`")
         self.assertIn("data:`C1`::INT AS `id`, data:`C2`::STRING AS `v` FROM `c`.`s`.`_shared_0` "
-                      "WHERE destination = 'db.s.a'", v)                                      # typed as the source
+                      "WHERE destination = 'db.s.a' AND NOT coalesce(deleted, false)", v)     # typed as the source
+        self.assertNotIn("UNION ALL", v)                                                     # no snapshot table
         seen = []
         silver.run(session(seen), tables, "`c`.`s`", Position("gateway_cursor", "09"), threads=1, first=True)
         self.assertEqual(sum(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`_shared_0`") for q in seen), 1)
@@ -99,6 +101,7 @@ class Shared(unittest.TestCase):
         merges = [q for q in seen if q.startswith("MERGE INTO `c`.`s`.`_shared_0`")]
         self.assertEqual((len(merges), got["shared"]["groups"], got["shared"]["done"]), (1, 1, 1))  # one MERGE
         self.assertIn("ON t.destination = c.destination AND t.k = c.k", merges[0])
+        self.assertIn("t.deleted = c._op = 'delete'", merges[0])                             # a delete: its marker
         self.assertIn("> '05'", merges[0])
 
     def test_a_debezium_member_reads_its_after_image(self):
@@ -109,24 +112,29 @@ class Shared(unittest.TestCase):
         with self.assertRaises(ValueError):                                                  # one transport a group
             silver.shared_changes_sql([src("a"), d], None, None)
 
-    def test_a_group_needs_keys_one_log_and_its_snapshot_in_the_log(self):
+    def test_a_group_needs_keys_and_one_log(self):
         keyless = from_gateway("gw", LOG, dict(ENTRY, id="k", keys=[]), "db.s.k")
         with self.assertRaises(ValueError):
             silver.shared_changes_sql([src("a"), keyless], None, None)
-        with self.assertRaises(ValueError):
-            silver.run(session([]), {"a": silver.Table(src("a"), "shared", snapshot_sql=SNAP)}, "`c`.`s`",
-                       Position("gateway_cursor", "1"), first=True)
+
+    def test_a_member_view_reads_its_snapshot_table_for_keys_the_group_has_not_changed(self):
+        t = silver.Table(src("a"), "shared", snapshot_table=SNAP, group="0")
+        v = silver.shared_view_sql(t, "`c`.`s`", "`c`.`s`.`a`")
+        self.assertIn(f"UNION ALL SELECT s.`id`, s.`v` FROM {SNAP} s WHERE NOT EXISTS (SELECT 1 FROM "
+                      "`c`.`s`.`_shared_0` x WHERE x.destination = 'db.s.a' AND parse_json(x.k)[0]::INT <=> s.`id`)", v)
+        seen = []
+        silver.run(session(seen), {"a": t}, "`c`.`s`", Position("gateway_cursor", "09"), threads=1, first=True)
+        build = next(q for q in seen if q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`_shared_0`"))
+        self.assertIn("_op = 'delete' AS deleted", build)                                    # deletes kept as markers
+        self.assertNotIn(SNAP, build)                                                        # the snapshot isn't copied
 
 
 class NewerSnapshot(unittest.TestCase):
-    def test_rebuilt_only_when_newer_than_the_one_recorded(self):
-        self.assertEqual(silver.renewed({"a": 200, "b": 100, "c": 200}, {"a": 100, "b": 100, "c": None}, "abc"), ["a"])
-        # c: built before snapshots were recorded: it records 200 now, no rebuild
-        q = silver.shared_changes_sql([src("a"), src("b")], None, Position("gateway_cursor", "09"))
-        self.assertIn("max(CASE WHEN operation = 'read' THEN value:snapshot::BIGINT END) OVER (PARTITION BY destination)", q)
-        self.assertIn("(operation = 'read' AND value:snapshot::BIGINT = _snap)", q)       # each table's newest only
-        q2 = silver.shared_changes_sql([src("a")], Position("gateway_cursor", "05"), Position("gateway_cursor", "09"))
-        self.assertNotIn("_snap", q2)                                                       # a round: changes only
+    def test_a_new_snapshot_is_a_new_table(self):
+        tables = {n: silver.Table(src(n), "merge", snapshot_table=x) for n, x in
+                  (("a", "`c`.`s2`.`a`"), ("b", "`c`.`s1`.`b`"), ("c", "`c`.`s1`.`c`"), ("d", "`c`.`s1`.`d`"))}
+        kept = {"a": "`c`.`s1`.`a`", "b": "`c`.`s1`.`b`", "c": None}   # d: never built
+        self.assertEqual(silver.renewed(tables, kept), ["a", "c"])      # a: a new table; c: built from the log alone
 
 
 class SchemaChange(unittest.TestCase):
@@ -168,6 +176,36 @@ class FlowThrough(unittest.TestCase):
         self.assertTrue(any(q.startswith("DROP VIEW IF EXISTS `c`.`s`.`a`") for q in seen))
         self.assertTrue(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`a`") for q in seen))   # built from the log
         self.assertFalse(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`b`") for q in seen))  # b stays shared
+
+    def test_observe_keeps_views_and_recreates_one_when_its_snapshot_is_ready(self):
+        from unittest import mock
+
+        from lfc_log_silver import flowthrough
+        policy = routing.Policy(LOG, fast_events_per_s=1)
+        sources = {n: src(n) for n in "ab"}
+        state, seen = {}, []
+
+        def sql(q):
+            seen.append(q)
+            rows = [("db.s.a", 50)] if q.startswith("SELECT destination, count(*)") else []
+            return types.SimpleNamespace(collect=lambda: rows)
+        sess = types.SimpleNamespace(sql=sql)
+        with mock.patch.object(flowthrough, "load", lambda *_: dict(state)), \
+                mock.patch.object(flowthrough, "save", lambda _s, _c, routes, got, at: state.update(
+                    {n: (r, got.get(n, 0), at) for n, r in routes.items()})):
+            got = flowthrough.observe(sess, "`c`.`s`", sources, policy, now=1000.0)
+            self.assertEqual(got["views"], ["a", "b"])                                    # views over the log
+            self.assertFalse(any(q.startswith("CREATE OR REPLACE TABLE") for q in seen))  # nothing stored
+            seen.clear()
+            got = flowthrough.observe(sess, "`c`.`s`", sources, policy, ready={"a": SNAP}, now=1010.0)
+            self.assertEqual(got["views"], ["a"])                                         # a's snapshot is ready
+            self.assertTrue(any(q.startswith("CREATE OR REPLACE VIEW `c`.`s`.`a`") and f"FROM {SNAP}" in q for q in seen))
+            self.assertEqual((state["a"][0]["silver"], state["a"][0]["proposed"]["silver"]), ("view", "shared"))
+            got = flowthrough.observe(sess, "`c`.`s`", sources, policy, ready={"a": SNAP}, now=1020.0)
+            self.assertEqual(got["views"], [])                                            # nothing changed: no DDL
+            state["a"] = ({**state["a"][0], "silver": "merge_round", "why": ""}, 50, 1020.0)   # step() pinned a
+            got = flowthrough.observe(sess, "`c`.`s`", sources, policy, ready={"a": SNAP, "b": SNAP}, now=1030.0)
+            self.assertEqual((got["views"], got["pinned"], state["a"][0]["silver"]), (["b"], 1, "merge_round"))
 
 
 class Merge(unittest.TestCase):
