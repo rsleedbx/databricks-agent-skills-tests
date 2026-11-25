@@ -28,7 +28,7 @@ variables:
     description: fanin_dbz_zbus - the Volume with the snapshot as of T, _sources.yaml and _schema/ (/Volumes/...)
     default: ""
   source_type:
-    description: fanin_dbz_zbus - SQLSERVER, POSTGRESQL, MYSQL, ORACLE, DB2 or INFORMIX
+    description: fanin_dbz_zbus - SQLSERVER, POSTGRESQL, MYSQL, ORACLE, DB2, INFORMIX, COCKROACHDB or YUGABYTEDB
     default: ""
   changefeed_path:
     description: fanin_crdb_cdf - the Volume folder with a folder a table

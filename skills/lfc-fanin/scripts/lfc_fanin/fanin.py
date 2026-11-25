@@ -25,9 +25,14 @@ from __future__ import annotations
 import json
 import time
 
-# the event field that orders a source's changes in Debezium's events (silver-from-schema.py's cdc.seq), by source_type
-DBZ_SEQ = {"SQLSERVER": "change_lsn", "POSTGRESQL": "lsn", "MYSQL": "binlog", "ORACLE": "scn", "DB2": "db2_lsn",
-           "INFORMIX": "ifx_lsn"}
+# silver-from-schema.py's settings for each source_type, as zerobus-debezium-test sets them: cdc.seq, the event field
+# that orders a source's changes (ts_ns, the default, for CockroachDB and YugabyteDB); MySQL: binary values as hex
+# text, and ON DELETE CASCADE / SET NULL applied by silver (InnoDB's own aren't in the binlog through 9.5);
+# YugabyteDB: its log comes through Kafka Connect (the Kafka endpoint's layout)
+SOURCE_CONF = {"SQLSERVER": {"cdc.seq": "change_lsn"}, "POSTGRESQL": {"cdc.seq": "lsn"},
+               "MYSQL": {"cdc.seq": "binlog", "cdc.binary": "hex", "cdc.fk_actions": "apply"},
+               "ORACLE": {"cdc.seq": "scn"}, "DB2": {"cdc.seq": "db2_lsn"}, "INFORMIX": {"cdc.seq": "ifx_lsn"},
+               "COCKROACHDB": {}, "YUGABYTEDB": {"cdc.bronze": "kafka"}}
 SILVER_FILES = ["skills/zerobus-debezium-test/scripts/" + f for f in
                 ("silver-from-schema.py", "canonical_sql.py", "fanout.py", "merge-silver.py")]
 MEDALLION = "skills/lfc-medallion/scripts/lfc_medallion/"
@@ -95,7 +100,7 @@ def silver_code(w, folder: str, archive: str) -> None:
                                format=ImportFormat.RAW, overwrite=True)
 
 
-def silver_pipeline(w, name: str, catalog: str, schema: str, log: str, volume: str, seq: str, archive: str) -> str:
+def silver_pipeline(w, name: str, catalog: str, schema: str, log: str, volume: str, conf: dict, archive: str) -> str:
     """The silver pipeline <name>-silver over a change log in its schema and the snapshot Volume (created, or updated
     when it exists): its id."""
     folder = f"/Users/{w.current_user.me().user_name}/.lfc_fanin/{name}"
@@ -103,9 +108,9 @@ def silver_pipeline(w, name: str, catalog: str, schema: str, log: str, volume: s
     spec = {"name": f"{name}-silver", "catalog": catalog, "schema": schema, "serverless": True, "continuous": False,
             "channel": "CURRENT",
             "libraries": [{"file": {"path": f"{folder}/silver-from-schema.py"}}],
-            "configuration": {"cdc.volume": volume, "cdc.bronze": "zerobus", "cdc.bronze_table": log, "cdc.seq": seq,
+            "configuration": {"cdc.volume": volume, "cdc.bronze": "zerobus", "cdc.bronze_table": log,
                               "cdc.code": f"/Workspace{folder}", "cdc.bronze_shards": "1", "cdc.nodedup_table": "",
-                              "cdc.history_suffix": "_history", "cdc.on_drift": "record"}}
+                              "cdc.history_suffix": "_history", "cdc.on_drift": "record", **conf}}
     flt = "name LIKE '" + spec["name"].replace("'", "''") + "'"
     have = [x.pipeline_id for x in w.pipelines.list_pipelines(filter=flt) if x.name == spec["name"]]
     if have:
@@ -133,16 +138,16 @@ def _dbz_create(w, spark, p: dict, d: dict) -> None:
     if not log or not vol.startswith("/Volumes/"):
         raise ValueError("fanin_dbz_zbus: change_log (the append-only log Debezium writes, catalog.schema.table) and "
                          "snapshot_volume (/Volumes/..., its snapshot, _sources.yaml and _schema/)")
-    seq = DBZ_SEQ.get((d.get("source_type") or "").upper())
-    if not seq:
-        raise ValueError(f"fanin_dbz_zbus: source_type, one of {', '.join(DBZ_SEQ)}")
+    conf = SOURCE_CONF.get((d.get("source_type") or "").upper())
+    if conf is None:
+        raise ValueError(f"fanin_dbz_zbus: source_type, one of {', '.join(SOURCE_CONF)}")
     log = quoted(log)
     rows = spark.sql(f"SELECT destination, count(*) AS n FROM {log} GROUP BY 1 ORDER BY 1").collect()
     p["log"] = log
     # silver-from-schema.py names its views after the bronze table: give it a plain name in the fan-in's schema
     spark.sql(f"CREATE OR REPLACE VIEW {fq(p['catalog'], p['schema'], 'cdc_log')} COMMENT 'the change log Debezium "
               f"writes (fanin_dbz_zbus)' AS SELECT * FROM {log}")
-    pid = silver_pipeline(w, p["name"], p["catalog"], p["schema"], "cdc_log", vol, seq, d.get("code_archive") or ARCHIVE)
+    pid = silver_pipeline(w, p["name"], p["catalog"], p["schema"], "cdc_log", vol, conf, d.get("code_archive") or ARCHIVE)
     p["parts"] = {"destinations": {r["destination"]: int(r["n"]) for r in rows}, "silver_pipeline": pid}
 
 
