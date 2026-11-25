@@ -65,6 +65,24 @@ view is recreated with the rules (one `CASE` on the row's position a schema even
 added or widened (`ALTER TABLE`) and its existing rows set by the rule. A snapshot taken after P already has the new
 shape. n:1 and gold see an ordinary column change.
 
+**A refresh is partial: only what's suspect is read again.** When part of a table is known to be wrong, a patch is
+taken at a position P, the same way as any snapshot (its CDC running, its marker seen first), and the rest of the
+table stays as it is:
+
+| Patch | Read from the source | When |
+|---|---|---|
+| columns | the key and the suspect columns, every row | a column known to be wrong: a missed default, a type decoded wrongly, a rename with no schema event |
+| rows | every column of the suspect keys or a key range | rows known to be wrong: a gap in the log for a window, one source partition |
+
+For each key and patched column, the newest by position wins: a change after P from the log, else the patch's value
+at P, else the snapshot and the changes before it, for what the patch doesn't cover. That's silver's one rule with one
+more input at P, and the overlap is harmless as before: a change after P carries the whole row. Routing decides a
+patch is needed and what it covers (from a failed check against the source, the drift record, or a schema event the
+log can't resolve); the snapshot layer takes it (a query-based read of those columns or keys, or `intake` over files
+holding them); silver recreates views over it, or runs one MERGE into a MERGE table setting only those columns; a
+checkpoint later folds it into a whole snapshot table. A column patch of a wide table reads a fraction of its bytes,
+and a row patch only its range; neither rewrites the table.
+
 **A checkpoint is an internal resnapshot.** A year of changes can rewrite a table; a rebuild or a view shouldn't replay
 them from the first snapshot. A checkpoint isn't a layer of its own: it's a loop, silver's output going back in as a
 snapshot, each step in the layer that already does that job:

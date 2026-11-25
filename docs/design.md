@@ -14,7 +14,7 @@ all, there is never a full table refresh, by design.
 - **Fan-in:** each source (a line of business, a tenant, a region) into one table each, whatever transport or silver
   method it came through. [design-fanin.md](design-fanin.md)
 - **No full refresh:** the source is read once a table, for its snapshot; schema changes are events at their position,
-  and a checkpoint resnapshots from silver. [design-no-full-refresh.md](design-no-full-refresh.md)
+  a suspect part is re-read alone, and a checkpoint resnapshots from silver. [design-no-full-refresh.md](design-no-full-refresh.md)
 
 FlowThrough is a technique, not a package: six layers, each with many sources or ways in, and no layer depends on
 another's choices.
