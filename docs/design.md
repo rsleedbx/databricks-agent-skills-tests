@@ -3,14 +3,6 @@
 FlowThrough is low latency, high throughput, scales to 10,000s of tables and supports n:1 fan-in. Best of all, there
 is never a full table refresh, by design.
 
-| | How |
-|---|---|
-| **Low latency** | each change lands in one append-only log as it arrives |
-| **High throughput** | whole files landed at a time, a busy table on a log of its own |
-| **10,000s of tables** | small tables share one table and one MERGE a group |
-| **n:1 fan-in** | many sources into one table each (layer 3) |
-| **No full table refresh** | the log only grows; nothing is ever re-read from the source |
-
 - **Latency:** Zerobus writes each change into the log, or a gateway's files are copied in once each; the busiest
   tables are kept by AUTO CDC in a continuous pipeline.
 - **Throughput:** one log per transport, clustered by table; a table busy enough to slow the others gets its own.
