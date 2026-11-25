@@ -75,8 +75,14 @@ def _target(schema: str, name: str) -> str:
 
 def ensure_state(session, schema: str) -> None:
     session.sql(f"CREATE TABLE IF NOT EXISTS {schema}.{STATE} (target STRING, kind STRING, position STRING, "
-                "rows BIGINT, seconds DOUBLE, updated_at TIMESTAMP) COMMENT 'lfc_log_silver: each silver table''s "
-                "position in its change source'")
+                "rows BIGINT, seconds DOUBLE, updated_at TIMESTAMP, snapshot BIGINT) COMMENT 'lfc_log_silver: each "
+                "silver table''s position in its change source, and the snapshot it was built from'")
+    try:   # a state table from before the snapshot column
+        cols = [r[0] for r in session.sql(f"DESCRIBE {schema}.{STATE}").collect()]
+        if cols and "snapshot" not in cols:
+            session.sql(f"ALTER TABLE {schema}.{STATE} ADD COLUMNS (snapshot BIGINT)").collect()
+    except Exception:  # noqa: BLE001  a session that can't describe it: the CREATE above has the column
+        pass
 
 
 def positions(session, schema: str) -> dict:
@@ -84,16 +90,39 @@ def positions(session, schema: str) -> dict:
     return {r[0]: (r[1], r[2]) for r in session.sql(f"SELECT target, kind, position FROM {schema}.{STATE}").collect()}
 
 
+def snapshots(session, schema: str) -> dict:
+    """{target: the snapshot id it was built from} (None: not recorded)."""
+    return {r[1]: r[0] for r in session.sql(f"SELECT snapshot, target FROM {schema}.{STATE}").collect()}
+
+
+def newest_snapshots(session, tables: dict) -> dict:
+    """{name: the newest snapshot id in the log} for the tables whose transport tags snapshots (one grouped query a
+    log)."""
+    by_log: dict = {}
+    for n, t in tables.items():
+        if getattr(t.src, "SNAPSHOT_ID", None):
+            by_log.setdefault((t.src.fq, t.src.SNAPSHOT_ID), {})[t.src.destination] = n
+    out = {}
+    for (fq, sid), dests in by_log.items():
+        rows = session.sql(f"SELECT max({sid}) AS snapshot, destination FROM {fq} WHERE operation = 'read' AND "
+                           f"destination IN ({', '.join(_lit(d) for d in dests)}) GROUP BY destination").collect()
+        out.update({dests[r[1]]: r[0] for r in rows if r[0] is not None})
+    return out
+
+
 def _save(session, schema: str, rows: list) -> None:
-    """[(target, kind, position, rows, seconds)] into the state, one MERGE for the run."""
+    """[(target, kind, position, rows, seconds[, snapshot])] into the state, one MERGE for the run (no snapshot:
+    the one kept stays)."""
     if not rows:
         return
-    vals = ", ".join(f"({_lit(t)}, {_lit(k)}, {_lit(p)}, {int(n or 0)}, {s:.3f})" for t, k, p, n, s in rows)
+    snap = lambda r: str(int(r[5])) if len(r) > 5 and r[5] is not None else "CAST(NULL AS BIGINT)"
+    vals = ", ".join(f"({_lit(r[0])}, {_lit(r[1])}, {_lit(r[2])}, {int(r[3] or 0)}, {r[4]:.3f}, {snap(r)})" for r in rows)
     session.sql(f"MERGE INTO {schema}.{STATE} s USING (SELECT * FROM VALUES {vals} AS n(target, kind, position, rows, "
-                "seconds)) n ON s.target = n.target WHEN MATCHED THEN UPDATE SET s.kind = n.kind, s.position = "
-                "n.position, s.rows = n.rows, s.seconds = n.seconds, s.updated_at = current_timestamp() WHEN NOT "
-                "MATCHED THEN INSERT (target, kind, position, rows, seconds, updated_at) VALUES (n.target, n.kind, "
-                "n.position, n.rows, n.seconds, current_timestamp())")
+                "seconds, snapshot)) n ON s.target = n.target WHEN MATCHED THEN UPDATE SET s.kind = n.kind, s.position = "
+                "n.position, s.rows = n.rows, s.seconds = n.seconds, s.updated_at = current_timestamp(), s.snapshot = "
+                "coalesce(n.snapshot, s.snapshot) WHEN NOT MATCHED THEN INSERT (target, kind, position, rows, seconds, "
+                "updated_at, snapshot) VALUES (n.target, n.kind, n.position, n.rows, n.seconds, current_timestamp(), "
+                "n.snapshot)")
 
 
 def view_sql(t: Table, target: str) -> str:
@@ -145,9 +174,16 @@ def build(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     """Each table built from its current rows, kept at `to` (read before the builds: a change after it is applied
     again by the next apply, the same result for SCD type 1). {name: (None, seconds)}."""
     ensure_state(session, schema)
+    newest = newest_snapshots(session, tables)
     done = _each(session, {n: build_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
-    _save(session, schema, [(n, to.kind, to.value, 0, s) for n, (_, s) in done.items()])
+    _save(session, schema, [(n, to.kind, to.value, 0, s, newest.get(n)) for n, (_, s) in done.items()])
     return done
+
+
+def renewed(newest: dict, kept_snap: dict, names) -> list:
+    """The tables whose newest snapshot is newer than the one they were built from (a recorded one: a table with
+    none recorded, from before the column, just records it)."""
+    return [n for n in names if n in newest and kept_snap.get(n) is not None and newest[n] > kept_snap[n]]
 
 
 def changed(session, tables: dict, schema: str, to) -> list:
@@ -178,12 +214,16 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     todo = {n: t for n, t in tables.items() if not t.only_changed}
     todo.update({n: skip_ok[n] for n in changed(session, skip_ok, schema, to)})
     kept = positions(session, schema)
+    newest = newest_snapshots(session, tables)
+    redo = set(renewed(newest, snapshots(session, schema), tables))   # a newer snapshot: rebuilt from the log
 
     def after(n):
         kind, pos = kept.get(n, (to.kind, None))
         return Position(kind, pos) if pos is not None else None
-    done = _each(session, {n: merge_sql(t.src, _target(schema, n), after(n), to) for n, t in todo.items()}, threads)
-    _save(session, schema, [(n, to.kind, to.value, r, s) for n, (r, s) in done.items()])
+    stmts = {n: build_sql(tables[n], _target(schema, n)) for n in redo}
+    stmts.update({n: merge_sql(t.src, _target(schema, n), after(n), to) for n, t in todo.items() if n not in redo})
+    done = _each(session, stmts, threads)
+    _save(session, schema, [(n, to.kind, to.value, r, s, newest.get(n)) for n, (r, s) in done.items()])
     return done
 
 
@@ -191,7 +231,7 @@ def shared_changes_sql(members: list, after, to) -> str:
     """Every member's events after `after` up to `to` in one scan of the log they share: destination, k (the key the
     landing filled in, as text), data (the event's row, row_sql: the same expression for every table of a transport),
     _op, _seq. No expression a table, so a group's size isn't bound by its SQL."""
-    from lfc_change_source.cdc_log import EVENT, SEQUENCES
+    from lfc_change_source.cdc_log import EVENT, SEQUENCES, TEXT
     from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT
     one = members[0]
     bad = [m.destination for m in members if m.fq != one.fq or m.seq != one.seq or m.row_sql() != one.row_sql()
@@ -203,10 +243,20 @@ def shared_changes_sql(members: list, after, to) -> str:
     lo, hi = one.position_sql(after), one.position_sql(to)
     where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT] + \
         ([f"{seq} > {lo}"] if lo is not None else []) + ([f"{seq} <= {hi}"] if hi is not None else [])
+    src = f"{one.fq} WHERE {' AND '.join(where)}"
+    sid = getattr(one, "SNAPSHOT_ID", None)
+    if sid and after is None:   # a build: each table's newest snapshot only, and the changes after its position
+        none = "coalesce(_pos, '') = ''" if one.seq in TEXT else "_pos IS NULL"   # a position with no value: every change
+        src = (f"(SELECT * FROM (SELECT *, max(CASE WHEN operation = 'read' AND {sid} = _snap THEN {seq} END) OVER "
+               f"(PARTITION BY destination) AS _pos FROM (SELECT *, max(CASE WHEN operation = 'read' THEN {sid} END) "
+               f"OVER (PARTITION BY destination) AS _snap FROM {src})) WHERE (operation = 'read' AND {sid} = _snap) OR "
+               f"(operation <> 'read' AND ({none} OR {seq} > _pos)))")
+    else:
+        src = f"(SELECT * FROM {src})"
     return (f"SELECT destination, key::STRING AS k, {one.row_sql()} AS data, "
             f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
             f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
-            f"FROM {one.fq} WHERE {' AND '.join(where)}")
+            f"FROM {src}")
 
 
 def missing_keys(session, members: list) -> int:
@@ -248,7 +298,6 @@ def _drop_tables(session, schema: str, names: list) -> None:
 def build_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     """Each group's table from its members' current rows up to `to`, a view per member, the group kept at `to`.
     {group: (members, seconds)}."""
-    from lfc_change_source.contract import DELETE, OP, last_change_sql
     ensure_state(session, schema)
     groups = _groups(tables)
 
@@ -258,18 +307,30 @@ def build_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
             raise ValueError(f"shared group {g}: {n:,} events with no key: land with keys (lfc_change_source "
                              "land.gateway_keys), or fill them in (land.backfill_keys)")
 
-    def one(g, members):
-        t0 = time.time()
-        cur = last_change_sql(shared_changes_sql([m.src for m in members.values()], None, to), ["destination", "k"])
-        session.sql(f"CREATE OR REPLACE TABLE {_target(schema, SHARED.format(group=g))} CLUSTER BY (destination) AS "
-                    f"SELECT destination, k, data FROM ({cur}) WHERE {OP} <> '{DELETE}'").collect()
-        return g, (len(members), time.time() - t0)
+    newest = newest_snapshots(session, tables)
     with ThreadPoolExecutor(threads) as pool:
-        done = dict(pool.map(lambda kv: one(*kv), groups.items()))
+        done = dict(pool.map(lambda kv: (kv[0], _build_group(session, schema, kv[0], kv[1], to)), groups.items()))
     _drop_tables(session, schema, list(tables))
     _each(session, {n: shared_view_sql(t, schema, _target(schema, n)) for n, t in tables.items()}, threads)
-    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, n, s) for g, (n, s) in done.items()])
+    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, n, s, _group_snapshot(newest, groups[g]))
+                            for g, (n, s) in done.items()])
     return done
+
+
+def _build_group(session, schema: str, g: str, members: dict, to) -> tuple:
+    """A group's table from its members' current rows up to `to` (each one's newest snapshot): (members, seconds)."""
+    from lfc_change_source.contract import DELETE, OP, last_change_sql
+    t0 = time.time()
+    cur = last_change_sql(shared_changes_sql([m.src for m in members.values()], None, to), ["destination", "k"])
+    session.sql(f"CREATE OR REPLACE TABLE {_target(schema, SHARED.format(group=g))} CLUSTER BY (destination) AS "
+                f"SELECT destination, k, data FROM ({cur}) WHERE {OP} <> '{DELETE}'").collect()
+    return len(members), time.time() - t0
+
+
+def _group_snapshot(newest: dict, members: dict):
+    """A group's snapshot mark: its members' newest snapshot ids' maximum (a member's new snapshot raises it)."""
+    got = [newest[n] for n in members if n in newest]
+    return max(got) if got else None
 
 
 def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
@@ -277,8 +338,14 @@ def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
     from lfc_change_source.contract import DELETE, OP, Position, last_change_sql
     groups = _groups(tables)
     kept = positions(session, schema)
+    newest, kept_snap = newest_snapshots(session, tables), snapshots(session, schema)
+    redo = {g for g, members in groups.items() if (snap := _group_snapshot(newest, members)) is not None and
+            kept_snap.get(SHARED.format(group=g)) is not None and snap > kept_snap[SHARED.format(group=g)]}
+    rebuilt = {g: _build_group(session, schema, g, groups[g], to) for g in redo}   # a member's newer snapshot
     stmts = {}
     for g, members in groups.items():
+        if g in redo:
+            continue
         kind, pos = kept.get(SHARED.format(group=g), (to.kind, None))
         after = Position(kind, pos) if pos is not None else None
         c = last_change_sql(shared_changes_sql([m.src for m in members.values()], after, to), ["destination", "k"])
@@ -286,8 +353,9 @@ def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
                     f"c.destination AND t.k = c.k WHEN MATCHED AND c.{OP} = '{DELETE}' THEN DELETE WHEN MATCHED THEN "
                     f"UPDATE SET t.data = c.data WHEN NOT MATCHED AND c.{OP} <> '{DELETE}' THEN INSERT (destination, "
                     "k, data) VALUES (c.destination, c.k, c.data)")
-    done = _each(session, stmts, threads)
-    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, r, s) for g, (r, s) in done.items()])
+    done = {**_each(session, stmts, threads), **rebuilt}
+    _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, r, s, _group_snapshot(newest, groups[g]))
+                            for g, (r, s) in done.items()])
     return done
 
 

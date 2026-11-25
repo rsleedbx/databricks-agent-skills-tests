@@ -37,6 +37,8 @@ def session(seen, kept=(), newest=()):
             rows = []
         elif q.startswith("SELECT count(*)"):
             rows = [(0,)]
+        elif q.startswith("SELECT snapshot, target") or q.startswith("SELECT max(") or q.startswith("DESCRIBE"):
+            rows = []   # no snapshot ids kept or in the log
         else:
             rows = [types.SimpleNamespace(asDict=lambda: {"num_affected_rows": 1})]
         return types.SimpleNamespace(collect=lambda: rows)
@@ -114,6 +116,17 @@ class Shared(unittest.TestCase):
         with self.assertRaises(ValueError):
             silver.run(session([]), {"a": silver.Table(src("a"), "shared", snapshot_sql=SNAP)}, "`c`.`s`",
                        Position("gateway_cursor", "1"), first=True)
+
+
+class NewerSnapshot(unittest.TestCase):
+    def test_rebuilt_only_when_newer_than_the_one_recorded(self):
+        self.assertEqual(silver.renewed({"a": 200, "b": 100, "c": 200}, {"a": 100, "b": 100, "c": None}, "abc"), ["a"])
+        # c: built before snapshots were recorded: it records 200 now, no rebuild
+        q = silver.shared_changes_sql([src("a"), src("b")], None, Position("gateway_cursor", "09"))
+        self.assertIn("max(CASE WHEN operation = 'read' THEN value:snapshot::BIGINT END) OVER (PARTITION BY destination)", q)
+        self.assertIn("(operation = 'read' AND value:snapshot::BIGINT = _snap)", q)       # each table's newest only
+        q2 = silver.shared_changes_sql([src("a")], Position("gateway_cursor", "05"), Position("gateway_cursor", "09"))
+        self.assertNotIn("_snap", q2)                                                       # a round: changes only
 
 
 class Merge(unittest.TestCase):

@@ -97,6 +97,17 @@ class CdcLog(unittest.TestCase):
         self.assertEqual(e["b"], "unhex(value:after:b::STRING) AS `b`")
         self.assertEqual(e["id"], "CAST(key:id AS BIGINT) AS `id`")
 
+    def test_a_newer_gateway_snapshot_replaces_the_older(self):   # a key it lacks is gone, with no delete event
+        from lfc_change_source.cdc_log import CdcLog
+        from lfc_change_source.gateway_log import from_gateway
+        src = from_gateway("gw", "`c`.`x`.`log`", {"id": "T", "keys": ["id"], "columns": [("id", "INT", "C1")]}, "db.s.t")
+        q = src.current_sql()
+        self.assertIn("operation = 'read' AND value:snapshot::BIGINT = (SELECT max(value:snapshot::BIGINT)", q)
+        self.assertIn("coalesce((SELECT max(value:cursor.sequence::STRING)", q)   # changes after that snapshot's position
+        dbz = CdcLog("pg1", "`c`.`x`.`log`", "t", "pg1.public.t", ["id"], {"id": "INT"}, seq="lsn")
+        self.assertIsNone(dbz.newest_snapshot_cond())                              # one snapshot: nothing to choose
+        self.assertNotIn("value:snapshot", dbz.current_sql())
+
 
 class GatewayStaging(unittest.TestCase):
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples", "gateway")

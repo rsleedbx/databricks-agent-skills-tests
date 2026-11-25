@@ -17,6 +17,7 @@ from .contract import Position, quote
 class GatewayLog(CdcLog):
     """A CdcLog whose positions are the gateway's cursor and whose columns come from the event's data by id."""
     ROW = "value:data"
+    SNAPSHOT_ID = "value:snapshot::BIGINT"   # land.gateway_snapshot tags each row with its snapshot folder's time
 
 def from_gateway(name: str, log: str, entry: dict, destination: str, snapshot: str | None = None) -> "GatewayLog":
     """A gateway's table in a landed change log (land.gateway): its columns from the event's data by column id
