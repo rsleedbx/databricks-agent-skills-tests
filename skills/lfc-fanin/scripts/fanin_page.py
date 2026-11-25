@@ -1,4 +1,4 @@
-"""fanin_page.py <results dir> <source> [<docs dir>]: the docs page of one database's fan-in test, from test-engine.sh's
+"""fanin_page.py <results dir> <source> [<docs dir>]: the docs page of one database's fan-in test, from fanin_test.py's
 results: docs/database-connect/<engine>/debezium-zerobus.md (what was tested, the result, your side by
 zerobus-debezium-test, the fan-in bundle's deploy). Refuses a test that didn't pass end to end.
 
@@ -68,8 +68,8 @@ Silver update times, the skill's pipeline and the fan-in's (the same pipeline co
 |---|---|---|---|
 {rows}
 
-Repeat the whole test, both sides and the check: [test-engine.sh](../../../skills/lfc-fanin/scripts/test-engine.sh)
-(`SOURCE={src} SOURCE_TYPE={st}`); this page is written from its results by `fanin_page.py`.
+Repeat the whole test, both sides and the check: [fanin_test.py](../../../skills/lfc-fanin/scripts/fanin_test.py)
+`engine --source {src} --source-type {st}`; this page is written from its results by `fanin_page.py`.
 
 ## Your side: {name}, Debezium, Zerobus
 

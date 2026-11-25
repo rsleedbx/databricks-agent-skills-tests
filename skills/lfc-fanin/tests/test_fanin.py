@@ -77,10 +77,35 @@ class Page(unittest.TestCase):
             self.assertIn("2026-11-25: PostgreSQL 16.15 (docker.io/library/postgres:16)", text)
             self.assertIn("all 2 tables (1 tables and their `_history`) equal to the skill's, every round", text)
             self.assertIn("| 2 | 190 (120) | 185 (118) | 300 |", text)
-            self.assertIn("SOURCE=pg SOURCE_TYPE=POSTGRESQL", text)
+            self.assertIn("engine --source pg --source-type POSTGRESQL", text)
             w("pg-rounds.jsonl", json.dumps(r(1, 2)) + "\n" + json.dumps(r(2, 1)) + "\n")   # round 2 differs
             with self.assertRaises(SystemExit):
                 fanin_page.page(d, "pg")
+
+
+class Harness(unittest.TestCase):
+    def test_no_terminal_input_lists_not_splitting_names_and_a_passed_round(self):
+        import tempfile
+        import time
+        sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+        import fanin_test
+        t0 = time.time()
+        self.assertEqual(fanin_test.run(["cat"]), 0)                        # no input: returns at once, not waiting
+        self.assertLess(time.time() - t0, 5)
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "log")
+            fanin_test.run([sys.executable, "-c", "import sys; print(sys.argv[1])", "a.b.t1,a.b.t3"], log)
+            self.assertEqual(open(log).read().strip(), "a.b.t1,a.b.t3")    # one argument, commas and all
+        os.environ.pop("FANIN_SCHEMA", None)
+        self.assertEqual(fanin_test.names("pg", "robertlee_pg_tpch_dbz_1795627011"), ("fanin-pg-1795627011", "fanin_pg_1795627011"))
+        os.environ["CATALOG"] = "c"
+        env = fanin_test.bundle_env("n", "run_s", "fan_s", "POSTGRESQL")
+        self.assertEqual((env["BUNDLE_VAR_change_log"], env["BUNDLE_VAR_snapshot_volume"]), ("c.run_s.cdc_log", "/Volumes/c/run_s/snapshot"))
+        ok = {"fanin_job": "TERMINATED SUCCESS", "compare": {"tables": 16, "equal": 16}}
+        self.assertTrue(fanin_test.round_passed(ok))
+        self.assertFalse(fanin_test.round_passed({**ok, "compare": {"tables": 16, "equal": 15}}))
+        self.assertFalse(fanin_test.round_passed({**ok, "fanin_job": "INTERNAL_ERROR FAILED"}))
+        self.assertFalse(fanin_test.round_passed({**ok, "compare": {"tables": 0, "equal": 0}}))
 
 
 if __name__ == "__main__":

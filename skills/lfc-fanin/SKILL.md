@@ -48,14 +48,16 @@ zerobus-debezium-test's `silver-from-schema.py`, fetched from the same archive.
 
 ## Test a database end to end
 
-[scripts/test-engine.sh](scripts/test-engine.sh) runs both sides and the check: zerobus-debezium-test for your side,
-this bundle on its log and Volume, then every fan-in silver table against the skill's (`compare.py`: count and a
-hash of every row), and removes that run's containers from the VM. `fanin_page.py <results> <source>` writes the
-database's page in docs/database-connect from those results, and refuses a test that didn't pass end to end.
+[scripts/fanin_test.py](scripts/fanin_test.py) `engine` runs both sides and the check: zerobus-debezium-test for your
+side, with its `ROUND_HOOK` running `fanin_test.py round` after each of its rounds (this bundle on that log and
+Volume, deployed on round 1, run every round, every fan-in silver table against the skill's silver of that round:
+`compare.py`, count and a hash of every row), then both silver pipelines' update times (`pipeline_times.py`), and
+the run's containers removed from the VM. `fanin_page.py <results> <source>` writes the database's page in
+docs/database-connect from those results, and refuses a test that didn't pass every round.
 
 ```bash
-PROFILE=<cli-profile> CATALOG=<catalog> VM_IP=<vm-ip> WAREHOUSE=<warehouse id> SOURCE=pg SOURCE_TYPE=POSTGRESQL \
-  bash skills/lfc-fanin/scripts/test-engine.sh
+PROFILE=<cli-profile> CATALOG=<catalog> VM_IP=<vm-ip> WAREHOUSE=<warehouse id> \
+  python3 -I skills/lfc-fanin/scripts/fanin_test.py engine --source pg --source-type POSTGRESQL
 python3 -I skills/lfc-fanin/scripts/fanin_page.py ~/.lfc-test/results/fanin pg
 ```
 

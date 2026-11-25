@@ -1610,7 +1610,7 @@ if [ "$PHASE" -ge 2 ]; then
     else each "history-$2" "every version equals the source's changefeed (expected, in silver, keys that differ)" cmp_hist "$1" "$2"; fi; }
   # ROUND_HOOK: a command run after each round's silver check (rounds 1 to 3), with ROUND, CATALOG and SCHEMA (this
   # run's) in its environment, while the database and Debezium still run: another reader of the same log and Volume
-  # (lfc-fanin's test-engine.sh runs its bundle there); its exit status is recorded, not a claim of this test
+  # (lfc-fanin's fanin_test.py runs its bundle there); its exit status is recorded, not a claim of this test
   hook() { [ -n "${ROUND_HOOK:-}" ] || return 0; ROUND=$1 CATALOG=$CATALOG SCHEMA=$S bash -c "$ROUND_HOOK" >> "$W/round-hook.log" 2>&1
     observe "round-hook-$1" "ROUND_HOOK exit $? ($W/round-hook.log)"; }
   same() { # same <table> <round> [observe]: silver equals the source, row by row (a table without a key: as a multiset)
