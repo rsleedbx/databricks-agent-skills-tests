@@ -34,7 +34,8 @@ def changes(t: dict):
     op = f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}"
     seq = f"named_struct('v', {t['seq']}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ}"
     dest = t["destination"].replace("'", "")
-    parts = [spark.readStream.table(log).where(  # noqa: F821
+    # skipChangeCommits: a rewrite of rows already read (land.backfill_keys' UPDATE) is skipped, not a failed stream
+    parts = [spark.readStream.option("skipChangeCommits", "true").table(log).where(  # noqa: F821
         f"destination = '{dest}' AND operation <> 'resolved'").selectExpr(*cols, op, seq) for log in LOGS]
     return reduce(lambda a, b: a.unionByName(b), parts)
 
