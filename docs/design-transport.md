@@ -1,13 +1,13 @@
 # FlowThrough: CDC (transport), latency and throughput
 
-Layer 1a, CDC ([design.md](design.md)), turns every transport into one shape: change events in an append-only change log
+Layer 1, CDC ([design.md](design.md)), turns every transport into one shape: change events in an append-only change log
 (`destination`, `operation`, `key`, `value`), one row an event, the event kept as it came (VARIANT). Nothing after this
 layer knows which transport a table came from; each adapter passes one conformance scenario (lfc-change-source). The
 log carries changes only: each table's snapshot is a table of its own ([design-no-full-refresh.md](design-no-full-refresh.md)).
 
 | Transport | Changes arrive as | Position | Into the log by | Adapter |
 |---|---|---|---|---|
-| Lakeflow Connect ingestion pipeline | the pipeline's own streaming tables (SCD type 1 or 2): already one source's silver, so straight to layer 3 | Delta version or commit time | none | `lfc_bronze` |
+| Lakeflow Connect ingestion pipeline | the pipeline's own streaming tables (SCD type 1 or 2): already one source's silver, so straight to n:1 (layer 5) | Delta version or commit time | none | `lfc_bronze` |
 | Lakeflow Connect gateway, staging read in place | JSON change files in the gateway's staging volume, every table mixed | the gateway's cursor | not landed: read where it is | `gateway_staging` |
 | Lakeflow Connect gateway, staging landed | the same files | the gateway's cursor | `COPY INTO` (polled) or Auto Loader (continuous) | `gateway_log` (`land.gateway`, `autoloader`) |
 | Debezium Server through Zerobus | rows Zerobus writes into the log | the source's own (LSN, binlog position, SCN, ...) | Zerobus: no landing compute | `cdc_log` |

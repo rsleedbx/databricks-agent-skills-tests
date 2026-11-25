@@ -1,4 +1,4 @@
-# FlowThrough: snapshot (layer 1b) and no full refresh
+# FlowThrough: snapshot (layer 2) and no full refresh
 
 A table's silver is its snapshot plus every change after it ([design.md](design.md)). The two come apart: the
 transport carries the changes ([design-transport.md](design-transport.md)), and a snapshot method takes the snapshot,

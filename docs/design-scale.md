@@ -1,6 +1,6 @@
 # FlowThrough: scale, one table's silver
 
-Silver ([design.md](design.md)) keeps each table's current rows by the cell routing gave it: routing decides
+Silver (layer 4, [design.md](design.md)) combines each table's snapshot and CDC: it keeps its current rows by the cell routing gave it: routing decides
 ([design-intelligent.md](design-intelligent.md)), silver carries it out (lfc-log-silver `silver.run`; `flowthrough.step`
 moves a table when its route changes).
 

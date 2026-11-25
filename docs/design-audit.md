@@ -33,6 +33,10 @@ what has been tested, and where it falls short. When a gap closes, its row goes 
 | A gateway doing the CDC can take QBC's snapshot | the gateway's task always asks for its own snapshot | a task option to take none |
 | A big table's snapshot from the customer's files | `intake.parquet_in_place` and `intake.files` exist, not run on a CockroachDB `initial_scan = 'only'` export | that run |
 | 10,000s of tables, many sources through one log | not run | a scale run |
+| Routing is a layer of its own | its decision is lfc-change-source `routing.py` (the CDC package) and its runner lfc-log-silver `flowthrough.py` (the silver package) | one routing module both call |
+| Silver combines snapshot and CDC | the combining query, `CdcLog.current_sql`, and the snapshot on a CDC source live in lfc-change-source; CDC should give only a table's changes after a position | move the combine into lfc-log-silver |
+| One silver | zerobus-debezium-test's `silver-from-schema.py` and `merge-silver.py` combine snapshot and CDC on their own, and the fan-in uses them | the fan-in and the test on lfc-log-silver (the first row above) |
+| Each layer in its own skill | the snapshot sources (`qbc`, `intake`) live in the CDC package | a snapshot skill of its own |
 | The log without snapshots is faster | expected, not measured | the same round with and without snapshot rows in the log, bytes read and time |
 
 ## Removed

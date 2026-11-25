@@ -16,19 +16,19 @@ all, there is never a full table refresh, by design.
 - **No full refresh:** the snapshot is a table of its own, taken once after the change capture starts; silver catches
   up from its position in the log, and a checkpoint resnapshots from silver. [design-no-full-refresh.md](design-no-full-refresh.md)
 
-FlowThrough is a technique, not a package: changes flow through layers, and no layer depends on another's choices.
-Routing decides each table's way through them; the layers carry it out.
+FlowThrough is a technique, not a package: six layers, each with many sources or ways in, and no layer depends on
+another's choices.
 
 | Layer | What it does | Detail | Skill |
 |---|---|---|---|
-| Routing | each table's class from its relationships, size and measured rate, and from it its change log, shards, snapshot method and silver cell (view, shared group, MERGE, AUTO CDC); a table moves when its rate does | [design-intelligent.md](design-intelligent.md) | lfc-change-source `routing`, lfc-log-silver `flowthrough` |
-| 1a. CDC | every source's changes into one shape: an append-only change log, changes only | [design-transport.md](design-transport.md) | lfc-change-source |
-| 1b. Snapshot | each table's rows once, into a Delta table of its own, after its CDC has started | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `intake`) |
-| 2. Silver | one table's current rows: its snapshot table and the log's changes after it, kept by the cell routing gave it | [design-scale.md](design-scale.md) | lfc-log-silver `silver` |
-| 3. n:1 | many sources' tables into one | [design-fanin.md](design-fanin.md) | lfc-medallion |
-| 4. Gold | marts on the n:1 tables | [design-fanin.md](design-fanin.md) | lfc-medallion-pack |
+| 1. CDC | every source's changes (Zerobus, a gateway, a changefeed, ...) into one shape: an append-only change log, changes only | [design-transport.md](design-transport.md) | lfc-change-source |
+| 2. Snapshot | every table's rows once (QBC, the customer's files, a gateway's own, ...) into a Delta table of its own, after its CDC has started | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `intake`) |
+| 3. Routing | decides how each table combines its CDC and its snapshot: its class from relationships, size and measured rate, and from it its change log, shards, snapshot method and silver cell; a table moves when its rate does | [design-intelligent.md](design-intelligent.md) | lfc-change-source `routing`, lfc-log-silver `flowthrough` |
+| 4. Silver | combines them: the snapshot table and the log's changes after it, kept by the cell routing chose (view, shared group, MERGE, AUTO CDC) | [design-scale.md](design-scale.md) | lfc-log-silver `silver` |
+| 5. n:1 | many sources' tables into one | [design-fanin.md](design-fanin.md) | lfc-medallion |
+| 6. Gold | marts on the n:1 tables | [design-fanin.md](design-fanin.md) | lfc-medallion-pack |
 
-So the cases add up instead of multiplying: a new transport is one row in 1a, a new snapshot method one row in 1b, a
-new kind of table one cell in silver.
+So the cases add up instead of multiplying: a new CDC source is one row in layer 1, a new snapshot source one row in
+layer 2, a new kind of table one cell in silver.
 
 Where the code doesn't meet this design yet, and what has been tested: [design-audit.md](design-audit.md).

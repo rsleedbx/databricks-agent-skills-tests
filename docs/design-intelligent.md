@@ -1,6 +1,6 @@
 # FlowThrough: intelligent routing
 
-Routing decides each table's way through every layer, from what the source already knows about it, not asked of
+Routing (layer 3) decides how each table combines its CDC and its snapshot, and its way through every layer, from what the source already knows about it, not asked of
 the user table by table ([design.md](design.md)): its change log and shards (CDC), its snapshot method (snapshot), and
 its silver cell (view, shared group, MERGE, AUTO CDC). The layers carry the decision out; none of them decides it.
 
