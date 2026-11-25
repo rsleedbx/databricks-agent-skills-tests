@@ -57,5 +57,28 @@ class Refuses(unittest.TestCase):
             del fanin.CONNECTORS["probe"]
 
 
+class Page(unittest.TestCase):
+    def test_a_page_only_for_a_test_that_passed(self):
+        import json
+        import tempfile
+        sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+        import fanin_page
+        with tempfile.TemporaryDirectory() as d:
+            w = lambda n, v: open(os.path.join(d, n), "w").write(v if isinstance(v, str) else json.dumps(v))  # noqa: E731
+            w("pg-skill.json", {"skill_exit": 0, "skill_pass": 23, "skill_fail": 0})
+            w("pg-fanin.json", {"fanin_job": "TERMINATED SUCCESS"})
+            w("pg-compare.json", {"tables": 2, "equal": 2, "by_table": {"orders": {}, "orders_history": {}}})
+            w("pg-skill.md", "- Date (UTC): 2026-11-25\n- Source: PostgreSQL PostgreSQL 16.15 (Debian) on x86, image docker.io/library/postgres:16 (sha256:ab)\n"
+                              "- Debezium: quay.io/debezium/server:3.7.0.Final (sha256:cd), PostgreSQL connector\n")
+            folder, text = fanin_page.page(d, "pg")
+            self.assertEqual(folder, "postgresql")
+            self.assertIn("2026-11-25: PostgreSQL 16.15 (docker.io/library/postgres:16)", text)
+            self.assertIn("all 2 tables (1 tables and their `_history`) equal", text)
+            self.assertIn("SOURCE=pg SOURCE_TYPE=POSTGRESQL", text)
+            w("pg-compare.json", {"tables": 2, "equal": 1, "by_table": {}})
+            with self.assertRaises(SystemExit):
+                fanin_page.page(d, "pg")
+
+
 if __name__ == "__main__":
     unittest.main()

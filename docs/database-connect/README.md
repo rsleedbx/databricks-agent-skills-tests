@@ -12,9 +12,12 @@ append-only change log (one Delta table for every source table), then silver tab
 
 ## Supported databases
 
-| Database | Debezium through Zerobus | Lakeflow Connect gateway |
+| Database | Debezium through Zerobus (each tested end to end through the fan-in) | Lakeflow Connect gateway |
 |---|---|---|
 | Microsoft SQL Server | [create an ingestion pipeline](sqlserver/debezium-zerobus.md) | [create an ingestion pipeline](sqlserver/lakeflow-connect-gateway.md) |
+| PostgreSQL | [create an ingestion pipeline](postgresql/debezium-zerobus.md) | Lakeflow Connect's own: [lakeflow-connect-database.md](../lakeflow-connect-database.md) |
+| CockroachDB | [create an ingestion pipeline](cockroachdb/debezium-zerobus.md) | not supported by Lakeflow Connect |
+| Informix | [create an ingestion pipeline](informix/debezium-zerobus.md) | not supported by Lakeflow Connect |
 
 SQL Server on an Always On availability group: [sqlserver/always-on.md](sqlserver/always-on.md). The other
 databases tested through Zerobus are in [lakeflow-connect-zerobus.md](../lakeflow-connect-zerobus.md); through a
