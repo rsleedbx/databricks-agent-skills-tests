@@ -17,16 +17,18 @@ all, there is never a full table refresh, by design.
   up from its position in the log, and a checkpoint resnapshots from silver. [design-no-full-refresh.md](design-no-full-refresh.md)
 
 FlowThrough is a technique, not a package: changes flow through layers, and no layer depends on another's choices.
+Routing decides each table's way through them; the layers carry it out.
 
 | Layer | What it does | Detail | Skill |
 |---|---|---|---|
-| 1. Transport | every source's changes into one shape: an append-only change log | [design-transport.md](design-transport.md) | lfc-change-source |
-| Snapshot | each table's snapshot into a Delta table, by a method chosen apart from the transport | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `intake`) |
-| 2. Silver | one table's current rows, by the cell its size and rate pick | [design-scale.md](design-scale.md) | lfc-log-silver |
+| Routing | each table's class from its relationships, size and measured rate, and from it its change log, shards, snapshot method and silver cell (view, shared group, MERGE, AUTO CDC); a table moves when its rate does | [design-intelligent.md](design-intelligent.md) | lfc-change-source `routing`, lfc-log-silver `flowthrough` |
+| 1a. CDC | every source's changes into one shape: an append-only change log, changes only | [design-transport.md](design-transport.md) | lfc-change-source |
+| 1b. Snapshot | each table's rows once, into a Delta table of its own, after its CDC has started | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `intake`) |
+| 2. Silver | one table's current rows: its snapshot table and the log's changes after it, kept by the cell routing gave it | [design-scale.md](design-scale.md) | lfc-log-silver `silver` |
 | 3. n:1 | many sources' tables into one | [design-fanin.md](design-fanin.md) | lfc-medallion |
 | 4. Gold | marts on the n:1 tables | [design-fanin.md](design-fanin.md) | lfc-medallion-pack |
 
-So the cases add up instead of multiplying: a new transport is one row in layer 1, a new snapshot method one row in
-the snapshot table, a new kind of table one cell in layer 2.
+So the cases add up instead of multiplying: a new transport is one row in 1a, a new snapshot method one row in 1b, a
+new kind of table one cell in silver.
 
 Where the code doesn't meet this design yet, and what has been tested: [design-audit.md](design-audit.md).

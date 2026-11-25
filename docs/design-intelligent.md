@@ -1,7 +1,8 @@
-# FlowThrough: intelligent
+# FlowThrough: intelligent routing
 
-Each table's route is decided from what the source already knows about it, not asked of the user table by table
-([design.md](design.md)).
+Routing decides each table's way through every layer, from what the source already knows about it, not asked of
+the user table by table ([design.md](design.md)): its change log and shards (CDC), its snapshot method (snapshot), and
+its silver cell (view, shared group, MERGE, AUTO CDC). The layers carry the decision out; none of them decides it.
 
 **From relationships: its role.** cdc-table-plan `classify.py` reads a canonical schema's keys and foreign keys (and
 row counts and activity, when known) and names each table's role, for the customer to check:
