@@ -17,6 +17,7 @@
 # writes the docs page from them. VM_USER (azureuser), SSH_KEY (ssh's default): the VM's login, as for the skill.
 # ARCHIVE: where the bundle installs lfc-change-source and lfc-fanin from (default: this repo's main).
 set -u
+exec </dev/null   # nothing it runs reads the terminal: a step that does (a cat with no file) would wait for good
 : "${PROFILE:?}" "${CATALOG:?}" "${VM_IP:?}" "${WAREHOUSE:?}" "${SOURCE:?}" "${SOURCE_TYPE:?}"
 HERE=$(cd "$(dirname "$0")" && pwd); SKILLS=$(cd "$HERE/../.." && pwd)
 RES=${RESULTS:-$HOME/.lfc-test/results/fanin}; mkdir -p "$RES"
