@@ -140,6 +140,36 @@ class SchemaChange(unittest.TestCase):
         self.assertEqual(sorted(silver.schema_changed(sess, tables, "`c`.`s`")), ["retyped", "wider"])   # new: not built
 
 
+class FlowThrough(unittest.TestCase):
+    def test_a_busy_table_leaves_its_group_for_a_merge_of_its_own(self):
+        import json
+        from lfc_log_silver import flowthrough
+        policy = routing.Policy(LOG, fast_events_per_s=1)
+        sources = {n: src(n) for n in "abc"}
+        shared = {"class": "small_slow", "snapshot": "log", "log": LOG, "shards": 1, "silver": "shared", "group": "0", "why": ""}
+        prev = [(n, json.dumps(shared), 0, 1000.0) for n in "abc"]
+        seen = []
+
+        def sql(q):
+            seen.append(q)
+            rows = (prev if q.startswith("SELECT name, route") else
+                    [("db.s.a", 5000)] if q.startswith("SELECT destination, count(*)") else
+                    [] if q.startswith(("SELECT target", "SELECT snapshot", "SELECT max(", "DESCRIBE", "SELECT table_name"))
+                    or "information_schema" in q else
+                    [(0,)] if q.startswith("SELECT count(*)") else
+                    [types.SimpleNamespace(asDict=lambda: {"num_affected_rows": 1})])
+            return types.SimpleNamespace(collect=lambda: rows)
+        got = flowthrough.step(types.SimpleNamespace(sql=sql), "`c`.`s`", sources, Position("gateway_cursor", "09"),
+                               policy, now=1010.0)        # a: 5,000 events in 10 s; b, c: none
+        self.assertEqual(got["routes"], {"merge_round": 1, "shared": 2})
+        self.assertEqual([(m["table"], m["from"], m["to"]) for m in got["moves"]], [("a", "shared", "merge_round")])
+        self.assertIn("of its group's changes", got["moves"][0]["why"])
+        self.assertTrue(any(q.startswith("DELETE FROM `c`.`s`.`_shared_0` WHERE destination = 'db.s.a'") for q in seen))
+        self.assertTrue(any(q.startswith("DROP VIEW IF EXISTS `c`.`s`.`a`") for q in seen))
+        self.assertTrue(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`a`") for q in seen))   # built from the log
+        self.assertFalse(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`b`") for q in seen))  # b stays shared
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),

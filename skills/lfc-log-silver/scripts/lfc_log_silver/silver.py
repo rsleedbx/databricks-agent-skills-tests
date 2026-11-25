@@ -316,6 +316,8 @@ def _groups(tables: dict) -> dict:
 
 def _drop_tables(session, schema: str, names: list) -> None:
     """Drop those of `names` that are tables, not views (a table moved into a group: its view takes the name)."""
+    if not names:
+        return
     cat, sch = [x.strip("`").replace("``", "`") for x in schema.split("`.`")]
     rows = session.sql(f"SELECT table_name FROM {_q(cat)}.information_schema.tables WHERE table_schema = {_lit(sch)} "
                        f"AND table_type <> 'VIEW' AND table_name IN ({', '.join(_lit(n.lower()) for n in names)})"
