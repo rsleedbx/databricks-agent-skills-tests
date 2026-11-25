@@ -24,7 +24,7 @@ Code: [scripts/lfc_log_silver/silver.py](scripts/lfc_log_silver/silver.py), inst
 (`pip install <archive>#subdirectory=skills/lfc-log-silver/scripts`), with lfc-change-source beside it. The AUTO CDC
 pipeline source: [scripts/pipelines/auto_cdc_from_log.py](scripts/pipelines/auto_cdc_from_log.py).
 
-The four layers, transport, a table's silver, many sources into one, and gold, each in one table: [docs/design.md](../../docs/design.md).
+FlowThrough, the four layers (transport, a table's silver, many sources into one, gold), each in one table: [docs/design.md](../../docs/design.md).
 
 ## Use
 

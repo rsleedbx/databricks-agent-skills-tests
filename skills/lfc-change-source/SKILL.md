@@ -64,7 +64,7 @@ snapshot), and when a small table leaves its group (`routing.plan`): [references
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).
 
-The four layers, transport, a table's silver, many sources into one, and gold, each in one table: [docs/design.md](../../docs/design.md).
+FlowThrough, the four layers (transport, a table's silver, many sources into one, gold), each in one table: [docs/design.md](../../docs/design.md).
 
 ## Conformance: an adapter is done when this passes
 

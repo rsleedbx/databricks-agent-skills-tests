@@ -1,6 +1,11 @@
-# From source changes to gold: four layers
+# FlowThrough: from source changes to gold in four layers
 
-Changes go through four layers, each with its own short table. A layer never depends on the choices of another:
+FlowThrough is the technique this page describes: changes flow through four layers, each with its own short table.
+It is not a package. Its parts are the skills each layer names (lfc-change-source, lfc-log-silver, lfc-medallion).
+The fan-in bundle ([lfc-fanin](../skills/lfc-fanin/SKILL.md)) deploys an ingestion; its Debezium route builds silver
+with zerobus-debezium-test's AUTO CDC pipeline today, not with FlowThrough's routing below.
+
+A layer never depends on the choices of another:
 - **Layer 1** turns every transport into one shape.
 - **Layer 2** keeps one table's silver.
 - **Layer 3** combines many sources' tables into one (n:1).

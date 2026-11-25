@@ -36,7 +36,7 @@ gateway, in [lakeflow-connect-database.md](../lakeflow-connect-database.md).
 The tests fill their sources with the TPC models; each model's tables and keys: [tpc-models.md](../tpc-models.md).
 
 Every route gives the change log the same columns, so silver doesn't know which route a table came from. The four
-layers, transport to gold: [design.md](../design.md).
+layers, transport to gold (FlowThrough): [design.md](../design.md).
 
 ## Network connectivity
 

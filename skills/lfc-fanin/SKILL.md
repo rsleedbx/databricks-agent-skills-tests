@@ -38,6 +38,10 @@ p = fanin.create(w, spark, name=..., catalog=..., schema=..., ingestion_definiti
 fanin.land(w, spark, p)
 ```
 
+Its `fanin_dbz_zbus` silver is zerobus-debezium-test's AUTO CDC pipeline, one per source table; it doesn't use
+FlowThrough's routing ([docs/design.md](../../docs/design.md): a shared group, views, MERGE, AUTO CDC by each table's
+size and rate) yet.
+
 Code: [scripts/lfc_fanin/fanin.py](scripts/lfc_fanin/fanin.py), installed as the package `lfc-fanin`
 (`pip install <archive>#subdirectory=skills/lfc-fanin/scripts`) next to `lfc-change-source`. The silver pipeline is
 zerobus-debezium-test's `silver-from-schema.py`, fetched from the same archive.
