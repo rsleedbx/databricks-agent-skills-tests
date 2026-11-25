@@ -18,7 +18,8 @@ def upsert_pipeline(w, spec: dict) -> str:
 def run_pipeline(w, pid: str, timeout: int = 3600) -> str:
     """One update of a triggered pipeline, waited for: its final state (an update still running from before, e.g.
     on an older spec, is stopped first)."""
-    if w.pipelines.get(pid).state.value == "RUNNING":
+    state = w.pipelines.get(pid).state   # None: a pipeline created and never run
+    if state is not None and state.value == "RUNNING":
         w.pipelines.stop_and_wait(pid)
     u = w.pipelines.start_update(pid).update_id
     t0 = time.time()

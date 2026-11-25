@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 
 from . import silver
 
@@ -105,8 +106,9 @@ def observe(session, schema: str, sources: dict, policy, ready: dict | None = No
     pinned = {n for n in sources if n in prev and prev[n][0].get("why") != "observing"}
     made = {n: silver.Table(s, "view", snapshot_table=ready.get(n)) for n, s in sources.items()
             if n not in pinned and (n not in prev or prev[n][0].get("snapshot_table") != ready.get(n))}
-    if made:
-        silver.views(session, made, schema, threads)
+    if made:   # recorded with their snapshot table, so a later one recreates them (silver.renewed)
+        done = silver.views(session, made, schema, threads)
+        silver._save(session, schema, [(n, "observe", "", 0, s, made[n].snapshot_table) for n, (_, s) in done.items()])
     routes = {n: {"class": plan[n].cls, "log": plan[n].log, "shards": plan[n].shards,
                   "silver": "view", "group": "", "why": "observing", "snapshot_table": ready.get(n),
                   "destination": sources[n].destination,
@@ -127,15 +129,20 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
     from lfc_change_source import routing
     now, prev, got, rates = measure(session, schema, sources, now)
     routes = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
-    tables = {n: silver.from_route(s, routes[n], **{**(extra or {}).get(n, {}), **checkpointed(prev, n)})
-              for n, s in sources.items()}
+    tables = {n: silver.from_route(s, routes[n], **snapshot_of(prev, n, extra)) for n, s in sources.items()}
     first = not prev
-    moves = []
+    moves, held = [], []
     if not first:
         for n in tables:
             old = prev.get(n, (None,))[0]
             new = route_dict(routes[n])
             if old is None or (old.get("silver"), old.get("group")) != (new["silver"], new["group"]):
+                if (old or {}).get("silver") == "auto_cdc":   # its streaming table belongs to its pipeline: held
+                    held.append({"table": n, "to": new["silver"], "why": "leaving AUTO CDC: remove it from its "
+                                 "pipeline's list (auto_cdc lists) and let the pipeline drop it first"})
+                    routes[n] = replace(routes[n], silver="auto_cdc", group="")
+                    tables[n] = silver.from_route(sources[n], routes[n], **snapshot_of(prev, n, extra))
+                    continue
                 moves.append((n, old, new))
         _move(session, schema, tables, moves, prev, to, threads)
     ran = silver.run(session, tables, schema, to, threads, first=first)
@@ -151,9 +158,16 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
     return {"routes": by_method, "rates": {n: float(f"{r:.4g}") for n, r in rates.items() if r},
             "moves": [{"table": n, "from": (o or {}).get("silver"), "to": w["silver"], "why": w.get("why") or "",
                        "takes": [x for _, x in routing.transitions(o or {}, w)]} for n, o, w in moves],
-            "silver": ran, "auto_cdc": silver.auto_cdc_tables(auto) if auto else [],
+            "held": held, "silver": ran, "auto_cdc": silver.auto_cdc_tables(auto) if auto else [],
             "auto_cdc_changed": any(w["silver"] == "auto_cdc" or (o or {}).get("silver") == "auto_cdc" for _, o, w in moves)}
 
+
+
+def snapshot_of(prev: dict, name: str, extra: dict | None = None) -> dict:
+    """A table's snapshot table and position: its checkpoint, else the caller's (extra), else the one recorded last
+    round (observe's, or the last step's)."""
+    rec = prev.get(name, ({},))[0].get("snapshot_table")
+    return {**({"snapshot_table": rec} if rec else {}), **(extra or {}).get(name, {}), **checkpointed(prev, name)}
 
 
 def checkpointed(prev: dict, name: str) -> dict:
@@ -177,9 +191,7 @@ def checkpoint(session, schema: str, sources: dict, to, into: str, names: list |
     for n in names:
         r = prev[n][0]
         method, only = silver.FROM_ROUTE[r["silver"]]
-        tables[n] = silver.Table(sources[n], method, only, group=r.get("group") or "",
-                                 **({"snapshot_table": r.get("snapshot_table")} if r.get("snapshot_table") else {}),
-                                 **checkpointed(prev, n))
+        tables[n] = silver.Table(sources[n], method, only, group=r.get("group") or "", **snapshot_of(prev, n))
     got = silver.checkpoint(session, tables, schema, to, into, threads)
     save(session, schema, {n: {**prev[n][0], "snapshot_table": got[n]["snapshot_table"], "checkpoint": got[n]}
                            for n in got}, {n: prev[n][1] for n in got}, prev[names[0]][2] if names else time.time())
@@ -190,6 +202,10 @@ def checkpoint(session, schema: str, sources: dict, to, into: str, names: list |
             by_log.setdefault(sources[n].fq, []).append(sources[n].destination)
         for fq, dests in by_log.items():
             trimmed += land.trim(session, fq, dests, to.kind, to.value) or 0
+    if trim:   # the counts after the trim, so the next round's rate isn't read as zero
+        after = counts(session, {n: sources[n] for n in got})
+        save(session, schema, {n: {**prev[n][0], "snapshot_table": got[n]["snapshot_table"], "checkpoint": got[n]}
+                               for n in got}, after, prev[names[0]][2] if names else time.time())
     return {"tables": len(got), "seconds": round(time.time() - t0, 1), "trimmed": trimmed}
 
 def _move(session, schema: str, tables: dict, moves: list, prev: dict, to, threads: int) -> None:

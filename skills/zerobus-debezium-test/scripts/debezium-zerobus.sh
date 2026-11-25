@@ -315,12 +315,12 @@ cleanup() {
   [ "${KEEP:-0}" = 1 ] && { echo "KEEP=1: left $CATALOG.$S, SP ${SP_NAME:-}, VM containers and $RD, to inspect:"; printf '%s\n' ${LINKS[@]+"${LINKS[@]}"}; rm -rf "${W:?}"; return; }
   vm "$PODMAN rm -f --ignore $DBZS $SRCC $SQR $([ -n "$APP" ] && echo "${APPC[*]}") >/dev/null 2>&1; $PODMAN network rm $NET >/dev/null 2>&1; $(rmc $RD)" || true
   [ -n "${SP_ID:-}" ] && dbx service-principals delete "$SP_ID" >/dev/null 2>&1
-  for p in ${PIPELINE_IDS[@]+"${PIPELINE_IDS[@]}"}; do dbx pipelines delete "$p" >/dev/null 2>&1; done
+  for p in ${PIPELINE_IDS[@]+"${PIPELINE_IDS[@]}"} ${QBC_IDS[@]+"${QBC_IDS[@]}"}; do dbx pipelines delete "$p" >/dev/null 2>&1; done
   for j in ${JOB_ID:-} ${MERGE_JOBS[@]+"${MERGE_JOBS[@]}"}; do dbx jobs delete "$j" >/dev/null 2>&1; done
   [ -n "${CONN:-}" ] && dbx connections delete "$CONN" >/dev/null 2>&1
   [ -n "${WSDIR:-}" ] && dbx workspace delete "$WSDIR" --recursive >/dev/null 2>&1
   dbx schemas delete "$CATALOG.$S" --force >/dev/null 2>&1
-  for k in ${SPLIT_SCHEMAS[@]+"${SPLIT_SCHEMAS[@]}"}; do dbx schemas delete "$CATALOG.$k" --force >/dev/null 2>&1; done
+  for k in ${SPLIT_SCHEMAS[@]+"${SPLIT_SCHEMAS[@]}"} ${SNAP_SCHEMAS[@]+"${SNAP_SCHEMAS[@]}"}; do dbx schemas delete "$CATALOG.$k" --force >/dev/null 2>&1; done
   left=$(vm "$PODMAN ps -a --format '{{.Names}}' | grep -c -E '^($(echo $DBZS | tr ' ' '|')|$SRCC)\$'" 2>/dev/null)
   echo "cleanup: containers left ${left:-?}; SP ${SP_ID:+deleted}; pipeline(s) ${PIPELINE_ID:+deleted}; connection ${CONN:+deleted}; schema dropped"
   rm -rf "${W:?}"; [ -n "${MIXF:-}" ] && rm -f "$MIXF"
@@ -1393,7 +1393,7 @@ if [ "$PHASE" -ge 2 ]; then
         --connection "$CONN" --catalog "$CATALOG" --schema "${S}_snap$i" --source-catalog "$SRC_DB" --source-schema "$SRC_SCHEMA" \
         --schema-tsv "$W/schema-$i.tsv" > "$W/qbc-$i.json" 2>"$W/qbc-$i.err" \
         || { claim snapshot-qbc FAIL "source $i: $(cat "$W/qbc-$i.json" "$W/qbc-$i.err" | tail -3 | cut -c1-300)"; exit 1; }
-      QP=$(jq -r .pipeline_id "$W/qbc-$i.json"); PIPELINE_IDS+=("$QP")   # cleanup takes it too
+      QP=$(jq -r .pipeline_id "$W/qbc-$i.json"); QBC_IDS+=("$QP")   # cleanup takes it (not a silver pipeline)
       link "snapshot pipeline (source $i)" "$HOST/pipelines/$QP"
     done; use 1; SNAP_S=$((SECONDS - T0))
     claim snapshot-qbc PASS "a query-based pipeline through $CONN per source, every table once (SCD type 1 on its key, no cursor), after the marker: ${SNAP_S}s; no file left Databricks or the source"
@@ -1402,7 +1402,7 @@ if [ "$PHASE" -ge 2 ]; then
   # files copied once, typed by each source's canonical schema), and _snapshot.tsv, their rows (lfc-change-source intake)
   T0=$SECONDS; SRCS=()
   for i in $(seq 1 "$NSRC"); do q "CREATE SCHEMA IF NOT EXISTS \`$CATALOG\`.${S}_snap$i COMMENT 'Snapshot of source $i (debezium-zerobus.sh run $E)'" >/dev/null || exit 2
-    SPLIT_SCHEMAS+=("${S}_snap$i"); SRCS+=(--source "${DESTP[$i]}=$CATALOG.${S}_snap$i=$W/schema-$i.yaml"); done
+    SNAP_SCHEMAS+=("${S}_snap$i"); SRCS+=(--source "${DESTP[$i]}=$CATALOG.${S}_snap$i=$W/schema-$i.yaml"); done
   CSVJ=$(case $SOURCE in (mysql) echo '{"nullValue": "\\N", "escape": "\\", "multiLine": "true"}';; (mssql|oracle|db2|informix) echo '{"nullValue": "\\N", "escape": "\"", "multiLine": "true"}';; (*) echo '{}';; esac)
   python3 -I "$HERE/snapshot-intake.py" --profile "$PROFILE" --warehouse "$WAREHOUSE" --mode "$([ "$SNAP" = qbc ] && echo table || echo files)" \
     --volume "$VOL" --format "$SNAP_FMT" --csv "$CSVJ" $([ "$SOURCE" = mysql ] && echo --binhex) ${SRCS[@]+"${SRCS[@]}"} --out "$W/_snapshot.tsv" \

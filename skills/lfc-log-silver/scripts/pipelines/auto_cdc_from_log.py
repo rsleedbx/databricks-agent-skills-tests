@@ -45,7 +45,7 @@ def snapshot(t: dict):
     pos = str(s["position"]).replace("'", "")
     # the same sequencing type as the change flow's (AUTO CDC refuses two types into one target): the position's SQL
     # type, nullable like an event field
-    v = f"CAST(nullif('{pos}', NULL) AS {t.get('seq_type', 'STRING')})"
+    v = f"CAST(nullif('{pos}', '') AS {t.get('seq_type', 'STRING')})"   # no position: NULL, before every change
     cols = ["`" + c.replace("`", "``") + "`" for c in s["columns"]]
     return (spark.readStream.option("skipChangeCommits", "true").table(s["table"])  # noqa: F821
             .selectExpr(*cols, f"'{UPSERT}' AS {OP}", f"named_struct('v', {v}, 'o', 0) AS {SEQ}"))

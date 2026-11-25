@@ -409,7 +409,7 @@ streams_of = {id(m): src for src, m in groups.items()}
 queries = []
 for src, mine in groups.items():
     cp = a.checkpoint if src == a.source else f"{a.checkpoint}-{src.split('.')[-1]}"
-    w = spark.readStream.table(src).writeStream.foreachBatch(batch_fn(mine)).option("checkpointLocation", cp)
+    w = spark.readStream.option("skipChangeCommits", "true").table(src).writeStream   # a trim's DELETE is skipped.foreachBatch(batch_fn(mine)).option("checkpointLocation", cp)
     if a.once:   # one after another: each takes what's in its log now, then stops
         w.trigger(availableNow=True).start().awaitTermination()
     else:

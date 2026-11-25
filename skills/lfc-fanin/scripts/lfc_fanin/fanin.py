@@ -137,7 +137,10 @@ def _dbz_create(w, spark, p: dict, d: dict) -> None:
 
 
 def _dbz_land(w, spark, p: dict) -> dict:   # Zerobus writes the log; silver catches up from it
-    return {"silver": run_pipeline(w, p["parts"]["silver_pipeline"])}
+    st = run_pipeline(w, p["parts"]["silver_pipeline"])
+    if st != "COMPLETED":   # the job fails with it, so a stale silver doesn't pass as a run
+        raise RuntimeError(f"silver pipeline {p['parts']['silver_pipeline']}: update {st}")
+    return {"silver": st}
 
 
 def _crdb_create(w, spark, p: dict, d: dict) -> None:

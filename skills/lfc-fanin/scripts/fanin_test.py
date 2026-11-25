@@ -91,9 +91,9 @@ def fanin_round(source: str, source_type: str, schema: str, rnd: int) -> dict:
     name, fan = names(source, schema)
     env, log, bundle, t0 = bundle_env(name, schema, fan, source_type), res / f"{source}-fanin.log", HERE.parent / "bundle", time.time()
     deployed = rnd != 1 or run(["databricks", "bundle", "deploy", "-p", profile], log, bundle, env) == 0
-    if deployed:
-        run(["databricks", "bundle", "run", "fanin_job", "-p", profile], log, bundle, env)
-    st = wait_job(w, name) if deployed else "not deployed"
+    ran = deployed and run(["databricks", "bundle", "run", "fanin_job", "-p", profile], log, bundle, env) == 0
+    # a failed run fails the round: wait_job alone could read the previous round's run
+    st = wait_job(w, name) if ran else ("not deployed" if not deployed else "bundle run failed")
     sys.path.insert(0, str(HERE.parent.parent / "lfc-change-source" / "scripts"))
     from lfc_change_source.engine import Warehouse
     cmp = compare.compare(Warehouse(os.environ["WAREHOUSE"], w), w, os.environ["CATALOG"], schema, fan)

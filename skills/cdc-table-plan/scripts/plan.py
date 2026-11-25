@@ -16,8 +16,9 @@ For each table whose silver changed, an action and whether it can be done withou
   refuse   what the pipeline can't build: scd1 or scd2 without a primary key, append together with scd1 or scd2
   warn     append for a table the activity shows updated or deleted, or whose foreign key deletes or changes its rows
            with its parent (ON DELETE CASCADE, SET NULL): those changes would be left out
-  snapshot / cutover / reshard   the table's route changed (lfc-change-source routing.transitions): its snapshot's path
-           (log <-> direct), its change log (shared <-> own, at a position: no new snapshot), its shards; no refresh
+  cutover / silver / reshard   the table's route changed (lfc-change-source routing.transitions): its change log
+           (shared <-> own, at a position: no new snapshot), its silver cell (a table built, swapped for a view, or
+           into or out of a group: asks first, since a table's readers see it replaced), its shards; no refresh
 A table only in desired needs its producer to capture it first (refused here); one only in current is dropped.
 Prints a table, or with --json {"refresh": [...], "drop": [...], "refuse": [...], "warn": [...], "auto": bool}: the
 targets to full-refresh, and whether everything can go ahead without asking. Exit 0 auto, 1 needs asking, 2 refused.
@@ -106,12 +107,12 @@ def main():
                   for t in tables}
     acts = diff(load(a.current), load(a.desired), keyed, load(a.activity) if a.activity else None, acting)
     refuse = [x for x in acts if x[0] == "refuse"]
-    ask = [x for x in acts if x[0] in ("drop", "warn")]
+    ask = [x for x in acts if x[0] in ("drop", "warn", "silver")]
     if a.json:
         print(json.dumps({"refresh": sorted({x[2] for x in acts if x[0] in ("add", "rebuild")}),
                           "drop": [x[2] for x in acts if x[0] == "drop"], "refuse": [x[1] for x in refuse],
                           "warn": [x[1] for x in acts if x[0] == "warn"], "auto": not refuse and not ask,
-                          "route": [x[1] for x in acts if x[0] in ("snapshot", "cutover", "reshard")],
+                          "route": [x[1] for x in acts if x[0] in ("cutover", "silver", "reshard")],
                           "actions": [dict(zip(("action", "table", "target", "why"), x)) for x in acts]}))
     else:
         print("| Action | Table | Target | Why |\n|---|---|---|---|")

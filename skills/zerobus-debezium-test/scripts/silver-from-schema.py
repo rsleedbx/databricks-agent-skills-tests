@@ -147,7 +147,8 @@ def norm_view(bronze):
         return name
     _views.add(name)
 
-    dp.temporary_view(name=name)(lambda: normed(spark.readStream.table(bronze)))
+    # skipChangeCommits: a checkpoint's trim (lfc-change-source land.trim) deletes from the log; a stream skips it
+    dp.temporary_view(name=name)(lambda: normed(spark.readStream.option("skipChangeCommits", "true").table(bronze)))
 
     @dp.temporary_view(name=f"_dedup_{bronze}")
     def dedup():

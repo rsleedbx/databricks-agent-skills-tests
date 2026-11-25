@@ -215,23 +215,28 @@ def renewed(tables: dict, kept_snap: dict) -> list:
 
 
 def changed(session, tables: dict, schema: str, to) -> list:
-    """The tables with a change event after their kept position, up to `to`: one grouped query over the log they share
-    (each table's newest position against its kept one). A table never built counts as changed."""
+    """The tables with a change event after their kept position, up to `to`: one grouped query a log (each table's
+    newest position against its kept one), so a table on a log of its own is seen too. A table never built counts as
+    changed."""
     from lfc_change_source.cdc_log import SEQUENCES, TEXT
     if not tables:
         return []
     kept = positions(session, schema)
-    one = next(iter(tables.values())).src
-    seq = SEQUENCES[one.seq]
-    lit = (lambda v: "'" + str(v).replace("'", "") + "'") if one.seq in TEXT else (lambda v: str(int(v)))
-    by_dest = {t.src.destination: n for n, t in tables.items()}
-    rows = session.sql(f"SELECT destination, max({seq}) FROM {one.fq} WHERE operation <> 'resolved' "
-                       f"AND destination IN ({', '.join(_lit(d) for d in by_dest)}) AND {seq} <= {lit(to.value)} "
-                       "GROUP BY destination").collect()
-    newest = {by_dest[r[0]]: r[1] for r in rows}
-    order = (lambda v: str(v)) if one.seq in TEXT else (lambda v: int(v))
+    by_log: dict = {}
+    for n, t in tables.items():
+        by_log.setdefault((t.src.fq, t.src.seq), {})[t.src.destination] = n
+    newest = {}
+    for (fq, kind), by_dest in by_log.items():
+        lit = (lambda v: "'" + str(v).replace("'", "") + "'") if kind in TEXT else (lambda v: str(int(v)))
+        rows = session.sql(f"SELECT destination, max({SEQUENCES[kind]}) FROM {fq} WHERE operation <> 'resolved' "
+                           f"AND destination IN ({', '.join(_lit(d) for d in by_dest)}) AND {SEQUENCES[kind]} <= "
+                           f"{lit(to.value)} GROUP BY destination").collect()
+        newest.update({by_dest[r[0]]: r[1] for r in rows})
+
+    def order(n, v):
+        return str(v) if tables[n].src.seq in TEXT else int(v)
     return [n for n in tables if n not in kept or kept[n][1] is None
-            or (n in newest and order(newest[n]) > order(kept[n][1]))]
+            or (n in newest and order(n, newest[n]) > order(n, kept[n][1]))]
 
 
 def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_schema: list | None = None) -> dict:
@@ -350,6 +355,15 @@ def _member_views(session, tables: dict, schema: str, to, threads: int) -> None:
     _save(session, schema, [(n, to.kind, to.value, 0, s, tables[n].snapshot_table) for n, (_, s) in done.items()])
 
 
+def _ensure_deleted(session, target: str) -> None:
+    try:
+        cols = [r[0] for r in session.sql(f"DESCRIBE {target}").collect()]
+        if cols and "deleted" not in cols:
+            session.sql(f"ALTER TABLE {target} ADD COLUMNS (deleted BOOLEAN)").collect()
+    except Exception:  # noqa: BLE001  not built yet: the build makes the column
+        pass
+
+
 def _build_group(session, schema: str, g: str, members: dict, to) -> tuple:
     """A group's table from its members' changes up to `to`: each key's last change, a delete kept as a marker (it
     hides the key's snapshot row). (members, seconds)."""
@@ -370,6 +384,13 @@ def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
     groups = _groups(tables)
     kept = positions(session, schema)
     stmts = {}
+    for g in groups:   # a group built before delete markers: the column added (NULL: not deleted)
+        _ensure_deleted(session, _target(schema, SHARED.format(group=g)))
+    for g, members in groups.items():   # events landed without a key would never match their row: refused
+        n = missing_keys(session, [m.src for m in members.values()])
+        if n:
+            raise ValueError(f"shared group {g}: {n:,} events with no key: land with keys (lfc_change_source "
+                             "land.gateway_keys), or fill them in (land.backfill_keys)")
     for g, members in groups.items():
         kind, pos = kept.get(SHARED.format(group=g), (to.kind, None))
         after = Position(kind, pos) if pos is not None else None
@@ -396,6 +417,9 @@ def checkpoint(session, tables: dict, schema: str, to, into: str, threads: int =
     rebuilt; a view's or a shared member's is its rows, and its view is recreated over the new table; an AUTO CDC
     table's is its rows, for its pipeline's next start. {name: {"snapshot_table", "kind", "position"}}."""
     stamp = stamp or time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    merges = {n: t for n, t in tables.items() if t.method == "merge"}
+    if merges:   # each MERGE table up to `to` first: its copy is then the table as of `to`, and the trim loses nothing
+        apply(session, {n: replace(t, only_changed=False) for n, t in merges.items()}, schema, to, threads)
     new = {n: f"{into}.{_q(f'{n}__ck{stamp}')}" for n in tables}
     cols = lambda t: ", ".join(_q(c) for c in t.src.columns)
     stmts = {n: (f"CREATE TABLE {new[n]} AS SELECT {cols(t)} FROM {_target(schema, n)}" if t.method == "merge" else
@@ -403,9 +427,7 @@ def checkpoint(session, tables: dict, schema: str, to, into: str, threads: int =
     _each(session, stmts, threads)
     moved = {n: replace(t, snapshot_table=new[n], position=to) for n, t in tables.items()}
     ensure_state(session, schema)
-    kept = positions(session, schema)
-    _save(session, schema, [(n, *kept.get(n, (to.kind, to.value)), 0, 0.0, new[n])
-                            for n, t in moved.items() if t.method == "merge"])
+    _save(session, schema, [(n, to.kind, to.value, 0, 0.0, new[n]) for n, t in moved.items() if t.method == "merge"])
     views(session, {n: t for n, t in moved.items() if t.method == "view"}, schema, threads, to)
     shared = {n: t for n, t in moved.items() if t.method == "shared"}
     if shared:

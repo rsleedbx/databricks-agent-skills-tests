@@ -223,12 +223,26 @@ class Checkpoint(unittest.TestCase):
         self.assertIn("FROM `c`.`ck`.`v__ck1`", view)                               # recreated over the checkpoint
         self.assertIn("value:cursor.sequence::STRING > '09'", view)                 # and only the changes after it
         self.assertFalse(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`m`") for q in seen))   # m: no rebuild
-        state = next(q for q in seen if q.startswith("MERGE INTO `c`.`s`._log_silver") and "'m'" in q)
-        self.assertIn("('m', 'gateway_cursor', '07', 0, 0.000, '`c`.`ck`.`m__ck1`')", state)   # its position kept
+        state = next(q for q in seen if q.startswith("MERGE INTO `c`.`s`._log_silver") and "m__ck1" in q)
+        self.assertIn("('m', 'gateway_cursor', '09', 0, 0.000, '`c`.`ck`.`m__ck1`')", state)   # at `to`
+        merge = next(q for q in seen if q.startswith("MERGE INTO `c`.`s`.`m`"))
+        self.assertIn("> '07'", merge)                                              # brought up to `to` first
+        self.assertLess(seen.index(merge), seen.index("CREATE TABLE `c`.`ck`.`m__ck1` AS SELECT `id`, `v` FROM `c`.`s`.`m`"))
         seen.clear()
         land.trim(session(seen), LOG, ["db.s.m", "db.s.v"], "gateway_cursor", "09")
         self.assertEqual(seen, ["DELETE FROM `c`.`x`.`cdc_log` WHERE destination IN ('db.s.m', 'db.s.v') AND "
                                 "operation <> 'resolved' AND value:cursor.sequence::STRING <= '09'"])
+
+
+    def test_a_tables_snapshot_checkpoint_then_caller_then_recorded(self):
+        from lfc_log_silver import flowthrough
+        ck = {"snapshot_table": "`c`.`ck`.`a__ck2`", "kind": "lsn", "position": "9"}
+        prev = {"a": ({"snapshot_table": "`c`.`ck`.`a__ck1`", "checkpoint": ck}, 0, 0.0),
+                "b": ({"snapshot_table": "`c`.`snap`.`b`"}, 0, 0.0)}
+        got = flowthrough.snapshot_of(prev, "a", {"a": {"snapshot_table": "`c`.`snap`.`a`"}})
+        self.assertEqual((got["snapshot_table"], got["position"].value), ("`c`.`ck`.`a__ck2`", "9"))   # one each: no clash
+        self.assertEqual(flowthrough.snapshot_of(prev, "b"), {"snapshot_table": "`c`.`snap`.`b`"})   # observe's record
+        self.assertEqual(flowthrough.snapshot_of(prev, "c"), {})
 
 
 class Merge(unittest.TestCase):
