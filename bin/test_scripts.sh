@@ -146,6 +146,7 @@ check "lfc_medallion paths and engine: the MERGE optimizer's k and engine by cos
 check "lfc_change_source: the contract (positions, last change per key) and the Lakeflow Connect bronze adapter (snapshot, changes with _op and _seq, watermark, stats)" python3 -m unittest -q "$SK/lfc-change-source/tests/test_change_source.py"
 check "lfc_medallion methods: refresh techniques from an event log, each technique's time against its own input, fit_r2" python3 -m unittest -q "$SK/lfc-medallion/tests/test_methods.py"
 check "lfc_medallion merge_all: copy, change-feed MERGE, unchanged, full refresh, new column, SCD type 2 key, stack_all skip (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_merge.py"
+check "lfc_fanin: names quoted, what each connector type refuses, folders not written yet, an added connector type (fake spark)" python3 -m unittest -q "$SK/lfc-fanin/tests/test_fanin.py"
 check "lfc_log_silver: build and MERGE SQL from a change source, positions kept per table, the staged apply, a round by method, AUTO CDC lists (fake session)" python3 -m unittest -q "$SK/lfc-log-silver/tests/test_log_silver.py"
 check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right

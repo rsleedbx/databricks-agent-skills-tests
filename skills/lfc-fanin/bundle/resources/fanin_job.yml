@@ -1,0 +1,20 @@
+resources:
+  jobs:
+    fanin_job:
+      name: ${var.pipeline_name}
+      tasks:
+        - task_key: fanin
+          notebook_task:
+            notebook_path: ../notebooks/fanin.py
+            base_parameters:
+              pipeline_name: ${var.pipeline_name}
+              connector_type: ${var.connector_type}
+              dest_catalog: ${var.dest_catalog}
+              dest_schema: ${var.dest_schema}
+              change_log: ${var.change_log}
+              snapshot_volume: ${var.snapshot_volume}
+              source_type: ${var.source_type}
+              changefeed_path: ${var.changefeed_path}
+              tables: ${var.tables}
+              tests_repo_archive: ${var.tests_repo_archive}
+      max_concurrent_runs: 1

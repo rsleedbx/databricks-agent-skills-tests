@@ -66,6 +66,7 @@ layers:
       - lfc-downstream-history
       - lfc-medallion
       - lfc-log-silver
+      - lfc-fanin
       - lfc-connection-sync
       - lfc-workspace-setup
       - lfc-meta-ads

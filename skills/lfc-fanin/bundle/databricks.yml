@@ -1,0 +1,53 @@
+# A fan-in ingestion as a bundle: a job that runs notebooks/fanin.py (lfc_fanin), set up like an integrated CDC
+# pipeline (docs: ingestion/lakeflow-connect/sql-server-integrated-pipeline). Set the variables (BUNDLE_VAR_<name>: a
+# value with commas can't go through --var), then:
+#   databricks bundle deploy -p <profile>
+#   databricks bundle run fanin_job -p <profile>
+# Target `scheduled` adds the schedule (each run brings silver up to date); `dev` runs on demand.
+bundle:
+  name: lfc_fanin
+
+include:
+  - resources/*.yml
+
+variables:
+  pipeline_name:
+    description: the fan-in's name (its silver pipeline is <name>-silver)
+    default: lfc-fanin
+  connector_type:
+    description: fanin_dbz_zbus (Debezium Server through Zerobus) or fanin_crdb_cdf (CockroachDB changefeed files)
+    default: fanin_dbz_zbus
+  dest_catalog:
+    description: catalog of this ingestion's own tables (change log or the view over yours, state, silver)
+  dest_schema:
+    description: schema of this ingestion's own tables
+  change_log:
+    description: fanin_dbz_zbus - the append-only log Debezium writes (catalog.schema.table)
+    default: ""
+  snapshot_volume:
+    description: fanin_dbz_zbus - the Volume with the snapshot as of T, _sources.yaml and _schema/ (/Volumes/...)
+    default: ""
+  source_type:
+    description: fanin_dbz_zbus - SQLSERVER, POSTGRESQL, MYSQL, ORACLE, DB2 or INFORMIX
+    default: ""
+  changefeed_path:
+    description: fanin_crdb_cdf - the Volume folder with a folder a table
+    default: ""
+  tables:
+    description: fanin_crdb_cdf - database.schema.table:key1|key2, comma separated
+    default: ""
+  tests_repo_archive:
+    description: where pip installs lfc-change-source and lfc-fanin from, and the silver code comes from
+    default: https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip
+
+targets:
+  dev:
+    mode: development
+    default: true
+  scheduled:
+    resources:
+      jobs:
+        fanin_job:
+          schedule:
+            quartz_cron_expression: "0 */15 * * * ?"
+            timezone_id: UTC
