@@ -127,7 +127,8 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
     from lfc_change_source import routing
     now, prev, got, rates = measure(session, schema, sources, now)
     routes = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
-    tables = {n: silver.from_route(s, routes[n], **(extra or {}).get(n, {})) for n, s in sources.items()}
+    tables = {n: silver.from_route(s, routes[n], **{**(extra or {}).get(n, {}), **checkpointed(prev, n)})
+              for n, s in sources.items()}
     first = not prev
     moves = []
     if not first:
@@ -139,8 +140,10 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
         _move(session, schema, tables, moves, prev, to, threads)
     ran = silver.run(session, tables, schema, to, threads, first=first)
     save(session, schema, {n: {**route_dict(r), "snapshot_table": tables[n].snapshot_table,
-                               "destination": sources[n].destination} for n, r in routes.items()},
-         got, now)   # snapshot_table, destination: where the dashboard's links go
+                               "destination": sources[n].destination,
+                               **({"checkpoint": prev[n][0]["checkpoint"]} if prev.get(n, ({},))[0].get("checkpoint") else {})}
+                           for n, r in routes.items()},
+         got, now)   # snapshot_table, destination: where the dashboard's links go; a checkpoint stays
     by_method: dict = {}
     for r in routes.values():
         by_method[r.silver] = by_method.get(r.silver, 0) + 1
@@ -151,6 +154,43 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
             "silver": ran, "auto_cdc": silver.auto_cdc_tables(auto) if auto else [],
             "auto_cdc_changed": any(w["silver"] == "auto_cdc" or (o or {}).get("silver") == "auto_cdc" for _, o, w in moves)}
 
+
+
+def checkpointed(prev: dict, name: str) -> dict:
+    """A table's checkpoint from the last round's state, as from_route's snapshot_table and position ({}: none)."""
+    from lfc_change_source.contract import Position
+    ck = prev.get(name, ({},))[0].get("checkpoint")
+    return {"snapshot_table": ck["snapshot_table"], "position": Position(ck["kind"], ck["position"])} if ck else {}
+
+
+def checkpoint(session, schema: str, sources: dict, to, into: str, names: list | None = None, trim: bool = True,
+               threads: int = 16) -> dict:
+    """An internal resnapshot of `names` (default: every table) at `to` (silver.checkpoint), recorded in
+    <schema>._flowthrough so every later round starts from it, then (trim) the log's changes up to `to` for those
+    tables deleted (lfc_change_source land.trim; their silver keeps a position at or after `to`). No source read.
+    {"tables": n, "seconds": s, "trimmed": rows}."""
+    from lfc_change_source import land
+    t0 = time.time()
+    prev = load(session, schema)
+    names = [n for n in (names or sources) if n in prev]
+    tables = {}
+    for n in names:
+        r = prev[n][0]
+        method, only = silver.FROM_ROUTE[r["silver"]]
+        tables[n] = silver.Table(sources[n], method, only, group=r.get("group") or "",
+                                 **({"snapshot_table": r.get("snapshot_table")} if r.get("snapshot_table") else {}),
+                                 **checkpointed(prev, n))
+    got = silver.checkpoint(session, tables, schema, to, into, threads)
+    save(session, schema, {n: {**prev[n][0], "snapshot_table": got[n]["snapshot_table"], "checkpoint": got[n]}
+                           for n in got}, {n: prev[n][1] for n in got}, prev[names[0]][2] if names else time.time())
+    trimmed = 0
+    if trim:
+        by_log: dict = {}
+        for n in got:
+            by_log.setdefault(sources[n].fq, []).append(sources[n].destination)
+        for fq, dests in by_log.items():
+            trimmed += land.trim(session, fq, dests, to.kind, to.value) or 0
+    return {"tables": len(got), "seconds": round(time.time() - t0, 1), "trimmed": trimmed}
 
 def _move(session, schema: str, tables: dict, moves: list, prev: dict, to, threads: int) -> None:
     """Each moved table into its new method, from the log: the other methods' objects of that name dropped, rows

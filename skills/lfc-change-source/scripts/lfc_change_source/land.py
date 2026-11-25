@@ -107,6 +107,20 @@ def changefeed(session, root: str, log: str, destination: str, keys: list[str], 
 
 
 
+
+def trim(session, log: str, destinations: list, kind: str, upto: str) -> int | None:
+    """The log's change events of `destinations` at or before position `upto` (a position kind of cdc_log
+    SEQUENCES) deleted: safe once each of those tables has a checkpoint at `upto` or later (lfc_log_silver
+    silver.checkpoint) and every reader of them keeps a position at or after it. One statement for every table
+    checkpointed at that position; resolved marks stay. The rows deleted."""
+    from .cdc_log import SEQUENCES, TEXT
+    if not destinations:
+        return 0
+    lit = _lit(upto) if kind in TEXT else str(int(upto))
+    rows = session.sql(f"DELETE FROM {log} WHERE destination IN ({', '.join(_lit(d) for d in destinations)}) "
+                       f"AND operation <> 'resolved' AND {SEQUENCES[kind]} <= {lit}").collect()
+    return _inserted(rows, "num_affected_rows") if rows else None
+
 def _inserted(rows, field: str = "num_inserted_rows") -> int | None:
     try:
         return int(rows[0].asDict().get(field)) if rows else 0

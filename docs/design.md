@@ -108,6 +108,15 @@ member's view is its rows in the group plus its snapshot table's rows for the ke
 deleted, matched by the key typed from the group's stored key (`stored_key_values`). So the group's table and its one
 MERGE stay the same for every member, and a member's new snapshot only recreates its view.
 
+**A checkpoint is an internal resnapshot.** A year of changes can rewrite a table; a rebuild or a view shouldn't
+replay them from the first snapshot. lfc-log-silver `flowthrough.checkpoint` writes each table's current rows as of a
+position P into a new snapshot table, from silver, never the source (a MERGE table's is a copy of itself; a view's or
+a shared member's is its rows), records it so every later round starts there (a MERGE table isn't rebuilt; views are
+recreated over it), then deletes the log's changes up to P for those tables (lfc-change-source `land.trim`). The log
+then holds what's after the last checkpoint. Tested on a copy of the PostgreSQL run's log: 8 tables checkpointed in
+21 s, the log trimmed to empty, then four new changes at the source through one round, every table equal to the
+untrimmed log over the original snapshot.
+
 A changefeed for CDC runs with `initial_scan = 'no'` (an initial scan would land every row as an update). The code
 that kept snapshots in the log (`read` rows, the newest-snapshot rule, `land.gateway_snapshots`) was removed; it is
 at the tag `snapshot-in-log-last` if it's ever needed again.

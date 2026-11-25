@@ -207,6 +207,30 @@ class FlowThrough(unittest.TestCase):
             self.assertEqual((got["views"], got["pinned"], state["a"][0]["silver"]), (["b"], 1, "merge_round"))
 
 
+class Checkpoint(unittest.TestCase):
+    def test_a_checkpoint_from_silver_and_the_log_trimmed(self):
+        from lfc_change_source import land
+        to = Position("gateway_cursor", "09")
+        tables = {"m": silver.Table(src("m"), "merge", snapshot_table=SNAP), "v": silver.Table(src("v"), "view")}
+        seen = []
+        got = silver.checkpoint(session(seen, kept=[("m", "gateway_cursor", "07")]), tables, "`c`.`s`", to,
+                                "`c`.`ck`", threads=1, stamp="1")
+        self.assertEqual(got["m"], {"snapshot_table": "`c`.`ck`.`m__ck1`", "kind": "gateway_cursor", "position": "09"})
+        self.assertIn("CREATE TABLE `c`.`ck`.`m__ck1` AS SELECT `id`, `v` FROM `c`.`s`.`m`", seen)   # from silver
+        mk = next(q for q in seen if q.startswith("CREATE TABLE `c`.`ck`.`v__ck1`"))
+        self.assertIn("FROM `c`.`x`.`cdc_log`", mk)                                 # a view's rows: snapshot + log
+        view = next(q for q in seen if q.startswith("CREATE OR REPLACE VIEW `c`.`s`.`v`"))
+        self.assertIn("FROM `c`.`ck`.`v__ck1`", view)                               # recreated over the checkpoint
+        self.assertIn("value:cursor.sequence::STRING > '09'", view)                 # and only the changes after it
+        self.assertFalse(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`m`") for q in seen))   # m: no rebuild
+        state = next(q for q in seen if q.startswith("MERGE INTO `c`.`s`._log_silver") and "'m'" in q)
+        self.assertIn("('m', 'gateway_cursor', '07', 0, 0.000, '`c`.`ck`.`m__ck1`')", state)   # its position kept
+        seen.clear()
+        land.trim(session(seen), LOG, ["db.s.m", "db.s.v"], "gateway_cursor", "09")
+        self.assertEqual(seen, ["DELETE FROM `c`.`x`.`cdc_log` WHERE destination IN ('db.s.m', 'db.s.v') AND "
+                                "operation <> 'resolved' AND value:cursor.sequence::STRING <= '09'"])
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),

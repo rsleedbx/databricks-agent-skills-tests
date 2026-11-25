@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 STATE = "_log_silver"
 METHODS = ("shared", "view", "merge", "auto_cdc")
@@ -386,6 +386,31 @@ def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
     return done
 
 
+
+
+def checkpoint(session, tables: dict, schema: str, to, into: str, threads: int = 16, stamp: str | None = None) -> dict:
+    """An internal resnapshot: each table's current rows as of `to` into a new snapshot table in `into` (a quoted
+    catalog.schema), from silver, never the source, so a rebuild or a view starts there instead of from the first
+    snapshot and every change since (and the log up to `to` can be trimmed: lfc_change_source land.trim). A MERGE
+    table's copy is the table itself (a copy, not a clone: VACUUM on silver can't break it), recorded so it isn't
+    rebuilt; a view's or a shared member's is its rows, and its view is recreated over the new table; an AUTO CDC
+    table's is its rows, for its pipeline's next start. {name: {"snapshot_table", "kind", "position"}}."""
+    stamp = stamp or time.strftime("%Y%m%d%H%M%S", time.gmtime())
+    new = {n: f"{into}.{_q(f'{n}__ck{stamp}')}" for n in tables}
+    cols = lambda t: ", ".join(_q(c) for c in t.src.columns)
+    stmts = {n: (f"CREATE TABLE {new[n]} AS SELECT {cols(t)} FROM {_target(schema, n)}" if t.method == "merge" else
+                 f"CREATE TABLE {new[n]} AS SELECT {cols(t)} FROM ({t.current_sql()})") for n, t in tables.items()}
+    _each(session, stmts, threads)
+    moved = {n: replace(t, snapshot_table=new[n], position=to) for n, t in tables.items()}
+    ensure_state(session, schema)
+    kept = positions(session, schema)
+    _save(session, schema, [(n, *kept.get(n, (to.kind, to.value)), 0, 0.0, new[n])
+                            for n, t in moved.items() if t.method == "merge"])
+    views(session, {n: t for n, t in moved.items() if t.method == "view"}, schema, threads, to)
+    shared = {n: t for n, t in moved.items() if t.method == "shared"}
+    if shared:
+        _member_views(session, shared, schema, to, threads)
+    return {n: {"snapshot_table": new[n], "kind": to.kind, "position": to.value} for n in tables}
 
 def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
     """The table lists for this skill's pipelines/auto_cdc_from_log.py, `per_pipeline` tables each (a pipeline takes

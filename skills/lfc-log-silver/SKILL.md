@@ -64,6 +64,9 @@ lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "
   taken: a view over the log alone at first, recreated over its snapshot table once that is ready (a metadata change),
   and the route the plan would give it kept as `proposed` in `<schema>._flowthrough`. `step` with the pinned policy
   then moves each view to its route, from its snapshot and the log.
+- `flowthrough.checkpoint(session, schema, sources, to, into)`: an internal resnapshot of each table at `to`, from silver
+  (`silver.checkpoint`), recorded so later rounds start there, then the log's changes up to `to` trimmed (lfc-change-
+  source `land.trim`): a rebuild or a view no longer replays every change since the first snapshot.
 - The dashboard [dashboard/flowthrough.lvdash.json](dashboard/flowthrough.lvdash.json) shows that schema: change events a
   minute by table and the newest one's age (its `cdc_log`, a view over the log), snapshots waiting and ready, each
   table's route now and proposed, and the stored tables' positions (`_log_silver`). Each table's row starts with
