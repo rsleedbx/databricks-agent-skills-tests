@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from . import debezium
 from .contract import DELETE, OP, SEQ, UPSERT, Position, Stats, last_change_sql, quote
 
 # the event field that orders a source's changes, as a BIGINT (moved from zerobus-debezium-test's silver generator)
@@ -42,11 +43,12 @@ RESOLVED = {"hlc": "value:resolved::STRING"}
 EVENT = "operation <> 'resolved'"   # a change event, not a landed watermark
 
 
-def column_sql(name: str, sql_type: str, keys: list[str]) -> str:
+def column_sql(name: str, sql_type: str, keys: list[str], precision=None, binhex: bool = False) -> str:
     """A column from an event: a key column from the event's key (a delete has no after image), the rest from the
-    after image, cast to its type."""
+    after image, as its type: Debezium's encodings decoded (debezium.typed: a date as days, a timestamp as epoch
+    milli-, micro- or nanoseconds by its precision; binary as hex text with binhex)."""
     src = f"key:{name}" if name in keys else f"value:after:{name}"
-    return f"{src}::{sql_type} AS {quote(name)}"
+    return f"{debezium.typed(src, sql_type, precision=precision, binhex=binhex)} AS {quote(name)}"
 
 
 @dataclass
@@ -61,6 +63,8 @@ class CdcLog:
     snapshot: str | None = None     # the snapshot's rows as SQL (columns by name)
     exprs: dict = field(default_factory=dict)   # {column: SQL expression AS column}: a caller's own typing
     shared: bool = True
+    precision: dict = field(default_factory=dict)   # {column: digits of fraction}: a temporal column's (Debezium's unit)
+    binhex: bool = False                            # binary values come as hex text (binary.handling.mode=hex)
 
     def __post_init__(self):
         if self.seq not in SEQUENCES:
@@ -76,7 +80,8 @@ class CdcLog:
 
     def column_exprs(self) -> list[str]:
         """Each column's SQL from an event (`<expression> AS <name>`), in order."""
-        return [self.exprs.get(c) or column_sql(c, t, self.keys) for c, t in self.columns.items()]
+        return [self.exprs.get(c) or column_sql(c, t, self.keys, self.precision.get(c), self.binhex)
+                for c, t in self.columns.items()]
 
     def column_values(self) -> dict:
         """{column: its SQL expression from an event}, column_exprs without the alias, in order."""
@@ -95,7 +100,7 @@ class CdcLog:
         for c, t in self.columns.items():
             e = self.exprs.get(c)
             out[c] = (e.removesuffix(f" AS {quote(c)}").replace(self.ROW + ":", col + ":").replace(self.ROW + ".", col + ":")
-                      if e else f"{col}:{quote(c)}::{t}")
+                      if e else debezium.typed(f"{col}:{quote(c)}", t, precision=self.precision.get(c), binhex=self.binhex))
         return out
 
     def position_sql(self, p: Position | None) -> str | None:

@@ -103,7 +103,7 @@ class Shared(unittest.TestCase):
         from lfc_change_source.cdc_log import CdcLog
         d = CdcLog("pg1", LOG, "t", "pg1.public.t", ["id"], {"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="lsn")
         self.assertEqual(d.row_sql(), "value:after")
-        self.assertEqual(d.stored_values(), {"id": "data:`id`::BIGINT", "total": "data:`total`::DECIMAL(12,2)"})
+        self.assertEqual(d.stored_values(), {"id": "CAST(data:`id` AS BIGINT)", "total": "CAST(data:`total` AS DECIMAL(12,2))"})
         with self.assertRaises(ValueError):                                                  # one transport a group
             silver.shared_changes_sql([src("a"), d], None, None)
 

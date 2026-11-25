@@ -24,10 +24,11 @@ ARCHIVE=${ARCHIVE:-https://github.com/rsleedbx/databricks-agent-skills-tests/arc
 SSH=(ssh -o ConnectTimeout=20 ${SSH_KEY:+-i "$SSH_KEY"} "${VM_USER:-azureuser}@$VM_IP")
 C=$(mktemp -d "${TMPDIR:-/tmp}/fanin-$SOURCE.XXXXXX")   # a copy: editing the skills can't change this run
 COPYFILE_DISABLE=1 tar -C "$SKILLS/.." --exclude __pycache__ -cf - "$(basename "$SKILLS")" | tar -xf - -C "$C"
-export PROFILE CATALOG WAREHOUSE SOURCE SOURCE_TYPE ARCHIVE RES HERE
+FANIN_HERE=$HERE   # not HERE: debezium-zerobus.sh sets its own HERE, and an exported name keeps the new value
+export PROFILE CATALOG WAREHOUSE SOURCE SOURCE_TYPE ARCHIVE RES FANIN_HERE
 rm -f "$RES/$SOURCE-rounds.jsonl"; t0=$SECONDS
 (cd "$C/skills/zerobus-debezium-test" && SOURCE=$SOURCE MODEL=tpch NSRC=1 PHASE=2 KEEP=1 OUT="$RES/$SOURCE-skill.md" \
-  ROUND_HOOK="bash $HERE/fanin-round.sh" bash scripts/debezium-zerobus.sh > "$RES/$SOURCE-skill.log" 2>&1); rc=$?
+  ROUND_HOOK="bash $FANIN_HERE/fanin-round.sh" bash scripts/debezium-zerobus.sh > "$RES/$SOURCE-skill.log" 2>&1); rc=$?
 E=$(grep -o -m1 'run [0-9]*:' "$RES/$SOURCE-skill.log" | tr -dc 0-9)
 R=$(grep -o -m1 "schema $CATALOG\.[a-z0-9_]*" "$RES/$SOURCE-skill.log" | sed "s/schema $CATALOG\.//")
 printf '{"source":"%s","source_type":"%s","skill_exit":%s,"skill_pass":%s,"skill_fail":%s,"run":"%s","schema":"%s","skill_s":%s}\n' \

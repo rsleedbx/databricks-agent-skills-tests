@@ -69,8 +69,9 @@ class CdcLog(unittest.TestCase):
         src = Log("crdb1", "`m`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", ["id"],
                   {"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="lsn", snapshot="SELECT * FROM `m`.`zb`.`snap`")
         q = src.changes_sql(Position("lsn", "100"), Position("lsn", "200"))
-        self.assertIn("key:id::BIGINT AS `id`", q)                       # a delete has only its key
-        self.assertIn("value:after:total::DECIMAL(12,2) AS `total`", q)
+        self.assertIn("CAST(key:id AS BIGINT) AS `id`", q)                       # a delete has only its key
+        self.assertIn("CAST(value:after:total AS DECIMAL(12,2)) AS `total`", q)
+
         self.assertIn("destination = 'crdb1.public.orders' AND operation <> 'resolved' AND value:source:lsn::BIGINT > 100 AND "
                       "value:source:lsn::BIGINT <= 200", q)
         self.assertIn("CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS _seq", q)   # a delete before an insert
@@ -82,6 +83,19 @@ class CdcLog(unittest.TestCase):
             Log("x", "t", "t", "d", ["id"], {"id": "INT"}, seq="gtid")
         self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn",
                                           "gateway_cursor", "hlc"})
+
+
+    def test_debezium_dates_and_timestamps_decoded(self):   # days and epoch numbers, by the column's precision
+        from lfc_change_source.cdc_log import CdcLog
+        src = CdcLog("pg1", "`m`.`zb`.`cdc_log`", "t", "pg1.public.t", ["id"],
+                     {"id": "BIGINT", "d": "DATE", "ts": "TIMESTAMP_NTZ", "tz": "TIMESTAMP", "b": "BINARY"},
+                     seq="lsn", precision={"ts": 3}, binhex=True)
+        e = dict(zip(src.columns, src.column_exprs()))
+        self.assertIn("date_add(DATE'1970-01-01', CAST(value:after:d::STRING AS INT))", e["d"])
+        self.assertIn("CAST(value:after:ts::STRING AS BIGINT) * 1000", e["ts"])          # milliseconds: precision 3
+        self.assertIn("timestamp_micros(CAST(value:after:tz::STRING AS BIGINT))", e["tz"])   # no precision: micro
+        self.assertEqual(e["b"], "unhex(value:after:b::STRING) AS `b`")
+        self.assertEqual(e["id"], "CAST(key:id AS BIGINT) AS `id`")
 
 
 class GatewayStaging(unittest.TestCase):

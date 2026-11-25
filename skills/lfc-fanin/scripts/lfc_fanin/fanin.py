@@ -36,6 +36,7 @@ SOURCE_CONF = {"SQLSERVER": {"cdc.seq": "change_lsn"}, "POSTGRESQL": {"cdc.seq":
 SILVER_FILES = ["skills/zerobus-debezium-test/scripts/" + f for f in
                 ("silver-from-schema.py", "canonical_sql.py", "fanout.py", "merge-silver.py")]
 MEDALLION = "skills/lfc-medallion/scripts/lfc_medallion/"
+CHANGE_SOURCE = "skills/lfc-change-source/scripts/lfc_change_source/"   # Debezium's encodings, which canonical_sql imports
 ARCHIVE = "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip"
 
 
@@ -81,7 +82,7 @@ def not_yet(e: Exception) -> bool:
 
 def silver_code(w, folder: str, archive: str) -> None:
     """The silver pipeline's files from the tests repo archive into a workspace folder: silver-from-schema.py and its
-    helpers, and the lfc_medallion package they import."""
+    helpers, and the lfc_medallion and lfc_change_source packages they import."""
     import io
     import urllib.request
     import zipfile
@@ -90,14 +91,15 @@ def silver_code(w, folder: str, archive: str) -> None:
     with urllib.request.urlopen(archive, timeout=120) as r:   # the tests repo archive (https)
         z = zipfile.ZipFile(io.BytesIO(r.read()))
     top = z.namelist()[0].split("/")[0]
-    w.workspace.mkdirs(f"{folder}/lfc_medallion")
     for f in SILVER_FILES:
         w.workspace.upload(f"{folder}/{f.rsplit('/', 1)[1]}", io.BytesIO(z.read(f"{top}/{f}")),
                            format=ImportFormat.RAW, overwrite=True)
-    for n in z.namelist():
-        if n.startswith(f"{top}/{MEDALLION}") and n.endswith(".py"):
-            w.workspace.upload(f"{folder}/lfc_medallion/{n.rsplit('/', 1)[1]}", io.BytesIO(z.read(n)),
-                               format=ImportFormat.RAW, overwrite=True)
+    for pkg, prefix in (("lfc_medallion", MEDALLION), ("lfc_change_source", CHANGE_SOURCE)):
+        w.workspace.mkdirs(f"{folder}/{pkg}")
+        for n in z.namelist():
+            if n.startswith(f"{top}/{prefix}") and n.endswith(".py") and n.count("/") == f"{top}/{prefix}".count("/"):
+                w.workspace.upload(f"{folder}/{pkg}/{n.rsplit('/', 1)[1]}", io.BytesIO(z.read(n)),
+                                   format=ImportFormat.RAW, overwrite=True)
 
 
 def silver_pipeline(w, name: str, catalog: str, schema: str, log: str, volume: str, conf: dict, archive: str) -> str:
