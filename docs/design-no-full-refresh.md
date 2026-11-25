@@ -78,7 +78,8 @@ For each key and patched column, the newest by position wins: a change after P f
 at P, else the snapshot and the changes before it, for what the patch doesn't cover. That's silver's one rule with one
 more input at P, and the overlap is harmless as before: a change after P carries the whole row. Routing decides a
 patch is needed and what it covers (from a failed check against the source, the drift record, or a schema event the
-log can't resolve); the snapshot layer takes it (a query-based read of those columns or keys, or `intake` over files
+log can't resolve); the snapshot layer takes it (a query-based pipeline's `table_configuration` takes both:
+`include_columns` for the key and the suspect columns, `row_filter` for the suspect keys; or `intake` over files
 holding them); silver recreates views over it, or runs one MERGE into a MERGE table setting only those columns; a
 checkpoint later folds it into a whole snapshot table. A column patch of a wide table reads a fraction of its bytes,
 and a row patch only its range; neither rewrites the table.

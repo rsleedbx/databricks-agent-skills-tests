@@ -15,6 +15,7 @@ what has been tested, and where it falls short. When a gap closes, its row goes 
 | Observe, then pin | on that run: 8 views over the log, recreated over the snapshot tables (6.6 s), two pinned to MERGE; every table equal to the run's silver |
 | A shared group from snapshot tables | on that run: 8 tables, one group of 29 changed rows, every table equal |
 | Checkpoint and log trim | on a copy of that run's log: 8 tables in 21 s, the log trimmed to empty, then 4 new changes through one round, every table equal to the untrimmed log over the original snapshot |
+| A QBC read of chosen columns and rows | `table_configuration` with `include_columns` and `row_filter` (the SDK's classes lack `row_filter`; the API keeps it): `nation`, 2 columns and the 5 rows asked for |
 | The dashboard | rendered with a signed-in session: links to raw CDC, raw snapshot and silver; the Snapshot and Snapshot + log pages for a chosen table |
 
 ## Where the code falls short
@@ -35,7 +36,7 @@ what has been tested, and where it falls short. When a gap closes, its row goes 
 | A big table's snapshot from the customer's files | `intake.parquet_in_place` and `intake.files` exist, not run on a CockroachDB `initial_scan = 'only'` export | that run |
 | 10,000s of tables, many sources through one log | not run | a scale run |
 | A schema change is an event at its position (add with a default, rename, type change, drop), never a refresh | a change found by comparing columns recreates a view or rebuilds a MERGE table from its snapshot table and the log, which gets `ADD COLUMN ... DEFAULT x` (NULL instead of x) and renames wrong; the decision is in silver, not routing | schema events in the log from each source's record (ddl_history, Debezium's schema events, an event trigger for PostgreSQL), and routing reading them |
-| A refresh is partial: a column or row patch at a position, combined by silver | none: a suspect table needs a new whole snapshot (QBC) and a rebuild from it | patch tables (key and columns, or keys) from QBC's column selection or `intake`, silver's rule with the patch as one more input at its position, routing deciding from checks and drift |
+| A refresh is partial: a column or row patch at a position, combined by silver | none: a suspect table needs a new whole snapshot (QBC) and a rebuild from it | patch tables (key and columns, or keys) from QBC (`table_configuration.include_columns` and `row_filter`: a probe kept 5 of 25 rows and 2 columns, as asked) or `intake`, silver's rule with the patch as one more input at its position, routing deciding from checks and drift |
 | Routing is a layer of its own | its decision is lfc-change-source `routing.py` (the CDC package) and its runner lfc-log-silver `flowthrough.py` (the silver package) | one routing module both call |
 | Silver combines snapshot and CDC | the combining query, `CdcLog.current_sql`, and the snapshot on a CDC source live in lfc-change-source; CDC should give only a table's changes after a position | move the combine into lfc-log-silver |
 | One silver | zerobus-debezium-test's `silver-from-schema.py` and `merge-silver.py` combine snapshot and CDC on their own, and the fan-in uses them | the fan-in and the test on lfc-log-silver (the first row above) |
