@@ -1603,6 +1603,11 @@ if [ "$PHASE" -ge 2 ]; then
     keyed "$1" || return 0
     if [ "$3" = observe ]; then use 1; observe "history-$2" "versions expected, in silver, keys that differ ($SRC_DB): $(cmp_hist "$1" "$2")"
     else each "history-$2" "every version equals the source's changefeed (expected, in silver, keys that differ)" cmp_hist "$1" "$2"; fi; }
+  # ROUND_HOOK: a command run after each round's silver check (rounds 1 to 3), with ROUND, CATALOG and SCHEMA (this
+  # run's) in its environment, while the database and Debezium still run: another reader of the same log and Volume
+  # (lfc-fanin's test-engine.sh runs its bundle there); its exit status is recorded, not a claim of this test
+  hook() { [ -n "${ROUND_HOOK:-}" ] || return 0; ROUND=$1 CATALOG=$CATALOG SCHEMA=$S bash -c "$ROUND_HOOK" >> "$W/round-hook.log" 2>&1
+    observe "round-hook-$1" "ROUND_HOOK exit $? ($W/round-hook.log)"; }
   same() { # same <table> <round> [observe]: silver equals the source, row by row (a table without a key: as a multiset)
     if [ "${3:-}" = observe ]; then use 1; observe "silver-$1-$2" "source vs silver ($SRC_DB): $(cmp_rows "$1" || true)"
     else each "silver-$1-$2" "silver $1 equals the source" cmp_rows "$1"; fi; }
@@ -1822,6 +1827,7 @@ if [ "$PHASE" -ge 2 ]; then
   else
   [ "$st" = COMPLETED ] || claim silver-update-1 FAIL "pipeline update: $st $(tr '\n' ' ' < "$W/err1" | cut -c1-300)"
   for t in $TABLES; do same "$t" 1; done
+  hook 1
   gold 1
   [ -n "$GOLD" ] && observe gold-refresh-1 "update 1: $(refresh)"
 
@@ -1831,6 +1837,7 @@ if [ "$PHASE" -ge 2 ]; then
     *) claim changes-2 FAIL "fewer events than expected: $r$(capture_note)";; esac
   st=$(run_silver); [ "$st" = COMPLETED ] || claim silver-update-2 FAIL "pipeline update: $st"
   for t in $TABLES; do same "$t" 2; done
+  hook 2
   gold 2
   [ -n "$GOLD" ] && observe gold-refresh-2 "update 2, after round 2: $(refresh)"
   [ "$PHASE" -ge 3 ] && observe clustering "clustering columns: $(for t in $TABLES $GOLD; do printf '%s %s; ' "$t" "$(q "DESCRIBE TABLE EXTENDED $T.$t" 2>/dev/null | grep -o -E 'clusteringColumns=\[\[[^]]*\]\]' | head -1)"; done | cut -c1-600)"
@@ -1850,6 +1857,7 @@ if [ "$PHASE" -ge 2 ]; then
       *) claim changes-3 FAIL "fewer events than expected: $r";; esac
     st=$(run_silver); [ "$st" = COMPLETED ] || claim silver-update-3 FAIL "pipeline update: $st"
     for t in $TABLES; do same "$t" 3; done
+    hook 3
     gold 3
     # each source's own history: its changefeed from T, with each row's commit time (`updated`), or its audit table
     for i in $(seq 1 "$NSRC"); do use "$i"
