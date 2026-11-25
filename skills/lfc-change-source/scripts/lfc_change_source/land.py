@@ -73,7 +73,9 @@ def gateway_key_sql(keys: dict | None, event: str = "event") -> str:
 
 
 def backfill_keys(session, log: str, name: str, keys: dict) -> int | None:
-    """Fill the key of this gateway's rows landed without one (before gateway_keys): one UPDATE; rows changed."""
+    """Fill the key of this gateway's rows landed without one (before gateway_keys): one UPDATE; rows changed. A
+    streaming reader of the log fails on it (DELTA_SOURCE_TABLE_IGNORE_CHANGES) unless it reads with
+    skipChangeCommits (lfc-log-silver's AUTO CDC pipeline does): run it before such readers start, or with that."""
     rows = session.sql(f"UPDATE {log} SET key = {gateway_key_sql(keys, 'value')} WHERE gateway = {_lit(name)} AND "
                        "key IS NULL AND operation <> 'resolved'").collect()
     return _inserted(rows, "num_affected_rows")
