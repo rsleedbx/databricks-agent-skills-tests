@@ -13,6 +13,14 @@ log carries changes only: each table's snapshot is a table of its own ([design-n
 | Debezium Server through Zerobus | rows Zerobus writes into the log | the source's own (LSN, binlog position, SCN, ...) | Zerobus: no landing compute | `cdc_log` |
 | CockroachDB changefeed (`format='json'`, `initial_scan = 'no'`) | JSON files in cloud storage or a Volume, a folder a table | the HLC | `COPY INTO` (`land.changefeed`) | `changefeed_log` |
 
+## Schema changes
+
+A source's schema change is one more event in the log, at its position, from the source's own record of it: SQL
+Server's `cdc.ddl_history` (with its `ddl_lsn`), Debezium's schema change events (MySQL, SQL Server, Oracle), a
+gateway's schema files (versioned at its cursor), and for PostgreSQL, whose logical decoding sends no DDL, an event
+trigger writing each DDL into a captured table, so its rows arrive in order with the changes. How silver reads rows
+around it: [design-no-full-refresh.md](design-no-full-refresh.md).
+
 ## Latency
 
 A change reaches silver after the log's latency plus its silver cell's: Zerobus writes each event as it comes, with no

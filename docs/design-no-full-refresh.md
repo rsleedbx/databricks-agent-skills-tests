@@ -48,6 +48,23 @@ for every member, and a member's new snapshot only recreates its view ([design-s
 The source is read once a table, for its snapshot; every later state comes from the log. A table that must change
 shape (a type change) is rebuilt from its snapshot table and the log, never from the source.
 
+**A schema change is an event at its position, not a refresh.** Databases treat `ADD COLUMN ... DEFAULT x`, a
+rename and a type change as metadata: existing rows aren't rewritten, and the change is a fact at a moment. The change
+log records it the same way, at its position P (layer 1), and silver reads each row by which side of P its last
+change is on. No new snapshot, no rebuild from the source:
+
+| Change at P | In the log at P | A row whose last change is before P (snapshot rows taken before P too) | after P |
+|---|---|---|---|
+| `ADD COLUMN c DEFAULT x` | `{operation: schema, add: c, default: x}` | `c` reads `x` | carries `c` |
+| rename `a` -> `b` | `{rename: a -> b}` | `b` reads `a` | carries `b` |
+| type change of `c` | `{retype: c, from, to}` | decoded as the old type, cast to the new (a narrowing change is flagged, not applied) | the new type |
+| drop `c` | `{drop: c}` | as it was | `c` NULL, or dropped: routing's choice |
+
+Routing reads the schema events and decides each table's action; silver carries it out: a view or a shared member's
+view is recreated with the rules (one `CASE` on the row's position a schema event), a MERGE table gets the column
+added or widened (`ALTER TABLE`) and its existing rows set by the rule. A snapshot taken after P already has the new
+shape. n:1 and gold see an ordinary column change.
+
 **A checkpoint is an internal resnapshot.** A year of changes can rewrite a table; a rebuild or a view shouldn't replay
 them from the first snapshot. `flowthrough.checkpoint` writes each table's current rows as of a position P into a new
 snapshot table, from silver (a MERGE table's is a copy of itself; a view's or a shared member's is its rows), records
