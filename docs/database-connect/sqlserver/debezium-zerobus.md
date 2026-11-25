@@ -1,56 +1,50 @@
 # SQL Server: create an ingestion pipeline with Debezium through Zerobus
 
-Debezium Server reads SQL Server's CDC change tables and its Zerobus sink writes each change into an append-only
-change log in Unity Catalog. Silver is kept from that log. Back to [database connectors](../README.md).
+You run Debezium Server next to SQL Server; its Zerobus sink writes every change into one append-only change log in
+Unity Catalog. The fan-in bundle ([lfc-fanin](../../../skills/lfc-fanin/SKILL.md), `connector_type: fanin_dbz_zbus`)
+builds silver from that log. Back to [database connectors](../README.md).
 
-Tested with SQL Server 2022 (16.0.4305) and Debezium Server 3.7, Zerobus sink, into a serverless Azure workspace:
-inserts, updates and deletes reach silver equal to the source, and several sources into one set of tables
-([lakeflow-connect-zerobus.md](../../lakeflow-connect-zerobus.md)).
+## Tested
 
-## Requirements
+2026-11-24, SQL Server 2022 (16.0.4305.5, Developer) and Debezium Server 3.7.0.Final (Zerobus sink) in containers on an Azure VM, into a serverless
+Azure workspace. The source holds [TPC-H](../../tpc-models.md#tpc-h) at SF 0.001 (8 tables).
 
-- **SQL Server:** CDC on for the database and each table (`sys.sp_cdc_enable_db`, `sys.sp_cdc_enable_table`), the
-  SQL Server Agent running (its capture job fills the change tables), and a login that can read them. The test's
-  setup: [mssql-cdc.sql](../../../skills/zerobus-debezium-test/scripts/sources/mssql-cdc.sql).
-- **Debezium Server** next to the database, with outbound 443 to the workspace's Zerobus endpoint.
-- **Unity Catalog:** a catalog and schema for the change log, a service principal with `MODIFY` on it (Zerobus
-  writes as it), and a Unity Catalog connection to the database for silver's schema reads.
+| Step | Result |
+|---|---|
+| Your side: snapshot, Debezium, Zerobus, the change log | every claim passed: each table's inserts, updates and deletes in the log within 1 s; the snapshot stays out of the log |
+| The fan-in bundle: `bundle deploy`, `bundle run fanin_job` | created the view `cdc_log` over your log and the silver pipeline; one update |
+| Silver against the source | all 8 tables equal (row count and a hash of every row), after two rounds of changes |
 
-## Create the ingestion pipeline
+## Your side: SQL Server, Debezium, Zerobus
 
-1. **The change log.** One Delta table for every source table: `destination STRING, operation STRING, key VARIANT,
-   value VARIANT, ...`, `CLUSTER BY (destination)` (lfc-change-source `land.ensure_log` makes it).
-2. **The snapshot.** Each table's rows as of the time Debezium starts from, into a Volume (Parquet), so the first load
-   doesn't go through Zerobus.
-3. **Debezium Server.** The SQL Server connector with the Zerobus sink, the tables to capture, starting after the
-   snapshot. Its config: the test's [zerobus-debezium-test](../../../skills/zerobus-debezium-test/SKILL.md).
-4. **Silver.** lfc-log-silver: each table's current rows from its snapshot and its changes in the log, kept by the
-   method its route picks (a group's shared table for most small tables, a MERGE, or AUTO CDC for the busiest):
-   [lfc-log-silver](../../../skills/lfc-log-silver/SKILL.md).
-
-You run Debezium; Databricks only receives. The change log is the hand-off: a fan-in reader needs to know only its
-table name.
-
-## Deploy
-
-**As a script** (what the tests run, end to end, with checks against the source: SQL Server in a container, Debezium,
-Zerobus, silver, gold):
+The skill [zerobus-debezium-test](../../../skills/zerobus-debezium-test/SKILL.md) sets it up and checks it: SQL Server
+with CDC, the snapshot as of T in a Volume, Debezium Server with the Zerobus sink, the service principal and the
+change log. What the fan-in needs from it is the log and the Volume, which `KEEP=1` leaves:
 
 ```bash
-PROFILE=<cli-profile> CATALOG=<catalog> VM_IP=<vm-ip> SOURCES=mssql MODELS=tpch NSRCS=1 PARALLEL=1 \
-  bash skills/zerobus-debezium-test/scripts/matrix.sh
+PROFILE=<cli-profile> CATALOG=<catalog> VM_IP=<vm-ip> SOURCE=mssql MODEL=tpch NSRC=1 PHASE=2 KEEP=1 \
+  bash skills/zerobus-debezium-test/scripts/debezium-zerobus.sh
+# prints: schema <catalog>.<run schema>, the change log <catalog>.<run schema>.cdc_log,
+#         the Volume /Volumes/<catalog>/<run schema>/snapshot
 ```
 
-`NSRCS=2` merges two SQL Server sources into one set of tables. The workspace needs Zerobus first
-([zerobus-workspace-setup](../../../skills/zerobus-workspace-setup/SKILL.md)).
+Your own Debezium works the same way when it writes that log and Volume layout (the skill's
+[references](../../../skills/zerobus-debezium-test/references/) describe both).
 
-**From a notebook or job:** with the change log already written by your Debezium Server, silver is a call per round:
+## The fan-in: deploy
 
-```python
-from lfc_change_source import routing
-from lfc_log_silver import silver
-tables = {t: silver.from_route(src[t], route) for t, route in routing.plan(stats, policy).items()}
-silver.run(spark, tables, "`main`.`silver`", to, first=True)    # the first round builds; later rounds apply
+```bash
+cd skills/lfc-fanin/bundle
+export BUNDLE_VAR_pipeline_name=orders-fanin BUNDLE_VAR_connector_type=fanin_dbz_zbus BUNDLE_VAR_source_type=SQLSERVER \
+  BUNDLE_VAR_dest_catalog=<catalog> BUNDLE_VAR_dest_schema=<fan-in schema> \
+  BUNDLE_VAR_change_log=<catalog>.<run schema>.cdc_log BUNDLE_VAR_snapshot_volume=/Volumes/<catalog>/<run schema>/snapshot
+databricks bundle deploy -p <cli-profile>
+databricks bundle run fanin_job -p <cli-profile>      # each run brings silver up to date; -t scheduled: every 15 minutes
 ```
 
-Not covered yet: a bundle that deploys the Databricks side alone (schema, service principal grant, silver job).
+It creates, in `<catalog>.<fan-in schema>`: a view `cdc_log` over your log, the silver pipeline `<name>-silver`
+(one table per source table, SCD type 1, and `<table>_history`, SCD type 2; `schema_drift` records values that didn't fit), and `_fanin` (what it made). Running it
+again changes nothing it made, and runs one silver update.
+
+From a notebook instead of a bundle: [the bundle's notebook](../../../skills/lfc-fanin/bundle/notebooks/fanin.py)
+(the same `fanin.create` and `fanin.land` calls).
