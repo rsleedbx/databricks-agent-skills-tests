@@ -1,5 +1,30 @@
 # FlowThrough: from source changes to gold in four layers
 
+FlowThrough is low latency, high throughput, scales to 10,000s of tables and supports n:1 fan-in. Best of all, there
+is never a full table refresh, by design.
+
+| | How |
+|---|---|
+| **Low latency** | each change lands in one append-only log as it arrives |
+| **High throughput** | whole files landed at a time, a busy table on a log of its own |
+| **10,000s of tables** | small tables share one table and one MERGE a group |
+| **n:1 fan-in** | many sources into one table each (layer 3) |
+| **No full table refresh** | the log only grows; nothing is ever re-read from the source |
+
+- **Latency:** Zerobus writes each change into the log, or a gateway's files are copied in once each; the busiest
+  tables are kept by AUTO CDC in a continuous pipeline.
+- **Throughput:** one log per transport, clustered by table; a table busy enough to slow the others gets its own.
+- **Scale:** a group of small tables keeps its current rows in one table, one MERGE a round for the group and a view
+  per table; big ones get a MERGE of their own or AUTO CDC, picked by each table's size and change rate.
+- **Fan-in:** each source (a line of business, a tenant, a region) into one table each, whatever transport or silver
+  method it came through.
+- **No full refresh:** a new snapshot is appended to the log, and each silver table catches up from its last
+  position. A silver table that must change shape (a type change) is rebuilt from the log, never from the source.
+
+Tested so far: every transport landed and rebuilt equal to the source; one gateway from 100 to 5,000 tables; shaped
+rounds on 500 tables with each silver method; n:1 merges in lfc-medallion; a table recovered by a new snapshot
+appended to the log. 10,000s of tables and many-source fan-in through one log are the design's targets, not yet run.
+
 FlowThrough is the technique this page describes: changes flow through four layers, each with its own short table.
 It is not a package. Its parts are the skills each layer names (lfc-change-source, lfc-log-silver, lfc-medallion).
 The fan-in bundle ([lfc-fanin](../skills/lfc-fanin/SKILL.md)) deploys an ingestion; its Debezium route builds silver
