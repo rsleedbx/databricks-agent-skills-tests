@@ -29,7 +29,8 @@ what has been tested, and where it falls short. When a gap closes, its row goes 
 | The dashboard shows each ingestion | deployed by `lfc_log_silver/dashboard.py`; the fan-in bundle doesn't deploy it or run observe | a bundle resource, and observe in the fan-in job |
 | A new snapshot or a type change never needs the source | AUTO CDC tables don't handle either yet | restart that table's flows from its snapshot table and the log |
 | A new snapshot is a new table, swapped in | the old snapshot table (and a checkpoint's predecessor) isn't dropped | drop it once nothing reads it |
-| A checkpoint when changes have rewritten much of a table | `flowthrough.checkpoint` runs when called | a trigger: changes since the snapshot past a share of its rows, or a schedule |
+| A checkpoint when changes have rewritten much of a table, decided by routing | `flowthrough.checkpoint` runs when called | a trigger in routing: changes since the snapshot past a share of its rows, or a schedule |
+| A checkpoint's steps each in their layer | `silver.checkpoint` writes the snapshot table and switches silver over in one function | "from silver" as a snapshot source beside `intake`'s; silver's part is its `renewed` handling |
 | A gateway doing the CDC can take QBC's snapshot | the gateway's task always asks for its own snapshot | a task option to take none |
 | A big table's snapshot from the customer's files | `intake.parquet_in_place` and `intake.files` exist, not run on a CockroachDB `initial_scan = 'only'` export | that run |
 | 10,000s of tables, many sources through one log | not run | a scale run |

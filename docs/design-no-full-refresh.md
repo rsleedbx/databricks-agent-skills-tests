@@ -66,8 +66,15 @@ added or widened (`ALTER TABLE`) and its existing rows set by the rule. A snapsh
 shape. n:1 and gold see an ordinary column change.
 
 **A checkpoint is an internal resnapshot.** A year of changes can rewrite a table; a rebuild or a view shouldn't replay
-them from the first snapshot. `flowthrough.checkpoint` writes each table's current rows as of a position P into a new
-snapshot table, from silver (a MERGE table's is a copy of itself; a view's or a shared member's is its rows), records
-it so every later round starts there (a MERGE table isn't rebuilt; views are recreated over it), then deletes the
-log's changes up to P for those tables (lfc-change-source `land.trim`). The log then holds only what's after the last
-checkpoint.
+them from the first snapshot. A checkpoint isn't a layer of its own: it's a loop, silver's output going back in as a
+snapshot, each step in the layer that already does that job:
+
+| Step | Layer |
+|---|---|
+| decide when: a table's changes since its snapshot pass a share of its rows, or a schedule | 3. Routing |
+| write its current rows as of a position P into a new snapshot table: silver is one more snapshot source, beside QBC, files and a gateway (a MERGE table's is a copy of itself; a view's or a shared member's is its rows) | 2. Snapshot |
+| switch to it: views recreated over it, a MERGE table recorded at P, not rebuilt (`silver.renewed`) | 4. Silver |
+| trim the log up to P, once every table reading that log has a checkpoint at or past it (`land.trim`) | 1. CDC |
+
+The log then holds only what's after the last checkpoint. A rebuild after a schema change is different: silver
+recomputing from its own inputs, the snapshot table and the log, with no new snapshot.

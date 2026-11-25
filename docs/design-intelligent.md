@@ -1,8 +1,10 @@
 # FlowThrough: intelligent routing
 
-Routing (layer 3) decides how each table combines its CDC and its snapshot, and its way through every layer, from what the source already knows about it, not asked of
-the user table by table ([design.md](design.md)): its change log and shards (CDC), its snapshot method (snapshot), and
-its silver cell (view, shared group, MERGE, AUTO CDC). The layers carry the decision out; none of them decides it.
+Routing (layer 3, [design.md](design.md)) decides how each table combines its CDC and its snapshot, from what the
+source already knows about it, not asked of the user table by table: its change log and shards (CDC), its snapshot
+method (snapshot), its silver cell (view, shared group, MERGE, AUTO CDC), what a schema change does to it (from the
+schema events in the log: [design-no-full-refresh.md](design-no-full-refresh.md)), and when it's checkpointed. The
+layers carry each decision out; none of them decides it.
 
 **From relationships: its role.** cdc-table-plan `classify.py` reads a canonical schema's keys and foreign keys (and
 row counts and activity, when known) and names each table's role, for the customer to check:
