@@ -1,12 +1,12 @@
 # FlowThrough: scale, one table's silver
 
-Silver (layer 4, [design.md](design.md)) combines each table's snapshot and CDC: it keeps its current rows by the cell routing gave it: routing decides
-([design-intelligent.md](design-intelligent.md)), silver carries it out (lfc-log-silver `silver.run`; `flowthrough.step`
-moves a table when its route changes).
+Silver (layer 4, [design.md](design.md)) combines each table's snapshot and CDC: it keeps its current rows by the cell
+routing gave it: routing decides ([design-intelligent.md](design-intelligent.md)), silver carries it out
+(lfc-log-silver `silver.run`; `flowthrough.step` moves a table when its route changes).
 
-A table's cell follows from its size and how fresh its silver must be (slow, fast, realtime). Every cell reads the table's current rows one way (its snapshot
-table, then each key's last change after it: [design-no-full-refresh.md](design-no-full-refresh.md)), so every cell
-gives the same table (lfc-log-silver).
+A table's cell follows from its size and how fresh its silver must be (slow, fast, realtime). Every cell reads the
+table's current rows one way (its snapshot table, then each key's last change after it:
+[design-no-full-refresh.md](design-no-full-refresh.md)), so every cell gives the same table (lfc-log-silver).
 
 | | slow | fast | realtime |
 |---|---|---|---|
