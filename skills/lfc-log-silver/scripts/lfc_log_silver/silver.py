@@ -180,6 +180,34 @@ def build(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     return done
 
 
+def _norm_type(t: str) -> str:
+    return "".join(str(t).lower().split()).replace("integer", "int")
+
+
+def silver_columns(session, schema: str) -> dict:
+    """{table: {column: type}} of every table and view in the silver schema (information_schema, one query)."""
+    cat, sch = [x.strip("`").replace("``", "`") for x in schema.split("`.`")]
+    rows = session.sql(f"SELECT table_name, column_name, full_data_type FROM {_q(cat)}.information_schema.columns "
+                       f"WHERE table_schema = {_lit(sch)}").collect()
+    out: dict = {}
+    for r in rows:
+        out.setdefault(r[0], {})[r[1].lower()] = _norm_type(r[2])
+    return out
+
+
+def schema_changed(session, tables: dict, schema: str) -> list:
+    """The silver tables whose columns (names or types) differ from their source's now (a table not built yet left
+    out): its view is recreated, its MERGE table rebuilt from the log."""
+    have = silver_columns(session, schema)
+    out = []
+    for n, t in tables.items():
+        cur = have.get(n.lower())
+        want = {c.lower(): _norm_type(ty) for c, ty in t.src.columns.items()}
+        if cur is not None and cur != want:
+            out.append(n)
+    return out
+
+
 def renewed(newest: dict, kept_snap: dict, names) -> list:
     """The tables whose newest snapshot is newer than the one they were built from (a recorded one: a table with
     none recorded, from before the column, just records it)."""
@@ -206,7 +234,7 @@ def changed(session, tables: dict, schema: str, to) -> list:
             or (n in newest and order(newest[n]) > order(kept[n][1]))]
 
 
-def apply(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_schema: list | None = None) -> dict:
     """Each table: one MERGE of its changes after its kept position up to `to`; a table with only_changed and no
     event past its position is skipped. {name: (rows, seconds)} for the tables merged."""
     from lfc_change_source.contract import Position
@@ -216,6 +244,7 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     kept = positions(session, schema)
     newest = newest_snapshots(session, tables)
     redo = set(renewed(newest, snapshots(session, schema), tables))   # a newer snapshot: rebuilt from the log
+    redo |= set(changed_schema or ()) & set(tables)                    # a schema change: rebuilt from the log too
 
     def after(n):
         kind, pos = kept.get(n, (to.kind, None))
@@ -378,22 +407,29 @@ def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
 
 def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False) -> dict:
     """One round for every table by its method: shared groups built (with their views) on the first round, one MERGE
-    a group after it; views created on the first round only; merged tables built on the first round, merged after it (only_changed: only those with events past their position); auto_cdc tables left to
-    their pipelines. {method: {"tables": n, "done": n, "seconds": s}} (shared: "done" counts groups)."""
+    a group after it; views created on the first round (and again after a schema change); merged tables built on the
+    first round, merged after it (only_changed: only those with events past their position; rebuilt from the log
+    after a schema change or a newer snapshot); auto_cdc tables left to their pipelines. {method: {"tables": n, "done": n, "seconds": s}} (shared: "done" counts groups)."""
     by = {m: {n: t for n, t in tables.items() if t.method == m} for m in METHODS}
+    moved = [] if first else schema_changed(session, {n: t for n, t in tables.items() if t.method != "auto_cdc"}, schema)
     bad = [n for n, t in tables.items() if t.method not in METHODS]
     if bad:
         raise ValueError(f"tables with no method here: {bad[:5]} (one of {', '.join(METHODS)})")
     out = {}
     t0 = time.time()
     done = (build_shared if first else apply_shared)(session, by["shared"], schema, to, threads) if by["shared"] else {}
+    remade = [n for n in moved if n in by["shared"]]   # a member's new columns: its view over the group, again
+    if remade:
+        _each(session, {n: shared_view_sql(by["shared"][n], schema, _target(schema, n)) for n in remade}, threads)
     out["shared"] = {"tables": len(by["shared"]), "groups": len(_groups(by["shared"])) if by["shared"] else 0,
                      "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
-    done = views(session, by["view"], schema, threads) if first and by["view"] else {}
+    done = views(session, by["view"] if first else {n: by["view"][n] for n in moved if n in by["view"]}, schema,
+                 threads) if by["view"] else {}
     out["view"] = {"tables": len(by["view"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
-    done = (build if first else apply)(session, by["merge"], schema, to, threads) if by["merge"] else {}
+    done = (build(session, by["merge"], schema, to, threads) if first else
+            apply(session, by["merge"], schema, to, threads, [n for n in moved if n in by["merge"]])) if by["merge"] else {}
     out["merge"] = {"tables": len(by["merge"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     out["auto_cdc"] = {"tables": len(by["auto_cdc"]), "done": 0, "seconds": 0.0}
     return out

@@ -47,6 +47,12 @@ lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "
 - `build` makes each merged table from its current rows and keeps the run's position in `<silver schema>._log_silver`;
   `apply` runs one MERGE a table of each key's last change after it, `threads` at once; `only_changed` skips a table
   with no event past its position (one grouped query finds them).
+- A newer snapshot of a table (a gateway tags each snapshot's rows) replaces the older one: views and builds read
+  only the newest snapshot and the changes after it, a MERGE table whose snapshot is newer than the one it was built
+  from is rebuilt from the log, and so is a shared group when a member's is (the state keeps each one's snapshot).
+- A schema change (a table's columns, by name and type, differ from its source's now): its view is recreated, its
+  MERGE table rebuilt from the log, a shared member's view recreated. Never a read of the source. AUTO CDC tables
+  don't do either yet: a new snapshot or a type change there needs that table restarted from the log.
 - `auto_cdc_tables` writes the lists for `pipelines/auto_cdc_from_log.py`, at most 999 tables a pipeline (a pipeline
   takes up to 1,000 tables, and its setup grows with its flows). A snapshot read in place adds a second flow that
   streams its parquet files (an AUTO CDC flow reads its source as a stream, so a batch view is refused), sequenced by

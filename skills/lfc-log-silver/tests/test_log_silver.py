@@ -129,6 +129,17 @@ class NewerSnapshot(unittest.TestCase):
         self.assertNotIn("_snap", q2)                                                       # a round: changes only
 
 
+class SchemaChange(unittest.TestCase):
+    def test_a_table_whose_columns_differ_from_its_source(self):
+        rows = [("same", "id", "int"), ("same", "v", "string"), ("wider", "id", "int"), ("wider", "v", "string"),
+                ("retyped", "id", "bigint"), ("retyped", "v", "string")]
+        sess = types.SimpleNamespace(sql=lambda q: types.SimpleNamespace(collect=lambda: rows))
+        tables = {n: silver.Table(src(n)) for n in ("same", "retyped", "new")}
+        wide = from_gateway("gw", LOG, dict(ENTRY, columns=ENTRY["columns"] + [("w", "INT", "C3")]), "db.s.wider")
+        tables["wider"] = silver.Table(wide)
+        self.assertEqual(sorted(silver.schema_changed(sess, tables, "`c`.`s`")), ["retyped", "wider"])   # new: not built
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),
