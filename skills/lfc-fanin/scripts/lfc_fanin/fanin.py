@@ -91,6 +91,7 @@ def silver_code(w, folder: str, archive: str) -> None:
     with urllib.request.urlopen(archive, timeout=120) as r:   # the tests repo archive (https)
         z = zipfile.ZipFile(io.BytesIO(r.read()))
     top = z.namelist()[0].split("/")[0]
+    w.workspace.mkdirs(folder)
     for f in SILVER_FILES:
         w.workspace.upload(f"{folder}/{f.rsplit('/', 1)[1]}", io.BytesIO(z.read(f"{top}/{f}")),
                            format=ImportFormat.RAW, overwrite=True)
