@@ -111,7 +111,7 @@ class AlignedOnSpark(unittest.TestCase):
         try:
             cls.spark = (SparkSession.builder.master("local[1]").config("spark.ui.enabled", "false")
                          .config("spark.sql.session.timeZone", "UTC").getOrCreate())
-        except RuntimeError as e:   # Databricks Connect's pyspark: remote sessions only (bin/test_scripts.sh runs this
+        except RuntimeError as e:   # Databricks Connect's pyspark: remote sessions only (the repo's test runner runs this
             raise unittest.SkipTest(f"no local Spark session: {str(e)[:80]}") from e   # with pyspark through uv)
 
     def stack(self, a, b):

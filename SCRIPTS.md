@@ -22,6 +22,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `bin/test_gate.py` should a check of bin/test_scripts.sh run, given what changed since it last passed?
 - `bin/test_scripts.sh` regression tests for the skills' scripts.
 - `bin/test_skip/scripts/test_skip.py` Vendored copy of shared unit 'test_skip': edit the master, then run `reuse-first vendor sync` (any other edit shows a...
+- `bin/test_timings.py` [timings.tsv] [--top N]: what bin/test_scripts.sh's checks cost, from the timings it appends (TEST_TIMINGS, default ~...
 
 ## account-token-fallback
 
