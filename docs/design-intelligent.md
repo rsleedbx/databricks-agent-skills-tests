@@ -26,6 +26,18 @@ after that position. This works after the snapshot has started too, as long as t
 the position the snapshot is combined from is still in a log. A person can ask for a split (`decisions`), or the plan
 can propose one when a table's rate outgrows its log.
 
+**Restarting a producer is one abstraction for every transport** (CDC layer, used by every split and by any recovery):
+`position()` (where the producer has got to), `stop()`, and `start(at, routes)` (from a position, with a destination
+log for each table). Each transport is an adapter behind it, tested on its own with fakes and live:
+
+| Adapter | Position | Destination per table |
+|---|---|---|
+| Debezium Server | its offset store (an LSN, an SCN, a binlog file and position) | its sink's target table: a new log is a new Zerobus target table, so the Zerobus side changes with it |
+| Lakeflow Connect gateway | its cursor in the staging volume | the gateway's tables and the landing that copies them into a log |
+
+The plan only names the new routes; this module carries them out, and silver reads each table from its log after the
+position it was restarted at.
+
 **The plan, before anything is captured.** Routing reads, for every source:
 1. the schema: tables, keys, foreign keys (each table's role, below);
 2. the statistics: rows, bytes, and inserts, updates and deletes over a known time;
