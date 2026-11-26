@@ -45,28 +45,15 @@ same reduction for every transport (conformance `gateway_log`). A CockroachDB ch
 (`land.changefeed`, read by `changefeed_log`). Use `format='json'`: its parquet writer fills a DECIMAL with the
 number's text, so other readers get wrong numbers.
 
-**Which log, which snapshot method.** [routing.py](scripts/lfc_change_source/routing.py) gives each table a class
-from its snapshot's bytes and its change rate, or by name, and with it how its silver is kept and how its snapshot is
-taken (`snapshot_by`: `qbc` by default, the customer's `files` past 10 TB). Every snapshot is a Delta table:
-
-| Class | Changes | Silver |
-|---|---|---|
-| `small_slow` | the shared log | shared: a group's table of changes, a view a table over it and its snapshot table |
-| `small_fast` | the shared log | shared, or a MERGE of its own every round |
-| `big_slow` | the shared log | a MERGE when changed |
-| `big_fast` | a log of its own, sharded by key hash once one stream can't carry it | AUTO CDC, a continuous pipeline |
-
-A busy table in the shared log makes every other table's read skip its events, so a fast table gets its own log, and
-its own gateway or Debezium target table, since a gateway's change files mix its tables. The log carries changes
-only: each table's snapshot is a Delta table of its own (`qbc`, or `intake` for any other arrival, a gateway's
-staging included: `intake.gateway` copies it by name with its position). The suggestion from a
-source's statistics, and what changing a route later takes (most changes are a cut-over at a position, no new
-snapshot), and when a small table leaves its group (`routing.plan`): [references/routing.md](references/routing.md).
+**Which log, which snapshot method, which silver cell** is routing's decision, made in the routing layer's own skill, not here.
+The log carries changes only: each table's snapshot is a Delta table of its
+own (`qbc`, or `intake` for any other arrival, a gateway's staging included: `intake.gateway` copies it by name with
+its position).
 
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).
 
-FlowThrough, the four layers (transport, a table's silver, many sources into one, gold), each in one table: [docs/design.md](../../docs/design.md).
+FlowThrough's six layers (routing, CDC, snapshot, silver, n:1, gold): [docs/design.md](../../docs/design.md).
 
 ## Conformance: an adapter is done when this passes
 

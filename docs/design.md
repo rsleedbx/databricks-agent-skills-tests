@@ -21,7 +21,7 @@ another's choices.
 
 | Layer | What it does | Detail | Skill |
 |---|---|---|---|
-| 1. Routing | first, the plan: the schema, the statistics and the tables in scope decide each table's CDC log, snapshot method and first silver cell; then every round, its measured rate moves it | [design-intelligent.md](design-intelligent.md) | lfc-change-source `routing`, lfc-log-silver `flowthrough` |
+| 1. Routing | first, the plan: the schema, the statistics and the tables in scope decide each table's CDC log, snapshot method and first silver cell; then every round, its measured rate moves it | [design-intelligent.md](design-intelligent.md) | lfc-routing `routing`, lfc-log-silver `flowthrough` |
 | 2. CDC | every source's changes (Zerobus, a gateway, a changefeed, ...) into one shape: an append-only change log, changes only | [design-transport.md](design-transport.md) | lfc-change-source |
 | 3. Snapshot | every table's rows once, by the method routing chose (a direct JDBC read, QBC, a gateway's own, the customer's files), into a Delta table of its own, after its CDC has started | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `intake`) |
 | 4. Silver | combines them: the snapshot table and the log's changes after it, kept by the cell routing chose (view, shared group, MERGE, AUTO CDC) | [design-scale.md](design-scale.md) | lfc-log-silver `silver` |

@@ -65,6 +65,7 @@ layers:
       - lfc-schema-change-test
       - lfc-downstream-history
       - lfc-medallion
+      - lfc-routing
       - lfc-log-silver
       - lfc-fanin
       - lfc-connection-sync

@@ -28,7 +28,7 @@ row counts and activity, when known) and names each table's role, for the custom
 | log | no primary key, or inserts only, named like a log |
 | queue | inserts and deletes, few updates |
 
-**From statistics: its class.** lfc-change-source `routing` puts each table in one of four classes by its snapshot's
+**From statistics: its class.** lfc-routing `routing` puts each table in one of four classes by its snapshot's
 size and its change rate:
 
 | Class | Size, changes | Its share |

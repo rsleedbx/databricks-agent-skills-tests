@@ -5,7 +5,7 @@ shared) and build(session, schema, snapshot, steps, columns, keys) for the confo
 SNAPSHOTS: each snapshot method by name, chosen apart from the transport (docs/design-no-full-refresh.md): qbc, a
 query-based pipeline; the others are a transport's own (a gateway's staging, a changefeed's initial scan, in the log).
 Whatever the method, a snapshot read in place reaches silver as a Delta table with the source's column names and types.
-routing.py says which log and snapshot path each table takes, by its class (dimension, big_slow, big_fast).
+Which log, snapshot method and silver cell each table takes is routing's decision (lfc-routing).
 """
 from . import cdc_log, changefeed_log, gateway_log, gateway_staging, lfc_bronze, qbc
 

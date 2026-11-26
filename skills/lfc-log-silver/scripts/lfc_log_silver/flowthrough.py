@@ -4,7 +4,7 @@ route changed, and its silver kept, so the code follows the design's routing ins
   measure  each table's change rate from the log (its events since the last round over the time since), its size
            from the caller (the transport's adapter knows it: a gateway's snapshot bytes, a Volume's files); the first
            round has no rate yet, so every table starts slow and the next rounds move the busy ones
-  plan     lfc-change-source routing.plan on those numbers (classes, shared groups, the rules that take a small
+  plan     lfc-routing routing.plan on those numbers (classes, shared groups, the rules that take a small
            table out of its group), compared with the last round's plan kept in <schema>._flowthrough
   move     only the tables whose method or group changed: to a view (its table dropped), to a MERGE (built from the
            log, its view dropped), into a group (the group rebuilt), out of one (its rows deleted from the group's
@@ -97,7 +97,7 @@ def observe(session, schema: str, sources: dict, policy, ready: dict | None = No
     (the rows changed so far), and recreated once over its snapshot when that becomes ready (a metadata change). Then
     step() with the pinned policy moves each view to its route, from its snapshot and the log. Returns the proposal
     by method, the rates, and the views made this round."""
-    from lfc_change_source import routing
+    from lfc_routing import routing
     ready = ready or {}
     silver.ensure_state(session, schema)   # empty until step() stores a table: the dashboard reads it from the start
     now, prev, got, rates = measure(session, schema, sources, now)
@@ -126,7 +126,7 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
     """One round (module doc). sources: {name: an lfc_change_source source}; sizes: {name: snapshot bytes};
     extra: {name: {snapshot_table, position}} for a snapshot read in place (a Delta table). Returns the routes by
     method, the moves with what each took, silver.run's result and the AUTO CDC lists (changed: recreate them)."""
-    from lfc_change_source import routing
+    from lfc_routing import routing
     now, prev, got, rates = measure(session, schema, sources, now)
     routes = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
     tables = {n: silver.from_route(s, routes[n], **snapshot_of(prev, n, extra)) for n, s in sources.items()}

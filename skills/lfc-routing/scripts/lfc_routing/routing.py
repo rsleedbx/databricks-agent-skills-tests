@@ -32,7 +32,7 @@ tables, so such a table goes on a gateway (or a Debezium target table) of its ow
 whole files. The thresholds are starting points to measure against, set per deployment; any table's class (and its
 silver) can be chosen by name.
 
-    from lfc_change_source import routing
+    from lfc_routing import routing
     p = routing.Policy(shared_log="`main`.`ctl`.`cdc_log`")
     routes = routing.plan({"db.s.orders": (5 << 40, 250_000), "db.s.region": (4096, 0.01)}, p)
     routes["db.s.orders"].log, routes["db.s.orders"].shards, routes["db.s.region"].silver   # own log, 3, view
@@ -42,7 +42,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .cdc_log import SEQUENCES, TEXT
+from lfc_change_source.cdc_log import SEQUENCES, TEXT
 
 CLASSES = ("small_slow", "small_fast", "big_slow", "big_fast")
 SILVER = {"small_slow": "shared", "small_fast": "shared", "big_slow": "merge_changed", "big_fast": "auto_cdc"}

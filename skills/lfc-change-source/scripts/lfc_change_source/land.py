@@ -85,7 +85,7 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
             keys: dict | None = None) -> int | None:
     """The gateway's change files not landed before into the log; the rows added. only / skip: the tables
     (<catalog>.<schema>.<table>) whose events go to this log, or don't: one gateway's events split between logs (a
-    big_fast table's own log, routing.py), each log landing whole files with its own filter. keys (gateway_keys):
+    big_fast table's own log, lfc-routing), each log landing whole files with its own filter. keys (gateway_keys):
     each row's key filled in (silver's shared groups need it)."""
     where = ""
     if only:

@@ -14,7 +14,7 @@ code path follows two things only, how its silver is kept and where its snapshot
 | snapshot read in place | - | 4 | 5 | 6 |
 
 Every method reads a table's current rows one way, the source's `current_sql` (the snapshot wherever it is, then each
-key's last change after it), so every cell gives the same table. lfc-change-source `routing.py`'s classes pick the
+key's last change after it), so every cell gives the same table. lfc-routing `routing.py`'s classes pick the
 cell: `small_slow` and `small_fast` 0, `big_slow` 5 (merged only in a round that changed it), `big_fast` 6; `routing.plan`
 takes a small table out of its group (to 1 or 2) when it needs its own table, carries much of its group's changes, or
 is read often. A small table costs per statement (a MERGE has a fixed floor of seconds whatever it merges), a big one
@@ -29,7 +29,7 @@ FlowThrough, the four layers (transport, a table's silver, many sources into one
 ## Use
 
 ```python
-from lfc_change_source import routing
+from lfc_routing import routing
 from lfc_log_silver import silver
 
 # a Table: its change source, its method, and (snapshot read in place) its snapshot_table and position
@@ -77,7 +77,7 @@ lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "
   `link.templatedURL` and `displayAs: link` are ignored): a column's link is
   `"actions": {"click": {"type": "link", "urlTemplate": "{{ <url column> }}"}}`, the URL column only in the widget's
   query fields; a filter preset in a link is `/published/pages/<page>?o=<workspace id>&f_<page>%7E<filter>.s=<value>`.
-- A table read across logs (a cut-over: lfc-change-source `routing.history_fq`) is a source like any other.
+- A table read across logs (a cut-over: lfc-routing `routing.history_fq`) is a source like any other.
 
 ## Checks
 

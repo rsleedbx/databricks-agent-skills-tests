@@ -1,7 +1,7 @@
 # Routes: a suggestion from statistics, and what changing one later takes
 
 Every table gets a route: its class, its snapshot's path, its change log, and its shards
-([routing.py](../scripts/lfc_change_source/routing.py)). Workloads change, so a route is a starting point the user
+([routing.py](../scripts/lfc_routing/routing.py)). Workloads change, so a route is a starting point the user
 edits, and a later change should cost a cut-over, not a new pipeline.
 
 ## The suggestion

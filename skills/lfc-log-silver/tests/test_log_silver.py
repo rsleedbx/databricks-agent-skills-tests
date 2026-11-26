@@ -12,7 +12,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-change-source", "scripts"))
-from lfc_change_source import routing  # noqa: E402
+sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-routing", "scripts"))
+from lfc_routing import routing  # noqa: E402
 from lfc_change_source.contract import Position  # noqa: E402
 from lfc_change_source.gateway_log import from_gateway  # noqa: E402
 from lfc_log_silver import silver  # noqa: E402
