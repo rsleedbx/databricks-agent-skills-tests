@@ -1,10 +1,20 @@
 # FlowThrough: intelligent routing
 
-Routing (layer 3, [design.md](design.md)) decides how each table combines its CDC and its snapshot, from what the
-source already knows about it, not asked of the user table by table: its change log and shards (CDC), its snapshot
-method (snapshot), its silver cell (view, shared group, MERGE, AUTO CDC), what a schema change does to it (from the
-schema events in the log: [design-no-full-refresh.md](design-no-full-refresh.md)), and when it's checkpointed. The
-layers carry each decision out; none of them decides it.
+Routing (layer 1, [design.md](design.md)) comes first and decides how each table combines its CDC and its snapshot,
+from what the source already knows about it, not asked of the user table by table: its change log and shards (CDC),
+its snapshot method (snapshot), its silver cell (view, shared group, MERGE, AUTO CDC), what a schema change does to it
+(from the schema events in the log: [design-no-full-refresh.md](design-no-full-refresh.md)), and when it's
+checkpointed. The layers carry each decision out; none of them decides it.
+
+**The plan, before anything is captured.** Routing reads, for every source:
+1. the schema: tables, keys, foreign keys (each table's role, below);
+2. the statistics: rows, bytes, and inserts, updates and deletes over a known time;
+3. how many tables are in scope, per source;
+
+and decides each table's CDC log and shards, its snapshot method (a direct JDBC read for the many small tables, QBC
+for medium ones within its 250 tables a pipeline, a gateway's own when the gateway carries thousands, the customer's
+files past 10 TB: [design-no-full-refresh.md](design-no-full-refresh.md)), and its first silver cell. Then every
+round it re-decides cells from the measured rates.
 
 **From relationships: its role.** cdc-table-plan `classify.py` reads a canonical schema's keys and foreign keys (and
 row counts and activity, when known) and names each table's role, for the customer to check:

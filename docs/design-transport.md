@@ -1,6 +1,6 @@
 # FlowThrough: CDC (transport), latency and throughput
 
-Layer 1, CDC ([design.md](design.md)), turns every transport into one shape: change events in an append-only change
+Layer 2, CDC ([design.md](design.md)), turns every transport into one shape: change events in an append-only change
 log (`destination`, `operation`, `key`, `value`), one row an event, the event kept as it came (VARIANT). Nothing after
 this layer knows which transport a table came from; each adapter passes one conformance scenario (lfc-change-source).
 The log carries changes only: each table's snapshot is a table of its own

@@ -1,4 +1,4 @@
-# FlowThrough: snapshot (layer 2) and no full refresh
+# FlowThrough: snapshot (layer 3) and no full refresh
 
 A table's silver is its snapshot plus every change after it ([design.md](design.md)). The two come apart: the
 transport carries the changes ([design-transport.md](design-transport.md)), and a snapshot method takes the snapshot,
@@ -23,11 +23,14 @@ in batch, AUTO CDC streams it, each with the log's changes after its position ov
 copied once and typed, a gateway's staging copied by name with its position), so no silver cell knows a format,
 decodes text or lists folders.
 
-| Size | Snapshot by | Becomes the Delta table by |
-|---|---|---|
-| most tables | `qbc`: a Lakeflow Connect query-based pipeline through a UC connection, each table once | itself: it writes a streaming table |
-| big (past `snapshot_big_bytes`, 10 TB) | `files`: the customer's export into storage we're told of, e.g. a CockroachDB `CREATE CHANGEFEED ... WITH initial_scan = 'only', format = 'parquet'`; or the transport's own | `intake.parquet_in_place` (`CONVERT TO DELTA`, no copy; the files mustn't change), else `intake.files` (copied once) |
-| a transport that takes its own (a gateway) | the transport | `intake.gateway`: copied by name, with its position |
+Routing picks each table's method up front, from its size, how many tables are in scope and how its CDC arrives:
+
+| Method | For | Becomes the Delta table by | Limit |
+|---|---|---|---|
+| a direct JDBC read through the UC connection (`spark.read.jdbc`, or `remote_query` on a warehouse) | small tables (dimensions, lookups): most of 10,000 | one `CREATE TABLE ... AS SELECT` a table: no pipeline to create or start | one read a table, so small enough for one |
+| `qbc`: a Lakeflow Connect query-based pipeline through a UC connection, each table once | medium tables, or where a managed pipeline is wanted | itself: it writes a streaming table | 250 tables a pipeline, and a pipeline's start-up each |
+| `files`: the customer's export into storage we're told of, e.g. a CockroachDB `CREATE CHANGEFEED ... WITH initial_scan = 'only', format = 'parquet'` | big (past `snapshot_big_bytes`, 10 TB) | `intake.parquet_in_place` (`CONVERT TO DELTA`, no copy; the files mustn't change), else `intake.files` (copied once) | none |
+| the gateway's own | a source whose CDC is a gateway with many tables | `intake.gateway`: copied by name, with its position | none |
 
 ## The log carries CDC only
 
@@ -50,7 +53,7 @@ shape (a type change) is rebuilt from its snapshot table and the log, never from
 
 **A schema change is an event at its position, not a refresh.** Databases treat `ADD COLUMN ... DEFAULT x`, a
 rename and a type change as metadata: existing rows aren't rewritten, and the change is a fact at a moment. The change
-log records it the same way, at its position P (layer 1), and silver reads each row by which side of P its last
+log records it the same way, at its position P (layer 2, CDC), and silver reads each row by which side of P its last
 change is on. No new snapshot, no rebuild from the source:
 
 | Change at P | In the log at P | A row whose last change is before P (snapshot rows taken before P too) | after P |
@@ -74,15 +77,15 @@ table stays as it is:
 | columns | the key and the suspect columns, every row | a column known to be wrong: a missed default, a type decoded wrongly, a rename with no schema event |
 | rows | every column of the suspect keys or a key range | rows known to be wrong: a gap in the log for a window, one source partition |
 
-For each key and patched column, the newest by position wins: a change after P from the log, else the patch's value
-at P, else the snapshot and the changes before it, for what the patch doesn't cover. That's silver's one rule with one
+For each key and patched column, the newest by position wins: a change after P from the log, else the patch's value at
+P, else the snapshot and the changes before it, for what the patch doesn't cover. That's silver's one rule with one
 more input at P, and the overlap is harmless as before: a change after P carries the whole row. Routing decides a
 patch is needed and what it covers (from a failed check against the source, the drift record, or a schema event the
-log can't resolve); the snapshot layer takes it (a query-based pipeline's `table_configuration` takes both:
-`include_columns` for the key and the suspect columns, `row_filter` for the suspect keys; or `intake` over files
-holding them); silver recreates views over it, or runs one MERGE into a MERGE table setting only those columns; a
-checkpoint later folds it into a whole snapshot table. A column patch of a wide table reads a fraction of its bytes,
-and a row patch only its range; neither rewrites the table.
+log can't resolve); the snapshot layer takes it (a direct read is any `SELECT`; a query-based pipeline's
+`table_configuration` takes both: `include_columns` for the key and the suspect columns, `row_filter` for the suspect
+keys; or `intake` over files holding them); silver recreates views over it, or runs one MERGE into a MERGE table
+setting only those columns; a checkpoint later folds it into a whole snapshot table. A column patch of a wide table
+reads a fraction of its bytes, and a row patch only its range; neither rewrites the table.
 
 **A checkpoint is an internal resnapshot.** A year of changes can rewrite a table; a rebuild or a view shouldn't replay
 them from the first snapshot. A checkpoint isn't a layer of its own: it's a loop, silver's output going back in as a
@@ -90,10 +93,10 @@ snapshot, each step in the layer that already does that job:
 
 | Step | Layer |
 |---|---|
-| decide when: a table's changes since its snapshot pass a share of its rows, or a schedule | 3. Routing |
-| write its current rows as of a position P into a new snapshot table: silver is one more snapshot source, beside QBC, files and a gateway (a MERGE table's is a copy of itself; a view's or a shared member's is its rows) | 2. Snapshot |
+| decide when: a table's changes since its snapshot pass a share of its rows, or a schedule | 1. Routing |
+| write its current rows as of a position P into a new snapshot table: silver is one more snapshot source, beside QBC, files and a gateway (a MERGE table's is a copy of itself; a view's or a shared member's is its rows) | 3. Snapshot |
 | switch to it: views recreated over it, a MERGE table recorded at P, not rebuilt (`silver.renewed`) | 4. Silver |
-| trim the log up to P, once every table reading that log has a checkpoint at or past it (`land.trim`) | 1. CDC |
+| trim the log up to P, once every table reading that log has a checkpoint at or past it (`land.trim`) | 2. CDC |
 
 The log then holds only what's after the last checkpoint. A rebuild after a schema change is different: silver
 recomputing from its own inputs, the snapshot table and the log, with no new snapshot.
