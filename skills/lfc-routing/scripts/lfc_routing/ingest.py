@@ -106,7 +106,8 @@ def run_ingestion(session, schema: str, source: str, producer, shared_log: str, 
             else:                                  # writes its log itself: a split for each log of its own
                 landed, running = {}, prod.Spec(producer.name, producer.log, tuple(producer.tables))
                 for log, tbls in logs.items():
-                    want = [t for t in running.tables if t.split(".", 1)[-1] in set(tbls)]
+                    low = {x.lower() for x in tbls}   # plan names are lower-case group keys; the producer's, the source's
+                    want = [t for t in running.tables if t.split(".", 1)[-1].lower() in low]
                     if log == shared_log or not want:   # already in their log (an earlier request): nothing to split
                         continue
                     check = landed_check or has_event_after(count(log, want))
