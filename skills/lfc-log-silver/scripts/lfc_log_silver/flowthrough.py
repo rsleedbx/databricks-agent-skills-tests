@@ -73,8 +73,8 @@ def route_dict(r) -> dict:
 
 
 def _drop(session, schema: str, names: list, kind: str) -> None:
-    for n in names:
-        session.sql(f"DROP {kind} IF EXISTS {silver._target(schema, n)}").collect()
+    """The VIEWs (kind) or TABLEs of `names` dropped; an object of the other kind stays."""
+    silver._drop_kind(session, schema, names, view=kind == "VIEW")
 
 
 def measure(session, schema: str, sources: dict, now: float | None = None) -> tuple:
@@ -104,15 +104,27 @@ def observe(session, schema: str, sources: dict, policy, ready: dict | None = No
     plan = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
     # a table already pinned (step() gave it its route) is left as it is: its objects and its saved route
     pinned = {n for n in sources if n in prev and prev[n][0].get("why") != "observing"}
+    # a keyless table has no route to decide (always appended, and a view can't pick a key's last change): appended
+    # from the start, once its snapshot is ready, and pinned as append
+    keyless = {n: silver.Table(s, "append", snapshot_table=ready[n]) for n, s in sources.items()
+               if not s.keys and n not in pinned and n in ready}
+    for n, t in list(keyless.items()):   # up to its own latest event; none yet: left for a later round
+        w = t.src.watermark(session)
+        if w.value in (None, "None"):
+            del keyless[n]
+            continue
+        silver.appended(session, {n: t}, schema, w, threads, first=True)
     made = {n: silver.Table(s, "view", snapshot_table=ready.get(n)) for n, s in sources.items()
-            if n not in pinned and (n not in prev or prev[n][0].get("snapshot_table") != ready.get(n))}
+            if s.keys and n not in pinned and (n not in prev or prev[n][0].get("snapshot_table") != ready.get(n))}
     if made:   # recorded with their snapshot table, so a later one recreates them (silver.renewed)
         done = silver.views(session, made, schema, threads)
         silver._save(session, schema, [(n, "observe", "", 0, s, made[n].snapshot_table) for n, (_, s) in done.items()])
     routes = {n: {"class": plan[n].cls, "log": plan[n].log, "shards": plan[n].shards,
                   "silver": "view", "group": "", "why": "observing", "snapshot_table": ready.get(n),
                   "destination": sources[n].destination,
-                  "proposed": route_dict(plan[n])} for n in sources if n not in pinned}
+                  "proposed": route_dict(plan[n])} for n in sources if n not in pinned and sources[n].keys}
+    routes.update({n: {**route_dict(plan[n]), "silver": "append", "method": "append", "why": "keyless: appended",
+                       "snapshot_table": ready[n], "destination": sources[n].destination} for n in keyless})
     save(session, schema, routes, got, now)
     by_method: dict = {}
     for r in plan.values():
@@ -131,12 +143,14 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
     routes = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
     tables = {n: silver.from_route(s, routes[n], **snapshot_of(prev, n, extra)) for n, s in sources.items()}
     first = not prev
-    moves, held = [], []
+    moves, held, fresh = [], [], []
     if not first:
         for n in tables:
             old = prev.get(n, (None,))[0]
             new = route_dict(routes[n])
-            if tables[n].method == "append":   # keyless: appended whatever its route says, never moved
+            if tables[n].method == "append":   # keyless: appended whatever its route says, never moved after
+                if (old or {}).get("method") != "append":   # its first round as append: what was there goes
+                    fresh.append(n)
                 continue
             if old is None or (old.get("silver"), old.get("group")) != (new["silver"], new["group"]):
                 if (old or {}).get("silver") == "auto_cdc":   # its streaming table belongs to its pipeline: held
@@ -147,8 +161,9 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
                     continue
                 moves.append((n, old, new))
         _move(session, schema, tables, moves, prev, to, threads)
+        _to_append(session, schema, {n: tables[n] for n in fresh}, prev, to, threads)
     ran = silver.run(session, tables, schema, to, threads, first=first)
-    save(session, schema, {n: {**route_dict(r), "snapshot_table": tables[n].snapshot_table,
+    save(session, schema, {n: {**route_dict(r), "method": tables[n].method, "snapshot_table": tables[n].snapshot_table,
                                "destination": sources[n].destination,
                                **({"checkpoint": prev[n][0]["checkpoint"]} if prev.get(n, ({},))[0].get("checkpoint") else {})}
                            for n, r in routes.items()},
@@ -210,6 +225,21 @@ def checkpoint(session, schema: str, sources: dict, to, into: str, names: list |
         save(session, schema, {n: {**prev[n][0], "snapshot_table": got[n]["snapshot_table"], "checkpoint": got[n]}
                                for n in got}, after, prev[names[0]][2] if names else time.time())
     return {"tables": len(got), "seconds": round(time.time() - t0, 1), "trimmed": trimmed}
+
+def _to_append(session, schema: str, tables: dict, prev: dict, to, threads: int) -> None:
+    """Keyless tables on their first round as append (after observe's view, or a route's object from before): the
+    view or table of the name dropped, its rows out of a group it was in, then built from its snapshot and the log."""
+    if not tables:
+        return
+    for n, t in tables.items():
+        old = prev.get(n, ({},))[0]
+        if old.get("silver") == "shared":
+            g = silver._target(schema, silver.SHARED.format(group=old.get("group") or "0"))
+            session.sql(f"DELETE FROM {g} WHERE destination = {silver._lit(t.src.destination)}").collect()
+    _drop(session, schema, list(tables), "VIEW")
+    silver._drop_tables(session, schema, list(tables))
+    silver.appended(session, tables, schema, to, threads, first=True)
+
 
 def _move(session, schema: str, tables: dict, moves: list, prev: dict, to, threads: int) -> None:
     """Each moved table into its new method, from the log: the other methods' objects of that name dropped, rows

@@ -369,14 +369,20 @@ def _groups(tables: dict) -> dict:
 
 def _drop_tables(session, schema: str, names: list) -> None:
     """Drop those of `names` that are tables, not views (a table moved into a group: its view takes the name)."""
+    _drop_kind(session, schema, names, view=False)
+
+
+def _drop_kind(session, schema: str, names: list, view: bool) -> None:
+    """Drop those of `names` that are views (view) or tables (not view), leaving the other kind: DROP VIEW refuses a
+    table and DROP TABLE a view."""
     if not names:
         return
     cat, sch = [x.strip("`").replace("``", "`") for x in schema.split("`.`")]
     rows = session.sql(f"SELECT table_name FROM {_q(cat)}.information_schema.tables WHERE table_schema = {_lit(sch)} "
-                       f"AND table_type <> 'VIEW' AND table_name IN ({', '.join(_lit(n.lower()) for n in names)})"
-                       ).collect()
+                       f"AND table_type {'=' if view else '<>'} 'VIEW' "
+                       f"AND table_name IN ({', '.join(_lit(n.lower()) for n in names)})").collect()
     for r in rows:
-        session.sql(f"DROP TABLE {_target(schema, r[0])}").collect()
+        session.sql(f"DROP {'VIEW' if view else 'TABLE'} {_target(schema, r[0])}").collect()
 
 
 def build_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:

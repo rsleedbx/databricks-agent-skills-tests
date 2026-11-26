@@ -173,7 +173,7 @@ class FlowThrough(unittest.TestCase):
         self.assertEqual([(m["table"], m["from"], m["to"]) for m in got["moves"]], [("a", "shared", "merge_round")])
         self.assertIn("of its group's changes", got["moves"][0]["why"])
         self.assertTrue(any(q.startswith("DELETE FROM `c`.`s`.`_shared_0` WHERE destination = 'db.s.a'") for q in seen))
-        self.assertTrue(any(q.startswith("DROP VIEW IF EXISTS `c`.`s`.`a`") for q in seen))
+        self.assertTrue(any("table_type = 'VIEW'" in q and "table_name IN ('a')" in q for q in seen))   # its view looked up, then dropped
         self.assertTrue(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`a`") for q in seen))   # built from the log
         self.assertFalse(any(q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`b`") for q in seen))  # b stays shared
 
