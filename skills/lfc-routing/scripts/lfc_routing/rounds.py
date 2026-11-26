@@ -79,6 +79,11 @@ def run_round(session, schema: str, sources: dict, n: int | None = None, now: fl
             for k, e in got.items()]
     for i in range(0, len(vals), 500):
         session.sql(f"INSERT INTO {schema}.{OBSERVED} VALUES " + ", ".join(vals[i:i + 500])).collect()
+    # every planned table a row in routing_decisions (all NULL: the plan's), so a person or Genie updates its row
+    have = {r["tbl"] for r in _dicts(session.sql(f"SELECT tbl FROM {schema}.routing_decisions").collect())}
+    new = [t for t in sorted(plan["tables"]) if t not in have]
+    if new:
+        session.sql(f"INSERT INTO {schema}.routing_decisions (tbl) VALUES " + ", ".join(f"({_lit(t)})" for t in new)).collect()
     rows = tables.plan_rows(plan, round_=n)
     session.sql(f"DELETE FROM {schema}.routing_plan WHERE round = {int(n)}").collect()
     cols = tables.PLAN_COLUMNS

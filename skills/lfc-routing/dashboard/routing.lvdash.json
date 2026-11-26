@@ -1,0 +1,913 @@
+{
+ "datasets": [
+  {
+   "name": "plan",
+   "displayName": "plan",
+   "queryLines": [
+    "SELECT tbl, members, variant, role, class, cell, snapshot_by, log, key_kind, why FROM routing_plan WHERE round = (SELECT max(round) FROM routing_plan) ORDER BY members DESC, tbl"
+   ]
+  },
+  {
+   "name": "plan_history",
+   "displayName": "plan_history",
+   "queryLines": [
+    "SELECT round, tbl, role, class, cell, log, introspection_runs, why FROM routing_plan ORDER BY round DESC, tbl"
+   ]
+  },
+  {
+   "name": "decisions",
+   "displayName": "decisions",
+   "queryLines": [
+    "SELECT tbl, override_role, override_class, override_cell, override_snapshot_by, override_log, note, `by`, at FROM routing_decisions ORDER BY tbl"
+   ]
+  },
+  {
+   "name": "introspection",
+   "displayName": "introspection",
+   "queryLines": [
+    "SELECT run, source, at, status, tables, changes, error FROM introspection_runs ORDER BY at DESC"
+   ]
+  },
+  {
+   "name": "iterations",
+   "displayName": "iterations",
+   "queryLines": [
+    "SELECT n, `by`, at, note FROM routing_iteration ORDER BY n DESC"
+   ]
+  },
+  {
+   "name": "cdc_runs",
+   "displayName": "cdc_runs",
+   "queryLines": [
+    "SELECT run, source, at, action, status, tables, added, dropped, error FROM cdc_runs ORDER BY at DESC"
+   ]
+  },
+  {
+   "name": "snapshot_runs",
+   "displayName": "snapshot_runs",
+   "queryLines": [
+    "SELECT source, tbl, at, method, status, rows, position, snapshot_table, error FROM snapshot_runs ORDER BY at DESC"
+   ]
+  },
+  {
+   "name": "ingestion_runs",
+   "displayName": "ingestion_runs",
+   "queryLines": [
+    "SELECT run, source, at, status, plan_round, logs, snapshots, error FROM ingestion_runs ORDER BY at DESC"
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "plan",
+   "displayName": "Plan",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "plan_md",
+      "multilineTextboxSpec": {
+       "lines": [
+        "**The latest plan.** A row a table, or a group of repeating tables (members). Change a choice in Decisions (or ask Genie), then add a row to routing_iteration: the next round shows it here."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "t_plan",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "plan",
+         "fields": [
+          {
+           "name": "tbl",
+           "expression": "`tbl`"
+          },
+          {
+           "name": "members",
+           "expression": "`members`"
+          },
+          {
+           "name": "variant",
+           "expression": "`variant`"
+          },
+          {
+           "name": "role",
+           "expression": "`role`"
+          },
+          {
+           "name": "class",
+           "expression": "`class`"
+          },
+          {
+           "name": "cell",
+           "expression": "`cell`"
+          },
+          {
+           "name": "snapshot_by",
+           "expression": "`snapshot_by`"
+          },
+          {
+           "name": "log",
+           "expression": "`log`"
+          },
+          {
+           "name": "key_kind",
+           "expression": "`key_kind`"
+          },
+          {
+           "name": "why",
+           "expression": "`why`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "tbl",
+          "displayName": "tbl"
+         },
+         {
+          "fieldName": "members",
+          "displayName": "members"
+         },
+         {
+          "fieldName": "variant",
+          "displayName": "variant"
+         },
+         {
+          "fieldName": "role",
+          "displayName": "role"
+         },
+         {
+          "fieldName": "class",
+          "displayName": "class"
+         },
+         {
+          "fieldName": "cell",
+          "displayName": "cell"
+         },
+         {
+          "fieldName": "snapshot_by",
+          "displayName": "snapshot_by"
+         },
+         {
+          "fieldName": "log",
+          "displayName": "log"
+         },
+         {
+          "fieldName": "key_kind",
+          "displayName": "key_kind"
+         },
+         {
+          "fieldName": "why",
+          "displayName": "why"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Plan (latest round)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 6,
+      "height": 10
+     }
+    }
+   ]
+  },
+  {
+   "name": "decisions",
+   "displayName": "Decisions",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "dec_md",
+      "multilineTextboxSpec": {
+       "lines": [
+        "**Overrides.** NULL keeps the plan's choice; each column's comment says what each value does. Genie can set them: ask in words."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 2
+     }
+    },
+    {
+     "widget": {
+      "name": "t_dec",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "decisions",
+         "fields": [
+          {
+           "name": "tbl",
+           "expression": "`tbl`"
+          },
+          {
+           "name": "override_role",
+           "expression": "`override_role`"
+          },
+          {
+           "name": "override_class",
+           "expression": "`override_class`"
+          },
+          {
+           "name": "override_cell",
+           "expression": "`override_cell`"
+          },
+          {
+           "name": "override_snapshot_by",
+           "expression": "`override_snapshot_by`"
+          },
+          {
+           "name": "override_log",
+           "expression": "`override_log`"
+          },
+          {
+           "name": "note",
+           "expression": "`note`"
+          },
+          {
+           "name": "by",
+           "expression": "`by`"
+          },
+          {
+           "name": "at",
+           "expression": "`at`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "tbl",
+          "displayName": "tbl"
+         },
+         {
+          "fieldName": "override_role",
+          "displayName": "override_role"
+         },
+         {
+          "fieldName": "override_class",
+          "displayName": "override_class"
+         },
+         {
+          "fieldName": "override_cell",
+          "displayName": "override_cell"
+         },
+         {
+          "fieldName": "override_snapshot_by",
+          "displayName": "override_snapshot_by"
+         },
+         {
+          "fieldName": "override_log",
+          "displayName": "override_log"
+         },
+         {
+          "fieldName": "note",
+          "displayName": "note"
+         },
+         {
+          "fieldName": "by",
+          "displayName": "by"
+         },
+         {
+          "fieldName": "at",
+          "displayName": "at"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "routing_decisions"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 2,
+      "width": 6,
+      "height": 6
+     }
+    },
+    {
+     "widget": {
+      "name": "t_it",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "iterations",
+         "fields": [
+          {
+           "name": "n",
+           "expression": "`n`"
+          },
+          {
+           "name": "by",
+           "expression": "`by`"
+          },
+          {
+           "name": "at",
+           "expression": "`at`"
+          },
+          {
+           "name": "note",
+           "expression": "`note`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "n",
+          "displayName": "n"
+         },
+         {
+          "fieldName": "by",
+          "displayName": "by"
+         },
+         {
+          "fieldName": "at",
+          "displayName": "at"
+         },
+         {
+          "fieldName": "note",
+          "displayName": "note"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "routing_iteration (a row runs the next round)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 8,
+      "width": 6,
+      "height": 4
+     }
+    }
+   ]
+  },
+  {
+   "name": "history",
+   "displayName": "Plan history",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_hist",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "plan_history",
+         "fields": [
+          {
+           "name": "round",
+           "expression": "`round`"
+          },
+          {
+           "name": "tbl",
+           "expression": "`tbl`"
+          },
+          {
+           "name": "role",
+           "expression": "`role`"
+          },
+          {
+           "name": "class",
+           "expression": "`class`"
+          },
+          {
+           "name": "cell",
+           "expression": "`cell`"
+          },
+          {
+           "name": "log",
+           "expression": "`log`"
+          },
+          {
+           "name": "introspection_runs",
+           "expression": "`introspection_runs`"
+          },
+          {
+           "name": "why",
+           "expression": "`why`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "round",
+          "displayName": "round"
+         },
+         {
+          "fieldName": "tbl",
+          "displayName": "tbl"
+         },
+         {
+          "fieldName": "role",
+          "displayName": "role"
+         },
+         {
+          "fieldName": "class",
+          "displayName": "class"
+         },
+         {
+          "fieldName": "cell",
+          "displayName": "cell"
+         },
+         {
+          "fieldName": "log",
+          "displayName": "log"
+         },
+         {
+          "fieldName": "introspection_runs",
+          "displayName": "introspection_runs"
+         },
+         {
+          "fieldName": "why",
+          "displayName": "why"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Every round"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 12
+     }
+    }
+   ]
+  },
+  {
+   "name": "introspection",
+   "displayName": "Introspection",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_intro",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "introspection",
+         "fields": [
+          {
+           "name": "run",
+           "expression": "`run`"
+          },
+          {
+           "name": "source",
+           "expression": "`source`"
+          },
+          {
+           "name": "at",
+           "expression": "`at`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "tables",
+           "expression": "`tables`"
+          },
+          {
+           "name": "changes",
+           "expression": "`changes`"
+          },
+          {
+           "name": "error",
+           "expression": "`error`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "run",
+          "displayName": "run"
+         },
+         {
+          "fieldName": "source",
+          "displayName": "source"
+         },
+         {
+          "fieldName": "at",
+          "displayName": "at"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "status"
+         },
+         {
+          "fieldName": "tables",
+          "displayName": "tables"
+         },
+         {
+          "fieldName": "changes",
+          "displayName": "changes"
+         },
+         {
+          "fieldName": "error",
+          "displayName": "error"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Introspection runs (what changed since the source's previous run)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 8
+     }
+    }
+   ]
+  },
+  {
+   "name": "runs",
+   "displayName": "Runs",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "t_cdc",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "cdc_runs",
+         "fields": [
+          {
+           "name": "run",
+           "expression": "`run`"
+          },
+          {
+           "name": "source",
+           "expression": "`source`"
+          },
+          {
+           "name": "at",
+           "expression": "`at`"
+          },
+          {
+           "name": "action",
+           "expression": "`action`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "tables",
+           "expression": "`tables`"
+          },
+          {
+           "name": "added",
+           "expression": "`added`"
+          },
+          {
+           "name": "dropped",
+           "expression": "`dropped`"
+          },
+          {
+           "name": "error",
+           "expression": "`error`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "run",
+          "displayName": "run"
+         },
+         {
+          "fieldName": "source",
+          "displayName": "source"
+         },
+         {
+          "fieldName": "at",
+          "displayName": "at"
+         },
+         {
+          "fieldName": "action",
+          "displayName": "action"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "status"
+         },
+         {
+          "fieldName": "tables",
+          "displayName": "tables"
+         },
+         {
+          "fieldName": "added",
+          "displayName": "added"
+         },
+         {
+          "fieldName": "dropped",
+          "displayName": "dropped"
+         },
+         {
+          "fieldName": "error",
+          "displayName": "error"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Change capture starts and restarts"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 4
+     }
+    },
+    {
+     "widget": {
+      "name": "t_snap",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "snapshot_runs",
+         "fields": [
+          {
+           "name": "source",
+           "expression": "`source`"
+          },
+          {
+           "name": "tbl",
+           "expression": "`tbl`"
+          },
+          {
+           "name": "at",
+           "expression": "`at`"
+          },
+          {
+           "name": "method",
+           "expression": "`method`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "rows",
+           "expression": "`rows`"
+          },
+          {
+           "name": "position",
+           "expression": "`position`"
+          },
+          {
+           "name": "snapshot_table",
+           "expression": "`snapshot_table`"
+          },
+          {
+           "name": "error",
+           "expression": "`error`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "source",
+          "displayName": "source"
+         },
+         {
+          "fieldName": "tbl",
+          "displayName": "tbl"
+         },
+         {
+          "fieldName": "at",
+          "displayName": "at"
+         },
+         {
+          "fieldName": "method",
+          "displayName": "method"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "status"
+         },
+         {
+          "fieldName": "rows",
+          "displayName": "rows"
+         },
+         {
+          "fieldName": "position",
+          "displayName": "position"
+         },
+         {
+          "fieldName": "snapshot_table",
+          "displayName": "snapshot_table"
+         },
+         {
+          "fieldName": "error",
+          "displayName": "error"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Snapshots"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 4,
+      "width": 6,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "t_ing",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "ingestion_runs",
+         "fields": [
+          {
+           "name": "run",
+           "expression": "`run`"
+          },
+          {
+           "name": "source",
+           "expression": "`source`"
+          },
+          {
+           "name": "at",
+           "expression": "`at`"
+          },
+          {
+           "name": "status",
+           "expression": "`status`"
+          },
+          {
+           "name": "plan_round",
+           "expression": "`plan_round`"
+          },
+          {
+           "name": "logs",
+           "expression": "`logs`"
+          },
+          {
+           "name": "snapshots",
+           "expression": "`snapshots`"
+          },
+          {
+           "name": "error",
+           "expression": "`error`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "run",
+          "displayName": "run"
+         },
+         {
+          "fieldName": "source",
+          "displayName": "source"
+         },
+         {
+          "fieldName": "at",
+          "displayName": "at"
+         },
+         {
+          "fieldName": "status",
+          "displayName": "status"
+         },
+         {
+          "fieldName": "plan_round",
+          "displayName": "plan_round"
+         },
+         {
+          "fieldName": "logs",
+          "displayName": "logs"
+         },
+         {
+          "fieldName": "snapshots",
+          "displayName": "snapshots"
+         },
+         {
+          "fieldName": "error",
+          "displayName": "error"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Ingestions (the plan carried out)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 9,
+      "width": 6,
+      "height": 4
+     }
+    }
+   ]
+  }
+ ]
+}

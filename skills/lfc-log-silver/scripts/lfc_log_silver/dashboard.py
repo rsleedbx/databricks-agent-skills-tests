@@ -16,15 +16,17 @@ def filled(text: str, host: str, wsid: str, dashboard: str) -> str:
     return text.replace("__HOST__", host.rstrip("/")).replace("__WSID__", wsid).replace("__DASHBOARD__", dashboard)
 
 
-def deploy(w, warehouse: str, catalog: str, schema: str, host: str | None = None, folder: str | None = None) -> str:
-    """Created (or updated, by its name) and published: its published URL."""
+def deploy(w, warehouse: str, catalog: str, schema: str, host: str | None = None, folder: str | None = None,
+           file: str = FILE, title: str = "FlowThrough") -> str:
+    """Created (or updated, by its name) and published: its published URL. file: the dashboard (FlowThrough's, or
+    another with bare table names, such as lfc-routing's routing dashboard); title: its name before catalog.schema."""
     from databricks.sdk.service.dashboards import Dashboard
     host = (host or w.config.host).rstrip("/")
     wsid = str(w.get_workspace_id())
-    name = f"FlowThrough {catalog}.{schema}"
+    name = f"{title} {catalog}.{schema}"
     folder = folder or f"/Workspace/Users/{w.current_user.me().user_name}/flowthrough"
     w.workspace.mkdirs(folder)
-    with open(FILE) as f:
+    with open(file) as f:
         text = f.read()
     bare = lambda f: (f or "").removeprefix("/Workspace").rstrip("/")   # with or without the /Workspace prefix
     # the list gives no folder: each one of that name is read for its own

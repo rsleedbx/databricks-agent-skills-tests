@@ -65,6 +65,8 @@ class Rounds(unittest.TestCase):
         obs = [q for q in s.seen if q.startswith("INSERT INTO `c`.`s`.routing_observed")]
         self.assertIn("(2, 't1', 'orders', '`c`.`s`.cdc_log', 50100, 1100.000)", obs[0])
         self.assertTrue(any(q.startswith("DELETE FROM `c`.`s`.routing_plan WHERE round = 2") for q in s.seen))
+        # a decisions row for each planned table without one (hits has one): orders added, all NULL
+        self.assertIn("INSERT INTO `c`.`s`.routing_decisions (tbl) VALUES ('orders')", s.seen)
 
 
 if __name__ == "__main__":

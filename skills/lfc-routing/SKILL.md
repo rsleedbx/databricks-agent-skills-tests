@@ -46,6 +46,11 @@ generic notebooks; run a triggered job once by hand after a deploy (its trigger 
 (2026-11-26, a kept PostgreSQL run): round 3 ran 106 s after its row, 9 plan rows (TPC-H's dimensions, facts, a
 bridge; an override kept).
 
+**The dashboard.** [scripts/dashboard.py](scripts/dashboard.py) deploys [dashboard/routing.lvdash.json](dashboard/routing.lvdash.json)
+on a schema's routing tables: the latest plan (groups with their member counts), the decisions (every planned table
+has a row, NULL until set: ask Genie), every round, introspection runs with what changed, and the change capture,
+snapshot and ingestion runs.
+
 ```python
 from lfc_routing import routing
 p = routing.Policy(shared_log="`main`.`ctl`.`cdc_log`")
