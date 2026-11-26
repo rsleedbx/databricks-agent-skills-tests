@@ -38,6 +38,14 @@ repeat across databases or schemas by their name and columns (a deviating member
 classifies once a group (`classify_many`): 5,000 tenants of 2 tables are 2 plan rows with 5,000 members each. A
 decision on a group, a mapping override too, applies to every member.
 
+**Rounds from the tables.** [rounds.py](scripts/lfc_routing/rounds.py) runs a round (step 4) when a row is added to
+`routing_iteration`: each source's latest introspection, what its log showed since the last round (`routing_observed`),
+the overrides in `routing_decisions`, classify with the repeating tables grouped, appended to `routing_plan` with the
+introspection runs it came from. The [bundle](bundle/databricks.yml) has it and the provisional snapshot (step 3) as
+generic notebooks; run a triggered job once by hand after a deploy (its trigger fired only after that). Live
+(2026-11-26, a kept PostgreSQL run): round 3 ran 106 s after its row, 9 plan rows (TPC-H's dimensions, facts, a
+bridge; an override kept).
+
 ```python
 from lfc_routing import routing
 p = routing.Policy(shared_log="`main`.`ctl`.`cdc_log`")

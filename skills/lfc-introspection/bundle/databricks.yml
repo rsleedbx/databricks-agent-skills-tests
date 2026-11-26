@@ -3,6 +3,9 @@
 # The first deploy needs the table to exist: run the job once (it creates the tables), then the trigger watches it.
 #   databricks bundle deploy -p <profile> --var catalog=<c> --var schema=<s>
 #   databricks bundle run introspection_job -p <profile>
+# After a deploy, run each triggered job once by hand: a table update trigger didn't fire for a change made before
+# the job's first run (2026-11-26: a routing_iteration row waited 20 minutes; after one run by hand, the next fired in
+# 106 s).
 bundle:
   name: lfc_introspection
 
