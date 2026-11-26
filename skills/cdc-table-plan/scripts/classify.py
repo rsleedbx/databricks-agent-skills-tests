@@ -50,36 +50,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-medallion", "scripts"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-change-source", "scripts"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-routing", "scripts"))
-from lfc_routing import routing  # noqa: E402
-from lfc_medallion.roles import SILVER, plan  # noqa: E402
+from lfc_routing.classify import classify, review  # noqa: E402
 
 
 def load(p):
     with open(p) as f:
         return yaml.safe_load(f)
-
-
-def table_bytes(stats: dict | None, schema: dict, sf: float) -> dict:
-    """{table: bytes or None}: stats.yaml's data_size_bytes, else row_count x the columns' avg_width_bytes."""
-    by = {t["name"]: t for t in (stats or {}).get("tables") or []}
-    out = {}
-    for t in schema.get("tables") or []:
-        s = by.get(t["name"]) or {}
-        rows = t.get("row_count") or (t.get("row_count_per_sf") or 0) * sf or s.get("row_count")
-        width = sum(c.get("avg_width_bytes") or 0 for c in s.get("columns") or [])
-        out[t["name"]] = s.get("data_size_bytes") or (int(rows * width) if rows and width else None)
-    return out
-
-
-def routes(schema: dict, stats: dict | None, activity: dict | None, seconds: float | None, sf: float) -> dict:
-    """Each table's suggested route (lfc_routing.routing.suggest) from its bytes and change rate."""
-    size = table_bytes(stats, schema, sf)
-    rate = {}
-    for n, a in (activity or {}).items():
-        if isinstance(a, dict) and seconds:
-            rate[n] = sum(a.get(k) or 0 for k in ("inserts", "updates", "deletes")) / seconds
-    return routing.suggest({n: {"bytes": size.get(n), "events_per_s": rate.get(n)} for n in size},
-                           routing.Policy(shared_log="shared"))
 
 
 def main():
@@ -90,27 +66,18 @@ def main():
     ap.add_argument("--truth"); ap.add_argument("--review"); ap.add_argument("--model")
     a = ap.parse_args()
     schema = load(a.schema)
-    blind = {**schema, "tables": [{k: v for k, v in t.items() if k != "role"} for t in schema.get("tables") or []]}
     act = load(a.activity) if a.activity else None
     model = a.model or re.sub(r"\.ya?ml$", "", a.schema.rsplit("/", 1)[-1])
-    p = plan(blind, a.sf, act, model)   # never the answer it's scored against
-    for n, r in routes(blind, load(a.stats) if a.stats else None, act, a.activity_seconds, a.sf).items():
-        if n in p["tables"]:
-            p["tables"][n]["route"] = r
+    # the box (lfc_routing.classify); the plan file keeps its shape: no keys, no empty problems
+    p = classify(schema, load(a.stats) if a.stats else None, act, activity_seconds=a.activity_seconds, sf=a.sf,
+                 model=model, with_keys=False)
+    if not p["problems"]:
+        p.pop("problems")
     if a.review:   # corrections from the docs or the code: role (and silver, else the role's), with the citation
         roles = {t["name"]: {"role": t["role"], "cite": "the schema's role: (its specification)"}
                  for t in schema.get("tables") or [] if t.get("role")}
-        for n, r in ((roles if a.review == "schema" else load(a.review)) or {}).items():
-            r = r if isinstance(r, dict) else {"role": r}
-            t = p["tables"].get(n)
-            if t is None:
-                print(f"review: no table {n} in the schema", file=sys.stderr); continue
-            if r.get("role") not in SILVER:
-                print(f"review: {n}: role {r.get('role')!r} isn't one of {', '.join(SILVER)}; skipped", file=sys.stderr); continue
-            silver = list(r.get("silver") or SILVER[r["role"]])
-            if (t["role"], t["silver"]) != (r["role"], silver):
-                t.update(guessed=f"{t['role']} {'+'.join(t['silver'])}", role=r["role"], silver=silver, confidence="high",
-                         decided_by="docs", cite=r.get("cite") or a.review.rsplit("/", 1)[-1]); t.pop("ask", None)
+        for m in review(p, roles if a.review == "schema" else load(a.review), a.review.rsplit("/", 1)[-1]):
+            print(m, file=sys.stderr)
     if a.truth:
         truth = ({t["name"]: t["role"] for t in schema.get("tables") or [] if t.get("role")} if a.truth == "schema"
                  else load(a.truth))

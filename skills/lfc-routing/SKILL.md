@@ -27,6 +27,12 @@ source's statistics, and what changing a route later takes (most changes are a c
 snapshot), and when a small table leaves its group (`routing.plan`): [references/routing.md](references/routing.md).
 
 
+**Classify: the plan from files.** [classify.py](scripts/lfc_routing/classify.py) is routing's second box: the schema,
+the statistics, what the change log showed (`observed`) and what a person chose (`decisions`) in, a plan out, with
+each table's role (lfc-medallion `roles`), its keys (the primary key, else every column, as QBC and a gateway take a
+keyless table) and its route. No database or workspace, so a round replays from its files. cdc-table-plan
+`classify.py` is its command line.
+
 ```python
 from lfc_routing import routing
 p = routing.Policy(shared_log="`main`.`ctl`.`cdc_log`")
@@ -39,3 +45,5 @@ Plain Python, no Spark: it imports lfc-change-source's position kinds (`cdc_log.
 
 `python3 -m unittest skills/lfc-routing/tests/test_routing.py` (offline): the four classes, groups and the rules out,
 the suggestion from statistics, cut-overs across logs, what a route change takes, the snapshot method by size.
+`python3 -m unittest skills/lfc-routing/tests/test_classify.py` (offline): keys, the observed rate over the activity,
+decisions, the round, the schema's role lines never read.
