@@ -14,6 +14,8 @@ after the last commit fails too, so a consumer reads to the latest (to=None) and
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 
 from .contract import DELETE, OP, SEQ, UPSERT, Position, Stats, quote
@@ -70,7 +72,9 @@ class Bronze:
         time after the last commit fails with DELTA_TIMESTAMP_GREATER_THAN_COMMIT: nothing_newer() says so."""
         if to is not None and to.kind != after.kind:
             raise ValueError(f"a range's positions are one kind, not {after.kind} and {to.kind}")
-        name = self.fq.replace("`", "")
+        parts = [x.strip("`") for x in self.fq.split("`.`")] if "`.`" in self.fq else self.fq.split(".")
+        # plain where every part is a plain name; a part like a-b keeps its backticks, as table_changes needs
+        name = ".".join(x if re.fullmatch(r"[A-Za-z0-9_]+", x) else f"`{x}`" for x in parts)
         end = "" if to is None else f", {_bound(to, False)}"
         return (f"SELECT {self.select(data)}, CASE _change_type WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END "
                 f"AS {OP}, named_struct('v', _commit_version, 'o', CASE _change_type WHEN 'delete' THEN 0 ELSE 1 END) "
@@ -128,4 +132,4 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
                         f"WHEN MATCHED AND s.op = 'delete' THEN DELETE WHEN MATCHED THEN UPDATE SET t.{v} = s.{v} "
                         f"WHEN NOT MATCHED AND s.op != 'delete' THEN INSERT ({k}, {v}) VALUES (s.{k}, s.{v})")
         positions.append(src.watermark(session, kind))
-    return src, positions
+    return src, positions, None   # its snapshot_sql is the table as of a version

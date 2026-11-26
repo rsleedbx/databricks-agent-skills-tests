@@ -5,11 +5,10 @@
 #   cdc.tables   a JSON file (workspace path): [{"destination", "target", "keys": [...], "exprs": [...], "seq": ...}]:
 #                each column's SQL from an event and the position's SQL (lfc_log_silver.silver.auto_cdc_tables writes it
 #                from any lfc_change_source source)
-#                An entry with "snapshot": {"path", "exprs", "position"} also gets a flow reading that snapshot where
-#                the producer wrote it (routing's direct path: not in the log), as a stream over its parquet files
-#                (they don't change, so it reads them once), its rows sorted at the snapshot's position, before every
-#                change after it. (A batch view with once=True is refused: an AUTO CDC flow reads its source as a
-#                stream.)
+#                An entry with "snapshot": {"table", "columns", "position"} also gets a flow streaming that snapshot,
+#                a Delta table with the source's column names and types (the snapshot contract: lfc_log_silver.silver
+#                Table.snapshot_table), its rows sorted at the snapshot's position, before every change after it;
+#                skipChangeCommits, so a later snapshot run's rewrite doesn't stop the stream
 #   cdc.package  the folder holding lfc_change_source, a workspace path
 import json
 import sys
@@ -41,16 +40,15 @@ def changes(t: dict):
 
 
 def snapshot(t: dict):
-    """The table's snapshot where the producer wrote it, as a stream over its parquet files (schema read once from
-    them): its columns, an upsert each, at its position."""
+    """The table's snapshot, a Delta table streamed: its columns by name, an upsert each, at its position."""
     s = t["snapshot"]
     pos = str(s["position"]).replace("'", "")
-    schema = spark.read.parquet(s["path"]).schema  # noqa: F821
     # the same sequencing type as the change flow's (AUTO CDC refuses two types into one target): the position's SQL
     # type, nullable like an event field
-    v = f"CAST(nullif('{pos}', NULL) AS {t.get('seq_type', 'STRING')})"
-    return (spark.readStream.schema(schema).parquet(s["path"])  # noqa: F821
-            .selectExpr(*s["exprs"], f"'{UPSERT}' AS {OP}", f"named_struct('v', {v}, 'o', 0) AS {SEQ}"))
+    v = f"CAST(nullif('{pos}', '') AS {t.get('seq_type', 'STRING')})"   # no position: NULL, before every change
+    cols = ["`" + c.replace("`", "``") + "`" for c in s["columns"]]
+    return (spark.readStream.option("skipChangeCommits", "true").table(s["table"])  # noqa: F821
+            .selectExpr(*cols, f"'{UPSERT}' AS {OP}", f"named_struct('v', {v}, 'o', 0) AS {SEQ}"))
 
 
 def define(t: dict) -> None:

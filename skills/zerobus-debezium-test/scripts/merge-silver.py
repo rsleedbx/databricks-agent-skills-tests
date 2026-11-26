@@ -1,6 +1,7 @@
 # merge-silver.py: silver without a pipeline. A serverless job (spark_python_task) builds the same silver tables as
-# silver-from-schema.py, from the same volume (_sources.yaml, _schema/, _snapshot.tsv, the snapshot files) and the same
-# change log, with MERGE instead of AUTO CDC. A pipeline declares every table, view and flow when each update starts,
+# silver-from-schema.py, from the same volume (_sources.yaml, _schema/, _snapshot.tsv: intake's record of each snapshot
+# table's rows), the same snapshot tables (the contract: Delta tables with the source's columns, lfc-change-source
+# intake.py or qbc.py) and the same change log, with MERGE instead of AUTO CDC. A pipeline declares every table, view and flow when each update starts,
 # so its start-up grows with the number of tables, and a pipeline holds only so many; here nothing is declared per
 # table: one stream reads the change log, and each micro-batch MERGEs only the tables that changed in it.
 #
@@ -132,13 +133,9 @@ def snapshot(table):
     """The table's snapshot rows from every source, typed, with _source, _seq (the source's T) and _op 'read'."""
     parts = []
     for s in SOURCES:
-        fmt = s.get("format", "parquet")
-        if (table, s["prefix"], fmt) not in SNAP:
+        if not s.get("snapshot_table") or (table, s["prefix"], "table") not in SNAP:
             continue
-        r = spark.read.format(fmt)
-        if fmt == "csv":
-            r = r.option("header", "true")
-        df = r.load(f"{VOL}/{table}/{s['prefix']}/*.{fmt}")
+        df = spark.read.table(".".join(f"`{x}`" for x in f"{s['snapshot_table']}.{table}".split(".")))
         have = set(df.columns)
         sel = [F.expr(snapshot_value(c, have, BINHEX)).alias(c["name"]) for c in SCHEMA[table]]
         parts.append(df.select(*sel, F.lit(s["prefix"]).alias("_source"), F.lit(T_NS[s["prefix"]]).alias("_seq"),
@@ -412,7 +409,7 @@ streams_of = {id(m): src for src, m in groups.items()}
 queries = []
 for src, mine in groups.items():
     cp = a.checkpoint if src == a.source else f"{a.checkpoint}-{src.split('.')[-1]}"
-    w = spark.readStream.table(src).writeStream.foreachBatch(batch_fn(mine)).option("checkpointLocation", cp)
+    w = spark.readStream.option("skipChangeCommits", "true").table(src).writeStream   # a trim's DELETE is skipped.foreachBatch(batch_fn(mine)).option("checkpointLocation", cp)
     if a.once:   # one after another: each takes what's in its log now, then stops
         w.trigger(availableNow=True).start().awaitTermination()
     else:

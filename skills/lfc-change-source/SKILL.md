@@ -45,26 +45,15 @@ same reduction for every transport (conformance `gateway_log`). A CockroachDB ch
 (`land.changefeed`, read by `changefeed_log`). Use `format='json'`: its parquet writer fills a DECIMAL with the
 number's text, so other readers get wrong numbers.
 
-**Which log, which snapshot path.** [routing.py](scripts/lfc_change_source/routing.py) gives each table a class
-from its snapshot's bytes and its change rate, or by name, and with it how its silver is kept:
-
-| Class | Snapshot | Changes | Silver |
-|---|---|---|---|
-| `small_slow` | landed into the log (`log`) | the shared log | shared: a group's table, a view a table |
-| `small_fast` | `log` | the shared log | shared, or a MERGE of its own every round |
-| `big_slow` | read where the gateway wrote it (`direct`) | the shared log | a MERGE when changed |
-| `big_fast` | read in place | a log of its own, sharded by key hash once one stream can't carry it | AUTO CDC, a continuous pipeline |
-
-A busy table in the shared log makes every other table's read skip its events, so a fast table gets its own log, and
-its own gateway or Debezium target table, since a gateway's change files mix its tables. `land.gateway_snapshots`
-takes each table's snapshot path; `gateway_log.current_sql` reads a table on either path. The suggestion from a
-source's statistics, and what changing a route later takes (most changes are a cut-over at a position, no new
-snapshot), and when a small table leaves its group (`routing.plan`): [references/routing.md](references/routing.md).
+**Which log, which snapshot method, which silver cell** is routing's decision, made in the routing layer's own skill, not here.
+The log carries changes only: each table's snapshot is a Delta table of its
+own (`qbc`, or `intake` for any other arrival, a gateway's staging included: `intake.gateway` copies it by name with
+its position).
 
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).
 
-The four layers, transport, a table's silver, many sources into one, and gold, each in one table: [docs/design.md](../../docs/design.md).
+FlowThrough's six layers (routing, CDC, snapshot, silver, n:1, gold): [docs/design.md](../../docs/design.md).
 
 ## Conformance: an adapter is done when this passes
 

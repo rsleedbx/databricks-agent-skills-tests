@@ -1,0 +1,1473 @@
+{
+ "datasets": [
+  {
+   "name": "cdc",
+   "displayName": "CDC events by minute",
+   "queryLines": [
+    "SELECT date_trunc('MINUTE', coalesce(timestamp_micros(value:ts_ns::BIGINT DIV 1000), timestamp_millis(value:ts_ms::BIGINT))) AS minute, substring_index(destination, '.', -1) AS table_name, count(*) AS events ",
+    "FROM cdc_log WHERE operation NOT IN ('read', 'resolved') GROUP BY ALL"
+   ]
+  },
+  {
+   "name": "lag",
+   "displayName": "Newest change",
+   "queryLines": [
+    "SELECT timestampdiff(SECOND, max(coalesce(timestamp_micros(value:ts_ns::BIGINT DIV 1000), timestamp_millis(value:ts_ms::BIGINT))), current_timestamp()) AS newest_age_s, count(*) AS events FROM cdc_log ",
+    "WHERE operation NOT IN ('read', 'resolved')"
+   ]
+  },
+  {
+   "name": "tables",
+   "displayName": "Each table: snapshot, rate and route",
+   "queryLines": [
+    "SELECT name AS table_name, get_json_object(route, '$.destination') AS cdc, replace(get_json_object(route, '$.snapshot_table'), '`', '') AS snap, concat(current_catalog(), '.', current_schema(), '.', name) AS combined, concat('__HOST__/dashboardsv3/__DASHBOARD__/published/pages/raw_cdc?o=__WSID__&f_raw_cdc%7Ef-destination.s=', url_encode(get_json_object(route, '$.destination'))) AS cdc_url, concat('__HOST__/explore/data/', replace(replace(get_json_object(route, '$.snapshot_table'), '`', ''), '.', '/'), '?o=__WSID__&activeTab=sample') AS snap_url, concat('__HOST__/explore/data/', current_catalog(), '/', current_schema(), '/', name, '?o=__WSID__&activeTab=sample') AS combined_url, CASE WHEN get_json_object(route, '$.why') <> 'observing' OR get_json_object(route, '$.why') IS NULL THEN 'in silver' WHEN get_json_object(route, '$.snapshot_table') IS NULL THEN 'waiting' ELSE 'ready' END AS snapshot, get_json_object(route, '$.silver') AS silver, coalesce(get_json_object(route, '$.proposed.silver'), get_json_object(route, '$.silver')) AS proposed, coalesce(get_json_object(route, '$.proposed.class'), get_json_object(route, '$.class')) AS class, get_json_object(route, '$.proposed.why') AS why, events, timestamp_seconds(at) AS measured_at , CASE WHEN get_json_object(route, '$.why') = 'observing' AND get_json_object(route, '$.snapshot_table') IS NULL THEN 1 ELSE 0 END AS is_waiting FROM _flowthrough ORDER BY events DESC, name"
+   ]
+  },
+  {
+   "name": "silver",
+   "displayName": "Stored silver tables",
+   "queryLines": [
+    "SELECT target AS table_name, kind, position, rows, seconds, updated_at FROM _log_silver ORDER BY updated_at DESC"
+   ]
+  },
+  {
+   "name": "raw_cdc",
+   "displayName": "Raw CDC events",
+   "queryLines": [
+    "SELECT split_part(destination, '.', 1) AS source, CASE WHEN size(split(destination, '[.]')) >= 4 THEN split_part(destination, '.', 2) END AS database_name0, element_at(split(destination, '[.]'), -2) AS schema_name, element_at(split(destination, '[.]'), -1) AS table_name, coalesce(value:source:db::STRING, CASE WHEN size(split(destination, '[.]')) >= 4 THEN split_part(destination, '.', 2) END) AS database_name, destination, coalesce(timestamp_micros(value:ts_ns::BIGINT DIV 1000), timestamp_millis(value:ts_ms::BIGINT)) AS event_time, operation, to_json(key) AS key, to_json(value:after) AS after, to_json(value:source) AS source_position FROM cdc_log WHERE operation NOT IN ('resolved') ORDER BY event_time DESC"
+   ]
+  },
+  {
+   "name": "tables_map",
+   "displayName": "Each table: source, database, schema, its snapshot and silver",
+   "queryLines": [
+    "SELECT split_part(get_json_object(route, '$.destination'), '.', 1) AS source, CASE WHEN size(split(get_json_object(route, '$.destination'), '[.]')) >= 4 THEN split_part(get_json_object(route, '$.destination'), '.', 2) END AS database_name, element_at(split(get_json_object(route, '$.destination'), '[.]'), -2) AS schema_name, element_at(split(get_json_object(route, '$.destination'), '[.]'), -1) AS table_name, get_json_object(route, '$.destination') AS destination, replace(get_json_object(route, '$.snapshot_table'), '`', '') AS snapshot_full, concat(current_catalog(), '.', current_schema(), '.', name) AS silver_full FROM _flowthrough ORDER BY destination"
+   ]
+  },
+  {
+   "name": "snap_rows",
+   "displayName": "The chosen table's snapshot rows",
+   "queryLines": [
+    "SELECT r AS row_number, c AS column_name, v AS value FROM (",
+    "SELECT row_number() OVER (ORDER BY j) AS r, from_json(j, 'map<string,string>') AS m FROM (",
+    "SELECT to_json(struct(*)) AS j FROM IDENTIFIER(concat('`', replace(:snapshot_table, '.', '`.`'), '`')) WHERE :snapshot_table <> '_flowthrough' LIMIT 1000)) ",
+    "LATERAL VIEW explode(m) e AS c, v"
+   ],
+   "parameters": [
+    {
+     "displayName": "snapshot_table",
+     "keyword": "snapshot_table",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "_flowthrough"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "silver_rows",
+   "displayName": "The chosen table's silver rows (snapshot + log)",
+   "queryLines": [
+    "SELECT r AS row_number, c AS column_name, v AS value FROM (",
+    "SELECT row_number() OVER (ORDER BY j) AS r, from_json(j, 'map<string,string>') AS m FROM (",
+    "SELECT to_json(struct(*)) AS j FROM IDENTIFIER(concat('`', replace(:silver_table, '.', '`.`'), '`')) WHERE :silver_table <> '_flowthrough' LIMIT 1000)) ",
+    "LATERAL VIEW explode(m) e AS c, v"
+   ],
+   "parameters": [
+    {
+     "displayName": "silver_table",
+     "keyword": "silver_table",
+     "dataType": "STRING",
+     "defaultSelection": {
+      "values": {
+       "dataType": "STRING",
+       "values": [
+        {
+         "value": "_flowthrough"
+        }
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "pages": [
+  {
+   "name": "flowthrough",
+   "displayName": "FlowThrough",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "title",
+      "multilineTextboxSpec": {
+       "lines": [
+        "## FlowThrough: CDC and snapshot coming in\n",
+        "Changes arrive first; each table's snapshot follows. Until the plan is pinned every table is a view, and *proposed* is the route its size and measured rate would give it."
+       ]
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 6,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "k-tables",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "tables",
+         "fields": [
+          {
+           "name": "count(table_name)",
+           "expression": "COUNT(`table_name`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "count(table_name)",
+         "displayName": "Tables"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Tables"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k-waiting",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "tables",
+         "fields": [
+          {
+           "name": "sum(is_waiting)",
+           "expression": "SUM(`is_waiting`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "sum(is_waiting)",
+         "displayName": "Snapshots waiting"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Snapshots waiting"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 1,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "k-age",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "lag",
+         "fields": [
+          {
+           "name": "max(newest_age_s)",
+           "expression": "MAX(`newest_age_s`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "counter",
+       "encodings": {
+        "value": {
+         "fieldName": "max(newest_age_s)",
+         "displayName": "Newest change, seconds ago"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Newest change, seconds ago"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 1,
+      "width": 2,
+      "height": 3
+     }
+    },
+    {
+     "widget": {
+      "name": "cdc-line",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "cdc",
+         "fields": [
+          {
+           "name": "minute",
+           "expression": "`minute`"
+          },
+          {
+           "name": "sum(events)",
+           "expression": "SUM(`events`)"
+          },
+          {
+           "name": "table_name",
+           "expression": "`table_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "line",
+       "encodings": {
+        "x": {
+         "fieldName": "minute",
+         "scale": {
+          "type": "temporal"
+         },
+         "displayName": "Minute"
+        },
+        "y": {
+         "fieldName": "sum(events)",
+         "scale": {
+          "type": "quantitative"
+         },
+         "displayName": "Change events"
+        },
+        "color": {
+         "fieldName": "table_name",
+         "scale": {
+          "type": "categorical"
+         },
+         "displayName": "Table"
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "CDC coming in: change events a minute, by table"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 4,
+      "width": 6,
+      "height": 5
+     }
+    },
+    {
+     "widget": {
+      "name": "t-tables",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "tables",
+         "fields": [
+          {
+           "name": "cdc",
+           "expression": "`cdc`"
+          },
+          {
+           "name": "snap",
+           "expression": "`snap`"
+          },
+          {
+           "name": "combined",
+           "expression": "`combined`"
+          },
+          {
+           "name": "table_name",
+           "expression": "`table_name`"
+          },
+          {
+           "name": "snapshot",
+           "expression": "`snapshot`"
+          },
+          {
+           "name": "silver",
+           "expression": "`silver`"
+          },
+          {
+           "name": "proposed",
+           "expression": "`proposed`"
+          },
+          {
+           "name": "class",
+           "expression": "`class`"
+          },
+          {
+           "name": "why",
+           "expression": "`why`"
+          },
+          {
+           "name": "events",
+           "expression": "`events`"
+          },
+          {
+           "name": "measured_at",
+           "expression": "`measured_at`"
+          },
+          {
+           "name": "cdc_url",
+           "expression": "`cdc_url`"
+          },
+          {
+           "name": "snap_url",
+           "expression": "`snap_url`"
+          },
+          {
+           "name": "combined_url",
+           "expression": "`combined_url`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "cdc",
+          "displayName": "Raw CDC",
+          "actions": {
+           "click": {
+            "type": "link",
+            "urlTemplate": "{{ cdc_url }}"
+           }
+          }
+         },
+         {
+          "fieldName": "snap",
+          "displayName": "Raw snapshot",
+          "actions": {
+           "click": {
+            "type": "link",
+            "urlTemplate": "{{ snap_url }}"
+           }
+          }
+         },
+         {
+          "fieldName": "combined",
+          "displayName": "Silver: CDC + snapshot",
+          "actions": {
+           "click": {
+            "type": "link",
+            "urlTemplate": "{{ combined_url }}"
+           }
+          }
+         },
+         {
+          "fieldName": "table_name",
+          "displayName": "Table"
+         },
+         {
+          "fieldName": "snapshot",
+          "displayName": "Snapshot state"
+         },
+         {
+          "fieldName": "silver",
+          "displayName": "Silver now"
+         },
+         {
+          "fieldName": "proposed",
+          "displayName": "Proposed"
+         },
+         {
+          "fieldName": "class",
+          "displayName": "Class"
+         },
+         {
+          "fieldName": "why",
+          "displayName": "Why"
+         },
+         {
+          "fieldName": "events",
+          "displayName": "Change events"
+         },
+         {
+          "fieldName": "measured_at",
+          "displayName": "Measured"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Each table: click its raw CDC, raw snapshot or silver (CDC + snapshot), then its route"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 9,
+      "width": 6,
+      "height": 7
+     }
+    },
+    {
+     "widget": {
+      "name": "t-silver",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "silver",
+         "fields": [
+          {
+           "name": "table_name",
+           "expression": "`table_name`"
+          },
+          {
+           "name": "kind",
+           "expression": "`kind`"
+          },
+          {
+           "name": "position",
+           "expression": "`position`"
+          },
+          {
+           "name": "rows",
+           "expression": "`rows`"
+          },
+          {
+           "name": "seconds",
+           "expression": "`seconds`"
+          },
+          {
+           "name": "updated_at",
+           "expression": "`updated_at`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "table_name",
+          "displayName": "Table"
+         },
+         {
+          "fieldName": "kind",
+          "displayName": "Kind"
+         },
+         {
+          "fieldName": "position",
+          "displayName": "Position"
+         },
+         {
+          "fieldName": "rows",
+          "displayName": "Rows merged"
+         },
+         {
+          "fieldName": "seconds",
+          "displayName": "Seconds"
+         },
+         {
+          "fieldName": "updated_at",
+          "displayName": "Updated"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Stored silver tables (after pinning): position kept and last round"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 16,
+      "width": 6,
+      "height": 5
+     }
+    }
+   ]
+  },
+  {
+   "name": "raw_cdc",
+   "displayName": "Raw CDC",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "f-source",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "raw_cdc",
+         "fields": [
+          {
+           "name": "source",
+           "expression": "`source`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "source",
+          "displayName": "Source",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Source"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-database_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "raw_cdc",
+         "fields": [
+          {
+           "name": "database_name",
+           "expression": "`database_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "database_name",
+          "displayName": "Database",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Database"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-schema_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "raw_cdc",
+         "fields": [
+          {
+           "name": "schema_name",
+           "expression": "`schema_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "schema_name",
+          "displayName": "Schema",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Schema"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-table_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "raw_cdc",
+         "fields": [
+          {
+           "name": "table_name",
+           "expression": "`table_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "table_name",
+          "displayName": "Table",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Table"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-destination",
+      "queries": [
+       {
+        "name": "q_dest",
+        "query": {
+         "datasetName": "raw_cdc",
+         "fields": [
+          {
+           "name": "destination",
+           "expression": "`destination`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "destination",
+          "displayName": "Table (destination)",
+          "queryName": "q_dest"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Destination"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 0,
+      "width": 2,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "t-raw",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "raw_cdc",
+         "fields": [
+          {
+           "name": "event_time",
+           "expression": "`event_time`"
+          },
+          {
+           "name": "operation",
+           "expression": "`operation`"
+          },
+          {
+           "name": "key",
+           "expression": "`key`"
+          },
+          {
+           "name": "after",
+           "expression": "`after`"
+          },
+          {
+           "name": "source_position",
+           "expression": "`source_position`"
+          },
+          {
+           "name": "destination",
+           "expression": "`destination`"
+          }
+         ],
+         "disaggregated": true
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "table",
+       "encodings": {
+        "columns": [
+         {
+          "fieldName": "event_time",
+          "displayName": "event time"
+         },
+         {
+          "fieldName": "operation",
+          "displayName": "operation"
+         },
+         {
+          "fieldName": "key",
+          "displayName": "key"
+         },
+         {
+          "fieldName": "after",
+          "displayName": "after"
+         },
+         {
+          "fieldName": "source_position",
+          "displayName": "source position"
+         },
+         {
+          "fieldName": "destination",
+          "displayName": "destination"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Raw CDC events of the table, newest first (as the log holds them)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 10
+     }
+    }
+   ]
+  },
+  {
+   "name": "snapshot",
+   "displayName": "Snapshot",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "f-snapshot-source",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "source",
+           "expression": "`source`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "source",
+          "displayName": "Source",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Source"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-snapshot-database_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "database_name",
+           "expression": "`database_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "database_name",
+          "displayName": "Database",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Database"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-snapshot-schema_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "schema_name",
+           "expression": "`schema_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "schema_name",
+          "displayName": "Schema",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Schema"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-snapshot-table_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "table_name",
+           "expression": "`table_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "table_name",
+          "displayName": "Table",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Table"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-snapshot_table",
+      "queries": [
+       {
+        "name": "q_opts",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "snapshot_full",
+           "expression": "`snapshot_full`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "q_rows",
+        "query": {
+         "datasetName": "snap_rows",
+         "parameters": [
+          {
+           "name": "snapshot_table",
+           "keyword": "snapshot_table"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "snapshot_full",
+          "displayName": "Table",
+          "queryName": "q_opts"
+         },
+         {
+          "parameterName": "snapshot_table",
+          "queryName": "q_rows"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Table to show"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 0,
+      "width": 2,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "t-snapshot_table",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "snap_rows",
+         "fields": [
+          {
+           "name": "row_number",
+           "expression": "`row_number`"
+          },
+          {
+           "name": "column_name",
+           "expression": "`column_name`"
+          },
+          {
+           "name": "first(value)",
+           "expression": "FIRST(`value`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "pivot",
+       "encodings": {
+        "rows": [
+         {
+          "fieldName": "row_number",
+          "displayName": "#"
+         }
+        ],
+        "columns": [
+         {
+          "fieldName": "column_name",
+          "displayName": "column"
+         }
+        ],
+        "cell": {
+         "type": "multi-cell",
+         "fields": [
+          {
+           "fieldName": "first(value)",
+           "cellType": "text",
+           "displayName": "value"
+          }
+         ]
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "The snapshot's rows as QBC or intake wrote them (pick a table in Table to show; up to 1,000 rows, one column per source column)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 10
+     }
+    }
+   ]
+  },
+  {
+   "name": "silver",
+   "displayName": "Snapshot + log",
+   "pageType": "PAGE_TYPE_CANVAS",
+   "layout": [
+    {
+     "widget": {
+      "name": "f-silver-source",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "source",
+           "expression": "`source`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "source",
+          "displayName": "Source",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Source"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-silver-database_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "database_name",
+           "expression": "`database_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "database_name",
+          "displayName": "Database",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Database"
+       }
+      }
+     },
+     "position": {
+      "x": 1,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-silver-schema_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "schema_name",
+           "expression": "`schema_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "schema_name",
+          "displayName": "Schema",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Schema"
+       }
+      }
+     },
+     "position": {
+      "x": 2,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-silver-table_name",
+      "queries": [
+       {
+        "name": "q",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "table_name",
+           "expression": "`table_name`"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "table_name",
+          "displayName": "Table",
+          "queryName": "q"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Table"
+       }
+      }
+     },
+     "position": {
+      "x": 3,
+      "y": 0,
+      "width": 1,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "f-silver_table",
+      "queries": [
+       {
+        "name": "q_opts",
+        "query": {
+         "datasetName": "tables_map",
+         "fields": [
+          {
+           "name": "silver_full",
+           "expression": "`silver_full`"
+          }
+         ],
+         "disaggregated": false
+        }
+       },
+       {
+        "name": "q_rows",
+        "query": {
+         "datasetName": "silver_rows",
+         "parameters": [
+          {
+           "name": "silver_table",
+           "keyword": "silver_table"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 2,
+       "widgetType": "filter-single-select",
+       "encodings": {
+        "fields": [
+         {
+          "fieldName": "silver_full",
+          "displayName": "Table",
+          "queryName": "q_opts"
+         },
+         {
+          "parameterName": "silver_table",
+          "queryName": "q_rows"
+         }
+        ]
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Table to show"
+       }
+      }
+     },
+     "position": {
+      "x": 4,
+      "y": 0,
+      "width": 2,
+      "height": 1
+     }
+    },
+    {
+     "widget": {
+      "name": "t-silver_table",
+      "queries": [
+       {
+        "name": "main_query",
+        "query": {
+         "datasetName": "silver_rows",
+         "fields": [
+          {
+           "name": "row_number",
+           "expression": "`row_number`"
+          },
+          {
+           "name": "column_name",
+           "expression": "`column_name`"
+          },
+          {
+           "name": "first(value)",
+           "expression": "FIRST(`value`)"
+          }
+         ],
+         "disaggregated": false
+        }
+       }
+      ],
+      "spec": {
+       "version": 3,
+       "widgetType": "pivot",
+       "encodings": {
+        "rows": [
+         {
+          "fieldName": "row_number",
+          "displayName": "#"
+         }
+        ],
+        "columns": [
+         {
+          "fieldName": "column_name",
+          "displayName": "column"
+         }
+        ],
+        "cell": {
+         "type": "multi-cell",
+         "fields": [
+          {
+           "fieldName": "first(value)",
+           "cellType": "text",
+           "displayName": "value"
+          }
+         ]
+        }
+       },
+       "frame": {
+        "showTitle": true,
+        "title": "Silver: the snapshot with the log's changes over it (pick a table in Table to show; up to 1,000 rows, one column per source column)"
+       }
+      }
+     },
+     "position": {
+      "x": 0,
+      "y": 1,
+      "width": 6,
+      "height": 10
+     }
+    }
+   ]
+  }
+ ],
+ "uiSettings": {
+  "theme": {
+   "widgetBorderColor": {
+    "light": "#FFFFFF",
+    "dark": "#11171C"
+   },
+   "widgetBackgroundColor": {
+    "light": "#FFFFFF",
+    "dark": "#11171C"
+   }
+  }
+ }
+}

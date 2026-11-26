@@ -58,11 +58,13 @@ def stacked(spark, catalog: str, prefix: str, table: str, names: list[str], sour
     return out
 
 
-def stack_sql(catalog: str, prefix: str, table: str, cols: dict[str, list[tuple]], source_column: str = "_source") -> str:
+def stack_sql(catalog: str, prefix: str, table: str, cols: dict[str, list[tuple]], source_column: str = "_source",
+              labels: dict | None = None) -> str:
     """One table of every source in ONE statement: SELECT each source's rows, its name in the source column, UNION
     ALL, by column name (a column a source lacks is a typed NULL there; a column whose type differs between sources
     is cast to the widest, coltypes.widest, where it's narrower): the same rows as stacked(), with no schema read per
-    source. cols: {source: [(column, type)]} for this table (discover.catalog_columns)."""
+    source. cols: {source: [(column, type)]} for this table (discover.catalog_columns). labels: {source: the value its
+    rows carry in the source column} where that isn't the schema's suffix (a source named pg1.tpch1, a schema can't be)."""
     order: list[str] = []
     types: dict[str, list[str]] = {}
     for s in cols:
@@ -84,7 +86,7 @@ def stack_sql(catalog: str, prefix: str, table: str, cols: dict[str, list[tuple]
                 sel.append(f"CAST({q} AS {wide[c]}) AS {q}")
             else:
                 sel.append(q)
-        parts.append(f"SELECT {spark_string(s)} AS `{source_column}`, {', '.join(sel)} "
+        parts.append(f"SELECT {spark_string((labels or {}).get(s, s))} AS `{source_column}`, {', '.join(sel)} "
                      f"FROM `{catalog}`.`{prefix}{s}`.`{table}`")
     return "\nUNION ALL\n".join(parts)
 

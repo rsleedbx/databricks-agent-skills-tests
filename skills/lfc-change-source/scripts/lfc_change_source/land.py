@@ -16,16 +16,16 @@ log, each event as it is (VARIANT):
     land.ensure_log(spark, "`main`.`ctl`.`cdc_log`")
     land.gateway(spark, "/Volumes/.../<gateway id>", "`main`.`ctl`.`cdc_log`", "sales_gw_1")   # rows added
 
-A gateway's snapshots take one of two paths, per table (snapshot_path): `log`, landed by land.gateway_snapshots, one
-COPY INTO a table (their columns differ), each row as an event of operation read, so a table is rebuilt from the log
-alone (many small tables); or `direct`, left where the gateway wrote it and read in place, with only the changes from
-the log (a large table: no second copy). By the snapshot's bytes (MAX_LOG_SNAPSHOT_BYTES) unless chosen.
+The log carries changes only: a gateway's snapshot goes to a Delta table of its own (intake.gateway), never into
+the log (docs/design-no-full-refresh.md).
 
 A CockroachDB changefeed (format='json', updated, resolved) into object storage or a Volume, one folder a table
 (<date>/<files>.ndjson and <time>.RESOLVED), lands the same way (land.changefeed): the key as an object by the key
 columns' names (the event's key is an array in key order), operation delete when the event has no after image, else
 update; each RESOLVED file is one row, operation resolved, its position in value:resolved. Use format='json', not
 parquet: CockroachDB's parquet writer fills a DECIMAL column with the number's text, so readers get wrong numbers.
+Use initial_scan = 'no' on that changefeed: the table's snapshot comes from a snapshot method into a table (qbc, or an
+initial_scan = 'only' export through intake.files); an initial scan here would land every row as an update.
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
             keys: dict | None = None) -> int | None:
     """The gateway's change files not landed before into the log; the rows added. only / skip: the tables
     (<catalog>.<schema>.<table>) whose events go to this log, or don't: one gateway's events split between logs (a
-    big_fast table's own log, routing.py), each log landing whole files with its own filter. keys (gateway_keys):
+    big_fast table's own log, lfc-routing), each log landing whole files with its own filter. keys (gateway_keys):
     each row's key filled in (silver's shared groups need it)."""
     where = ""
     if only:
@@ -106,83 +106,20 @@ def changefeed(session, root: str, log: str, destination: str, keys: list[str], 
                  f"{root}/", "*/*{.ndjson,.RESOLVED}")
 
 
-MAX_LOG_SNAPSHOT_BYTES = 1 << 30   # a bigger snapshot stays where the gateway wrote it (path direct)
 
 
-def snapshot_path(nbytes: int, max_bytes: int = MAX_LOG_SNAPSHOT_BYTES, chosen: str | None = None) -> str:
-    """How a table's snapshot reaches its reader: `log`, landed into the change log as read events (many small
-    tables: one query rebuilds any table, and the cost is per object), or `direct`, read where the gateway wrote it
-    (a large table: no second copy as VARIANT rows; the table is loaded once from its parquet and only its changes
-    come from the log). By bytes unless chosen."""
-    if chosen in ("log", "direct"):
-        return chosen
-    if chosen:
-        raise ValueError(f"snapshot path {chosen!r}: log or direct")
-    return "log" if nbytes <= max_bytes else "direct"
-
-
-def gateway_snapshot(session, root: str, log: str, name: str, destination: str, entry: dict,
-                     max_bytes: int = MAX_LOG_SNAPSHOT_BYTES, path: str | None = None, landed: set | None = None) -> dict:
-    """One table's newest snapshot (gateway_staging's snapshot/<table id>/<time>/*.parquet): {path, bytes, snapshot,
-    rows}. Path log: its rows into the log, each as a change event of the gateway's shape (operation read, value
-    {table_id, cursor.sequence (the row's __sequence), operation READ, snapshot (the folder's time), data (columns by
-    id)}), so a reader rebuilds the table from the log alone; rows added, 0 when this snapshot is in the log already
-    (landed: the (destination, snapshot time) pairs there, landed_snapshots). An INSERT of read_files, not COPY INTO:
-    many COPY INTOs into one log at once failed on COPY INTO's own state (COPY_INTO_ROCKSDB_MAX_RETRY_EXCEEDED at 24),
-    and Delta takes concurrent appends. Path direct: nothing copied (rows None); read it in place
-    (gateway_log.current_sql). Path None: no snapshot yet."""
-    tid = entry["id"]
-    times = [int(e.name.strip("/")) for e in session.w.files.list_directory_contents(f"{root}/snapshot/{tid}")
-             if e.is_directory and e.name.strip("/").isdigit()]
-    if not times:
-        return {"path": None, "bytes": 0, "snapshot": None, "rows": None}
-    newest = max(times)
-    nbytes = sum(e.file_size or 0 for e in session.w.files.list_directory_contents(f"{root}/snapshot/{tid}/{newest}")
-                 if (e.name or e.path).endswith(".parquet"))
-    out = {"path": snapshot_path(nbytes, max_bytes, path), "bytes": nbytes, "snapshot": newest, "rows": None}
-    if out["path"] == "direct":
-        return out
-    cat, sch, tbl = destination.split(".", 2)
-    value = (f"to_variant_object(named_struct('table_id', named_struct('uoid', {_lit(tid)}, 'catalog', {_lit(cat)}, "
-             f"'schema', {_lit(sch)}, 'name', {_lit(tbl)}), 'cursor', named_struct('sequence', __sequence), "
-             f"'operation', 'READ', 'snapshot', {newest}, 'data', struct(* EXCEPT (__sequence, __operation, _rescued_data))))")
-    if landed is not None and (destination, newest) in landed:
-        out["rows"] = 0
-        return out
-    ids = {c: cid for c, _, cid in entry["columns"]}
-    key = ("parse_json(to_json(array(" + ", ".join(
-        f"variant_get(to_variant_object(named_struct('k', `{ids[k]}`)), '$.k', 'string')" for k in entry["keys"])
-        + ")))") if entry.get("keys") else "CAST(NULL AS VARIANT)"   # the text gateway_key_sql gives a change
-    rows = session.sql(
-        f"INSERT INTO {log} (destination, operation, key, value, gateway, file) SELECT {_lit(destination)}, 'read', "
-        f"{key}, {value}, {_lit(name)}, _metadata.file_path FROM read_files("
-        f"'{root}/snapshot/{tid}/{newest}/', format => 'parquet', pathGlobFilter => '*.parquet')").collect()
-    out["rows"] = _inserted(rows)
-    return out
-
-
-def landed_snapshots(session, log: str, name: str) -> set:
-    """{(destination, snapshot time)} of the snapshots a gateway has in the log already (one query)."""
-    rows = session.sql(f"SELECT DISTINCT destination, value:snapshot::BIGINT FROM {log} WHERE operation = 'read' "
-                       f"AND gateway = {_lit(name)}").collect()
-    return {(r[0], int(r[1])) for r in rows if r[1] is not None}
-
-
-def gateway_snapshots(session, root: str, log: str, name: str, tables: dict, threads: int = 8,
-                      max_bytes: int = MAX_LOG_SNAPSHOT_BYTES, paths: dict | None = None) -> dict:
-    """Every table's newest snapshot (gateway_snapshot), `threads` at once: {destination: {path, bytes, snapshot,
-    rows}}. tables: gateway_staging.schemas()'s {(catalog, schema, table): entry}; paths: {destination: log|direct}
-    to choose a table's path instead of by bytes."""
-    from concurrent.futures import ThreadPoolExecutor
-    paths = paths or {}
-    landed = landed_snapshots(session, log, name)
-
-    def one(kv):
-        dest = ".".join(kv[0])
-        return dest, gateway_snapshot(session, root, log, name, dest, kv[1], max_bytes, paths.get(dest), landed)
-    with ThreadPoolExecutor(threads) as pool:
-        return dict(pool.map(one, tables.items()))
-
+def trim(session, log: str, destinations: list, kind: str, upto: str) -> int | None:
+    """The log's change events of `destinations` at or before position `upto` (a position kind of cdc_log
+    SEQUENCES) deleted: safe once each of those tables has a checkpoint at `upto` or later (lfc_log_silver
+    silver.checkpoint) and every reader of them keeps a position at or after it. One statement for every table
+    checkpointed at that position; resolved marks stay. The rows deleted."""
+    from .cdc_log import SEQUENCES, TEXT
+    if not destinations:
+        return 0
+    lit = _lit(upto) if kind in TEXT else str(int(upto))
+    rows = session.sql(f"DELETE FROM {log} WHERE destination IN ({', '.join(_lit(d) for d in destinations)}) "
+                       f"AND operation <> 'resolved' AND {SEQUENCES[kind]} <= {lit}").collect()
+    return _inserted(rows, "num_affected_rows") if rows else None
 
 def _inserted(rows, field: str = "num_inserted_rows") -> int | None:
     try:

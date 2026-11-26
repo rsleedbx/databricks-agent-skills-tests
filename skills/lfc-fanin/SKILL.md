@@ -1,0 +1,72 @@
+---
+name: lfc-fanin
+description: "Deploy a fan-in ingestion the way an integrated CDC pipeline is set up (name, catalog, schema, a connector type), as a Databricks bundle that runs a notebook: fanin_dbz_zbus builds silver from the append-only change log your Debezium Server writes through Zerobus and its snapshot Volume; fanin_crdb_cdf lands CockroachDB changefeed files from a Volume into a change log. Use when the source side (Debezium, Zerobus, a changefeed) already runs and silver tables are wanted from it."
+---
+
+# A fan-in ingestion as a bundle
+
+You run the source side (Debezium Server through Zerobus, or a CockroachDB changefeed); this skill deploys the
+Databricks side. It's set up like an [integrated CDC pipeline](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/sql-server-integrated-pipeline):
+a name, a destination catalog and schema, and an ingestion definition with a connector type.
+
+| `connector_type` | You give | It creates in `<catalog>.<schema>` | Each run |
+|---|---|---|---|
+| `fanin_dbz_zbus` | `change_log` (the log Debezium writes), `snapshot_volume` (`_sources.yaml`: each source's snapshot table and position; `_schema/`), `source_type` | a view `cdc_log` over your log, each table's silver and `<table>_history`, `_fanin` (several sources: a schema each and an n:1 view a table) | one FlowThrough round |
+| `fanin_crdb_cdf` | `changefeed_path` (a folder a table), `tables` (`database.schema.table:key1\|key2`) | the change log `cdc_log`, `_fanin` | the new files into the log |
+
+The source side, set up and checked end to end: [zerobus-debezium-test](../zerobus-debezium-test/SKILL.md) (`SOURCE=<engine>`,
+`PHASE=2`, `KEEP=1` leaves the log and the Volume this skill reads).
+
+## Deploy
+
+```bash
+cd skills/lfc-fanin/bundle
+export BUNDLE_VAR_pipeline_name=orders-fanin BUNDLE_VAR_connector_type=fanin_dbz_zbus \
+  BUNDLE_VAR_dest_catalog=<catalog> BUNDLE_VAR_dest_schema=<schema> BUNDLE_VAR_source_type=SQLSERVER \
+  BUNDLE_VAR_change_log=<catalog>.<dbz schema>.cdc_log BUNDLE_VAR_snapshot_volume=/Volumes/<catalog>/<dbz schema>/snapshot
+databricks bundle deploy -p <profile>
+databricks bundle run fanin_job -p <profile>       # or -t scheduled: every 15 minutes
+```
+
+Variables go in as `BUNDLE_VAR_<name>`: the CLI splits a `--var` value on commas. Each run is safe to repeat: it
+reuses what it made and brings silver up to date. Without a bundle, the notebook
+([bundle/notebooks/fanin.py](bundle/notebooks/fanin.py)) runs the same two calls:
+
+```python
+from lfc_fanin import fanin
+p = fanin.create(w, spark, name=..., catalog=..., schema=..., ingestion_definition={"connector_type": ..., ...})
+fanin.land(w, spark, p)
+```
+
+Its `fanin_dbz_zbus` silver is FlowThrough's ([docs/design.md](../../docs/design.md)): each run routes each table by
+its size and measured rate (lfc-routing) and keeps its silver by that cell (lfc-log-silver: a shared group, a view, a
+MERGE), with every keyed table's history (SCD type 2), a keyless table appended, a value that doesn't fit recorded in
+`schema_drift`, and, for MySQL, the foreign keys' ON DELETE actions the binlog lacks. Several sources: each in
+`<schema>_<source>`, then one n:1 view a table with `_source` (lfc-medallion). A table routed to AUTO CDC fails the
+run: this job doesn't run that pipeline yet.
+
+Code: [scripts/lfc_fanin/fanin.py](scripts/lfc_fanin/fanin.py), installed as the package `lfc-fanin`
+(`pip install <archive>#subdirectory=skills/lfc-fanin/scripts`) next to `lfc-change-source`, `lfc-routing`,
+`lfc-medallion` and `lfc-log-silver`; no pipeline.
+
+## Test a database end to end
+
+[scripts/fanin_test.py](scripts/fanin_test.py) `engine` runs both sides and the check: zerobus-debezium-test for your
+side, with its `ROUND_HOOK` running `fanin_test.py round` after each of its rounds (this bundle on that log and
+Volume, deployed on round 1, run every round, every fan-in silver table against the skill's silver of that round:
+`compare.py`, count and a hash of every row), then both silver pipelines' update times (`pipeline_times.py`), and
+the run's containers removed from the VM. `fanin_page.py <results> <source>` writes the database's page in
+docs/database-connect from those results, and refuses a test that didn't pass every round.
+
+```bash
+PROFILE=<cli-profile> CATALOG=<catalog> VM_IP=<vm-ip> WAREHOUSE=<warehouse id> \
+  python3 -I skills/lfc-fanin/scripts/fanin_test.py engine --source pg --source-type POSTGRESQL
+python3 -I skills/lfc-fanin/scripts/fanin_page.py ~/.lfc-test/results/fanin pg
+```
+
+## Checks
+
+`python3 -m unittest skills/lfc-fanin/tests/test_fanin.py` (offline): names quoted part by part, what each
+connector type refuses, which errors mean a folder isn't written yet, and an added connector type.
+
+Tested end to end per database, with the result and how to repeat it: [docs/database-connect](../../docs/database-connect/README.md).

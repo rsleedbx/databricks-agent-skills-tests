@@ -53,7 +53,7 @@ Each table in the plan also gets a `route`: its class (`small_slow`, `small_fast
 path, its change log and its silver method, suggested from `--stats` (bytes) and `--activity` over `--activity-seconds` (rate). Edit it like
 `silver`; `plan.py diff` names what each route change takes (most are a cut-over at a position, with no new snapshot).
 The rules and what to choose at the start: lfc-change-source's
-[references/routing.md](../lfc-change-source/references/routing.md).
+[references/routing.md](../lfc-routing/references/routing.md).
 
 ## What it gets right
 

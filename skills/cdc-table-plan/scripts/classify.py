@@ -30,7 +30,7 @@ Roles, and the silver each gets (the plan's `silver`, which the pipeline builds;
   queue      inserts and deletes, few updates (activity only)  scd1
 Each table gets its evidence (`why`), a confidence, and a question to ask (`ask`) where a guess rests on little.
 
-Each table also gets a `route` (lfc-change-source routing.py): its class (small_slow, small_fast, big_slow, big_fast),
+Each table also gets a `route` (lfc-routing routing.py): its class (small_slow, small_fast, big_slow, big_fast),
 its snapshot's path (log: landed into the change log; direct: read where the producer wrote it; auto: set by its real
 bytes when it lands), its change log (shared, or own for big_fast and very busy tables), shards, and its silver method
 (view, merge_round, merge_changed, auto_cdc). From stats.yaml's data_size_bytes (else row_count x the columns' avg_width_bytes) and the activity's changes over
@@ -45,11 +45,12 @@ import sys
 import yaml
 
 # the rules live in lfc-medallion's package (lfc_medallion.roles), so a pipeline or job can use them too; the route's
-# in lfc-change-source's (lfc_change_source.routing)
+# in lfc-routing's (lfc_routing.routing)
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-medallion", "scripts"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-change-source", "scripts"))
-from lfc_change_source import routing  # noqa: E402
+sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-routing", "scripts"))
+from lfc_routing import routing  # noqa: E402
 from lfc_medallion.roles import SILVER, plan  # noqa: E402
 
 
@@ -71,7 +72,7 @@ def table_bytes(stats: dict | None, schema: dict, sf: float) -> dict:
 
 
 def routes(schema: dict, stats: dict | None, activity: dict | None, seconds: float | None, sf: float) -> dict:
-    """Each table's suggested route (lfc_change_source.routing.suggest) from its bytes and change rate."""
+    """Each table's suggested route (lfc_routing.routing.suggest) from its bytes and change rate."""
     size = table_bytes(stats, schema, sf)
     rate = {}
     for n, a in (activity or {}).items():

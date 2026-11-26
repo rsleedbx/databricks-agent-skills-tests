@@ -3,7 +3,7 @@
 The scenario is a snapshot, then steps at increasing positions: inserts, updates, a delete, a delete and an insert of
 one key at one position (a replacement), a key changed twice in one range. Each adapter's build() turns it into its
 own transport (a bronze table with its change data feed, change-log rows, files) and returns the positions after the
-snapshot and after each step. check() then runs the adapter's SQL on a session and compares:
+snapshot and after each step, and the snapshot as a table of its own where the transport carries only changes. check() then runs the adapter's SQL on a session and compares:
 
   snapshot       the snapshot's rows at the first position
   last change    last_change_sql over changes_sql(first, last): each key's final state, deletes as deletes
@@ -39,11 +39,13 @@ def expected() -> dict:
     return rows
 
 
-def check(session, source, positions: list) -> list[str]:
-    """Failures (empty: conforms) of `source` built from the scenario, positions[0] after the snapshot."""
+def check(session, source, positions: list, snapshot_sql: str | None = None) -> list[str]:
+    """Failures (empty: conforms) of `source` built from the scenario, positions[0] after the snapshot. snapshot_sql:
+    the snapshot as a table of its own (a change log's source carries only changes); None: the source's own
+    snapshot_sql at the first position (a bronze table's time travel, a gateway's staging)."""
     from .contract import DELETE, OP, SEQ, last_change_sql
     bad = []
-    snap = {r[0]: r[1] for r in session.sql(source.snapshot_sql(positions[0])).collect()}
+    snap = {r[0]: r[1] for r in session.sql(snapshot_sql or source.snapshot_sql(positions[0])).collect()}
     if snap != dict(SNAPSHOT):
         bad.append(f"snapshot: {snap} != {dict(SNAPSHOT)}")
     last = session.sql(last_change_sql(source.changes_sql(positions[0], positions[-1]), KEYS)).collect()
@@ -100,8 +102,8 @@ def main(argv=None) -> None:
     from .engine import Warehouse   # sql().collect() on a SQL warehouse
     session = Warehouse(a.warehouse)
     kw = {"kind": a.kind} if a.kind else {}
-    source, positions = ADAPTERS[a.adapter].build(session, a.schema, SNAPSHOT, STEPS, COLUMNS, KEYS, **kw)
-    bad = check(session, source, positions)
+    source, positions, snapshot_sql = ADAPTERS[a.adapter].build(session, a.schema, SNAPSHOT, STEPS, COLUMNS, KEYS, **kw)
+    bad = check(session, source, positions, snapshot_sql)
     print("\n".join(bad) if bad else f"{a.adapter}: conforms ({len(STEPS)} steps, {len(positions)} positions, "
                                      f"{positions[0].kind})")
     raise SystemExit(1 if bad else 0)

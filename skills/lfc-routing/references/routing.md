@@ -1,7 +1,7 @@
 # Routes: a suggestion from statistics, and what changing one later takes
 
 Every table gets a route: its class, its snapshot's path, its change log, and its shards
-([routing.py](../scripts/lfc_change_source/routing.py)). Workloads change, so a route is a starting point the user
+([routing.py](../scripts/lfc_routing/routing.py)). Workloads change, so a route is a starting point the user
 edits, and a later change should cost a cut-over, not a new pipeline.
 
 ## The suggestion
@@ -19,14 +19,17 @@ classify.py schema.yaml --stats stats.yaml --activity activity.yaml --activity-s
 ```
 
 Each route says why (`why`: the bytes, the rate, or that one is unknown). A table of unknown size is `auto_slow` or
-`auto_fast`: its snapshot's real bytes decide small or big when it lands. An unknown rate counts as slow. The user edits `route` like `silver`.
+`auto_fast`: its snapshot's real bytes decide small or big once it's taken. An unknown rate counts as slow. The user edits `route` like `silver`.
 
-| Class | Snapshot | Changes | Silver |
-|---|---|---|---|
-| `small_slow` (small, few changes) | `log`: landed into the change log | the shared log | `shared`: a group's table, one MERGE a round |
-| `small_fast` (small, many changes) | `log` | the shared log | `shared`, or `merge_round` out of its group |
-| `big_slow` (big, few changes) | `direct`: read where the producer wrote it | the shared log | `merge_changed`: a MERGE in rounds that change it |
-| `big_fast` (big, many changes) | `direct` | its own log, sharded by key hash once one stream can't carry it | `auto_cdc`: flows in a continuous pipeline, setup paid once |
+| Class | Changes | Silver |
+|---|---|---|
+| `small_slow` (small, few changes) | the shared log | `shared`: a group's table of changes, one MERGE a round |
+| `small_fast` (small, many changes) | the shared log | `shared`, or `merge_round` out of its group |
+| `big_slow` (big, few changes) | the shared log | `merge_changed`: a MERGE in rounds that change it |
+| `big_fast` (big, many changes) | its own log, sharded by key hash once one stream can't carry it | `auto_cdc`: flows in a continuous pipeline, setup paid once |
+
+Every class's snapshot is a Delta table of its own (`snapshot_by`: `qbc`, or `files` past `snapshot_big_bytes`), never
+in the log.
 
 A small table costs per object (a MERGE has a fixed floor of seconds whatever it merges), a big one per byte. Most
 tables are small and slow and hold almost no data; most bytes are in a few big, fast tables. Any table whose rate
@@ -40,18 +43,16 @@ a small table out of its group (a `view` if slow, `merge_round` if fast; `Route.
 - its reads a day (`plan`'s `reads_per_day`, from query history) are over `shared_max_reads_per_day` (off by default);
 - it has a log of its own.
 
-Thresholds (`Policy`): `fast_events_per_s` (default 1), `own_log_events_per_s` (10,000), `max_log_snapshot_bytes` (1 GiB), and
+Thresholds (`Policy`): `fast_events_per_s` (default 1), `own_log_events_per_s` (10,000), `small_max_bytes` (1 GiB: a snapshot this size or less is small), `snapshot_big_bytes` (10 TB: past it, `snapshot_big`'s snapshot method), and
 `shard_events_per_s` (Zerobus's documented 100,000 records a second per stream). They are starting points, set per
 deployment.
 
 ## What can change later, and how
 
-`plan.py diff <deployed plan> <edited plan>` names each change (`snapshot`, `cutover`, `reshard`) with what it takes.
+`plan.py diff <deployed plan> <edited plan>` names each change (`cutover`, `silver`, `reshard`) with what it takes.
 
 | Change | How | Takes a new snapshot? | State |
 |---|---|---|---|
-| snapshot `direct` -> `log` | land the kept snapshot into the log once (`land.gateway_snapshots`) | no | built, tested |
-| snapshot `log` -> `direct` | read the kept snapshot in place; its rows in the log are ignored (`gateway_log.current_sql`) | no | built, tested |
 | changes shared -> own log (slow -> fast) | at a position P: land the table's events after P into its own log (`land.gateway(only=...)`, the shared landing `skip=...`); read the shared log up to P and its own after P (`routing.history_fq`) | no | built; the reader tested live (two logs to silver, every table equal to the source) |
 | changes own -> shared log (fast -> slow) | the same cut-over the other way | no | built, tested offline |
 | shards | at a position P: split the events after P by the new key hash | no | designed, not built |

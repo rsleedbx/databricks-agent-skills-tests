@@ -156,6 +156,14 @@ class Roles(unittest.TestCase):
         with self.assertRaises(ValueError):
             CanonicalTableSchema.from_dict({"name": "x", "role": "facts", "columns": []})
 
+    def test_describe_mermaid_draws_keys_and_relationships(self):
+        m = cli("describe.py", os.path.join(SCHEMAS, "tpch.yaml"), "--mermaid")
+        self.assertTrue(m.startswith("erDiagram"))
+        self.assertIn("integer ps_partkey PK,FK", m)                       # a key that is both
+        self.assertIn('region ||--o{ nation : "n_regionkey"', m)           # parent to child, by the FK columns
+        self.assertIn('string _ "lookup, 5"', m)                            # role and rows
+        self.assertNotIn("r_comment", m)                                    # key columns only
+
     def test_describe_lists_by_kind_and_tpch_has_its_lateness(self):
         d = json.loads(cli("describe.py", os.path.join(SCHEMAS, "tpch.yaml"), "--json"))
         self.assertEqual((d["tables"], d["fact"], d["dimension"]), (8, 3, 5))
