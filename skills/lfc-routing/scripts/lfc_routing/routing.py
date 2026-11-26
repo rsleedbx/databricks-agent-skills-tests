@@ -64,6 +64,7 @@ class Route:
     group: str = ""       # shared: its group (plan() sets it)
     why: str = ""         # out of its group: the rule that took it out
     snapshot_by: str = "qbc"   # one of SNAPSHOT_METHODS: how its snapshot is taken
+    history: bool = False      # every version kept too (SCD type 2, <table>_history)
 
 
 @dataclass
@@ -85,6 +86,7 @@ class Policy:
     snapshot_big_bytes: int = 10 << 40              # bigger: snapshot_big (a query-based read of 10 TB is slow)
     snapshot_big: str = "qbc"                         # ... e.g. files, when the customer exports such tables
     snapshot_chosen: dict = field(default_factory=dict)   # {table: method}: chosen instead of by its size
+    history: object = ()                              # the tables whose every version is kept: "all", or names
 
     def log_name(self, table: str) -> str:
         shared = self.shared_log.rstrip("`")
@@ -113,7 +115,8 @@ def log_for(table: str, snapshot_bytes: int, events_per_s: float, policy: Policy
     if silver not in METHODS:
         raise ValueError(f"{table}: silver {silver!r}, one of {', '.join(METHODS)}")
     return Route(table, cls, policy.log_name(table) if own else policy.shared_log, shards, silver,
-                 snapshot_by=snapshot_method(table, snapshot_bytes, policy))
+                 snapshot_by=snapshot_method(table, snapshot_bytes, policy),
+                 history=policy.history == "all" or table in policy.history)
 
 
 def snapshot_method(table: str, snapshot_bytes: int, policy: Policy) -> str:

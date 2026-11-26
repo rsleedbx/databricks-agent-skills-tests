@@ -321,6 +321,28 @@ class FkActions(unittest.TestCase):
         self.assertEqual(got["c"].keys, ["cid"])                                    # everything else the source's
 
 
+class History(unittest.TestCase):
+    def test_every_version_from_the_snapshot_then_one_merge_a_round(self):
+        from lfc_change_source.cdc_log import CdcLog
+        from lfc_log_silver import history
+        src = CdcLog("pg1", LOG, "t", "pg1.s.t", ["id"], {"id": "INT", "v": "STRING"}, seq="lsn")
+        route = routing.log_for("pg1.s.t", 0, 0.0, routing.Policy(LOG, history="all"))
+        t = silver.from_route(src, route, SNAP, Position("lsn", "0"))
+        self.assertTrue(t.history)
+        seen = []
+        got = silver.run(session(seen), {"t": t}, "`c`.`s`", Position("lsn", "9"), threads=1, first=True)
+        self.assertEqual(got["history"]["done"], 1)
+        b = next(q for q in seen if q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`t_history`"))
+        self.assertIn("p AS __START_AT, e AS __END_AT", b)
+        self.assertIn(f"named_struct('v', 0, 'o', 0) AS _seq FROM {SNAP}", b)       # the snapshot's rows at its position
+        self.assertIn("LEAD(p) OVER (PARTITION BY `id` ORDER BY p, ver)", b)       # ended at the key's next point
+        m = history.merge_sql(t, "`c`.`s`.`t_history`", Position("lsn", "9"), Position("lsn", "12"))
+        self.assertIn("WHERE h.__END_AT IS NULL", m)                                # with the key's open version
+        self.assertIn("value:source:lsn::BIGINT > 9", m)                            # and the new changes
+        self.assertIn("WHEN MATCHED AND NOT (h.__END_AT <=> s.e) THEN UPDATE SET h.__END_AT = s.e", m)
+        self.assertFalse(silver.from_route(CdcLog("pg1", LOG, "h", "pg1.s.h", [], {"x": "INT"}, seq="lsn"), route).history)
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),
@@ -351,7 +373,7 @@ class Round(unittest.TestCase):
         seen = []
         got = silver.run(session(seen), tables, "`c`.`silver`", Position("gateway_cursor", "09"), threads=1, first=True)
         self.assertEqual({m: (v["tables"], v["done"]) for m, v in got.items()},
-                         {"shared": (0, 0), "view": (1, 1), "merge": (1, 1), "auto_cdc": (1, 0), "append": (0, 0)})
+                         {"shared": (0, 0), "view": (1, 1), "merge": (1, 1), "auto_cdc": (1, 0), "append": (0, 0), "history": (0, 0)})
         self.assertTrue(any(q.startswith("CREATE OR REPLACE VIEW `c`.`silver`.`v`") for q in seen))
         self.assertTrue(any(q.startswith("CREATE OR REPLACE TABLE `c`.`silver`.`m`") for q in seen))
         seen.clear()

@@ -52,6 +52,7 @@ class Table:
     snapshot_table: str | None = None
     position: object = None              # that snapshot's position (a Position; None: before every change)
     group: str = ""                      # shared: its group (routing.Route.group)
+    history: bool = False                # every version kept too, in <name>_history (history.py)
 
     def current_sql(self) -> str:
         # silver's one rule: the snapshot table and the log's changes after it
@@ -66,7 +67,8 @@ class Table:
 def from_route(src, route, snapshot_table=None, position=None) -> Table:
     """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
     method, only = FROM_ROUTE[route.silver] if src.keys else ("append", False)   # keyless: its rows, appended
-    return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "")
+    return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "",
+                 bool(getattr(route, "history", False)) and bool(src.keys))
 
 
 def _q(name: str) -> str:
@@ -555,4 +557,9 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     done = appended(session, by["append"], schema, to, threads, first) if by["append"] else {}
     out["append"] = {"tables": len(by["append"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     out["auto_cdc"] = {"tables": len(by["auto_cdc"]), "done": 0, "seconds": 0.0}
+    t0 = time.time()
+    hist = {n: t for n, t in tables.items() if t.history and t.method != "auto_cdc"}   # AUTO CDC keeps its own
+    from . import history
+    done = history.run(session, hist, schema, to, threads, first) if hist else {}
+    out["history"] = {"tables": len(hist), "done": len(done), "seconds": round(time.time() - t0, 1)}
     return out
