@@ -57,12 +57,20 @@ def schemas(session, root: str) -> dict:
                          "target_schema.<n>.json): the gateway runs with table ids off. Seen when its task came from "
                          "no ingestion pipeline; with table ids on and the tables snapshotted again, it's by id")
     out = {}
-    for tid, (_, text) in latest.items():
-        for s in json.loads(text)["schemas"]:
-            for t in s["tables"]:
-                out[(s["catalog"], s["schema"], t["name"])] = {
-                    "id": t["uoid"], "keys": list((t.get("primaryKey") or {}).get("columns") or []),
-                    "columns": [(c["name"], sql_type(c["type"]), c["uoid"]) for c in t["columns"]]}
+    for _, text in latest.values():
+        out.update(parse_schema(text))
+    return out
+
+
+def parse_schema(text: str) -> dict:
+    """One schema file (target_schema.<n>.json): {(catalog, schema, table): {"id", "columns": [(name, SQL type,
+    column id)], "keys"}}."""
+    out = {}
+    for s in json.loads(text)["schemas"]:
+        for t in s["tables"]:
+            out[(s["catalog"], s["schema"], t["name"])] = {
+                "id": t["uoid"], "keys": list((t.get("primaryKey") or {}).get("columns") or []),
+                "columns": [(c["name"], sql_type(c["type"]), c["uoid"]) for c in t["columns"]]}
     return out
 
 
