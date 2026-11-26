@@ -38,6 +38,12 @@ log for each table). Each transport is an adapter behind it, tested on its own w
 The plan only names the new routes; this module carries them out, and silver reads each table from its log after the
 position it was restarted at.
 
+**Make before break.** A new producer's position starts where it is created (a PostgreSQL slot at the current WAL), not
+where the old one was, so a split starts the new producer for the moved tables first and only then restarts the old one
+without them. The two logs overlap for those tables (never a gap); both carry the source's own positions, and silver
+applies an event at a position once, so a moved table reads its old log up to the cut and its new log after it. The
+cut is the old producer's position when it stopped carrying the table.
+
 **The plan, before anything is captured.** Routing reads, for every source:
 1. the schema: tables, keys, foreign keys (each table's role, below);
 2. the statistics: rows, bytes, and inserts, updates and deletes over a known time;
