@@ -58,8 +58,9 @@ plan n; nothing below decides. A plan is a file, so a round can be replayed from
 
 **A person in the loop, through tables.** The plan is a table (`routing_plan`: each table's heuristic role, class,
 silver cell, snapshot method, log and why, by round) that the dashboard shows. Beside it, `routing_decisions` has the
-same choices as override columns, NULL meaning "take the heuristic", which a person sets in the dashboard's editable table
-(the least work that is usable for testing; an app later). Editing doesn't start a round: a person adds a row to `routing_iteration`
+same choices as override columns, NULL meaning "take the heuristic", which a person sets by asking Genie (or the
+assistant) in words, which writes the UPDATE; each override column's comment lists the values it takes, so the
+statement comes out right (an app later). Editing doesn't start a round: a person adds a row to `routing_iteration`
 (n + 1, who, when), and a job with a table update trigger on that table runs the next round: the non-null overrides
 become `decisions`, classify writes plan n + 1. A log split is an override of a table's log, carried out by the
 producer module below.

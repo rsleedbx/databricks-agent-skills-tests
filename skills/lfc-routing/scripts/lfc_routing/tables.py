@@ -1,8 +1,8 @@
 """tables: a person in routing's loop through three tables (docs/design-intelligent.md, "A person in the loop"):
 
   routing_plan       classify's plan, a row a table a round: the heuristic role, class, cell, snapshot method, log
-  routing_decisions  a row a table: override_* columns, NULL meaning "take the heuristic", set by a person in the
-                     dashboard's editable table (an app later)
+  routing_decisions  a row a table: override_* columns, NULL meaning "take the heuristic", set by a person (Genie or
+                     the assistant writes the UPDATE from words; each column's comment lists its values)
   routing_iteration  a row a round a person asks for (n, by, at, note): a job's table update trigger on it runs a round
 
 Plain conversions between those rows and classify's documents, and the tables' DDL; running the SQL is the caller's.
@@ -18,6 +18,12 @@ import json
 # (the silver cell: view, shared, merge_round, merge_changed, auto_cdc), snapshot_by, log (a log of its own: a split)
 OVERRIDES = {"override_role": "role", "override_class": "class", "override_cell": "method",
              "override_snapshot_by": "snapshot_by", "override_log": "log"}
+# what each override takes: the comment on its column, so a person or an assistant writing the UPDATE knows
+COMMENTS = {"override_role": "dimension, lookup, bridge, fact, log or queue; NULL: the plan''s",
+            "override_class": "small_slow, small_fast, big_slow or big_fast; NULL: the plan''s",
+            "override_cell": "the silver cell: view, shared, merge_round, merge_changed or auto_cdc; NULL: the plan''s",
+            "override_snapshot_by": "qbc, transport (the gateway''s own) or files; NULL: the plan''s",
+            "override_log": "catalog.schema.table of a log of its own (a split); NULL: the shared log"}
 PLAN_COLUMNS = ("round", "tbl", "role", "class", "cell", "snapshot_by", "log", "keys", "key_kind", "members", "variant",
                 "introspection_runs", "why")
 
@@ -29,9 +35,12 @@ def ddl(schema: str) -> list:
             "cell STRING, snapshot_by STRING, log STRING, `keys` ARRAY<STRING>, key_kind STRING, members INT, variant BOOLEAN, "
             "introspection_runs STRING, why STRING) "
             "COMMENT 'lfc_routing: classify''s plan, a row a table a round'",
-            f"CREATE TABLE IF NOT EXISTS {schema}.routing_decisions (tbl STRING, "
-            + ", ".join(f"{c} STRING" for c in OVERRIDES)
-            + ", note STRING, `by` STRING, at TIMESTAMP) COMMENT 'lfc_routing: a person''s overrides, NULL: the heuristic'",
+            f"CREATE TABLE IF NOT EXISTS {schema}.routing_decisions (tbl STRING COMMENT 'the table (or group of "
+            "repeating tables) in routing_plan.tbl', "
+            + ", ".join(f"{c} STRING COMMENT '{COMMENTS[c]}'" for c in OVERRIDES)
+            + ", note STRING COMMENT 'why', `by` STRING COMMENT 'who', at TIMESTAMP COMMENT 'when') "
+            "COMMENT 'lfc_routing: a person''s overrides of routing_plan, a row a table; NULL takes the plan. "
+            "Set them with UPDATE ... SET override_<x> = ... WHERE tbl = ..., then add a row to routing_iteration'",
             f"CREATE TABLE IF NOT EXISTS {schema}.routing_iteration (n INT, `by` STRING, at TIMESTAMP, note STRING) "
             "TBLPROPERTIES (delta.enableChangeDataFeed = true) "
             "COMMENT 'lfc_routing: add a row (n + 1) when the decisions are done: the next round runs'"]
