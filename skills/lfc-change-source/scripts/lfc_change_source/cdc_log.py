@@ -42,13 +42,21 @@ RESOLVED = {"hlc": "value:resolved::STRING"}
 EVENT = "operation <> 'resolved'"   # a change event, not a landed watermark
 
 
-def column_sql(name: str, sql_type: str, keys: list[str], precision=None, binhex: bool = False, kind=None) -> str:
+def column_sql(name: str, sql_type: str, keys: list[str], precision=None, binhex: bool = False, kind=None,
+               cast: str = "CAST", default: str | None = None) -> str:
     """A column from an event: a key column from the event's key (a delete has no after image), the rest from the
     after image, as its type: Debezium's encodings decoded (debezium.typed: a date as days, a timestamp as epoch
     milli-, micro- or nanoseconds by its precision; binary as hex text with binhex; kind: a temporal kind its SQL
-    type doesn't say, a time kept as STRING)."""
-    src = f"key:{name}" if name in keys else f"value:after:{name}"
-    return f"{debezium.typed(src, sql_type, kind, precision, binhex=binhex)} AS {quote(name)}"
+    type doesn't say, a time kept as STRING; cast: TRY_CAST to record drift, a value that doesn't fit becoming NULL;
+    default: a column's default when the row lacks it). A key is always cast strictly."""
+    if name in keys:
+        return f"{debezium.typed(f'key:{name}', sql_type, kind, precision, binhex=binhex)} AS {quote(name)}"
+    v = f"value:after:{name}"
+    e = debezium.typed(v, sql_type, kind, precision, cast, binhex)
+    if default:
+        e = (f"CASE WHEN value:after IS NOT NULL AND NOT is_variant_null(value:after) AND {v} IS NULL "
+             f"THEN CAST({default} AS {sql_type}) ELSE {e} END")
+    return f"{e} AS {quote(name)}"
 
 
 @dataclass
@@ -65,6 +73,8 @@ class CdcLog:
     precision: dict = field(default_factory=dict)   # {column: digits of fraction}: a temporal column's (Debezium's unit)
     binhex: bool = False                            # binary values come as hex text (binary.handling.mode=hex)
     kinds: dict = field(default_factory=dict)       # {column: temporal kind} its SQL type doesn't say (a time: STRING)
+    cast: str = "CAST"                              # TRY_CAST: drift recorded, a misfit NULL (drift_sql)
+    defaults: dict = field(default_factory=dict)    # {column: its default}, for a row that lacks it
 
     def __post_init__(self):
         if self.seq not in SEQUENCES:
@@ -80,8 +90,32 @@ class CdcLog:
 
     def column_exprs(self) -> list[str]:
         """Each column's SQL from an event (`<expression> AS <name>`), in order."""
-        return [self.exprs.get(c) or column_sql(c, t, self.keys, self.precision.get(c), self.binhex, self.kinds.get(c))
+        return [self.exprs.get(c) or column_sql(c, t, self.keys, self.precision.get(c), self.binhex, self.kinds.get(c),
+                                                self.cast, self.defaults.get(c))
                 for c, t in self.columns.items()]
+
+    def drift_sql(self, after: Position | None, to: Position | None) -> str:
+        """What its events after `after` up to `to` hold that its columns don't (destination, kind, col, seq, sample):
+        a value its type can't hold (type), a known column without a default missing from the row (missing), a column
+        it doesn't know (new). One row an event and finding."""
+        seq = SEQUENCES[self.seq]
+        items = []
+        for c, t in self.columns.items():
+            if c in self.keys:
+                continue
+            v = f"value:after:{c}"
+            items.append(f"IF({v} IS NOT NULL AND NOT is_variant_null({v}) AND "
+                         f"{debezium.typed(v, t, self.kinds.get(c), self.precision.get(c), 'TRY_CAST', self.binhex)} IS NULL, "
+                         f"named_struct('kind', 'type', 'col', '{c}'), NULL)")
+            if not self.defaults.get(c):
+                items.append(f"IF({v} IS NULL, named_struct('kind', 'missing', 'col', '{c}'), NULL)")
+        known = ", ".join(f"'{c}'" for c in self.columns)
+        new = f"transform(array_except(json_object_keys(to_json(value:after)), array({known})), x -> named_struct('kind', 'new', 'col', x))"
+        none = "CAST(NULL AS STRUCT<kind: STRING, col: STRING>)"
+        found = f"filter(concat(array({', '.join(items) or none}), {new}), x -> x IS NOT NULL)"
+        return (f"SELECT destination, d.kind AS kind, d.col AS col, {seq} AS seq, substr(to_json(value:after), 1, 500) "
+                f"AS sample FROM {self.fq} LATERAL VIEW explode({found}) e AS d WHERE {self._where(after, to)} AND "
+                "value:after IS NOT NULL AND NOT is_variant_null(value:after)")
 
     def column_values(self) -> dict:
         """{column: its SQL expression from an event}, column_exprs without the alias, in order."""

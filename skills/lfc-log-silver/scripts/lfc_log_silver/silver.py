@@ -492,12 +492,40 @@ def auto_cdc_tables(tables: dict, per_pipeline: int = 999) -> list:
     return [items[i:i + per_pipeline] for i in range(0, len(items), per_pipeline)]
 
 
+DRIFT = "schema_drift"
+
+
+def record_drift(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+    """Each table's drift (a change source with cast TRY_CAST: lfc_change_source CdcLog.drift_sql) after its kept
+    position up to `to`, into <schema>.schema_drift: one row a table, source, kind and column, with the last position
+    and a sample. What an evolution resolves (a table's new schema, then its rebuild). {name: (rows, seconds)}."""
+    from lfc_change_source.contract import Position
+    mine = {n: t for n, t in tables.items() if getattr(t.src, "cast", "CAST") == "TRY_CAST"}
+    if not mine:
+        return {}
+    session.sql(f"CREATE TABLE IF NOT EXISTS {schema}.{DRIFT} (tbl STRING, _source STRING, kind STRING, col STRING, "
+                "_seq STRING, sample STRING) COMMENT 'lfc_log_silver: what the change log holds that a table''s "
+                "columns don''t, one row a table, source, kind and column'").collect()
+    kept = positions(session, schema)
+
+    def stmt(n, t):
+        kind, pos = kept.get(n, (to.kind, None))
+        after = Position(kind, pos) if pos is not None else None
+        found = (f"SELECT {_lit(n)} AS tbl, {_lit(t.src.name)} AS _source, kind, col, CAST(max(seq) AS STRING) AS _seq, "
+                 f"max_by(sample, seq) AS sample FROM ({t.src.drift_sql(after, to)}) GROUP BY kind, col")
+        return (f"MERGE INTO {schema}.{DRIFT} d USING ({found}) f ON d.tbl = f.tbl AND d._source = f._source AND "
+                "d.kind = f.kind AND d.col = f.col WHEN MATCHED THEN UPDATE SET d._seq = f._seq, d.sample = f.sample "
+                "WHEN NOT MATCHED THEN INSERT *")
+    return _each(session, {n: stmt(n, t) for n, t in mine.items()}, threads)
+
+
 def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False) -> dict:
     """One round for every table by its method: shared groups built (with their views) on the first round, one MERGE
     a group after it; views created on the first round (and again after a schema change); merged tables built on the
     first round, merged after it (only_changed: only those with events past their position; rebuilt from the log
     after a schema change or a newer snapshot); auto_cdc tables left to their pipelines. {method: {"tables": n, "done": n, "seconds": s}} (shared: "done" counts groups)."""
     ensure_state(session, schema)
+    record_drift(session, {n: t for n, t in tables.items() if t.method != "auto_cdc"}, schema, to, threads)   # kept positions
     by = {m: {n: t for n, t in tables.items() if t.method == m} for m in METHODS}
     moved = [] if first else schema_changed(session, {n: t for n, t in tables.items() if t.method != "auto_cdc"}, schema)
     bad = [n for n, t in tables.items() if t.method not in METHODS]

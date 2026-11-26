@@ -277,6 +277,27 @@ class Append(unittest.TestCase):
         self.assertIn("value:source:lsn::BIGINT > 9 AND value:source:lsn::BIGINT <= 12", ins)   # from its kept position
 
 
+class Drift(unittest.TestCase):
+    def test_a_misfit_is_null_and_recorded_once_a_kind_and_column(self):
+        from lfc_change_source.cdc_log import CdcLog
+        src = CdcLog("pg1", LOG, "t", "pg1.s.t", ["id"], {"id": "INT", "n": "INT", "d": "STRING"}, seq="lsn",
+                     cast="TRY_CAST", defaults={"d": "'x'"})
+        cols = src.column_exprs()
+        self.assertIn("CAST(key:id AS INT)", cols[0])                               # a key strictly
+        self.assertIn("TRY_CAST(value:after:n AS INT)", cols[1])                    # the rest: a misfit is NULL
+        self.assertIn("THEN CAST('x' AS STRING)", cols[2])                          # a row lacking d: its default
+        d = src.drift_sql(Position("lsn", "5"), Position("lsn", "9"))
+        for kind in ("'type', 'col', 'n'", "'missing', 'col', 'n'", "'new'"):
+            self.assertIn(kind, d)
+        self.assertNotIn("'missing', 'col', 'd'", d)                               # d has a default
+        seen = []
+        silver.run(session(seen, kept=[("t", "lsn", "5")]), {"t": silver.Table(src, "view")}, "`c`.`s`",
+                   Position("lsn", "9"), threads=1)
+        m = next(q for q in seen if q.startswith("MERGE INTO `c`.`s`.schema_drift"))
+        self.assertIn("value:source:lsn::BIGINT > 5", m)                            # from its kept position
+        self.assertIn("ON d.tbl = f.tbl AND d._source = f._source AND d.kind = f.kind AND d.col = f.col", m)
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),
