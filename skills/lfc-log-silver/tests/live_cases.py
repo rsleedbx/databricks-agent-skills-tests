@@ -47,6 +47,8 @@ CASES = {
                       (1012, "create", ROW(3, a=D("0.00")))]),
     "delete_a_snapshot_key": ([ROW(1), ROW(2)], [(1010, "delete", ROW(2))]),
     "insert_a_snapshot_key": ([ROW(1)], [(1010, "create", ROW(1))]),
+    "select": ([ROW(1)], [(1010, "update", ROW(1, "y"))]),   # reserved words as table names
+    "order": ([ROW(1)], [(1010, "create", ROW(2))]),
 }
 KEYLESS = {"keyless": ([{"v": "s", "n": 1}], [(1010, "create", {"v": "a", "n": 2}), (1010, "create", {"v": "a", "n": 2}),
                                                (1011, "update", {"v": "s", "n": 9}), (1012, "create", {"v": "b", "n": 3})])}
@@ -130,7 +132,7 @@ def run(wh, cat: str, sch: str, engine: str) -> list:
                      {c["name"]: sql_t(c) for c in cc}, seq=kind,
                      kinds={c["name"]: c["type"] for c in cc if c["type"] in ("date", "timestamp")},
                      precision={c["name"]: c.get("precision") for c in cc if c["type"] in ("date", "timestamp")})
-        method = "append" if name in KEYLESS else {"basic": "merge", "nulls": "view", "text": "shared"}.get(name, "merge")
+        method = "append" if name in KEYLESS else {"basic": "merge", "nulls": "view", "text": "shared", "order": "view", "select": "shared"}.get(name, "merge")
         tables[name] = silver.Table(src, method, snapshot_table=f"{S}.snap_{name}", position=Position(kind, str(P)),
                                     group="0" if method == "shared" else "", history=name not in KEYLESS)
     q(f"INSERT INTO {log} VALUES " + ", ".join(rows))
