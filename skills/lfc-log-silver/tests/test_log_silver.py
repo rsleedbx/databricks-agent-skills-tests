@@ -121,7 +121,7 @@ class Shared(unittest.TestCase):
         t = silver.Table(src("a"), "shared", snapshot_table=SNAP, group="0")
         v = silver.shared_view_sql(t, "`c`.`s`", "`c`.`s`.`a`")
         self.assertIn(f"UNION ALL SELECT CAST(s.`id` AS INT) AS `id`, CAST(s.`v` AS STRING) AS `v` FROM {SNAP} s WHERE NOT EXISTS (SELECT 1 FROM "
-                      "`c`.`s`.`_shared_0` x WHERE x.destination = 'db.s.a' AND parse_json(x.k)[0]::INT <=> s.`id`)", v)
+                      "`c`.`s`.`_shared_0` x WHERE x.destination = 'db.s.a' AND variant_get(parse_json(x.k), '$[0]', 'INT') <=> s.`id`)", v)
         seen = []
         silver.run(session(seen), {"a": t}, "`c`.`s`", Position("gateway_cursor", "09"), threads=1, first=True)
         build = next(q for q in seen if q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`_shared_0`"))

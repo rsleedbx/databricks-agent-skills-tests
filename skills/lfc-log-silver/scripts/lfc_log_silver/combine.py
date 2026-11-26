@@ -9,10 +9,10 @@ table's rows (a view, a build, a check) calls this, so every silver cell gives t
 from __future__ import annotations
 
 
-def current_sql(src, snapshot_sql: str | None = None, position=None) -> str:
+def current_sql(src, snapshot_sql: str | None = None, position=None, to=None) -> str:
     """The table's current rows (its columns, _op upsert): with no snapshot, from the log alone (src.snapshot_sql, a
     log that starts with the table); else the snapshot's rows at `position` (None: before every change) and each key's
-    last change after it."""
+    last change after it, up to `to` (None: the newest)."""
     from lfc_change_source.cdc_log import TEXT
     from lfc_change_source.contract import (
         DELETE,
@@ -28,5 +28,5 @@ def current_sql(src, snapshot_sql: str | None = None, position=None) -> str:
     typed = ", ".join(f"CAST({quote(c)} AS {t}) AS {quote(c)}" for c, t in src.columns.items())   # as the source types it
     v = src.position_sql(position) if position is not None else ("''" if src.seq in TEXT else "-1")
     both = (f"SELECT {typed}, '{UPSERT}' AS {OP}, named_struct('v', {v}, 'o', 0) AS {SEQ} FROM ({snapshot_sql}) "
-            f"UNION ALL SELECT {cols}, {OP}, {SEQ} FROM ({src.changes_sql(position, None)})")
+            f"UNION ALL SELECT {cols}, {OP}, {SEQ} FROM ({src.changes_sql(position, to)})")
     return f"SELECT {cols}, {OP} FROM ({last_change_sql(both, src.keys)}) WHERE {OP} <> '{DELETE}'"
