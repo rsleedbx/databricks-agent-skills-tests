@@ -103,6 +103,7 @@ if __name__ == "__main__":
             print(st, "ok" if not got else "\n  ".join(["MISMATCH"] + got), flush=True)
             bad += got
     for sample, schema in (("gateway/sqlserver_ct_t0001.jsonl", "gateway/sqlserver_ct_t0001_schema.json"),
+                           ("gateway/sqlserver_cdc_t1.jsonl", "gateway/sqlserver_cdc_t1_schema.json"),
                            ("gateway/cdc_history_update.jsonl", "gateway/target_schema.0.json")):
         got = check_gateway(wh, log, sample, schema)
         print(sample, "ok" if not got else "\n  ".join(["MISMATCH"] + got), flush=True)

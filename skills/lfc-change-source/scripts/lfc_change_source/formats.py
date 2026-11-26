@@ -48,12 +48,14 @@ GATEWAY = {"sample": "gateway/cdc_history_update.jsonl", "position": "gateway_cu
            "sqlserver_ct": "gateway/sqlserver_ct_t0001.jsonl and _schema.json: a SQL Server change-tracking gateway's "
                            "keyed table, REPLACE (an insert, as an upsert), UPDATE and DELETE; cursor.sequence 20 "
                            "digits, seqNum base64; no INSERT",
+           "sqlserver_cdc": "gateway/sqlserver_cdc_t1.jsonl and _schema.json: a SQL Server CDC gateway's keyed table, "
+                            "INSERT, UPDATE and DELETE; cursor.sequence ~v<version>-<LSN hex>-<n> (fixed width, ordered "
+                            "as text), lsn and seqNum base64",
            "event": "table_id {catalog, schema, name, uoid}, cursor {sequence (fixed-width text, ordered as text), "
                     "timestamp, extractionTimestamp}, txnID, operation (INSERT, UPDATE, DELETE; REPLACE an upsert), "
                     "data (columns by id, C_<uoid>_<n>)",
            "schema": "gateway/target_schema.0.json: metadata/table_schemas/<table id>/, each column id's name and type",
-           "not recorded yet": "a SQL Server CDC (not change tracking) gateway's files; a snapshot's parquet (read "
-                               "through intake.gateway, checked live on a 500-table run)"}
+           "not recorded yet": "a snapshot's parquet (read through intake.gateway, checked live on a 500-table run)"}
 
 CHANGEFEED = {"sample": "object_store/changefeed_orders.ndjson", "position": "hlc",
               "event": "after (the row; null for a delete), key (an array, key order), updated (<wall ns>.<logical>)",

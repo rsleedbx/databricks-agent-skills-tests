@@ -1,0 +1,46 @@
+{
+  "schemas": [{
+    "catalog": "lfcag",
+    "schema": "dbo",
+    "tables": [{
+      "name": "t1",
+      "objectType": "TABLE",
+      "primaryKey": {
+        "name": "PK__t1__3213E83F1F701667",
+        "columns": ["id"]
+      },
+      "columns": [{
+        "name": "id",
+        "type": "INTEGER",
+        "notNull": true,
+        "uoid": "C_IMMGIZp_1_901578250_1",
+        "sourceDataType": "INT"
+      }, {
+        "name": "v",
+        "type": "STRING",
+        "notNull": false,
+        "uoid": "C_IMMGIZp_1_901578250_2",
+        "sourceDataType": "NVARSTRING(50)"
+      }, {
+        "name": "n",
+        "type": "INTEGER",
+        "notNull": false,
+        "uoid": "C_IMMGIZp_1_901578250_3",
+        "sourceDataType": "INT"
+      }, {
+        "name": "c1",
+        "type": "INTEGER",
+        "notNull": false,
+        "uoid": "C_IMMGIZp_1_901578250_4",
+        "sourceDataType": "INT"
+      }, {
+        "name": "c1e",
+        "type": "INTEGER",
+        "notNull": false,
+        "uoid": "C_IMMGIZp_1_901578250_5",
+        "sourceDataType": "INT"
+      }],
+      "uoid": "T_IMMGIZp_1_901578250"
+    }]
+  }]
+}
