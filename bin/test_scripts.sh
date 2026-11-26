@@ -168,6 +168,7 @@ done
 check "lfc_introspection: schema.yaml and stats.yaml from the catalog (three statements, types per engine, keys, sizes; fake session)" uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q "$SK/lfc-introspection/tests/test_introspect.py"
 check "lfc_introspection history: on demand, kept by run (rows, changes between runs, pending requests, a failed run recorded; fake session)" python3 -m unittest -q "$SK/lfc-introspection/tests/test_history.py"
 check "statschema canonical.convert: a collector's raw document as to-canonical.py wrote it" uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q "$SK/lfc-source-statschema/tests/test_canonical.py"
+check "lfc_change_source moved: a moved table read as its old log up to the cut and its new one after it (the overlap once)" python3 -m unittest -q "$SK/lfc-change-source/tests/test_moved.py"
 check "lfc_change_source producer: a split make before break (steps, order, the cut, refusals), Debezium properties retargeted" python3 -m unittest -q "$SK/lfc-change-source/tests/test_producer.py"
 check "lfc_routing shapes: repeating tables grouped by shape (1,000 tenants: 2 groups, a variant, rows summed, classify once a group)" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/lfc-routing/tests/test_shapes.py"
 check "lfc_routing snapshots: the provisional snapshot's tables (small, with statistics) and step 7's keep or take" python3 -m unittest -q "$SK/lfc-routing/tests/test_snapshots.py"
