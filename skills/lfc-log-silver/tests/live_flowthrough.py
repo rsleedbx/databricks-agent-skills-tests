@@ -1,6 +1,7 @@
-"""live_flowthrough.py: a keyless table through flowthrough's observe and then step (pinned): observe appends it from
-the start (a view can't pick a keyless table's rows) and pins it as append, later steps append, and the saved route
-says append; a keyed table is a view while observed, then its route. Not an offline test.
+"""live_flowthrough.py: a keyless table through flowthrough's observe and then step (pinned): observe leaves it out (a
+view can't pick a keyless table's rows), the first step builds it from its snapshot at its position (the insert also in
+the snapshot counts once), the next appends, and the saved route says append; a keyed table is a view while observed,
+then its route. Not an offline test.
 
     PROFILE=<p> WAREHOUSE=<id> CATALOG=<c> [SCHEMA=<scratch>] python3 -I live_flowthrough.py
 """
@@ -52,12 +53,13 @@ sources = {"customers": mk("customers", ["id"], {"id": "INT", "name": "STRING"})
 pos = Position("ts_ns", "50")
 extra = {n: {"snapshot_table": f"{S}.snap_{n}", "position": pos} for n in sources}
 policy = routing.Policy(shared_log=LOG)
-log(ev("customers", "create", {"id": 2}, {"id": 2, "name": "b"}, 100), ev("events", "create", None, {"e": "e2", "n": 2}, 100))
+log(ev("customers", "create", {"id": 2}, {"id": 2, "name": "b"}, 100), ev("events", "create", None, {"e": "e2", "n": 2}, 100),
+    ev("events", "create", None, {"e": "e1", "n": 1}, 40))   # captured before the snapshot (at 50), also in it
 flowthrough.observe(wh, S, sources, policy, ready={n: f"{S}.snap_{n}" for n in sources})
 kind = lambda t: q(f"DESCRIBE TABLE EXTENDED {S}.`{t}`")  # noqa: E731
 is_view = lambda t: any(r[0] == "Type" and r[1] == "VIEW" for r in kind(t))  # noqa: E731
-ok = is_view("customers") and not is_view("events")
-print("observe: customers a view, events a table", "ok" if ok else "MISMATCH")
+ok = is_view("customers") and not q(f"SHOW TABLES IN {S} LIKE 'events'")
+print("observe: customers a view, events not made yet", "ok" if ok else "MISMATCH")
 flowthrough.step(wh, S, sources, Position("ts_ns", "200"), policy, extra=extra)
 log(ev("events", "create", None, {"e": "e3", "n": 3}, 300), ev("customers", "update", {"id": 1}, {"id": 1, "name": "a2"}, 300))
 flowthrough.step(wh, S, sources, Position("ts_ns", "400"), policy, extra=extra)

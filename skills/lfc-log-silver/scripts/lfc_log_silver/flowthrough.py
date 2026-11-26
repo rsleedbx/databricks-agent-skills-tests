@@ -104,16 +104,8 @@ def observe(session, schema: str, sources: dict, policy, ready: dict | None = No
     plan = routing.plan({n: ((sizes or {}).get(n, 0), rates[n]) for n in sources}, policy, reads_per_day)
     # a table already pinned (step() gave it its route) is left as it is: its objects and its saved route
     pinned = {n for n in sources if n in prev and prev[n][0].get("why") != "observing"}
-    # a keyless table has no route to decide (always appended, and a view can't pick a key's last change): appended
-    # from the start, once its snapshot is ready, and pinned as append
-    keyless = {n: silver.Table(s, "append", snapshot_table=ready[n]) for n, s in sources.items()
-               if not s.keys and n not in pinned and n in ready}
-    for n, t in list(keyless.items()):   # up to its own latest event; none yet: left for a later round
-        w = t.src.watermark(session)
-        if w.value in (None, "None"):
-            del keyless[n]
-            continue
-        silver.appended(session, {n: t}, schema, w, threads, first=True)
+    # a keyless table has no route to decide (always appended) and a view can't pick its rows (no key): observe
+    # leaves it out; the first step builds it from its snapshot at its position, then appends (SKILL.md, FlowThrough)
     made = {n: silver.Table(s, "view", snapshot_table=ready.get(n)) for n, s in sources.items()
             if s.keys and n not in pinned and (n not in prev or prev[n][0].get("snapshot_table") != ready.get(n))}
     if made:   # recorded with their snapshot table, so a later one recreates them (silver.renewed)
@@ -123,8 +115,6 @@ def observe(session, schema: str, sources: dict, policy, ready: dict | None = No
                   "silver": "view", "group": "", "why": "observing", "snapshot_table": ready.get(n),
                   "destination": sources[n].destination,
                   "proposed": route_dict(plan[n])} for n in sources if n not in pinned and sources[n].keys}
-    routes.update({n: {**route_dict(plan[n]), "silver": "append", "method": "append", "why": "keyless: appended",
-                       "snapshot_table": ready[n], "destination": sources[n].destination} for n in keyless})
     save(session, schema, routes, got, now)
     by_method: dict = {}
     for r in plan.values():

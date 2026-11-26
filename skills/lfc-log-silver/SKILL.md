@@ -63,7 +63,9 @@ lists = silver.auto_cdc_tables({t: x for t, x in tables.items() if x.method == "
   route changes. Before the plan is pinned, `flowthrough.observe` keeps every table a view while its snapshot is
   taken: a view over the log alone at first, recreated over its snapshot table once that is ready (a metadata change),
   and the route the plan would give it kept as `proposed` in `<schema>._flowthrough`. `step` with the pinned policy
-  then moves each view to its route, from its snapshot and the log.
+  then moves each view to its route, from its snapshot and the log. A keyless table is left out while observed (a view
+  can't pick its rows, and it has no route to decide): it shows up at the first `step`, built from its snapshot at
+  its position and then appended; checkpoints leave it out too (its rows are its log's inserts).
 - `flowthrough.checkpoint(session, schema, sources, to, into)`: an internal resnapshot of each table at `to`, from silver
   (`silver.checkpoint`), recorded so later rounds start there, then the log's changes up to `to` trimmed (lfc-change-
   source `land.trim`): a rebuild or a view no longer replays every change since the first snapshot.
