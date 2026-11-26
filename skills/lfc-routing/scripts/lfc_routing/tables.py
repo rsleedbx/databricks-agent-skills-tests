@@ -16,14 +16,16 @@ from __future__ import annotations
 # (the silver cell: view, shared, merge_round, merge_changed, auto_cdc), snapshot_by, log (a log of its own: a split)
 OVERRIDES = {"override_role": "role", "override_class": "class", "override_cell": "method",
              "override_snapshot_by": "snapshot_by", "override_log": "log"}
-PLAN_COLUMNS = ("round", "tbl", "role", "class", "cell", "snapshot_by", "log", "keys", "key_kind", "why")
+PLAN_COLUMNS = ("round", "tbl", "role", "class", "cell", "snapshot_by", "log", "keys", "key_kind", "members", "variant",
+                "why")
 
 
 def ddl(schema: str) -> list:
     """CREATE TABLE IF NOT EXISTS for the three tables in `schema` (a quoted catalog.schema); the iteration table keeps
     its change data feed, for the history of who asked for which round."""
     return [f"CREATE TABLE IF NOT EXISTS {schema}.routing_plan (round INT, tbl STRING, role STRING, class STRING, "
-            "cell STRING, snapshot_by STRING, log STRING, `keys` ARRAY<STRING>, key_kind STRING, why STRING) "
+            "cell STRING, snapshot_by STRING, log STRING, `keys` ARRAY<STRING>, key_kind STRING, members INT, variant BOOLEAN, "
+            "why STRING) "
             "COMMENT 'lfc_routing: classify''s plan, a row a table a round'",
             f"CREATE TABLE IF NOT EXISTS {schema}.routing_decisions (tbl STRING, "
             + ", ".join(f"{c} STRING" for c in OVERRIDES)
@@ -48,12 +50,15 @@ def decisions(rows: list) -> dict:
 def plan_rows(plan: dict, round_: int | None = None) -> list:
     """routing_plan rows (dicts, PLAN_COLUMNS) from classify's plan."""
     n = round_ if round_ is not None else plan.get("round")
+    groups = plan.get("groups") or {}   # shapes.classify_many: a row a group of repeating tables
     rows = []
     for t, p in sorted(plan["tables"].items()):
         r = p.get("route") or {}
+        g = groups.get(t) or {}
         rows.append({"round": n, "tbl": t, "role": p.get("role"), "class": r.get("class"), "cell": r.get("silver"),
                      "snapshot_by": r.get("snapshot_by"), "log": r.get("log"), "keys": p.get("keys"),
-                     "key_kind": p.get("key"), "why": "; ".join(x for x in (p.get("why"), r.get("why")) if x)})
+                     "key_kind": p.get("key"), "members": len(g.get("members") or [None]),
+                     "variant": bool(g.get("variant")), "why": "; ".join(x for x in (p.get("why"), r.get("why")) if x)})
     return rows
 
 

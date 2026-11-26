@@ -33,6 +33,11 @@ each table's role (lfc-medallion `roles`), its keys (the primary key, else every
 keyless table) and its route. No database or workspace, so a round replays from its files. cdc-table-plan
 `classify.py` is its command line.
 
+**Repeating tables: one decision a shape.** [shapes.py](scripts/lfc_routing/shapes.py) groups the tables that
+repeat across databases or schemas by their name and columns (a deviating member is a variant, its own group) and
+classifies once a group (`classify_many`): 5,000 tenants of 2 tables are 2 plan rows with 5,000 members each. A
+decision on a group, a mapping override too, applies to every member.
+
 ```python
 from lfc_routing import routing
 p = routing.Policy(shared_log="`main`.`ctl`.`cdc_log`")

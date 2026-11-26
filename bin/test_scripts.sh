@@ -169,6 +169,7 @@ check "lfc_introspection: schema.yaml and stats.yaml from the catalog (three sta
 check "lfc_introspection history: on demand, kept by run (rows, changes between runs, pending requests, a failed run recorded; fake session)" python3 -m unittest -q "$SK/lfc-introspection/tests/test_history.py"
 check "statschema canonical.convert: a collector's raw document as to-canonical.py wrote it" uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q "$SK/lfc-source-statschema/tests/test_canonical.py"
 check "lfc_change_source producer: a split make before break (steps, order, the cut, refusals), Debezium properties retargeted" python3 -m unittest -q "$SK/lfc-change-source/tests/test_producer.py"
+check "lfc_routing shapes: repeating tables grouped by shape (1,000 tenants: 2 groups, a variant, rows summed, classify once a group)" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/lfc-routing/tests/test_shapes.py"
 check "lfc_routing classify: the plan from files (keys, observed over activity, decisions, round, the routing tables' rows)" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/lfc-routing/tests/test_classify.py"
 check "classify.py never reads role: (TPC-E's plan is the same without it); --truth schema scores against it" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/cdc-table-plan/tests/test_classify.py"
 check "lfc_medallion: sources and tables found, one n:1 view per table, a table some sources lack (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_stack.py"
