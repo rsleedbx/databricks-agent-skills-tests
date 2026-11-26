@@ -19,6 +19,14 @@ Between the two, the change capture starts, every table into one change log. Cla
 reads what the log shows and what a person decided since round n-1, and writes plan n. The layers below carry out
 plan n; nothing below decides. A plan is a file, so a round can be replayed from its inputs and two plans compared.
 
+**A person in the loop, through tables.** The plan is a table (`routing_plan`: each table's heuristic role, class,
+silver cell, snapshot method, log and why, by round) that the dashboard shows. Beside it, `routing_decisions` has the
+same choices as override columns, NULL meaning "take the heuristic", which a person sets (SQL editor, a notebook, an
+app: a dashboard can't edit rows). Editing doesn't start a round: a person adds a row to `routing_iteration`
+(n + 1, who, when), and a job with a table update trigger on that table runs the next round: the non-null overrides
+become `decisions`, classify writes plan n + 1. A log split is an override of a table's log, carried out by the
+producer module below.
+
 **A log can be split while it runs.** A change log is append-only, so a split never rewrites one: the plan names a
 new log for some tables, the producer (a gateway, a Debezium Server) is stopped and started again from its last
 position, sending those tables to the new log and the rest to the old one, and silver reads each table from its log
