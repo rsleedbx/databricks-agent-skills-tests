@@ -1,0 +1,13 @@
+[project]
+name = "lfc-source-statschema"
+version = "0.1.0"
+description = "statschema's canonical schema.yaml and stats.yaml: the model, its I/O, the conversion from a collector, the DDL tools"
+requires-python = ">=3.10"
+dependencies = ["sqlglot", "pyyaml"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["statschema", "statschema.core", "statschema.query", "statschema.tools"]

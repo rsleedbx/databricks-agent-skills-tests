@@ -7,7 +7,7 @@
 #   PostgreSQL, SQL Server, CockroachDB and YugabyteDB need --database; Oracle --service (the PDB). MySQL covers every user database at once.
 #   MariaDB uses the MySQL query (its connection is a MYSQL one; no PROCESS variant: MariaDB has no innodb_tablespaces).
 #   CockroachDB and YugabyteDB: a POSTGRESQL connection and the PostgreSQL query (--database, as for PostgreSQL).
-#   Db2 and Informix have no Unity Catalog connection type: run lfc-introspection's scripts/sql/size/db2.sql or informix.sql with the engine's client.
+#   Db2 and Informix have no Unity Catalog connection type: run lfc-introspection's scripts/lfc_introspection/sql/size/db2.sql or informix.sql with the engine's client.
 set -uo pipefail
 P=$1; CONN=$2; E=$3; shift 3; DB=; SVC=; OUT=.; TOP=15
 while [ $# -gt 0 ]; do case $1 in --database) DB=$2; shift 2;; --service) SVC=$2; shift 2;; --out) OUT=$2; shift 2;; --top) TOP=$2; shift 2;; *) echo "unknown $1"; exit 2;; esac; done

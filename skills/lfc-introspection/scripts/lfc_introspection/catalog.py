@@ -5,7 +5,7 @@ size_query.py and size.sh, and introspect, all build their statements here.
 import os
 import re
 
-HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sql", "size")   # <engine>.sql
+HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sql", "size")   # <engine>.sql
 SQL_FILE = {"mariadb": "mysql"}                          # MariaDB: a MYSQL connection and the MySQL query
 NEEDS_DATABASE = ("postgres", "sqlserver", "cockroachdb", "yugabytedb")
 ENGINES = ("postgres", "mysql", "mariadb", "sqlserver", "oracle", "cockroachdb", "yugabytedb")
@@ -19,7 +19,7 @@ def remote_query(connection, engine, database=None, service=None, file=None, fol
     """SELECT * FROM remote_query(...) for the engine; file names another query beside this one (mysql-process), or
     in `folder` (another skill's catalog queries); fill: {placeholder: value} replaced in the query, like __DB__."""
     if engine not in ENGINES:
-        raise SizeQueryError(f"engine: {', '.join(ENGINES)} (db2 and informix: run lfc-introspection scripts/sql/size/db2.sql or informix.sql "
+        raise SizeQueryError(f"engine: {', '.join(ENGINES)} (db2 and informix: run lfc-introspection scripts/lfc_introspection/sql/size/db2.sql or informix.sql "
                              "by hand)")
     path = os.path.join(folder or HERE, (file or SQL_FILE.get(engine, engine)) + ".sql")
     if not os.path.isfile(path):

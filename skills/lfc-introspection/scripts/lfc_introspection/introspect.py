@@ -1,7 +1,7 @@
 """introspect: routing's first box (docs/design-intelligent.md, "Two boxes"): a source database in, statschema's
 schema.yaml and stats.yaml out, and nothing else. It reads only the catalog, through a Unity Catalog connection with
 remote_query (no table scans, no row data): each base table's columns and types, its primary key and foreign keys
-(scripts/sql/), and its rows and bytes (sql/size/<engine>.sql, which lfc-source-sizing runs too). The documents are statschema's
+(sql/), and its rows and bytes (sql/size/<engine>.sql, which lfc-source-sizing runs too). The documents are statschema's
 canonical format (statschema.tools.canonical.convert, the same conversion its collectors use).
 
     from lfc_introspection.introspect import introspect
@@ -17,14 +17,15 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-_STATSCHEMA = os.path.join(HERE, "..", "..", "..", "lfc-source-statschema", "scripts")   # the canonical format
-if _STATSCHEMA not in sys.path:
-    sys.path.insert(0, _STATSCHEMA)
-from statschema.tools.canonical import convert  # noqa: E402
+try:   # installed (pip install the lfc-source-statschema skill's scripts), else beside this skill in a checkout
+    from statschema.tools.canonical import convert
+except ImportError:
+    sys.path.insert(0, os.path.join(HERE, "..", "..", "..", "lfc-source-statschema", "scripts"))
+    from statschema.tools.canonical import convert  # noqa: E402
 
 from .catalog import remote_query  # noqa: E402
 
-SQL = os.path.join(HERE, "..", "sql")
+SQL = os.path.join(HERE, "sql")
 # engine -> (its columns query, its keys query (sql/<name>.sql), sqlglot's dialect for its type names)
 PG = ("infoschema-columns", "pg-keys", "postgres")
 ENGINES = {"postgres": PG, "yugabytedb": PG, "cockroachdb": PG,

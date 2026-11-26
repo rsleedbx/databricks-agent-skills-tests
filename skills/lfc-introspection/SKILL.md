@@ -11,8 +11,8 @@ and sizing (lfc-source-sizing) each take it without what the others need.
 
 | File | Holds | Read from |
 |---|---|---|
-| `schema.yaml` | each base table's columns (canonical type, native type, not null, default), primary key, foreign keys with their actions | [`sql/infoschema-columns.sql`](scripts/sql/infoschema-columns.sql), [`sql/pg-keys.sql`](scripts/sql/pg-keys.sql) or [`sql/infoschema-keys.sql`](scripts/sql/infoschema-keys.sql), [`sql/mysql-*.sql`](scripts/sql/mysql-columns.sql) |
-| `stats.yaml` | each table's rows and data bytes | [`sql/size/<engine>.sql`](scripts/sql/size/), the queries lfc-source-sizing runs |
+| `schema.yaml` | each base table's columns (canonical type, native type, not null, default), primary key, foreign keys with their actions | [`sql/infoschema-columns.sql`](scripts/lfc_introspection/sql/infoschema-columns.sql), [`sql/pg-keys.sql`](scripts/lfc_introspection/sql/pg-keys.sql) or [`sql/infoschema-keys.sql`](scripts/lfc_introspection/sql/infoschema-keys.sql), [`sql/mysql-*.sql`](scripts/lfc_introspection/sql/mysql-columns.sql) |
+| `stats.yaml` | each table's rows and data bytes | [`sql/size/<engine>.sql`](scripts/lfc_introspection/sql/size/), the queries lfc-source-sizing runs |
 
 ```bash
 uv run scripts/introspect.py --profile P --warehouse ID --connection lfcddemo-azurevm-pg --engine postgres \

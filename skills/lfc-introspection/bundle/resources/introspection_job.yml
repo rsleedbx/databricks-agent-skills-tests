@@ -1,0 +1,20 @@
+resources:
+  jobs:
+    introspection_job:
+      name: lfc-introspection-${var.schema}
+      trigger:
+        pause_status: UNPAUSED
+        table_update:
+          table_names:
+            - ${var.catalog}.${var.schema}.introspection_request
+          condition: ANY_UPDATED
+          min_time_between_triggers_seconds: ${var.min_seconds_between_runs}
+      tasks:
+        - task_key: run_requests
+          notebook_task:
+            notebook_path: ../notebooks/run_requests.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              tests_repo_archive: ${var.tests_repo_archive}
+      max_concurrent_runs: 1
