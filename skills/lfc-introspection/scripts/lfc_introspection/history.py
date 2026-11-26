@@ -122,7 +122,7 @@ def record(session, schema: str, req: dict, docs: tuple | None, error: str | Non
     return row
 
 
-def run_pending(session, schema: str, introspect=None) -> list:
+def run_pending(session, schema: str, introspect=None, via: str = "jdbc") -> list:
     """Every pending request run and recorded (a failure is a run too, with its error). introspect: the function
     that reads a source (lfc_introspection.introspect.introspect; another for a test). The runs' rows."""
     if introspect is None:
@@ -132,7 +132,8 @@ def run_pending(session, schema: str, introspect=None) -> list:
     out = []
     for r in pending(reqs, runs):
         try:
-            docs = introspect(session, r["source"], r["engine"], r.get("database"), r.get("src_schema") or "public")
+            docs = introspect(session, r["source"], r["engine"], r.get("database"), r.get("src_schema") or "public",
+                              via=via)
             out.append(record(session, schema, r, docs))
         except Exception as e:  # noqa: BLE001  the run is recorded as failed, with why
             out.append(record(session, schema, r, None, f"{type(e).__name__}: {str(e)[:500]}"))

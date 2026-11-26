@@ -15,6 +15,22 @@ class SizeQueryError(ValueError):
     """A missing engine, file, --database or --service."""
 
 
+def query_text(engine, database=None, file=None, folder=None, fill=None, jdbc=False):
+    """A catalog query's text on one line: the engine's size query, or `file` in `folder`; comments off, __DB__ and
+    fill's placeholders filled in. jdbc: for Spark's jdbc source (Db2 and Informix too: a JDBC connection has them)."""
+    if engine not in ENGINES and not (jdbc and engine in ("db2", "informix")):
+        raise SizeQueryError(f"engine: {', '.join(ENGINES)} (db2 and informix: run lfc-introspection scripts/lfc_introspection/sql/size/db2.sql or informix.sql "
+                             "by hand, or through a JDBC connection)")
+    path = os.path.join(folder or HERE, (file or SQL_FILE.get(engine, engine)) + ".sql")
+    if not os.path.isfile(path):
+        raise SizeQueryError(f"no query {path}")
+    with open(path) as f:                                 # comments off, __DB__ filled in, one line
+        inner = " ".join(re.sub(r"--.*$", "", line.rstrip("\n")).replace("__DB__", database or "") for line in f)
+    for k, v in (fill or {}).items():
+        inner = inner.replace(k, str(v).replace("'", "''"))
+    return re.sub(" +", " ", inner + " ").strip().rstrip(";")
+
+
 def remote_query(connection, engine, database=None, service=None, file=None, folder=None, fill=None):
     """SELECT * FROM remote_query(...) for the engine; file names another query beside this one (mysql-process), or
     in `folder` (another skill's catalog queries); fill: {placeholder: value} replaced in the query, like __DB__."""
@@ -34,11 +50,7 @@ def remote_query(connection, engine, database=None, service=None, file=None, fol
         arg = f", service_name => '{service}'"
     else:
         arg = ""
-    with open(path) as f:                                 # comments off, __DB__ filled in, one line
-        inner = " ".join(re.sub(r"--.*$", "", line.rstrip("\n")).replace("__DB__", database or "") for line in f)
-    for k, v in (fill or {}).items():
-        inner = inner.replace(k, str(v).replace("'", "''"))
-    inner = re.sub(" +", " ", inner + " ")
+    inner = query_text(engine, database, file, folder, fill) + " "
     return f"SELECT * FROM remote_query('{connection}'{arg}, query => \"{inner}\")"
 
 

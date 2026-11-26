@@ -3,7 +3,8 @@
 # dependencies = ["pyyaml", "sqlglot", "databricks-sdk"]
 # ///
 """introspect.py: a source database's schema.yaml and stats.yaml (statschema's format), read through a Unity Catalog
-connection on a SQL warehouse: the catalog only (lfc_introspection.introspect).
+connection with remote_query on a SQL warehouse (from the laptop): the catalog only (lfc_introspection.introspect; a
+notebook or job reads through a JDBC connection instead, its default).
 
 usage: introspect.py --profile P --warehouse ID --connection C --engine E [--database D | --service S] --schema S --out DIR
 """
@@ -27,7 +28,7 @@ def main(argv=None):
     from databricks.sdk import WorkspaceClient
     from lfc_change_source.engine import Warehouse
     wh = Warehouse(x.warehouse, WorkspaceClient(profile=x.profile))
-    schema, stats = introspect(wh, x.connection, x.engine, x.database, x.schema, x.service)
+    schema, stats = introspect(wh, x.connection, x.engine, x.database, x.schema, x.service, via="remote_query")
     os.makedirs(x.out, exist_ok=True)
     write(schema, stats, os.path.join(x.out, "schema.yaml"), os.path.join(x.out, "stats.yaml"))
     print(f"{len(schema['tables'])} tables -> {x.out}/schema.yaml, stats.yaml", file=sys.stderr)

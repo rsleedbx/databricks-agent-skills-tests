@@ -49,7 +49,8 @@ class Fake:
 class Introspect(unittest.TestCase):
     def setUp(self):
         self.fake = Fake()
-        self.schema, self.stats = introspect(self.fake, "conn1", "postgres", database="db1", schema="app")
+        self.schema, self.stats = introspect(self.fake, "conn1", "postgres", database="db1", schema="app",
+                                             via="remote_query")
         self.t = {t["name"]: t for t in self.schema["tables"]}
 
     def test_three_statements_through_the_connection(self):
@@ -77,6 +78,41 @@ class Introspect(unittest.TestCase):
         self.assertEqual((s["orders"]["row_count"], s["orders"]["data_size_bytes"]), (5000, 400_000))
         self.assertEqual(s["customer"]["row_count"], 100)                   # rows_alt when rows_est is unknown
         self.assertEqual((s["hits"]["row_count"], s["hits"]["data_size_bytes"]), (70, 24576))   # not schema other's
+
+    def test_the_same_reads_through_spark_jdbc(self):
+        seen = []
+
+        class Reader:
+            def __init__(self):
+                self.opts = {}
+
+            def format(self, f):
+                self.opts["format"] = f
+                return self
+
+            def option(self, k, v):
+                self.opts[k] = v
+                return self
+
+            def load(self):
+                seen.append(dict(self.opts))
+                q = self.opts["query"]
+                rows = COLS if "information_schema.columns" in q else KEYS if "pg_constraint" in q else SIZES
+
+                class D:
+                    def collect(self):
+                        return rows
+                return D()
+
+        class Spark:
+            @property
+            def read(self):
+                return Reader()
+        schema, _ = introspect(Spark(), "jdbc1", "postgres", database="db1", schema="app")   # via="jdbc", the default
+        self.assertEqual(schema, self.schema)
+        self.assertEqual([(s["format"], s["databricks.connection"]) for s in seen], [("jdbc", "jdbc1")] * 3)
+        self.assertFalse(any("remote_query" in s["query"] for s in seen))
+        self.assertTrue(all(not s["query"].endswith(";") for s in seen))   # Spark wraps it in a subquery
 
     def test_native_type_text(self):
         self.assertEqual(native("sqlserver", "nvarchar", -1, None, None, None), "nvarchar")   # (max)

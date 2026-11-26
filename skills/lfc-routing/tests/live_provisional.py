@@ -60,7 +60,7 @@ def request(table, n, values):
 
 
 request(history.REQUEST, 1, f"'{CONN}', 'postgres', 'tpch1', 'tpch1'")
-r1 = history.run_pending(wh, S)
+r1 = history.run_pending(wh, S, via="remote_query")
 print("introspection 1:", [(r["status"], r["tables"]) for r in r1], flush=True)
 request(provisional.REQUEST, 1, f"'{CONN}', '{LOG}', '{NAME}'")
 c1 = provisional.run_cdc_requests(wh, S, make=make, running=lambda src: None)
@@ -68,7 +68,7 @@ print("cdc 1:", [(r["action"], r["status"], r["tables"], r.get("error")) for r i
 ok &= c1[0]["status"] == "ok" and c1[0]["action"] == "start" and c1[0]["tables"] == r1[0]["tables"]
 psql("CREATE TABLE tpch1.lfc_added (id INT PRIMARY KEY, v TEXT)")
 request(history.REQUEST, 2, f"'{CONN}', 'postgres', 'tpch1', 'tpch1'")
-r2 = history.run_pending(wh, S)
+r2 = history.run_pending(wh, S, via="remote_query")
 print("introspection 2:", [(r["status"], r["tables"], r["changes"]) for r in r2], flush=True)
 ok &= r2[0]["changes"] == ["table added: lfc_added"]
 request(provisional.REQUEST, 2, f"'{CONN}', '{LOG}', '{NAME}'")

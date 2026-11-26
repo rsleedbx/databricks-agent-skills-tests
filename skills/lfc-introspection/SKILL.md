@@ -19,7 +19,9 @@ uv run scripts/introspect.py --profile P --warehouse ID --connection lfcddemo-az
   --database postgres --schema lfcddemo --out out/
 ```
 
-In Python, any session with `.sql(...).collect()` (a Spark session, a warehouse):
+In Python: through a UC **JDBC** connection with Spark's jdbc source (`via="jdbc"`, the default: a notebook or job,
+any engine with a driver, Spark's read options later), or a standard connection with `remote_query` on a SQL
+warehouse (`via="remote_query"`: from the laptop, the command line above). Either way
 `from lfc_introspection.introspect import introspect; schema, stats = introspect(session, conn, "mysql", schema="app")`.
 The documents are statschema's (`statschema.tools.canonical.convert`, the conversion its own collectors use).
 
@@ -31,7 +33,7 @@ case). Oracle, Db2 and Informix have size queries but no columns or keys query y
 
 A person asks for a run by adding a row to `introspection_request` (n, source, engine, database, src_schema), from the
 dashboard's editable table; the bundle's job ([bundle/](bundle/databricks.yml), a table update trigger on that table)
-runs [`history.run_pending`](scripts/lfc_introspection/history.py). Each run is appended: `introspection_runs` (status,
+runs [`history.run_pending`](scripts/lfc_introspection/history.py) through the request's JDBC connection. Each run is appended: `introspection_runs` (status,
 error, the documents classify reads, what changed since that source's previous run: tables and columns added or
 dropped, a type or key changed, rows grown), `introspection_schema` (columns) and `introspection_stats` (rows, bytes).
 `history.latest(session, schema, source)` gives a source's last documents. Live (2026-11-26): a row added, the

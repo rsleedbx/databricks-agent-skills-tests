@@ -1,6 +1,7 @@
 """introspect: routing's first box (docs/design-intelligent.md, "Two boxes"): a source database in, statschema's
-schema.yaml and stats.yaml out, and nothing else. It reads only the catalog, through a Unity Catalog connection with
-remote_query (no table scans, no row data): each base table's columns and types, its primary key and foreign keys
+schema.yaml and stats.yaml out, and nothing else. It reads only the catalog, through a Unity Catalog connection (no
+table scans, no row data), with Spark's jdbc source (via="jdbc", the default: a JDBC connection) or remote_query on a
+SQL warehouse (via="remote_query": a standard connection, from the laptop): each base table's columns and types, its primary key and foreign keys
 (sql/), and its rows and bytes (sql/size/<engine>.sql, which lfc-source-sizing runs too). The documents are statschema's
 canonical format (statschema.tools.canonical.convert, the same conversion its collectors use).
 
@@ -92,13 +93,24 @@ def raw(columns: list, keys: list, sizes: list, engine: str, schema: str) -> dic
 
 
 def introspect(session, connection: str, engine: str, database: str | None = None, schema: str = "public",
-               service: str | None = None) -> tuple:
-    """(schema, stats): statschema's two documents for `schema`'s base tables, read through `connection`."""
+               service: str | None = None, via: str = "jdbc") -> tuple:
+    """(schema, stats): statschema's two documents for `schema`'s base tables, read through `connection`.
+    via: "jdbc" (Spark's jdbc source through a UC JDBC connection: a Spark session, any engine with a driver, the
+    flexibility of Spark's reads) or "remote_query" (a standard UC connection on a SQL warehouse, from the laptop)."""
     if engine not in ENGINES:
         raise ValueError(f"introspect: engine {engine!r}, one of {', '.join(ENGINES)}")
     cols_q, keys_q, _ = ENGINES[engine]
     fill = {"__SCHEMA__": schema}
-    q = lambda f: session.sql(remote_query(connection, engine, database, service, file=f,  # noqa: E731
-                                           folder=SQL, fill=fill)).collect()
-    sizes = session.sql(remote_query(connection, engine, database, service)).collect()
+    if via == "jdbc":
+        from .catalog import query_text
+        rd = lambda text: (session.read.format("jdbc").option("databricks.connection", connection)  # noqa: E731
+                           .option("query", text).load().collect())
+        q = lambda f: rd(query_text(engine, database, file=f, folder=SQL, fill=fill, jdbc=True))  # noqa: E731
+        sizes = rd(query_text(engine, database, jdbc=True))
+    elif via == "remote_query":
+        q = lambda f: session.sql(remote_query(connection, engine, database, service, file=f,  # noqa: E731
+                                               folder=SQL, fill=fill)).collect()
+        sizes = session.sql(remote_query(connection, engine, database, service)).collect()
+    else:
+        raise ValueError(f"introspect: via {via!r}, jdbc or remote_query")
     return convert(raw(q(cols_q), q(keys_q), sizes, engine, schema))

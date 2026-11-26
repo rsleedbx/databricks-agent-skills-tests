@@ -63,7 +63,7 @@ class History(unittest.TestCase):
                     return R(state["runs"])
                 return R([])
 
-        def fake_introspect(session, src, engine, db, sch):
+        def fake_introspect(session, src, engine, db, sch, via=None):
             if src == "bad":
                 raise RuntimeError("no route to host")
             return S1, T1
