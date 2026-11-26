@@ -298,6 +298,29 @@ class Drift(unittest.TestCase):
         self.assertIn("ON d.tbl = f.tbl AND d._source = f._source AND d.kind = f.kind AND d.col = f.col", m)
 
 
+class FkActions(unittest.TestCase):
+    def test_a_parents_delete_reaches_its_children(self):
+        from lfc_change_source.cdc_log import CdcLog
+        from lfc_log_silver import fk
+        mk = lambda n, k, c: CdcLog("my1", LOG, n, f"my1.s.{n}", k, c, seq="binlog")   # noqa: E731
+        srcs = {"o": mk("o", ["oid"], {"oid": "INT"}), "l": mk("l", ["lid"], {"lid": "INT", "oid": "INT"}),
+                "n": mk("n", ["nid"], {"nid": "INT", "lid": "INT"}), "c": mk("c", ["cid"], {"cid": "INT", "oid": "INT"})}
+        edges = {"l": [{"cols": ["oid"], "parent": "o", "parent_cols": ["oid"], "on_delete": "CASCADE"}],
+                 "n": [{"cols": ["lid"], "parent": "l", "parent_cols": ["lid"], "on_delete": "CASCADE"}],
+                 "c": [{"cols": ["oid"], "parent": "o", "parent_cols": ["oid"], "on_delete": "SET_NULL"}]}
+        got = fk.with_actions(srcs, edges, {"l": (SNAP, Position("binlog", "4"))})
+        self.assertIs(got["o"], srcs["o"])                                         # a parent alone: as it was
+        lq = got["l"].changes_sql(Position("binlog", "4"), Position("binlog", "9"))
+        self.assertIn(f"FROM ({SNAP})", lq)                                         # l's state from its snapshot
+        self.assertIn("v.`oid` = d.`oid`", lq)                                      # matched on the foreign key
+        self.assertIn("'delete' AS _op", lq)                                        # CASCADE: a delete
+        nq = got["n"].changes_sql(None, None)
+        self.assertGreater(nq.count("v.`oid` = d.`oid`"), 0)                        # n's parent l carries o's deletes: a chain
+        cq = got["c"].changes_sql(None, None)
+        self.assertIn("CAST(NULL AS INT) AS `oid`", cq)                             # SET NULL: the key NULL
+        self.assertEqual(got["c"].keys, ["cid"])                                    # everything else the source's
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),

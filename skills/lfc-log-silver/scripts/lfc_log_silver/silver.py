@@ -352,6 +352,8 @@ def shared_view_sql(t: Table, schema: str, target: str) -> str:
 def _groups(tables: dict) -> dict:
     out: dict = {}
     for n, t in tables.items():
+        if getattr(t.src, "edges", None):   # derived changes (fk) aren't in the raw log a group reads
+            raise ValueError(f"{n}: a table with foreign key actions needs a table of its own (Policy.own_table)")
         out.setdefault(t.group or "0", {})[n] = t
     return out
 
