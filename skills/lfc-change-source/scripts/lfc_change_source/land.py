@@ -88,8 +88,14 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
     big_fast table's own log, lfc-routing), each log landing whole files with its own filter: listed with LIST and
     read once a log (a ledger, <log>__scanned, of the files it scanned). keys (gateway_keys):
     each row's key filled in (silver's shared groups need it)."""
-    if only or skip:   # COPY INTO takes no WHERE: a filtered landing reads only what it hasn't read for its tables
-        return _filtered(session, log, gateway_key_sql(keys), name, f"{root}/cdc/", only, skip)
+    if skip and not only:   # every table but these, as a list: from the gateway's schema files (a new table too)
+        from . import gateway_staging
+        out = {t.lower() for t in skip}
+        only = [d for d in (".".join(k) for k in gateway_staging.schemas(session, root)) if d.lower() not in out]
+        if not only:
+            return 0
+    if only:   # COPY INTO takes no WHERE: a filtered landing reads only what it hasn't read for its tables
+        return _filtered(session, log, gateway_key_sql(keys), name, f"{root}/cdc/", only)
     return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql(keys), name, f"{root}/cdc/",
                  "*/*")
 
@@ -171,28 +177,25 @@ def _files(session, src: str, now_ms: float) -> list:
     return sorted(out)
 
 
-def _filtered(session, log: str, key: str, name: str, src: str, only: list | None, skip: list | None) -> int:
+def _filtered(session, log: str, key: str, name: str, src: str, only: list) -> int:
     """A filtered landing, read once a file and table: the change files listed (_files); each read only for the
     tables of `only` it hasn't been read for (the ledger's (file, table) rows, or the log's own rows of that table
     from it: a round stopped before recording stays safe), so a table added to `only` later gets every file read for
-    it once; files needing the same tables read together in batches of BATCH, then recorded. `skip` (every table but
-    these: not a list of tables) is recorded under one key for the skip list, so changing it reads every file again.
-    The rows added."""
-    import hashlib
+    it once; files needing the same tables read together in batches of BATCH, then recorded (gateway() turns a skip
+    into this list). The rows added."""
     import time
     led = ledger(log)
     session.sql(f"CREATE TABLE IF NOT EXISTS {led} (gateway STRING, file STRING, tbl STRING, at TIMESTAMP) COMMENT "
                 "'lfc_change_source land: each change file and table a filtered landing into this log has read'").collect()
+    if "tbl" not in {str(r[0]) for r in session.sql(f"DESCRIBE TABLE {led}").collect()}:   # a ledger of a file a row
+        session.sql(f"ALTER TABLE {led} ADD COLUMNS (tbl STRING)").collect()   # its rows no table's: read again once
     dest = f"lower({GATEWAY_DESTINATION})"
-    if only:
-        want = sorted({t.lower() for t in only})
-    else:
-        want = ["skip:" + hashlib.sha1(",".join(sorted(t.lower() for t in skip)).encode()).hexdigest()[:12]]
+    want = sorted({t.lower() for t in only})
     wl = ", ".join(_lit(t) for t in want)
     done = {(_bare(str(r[0])), str(r[1])) for r in session.sql(
         f"SELECT file, tbl FROM {led} WHERE gateway = {_lit(name)} AND tbl IN ({wl}) "
-        + (f"UNION SELECT DISTINCT file, lower(destination) FROM {log} WHERE gateway = {_lit(name)} AND file IS NOT "
-           f"NULL AND lower(destination) IN ({wl})" if only else "")).collect()}
+        f"UNION SELECT DISTINCT file, lower(destination) FROM {log} WHERE gateway = {_lit(name)} AND file IS NOT "
+        f"NULL AND lower(destination) IN ({wl})").collect()}
     groups: dict = {}   # the tables a file still needs -> the files
     for f in _files(session, src, time.time() * 1000):
         need = tuple(t for t in want if (f, t) not in done)
@@ -202,8 +205,7 @@ def _filtered(session, log: str, key: str, name: str, src: str, only: list | Non
             f"{_lit(name)} AS gateway, _metadata.file_path AS file")
     added = 0
     for need, files in sorted(groups.items()):
-        where = (f" WHERE {dest} IN ({', '.join(_lit(t) for t in need)})" if only else
-                 f" WHERE {dest} NOT IN ({', '.join(_lit(t.lower()) for t in skip)})")
+        where = f" WHERE {dest} IN ({', '.join(_lit(t) for t in need)})"
         for i in range(0, len(files), BATCH):
             part = files[i:i + BATCH]
             reads = " UNION ALL ".join(f"SELECT {cols} FROM read_files('{f}', format => 'json', singleVariantColumn => "
