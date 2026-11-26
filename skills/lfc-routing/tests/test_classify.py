@@ -8,7 +8,7 @@ import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-for s in ("lfc-routing", "lfc-medallion", "lfc-change-source"):
+for s in ("lfc-routing", "lfc-medallion", "lfc-change-source", "lfc-log-silver"):
     sys.path.insert(0, os.path.join(HERE, "..", "..", s, "scripts"))
 from lfc_routing.classify import classify  # noqa: E402
 
@@ -57,6 +57,23 @@ class Classify(unittest.TestCase):
     def test_the_schema_role_lines_are_never_read(self):
         marked = {"tables": [dict(t, role="queue") for t in SCHEMA["tables"]]}
         self.assertEqual(classify(marked, STATS), classify(SCHEMA, STATS))
+
+
+class Observed(unittest.TestCase):
+    """flowthrough.observed, the document classify reads: two rounds of counts, a table first seen, then the plan."""
+
+    def test_two_rounds_of_counts_make_the_rates_classify_reads(self):
+        from lfc_log_silver.flowthrough import observed
+        prev = {"orders": ({}, 1000, 100.0), "customer": ({}, 10, 100.0)}
+        doc = observed(prev, {"orders": 501_000, "customer": 10, "audit_log": 5}, 200.0,
+                       {"orders": "`c`.`s`.`cdc_log`"}, round_=2)
+        t = doc["tables"]
+        self.assertEqual((doc["round"], doc["seconds"]), (2, 100.0))
+        self.assertEqual((t["orders"]["events_per_s"], t["customer"]["events_per_s"], t["audit_log"]["events_per_s"]),
+                         (5000.0, 0.0, 0.0))
+        self.assertEqual((t["orders"]["log"], t["audit_log"]["events"]), ("`c`.`s`.`cdc_log`", 5))
+        plan = classify(SCHEMA, STATS, observed=doc)
+        self.assertEqual((plan["round"], plan["tables"]["orders"]["route"]["class"]), (2, "big_fast"))
 
 
 if __name__ == "__main__":
