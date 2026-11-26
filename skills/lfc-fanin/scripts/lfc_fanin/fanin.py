@@ -69,7 +69,8 @@ def save(spark, p: dict) -> None:
 def not_yet(e: Exception) -> bool:
     """A Volume folder not written yet (not a missing table, schema or pipeline)."""
     t = str(e)
-    return "PATH_NOT_FOUND" in t or (type(e).__name__ in ("NotFound", "ResourceDoesNotExist") and "/Volumes/" in t)
+    return ("PATH_NOT_FOUND" in t or "CF_PATH_DOES_NOT_EXIST" in t   # read_files on a folder not written yet
+            or (type(e).__name__ in ("NotFound", "ResourceDoesNotExist") and "/Volumes/" in t))
 
 
 def _read_yaml(w, path: str):
