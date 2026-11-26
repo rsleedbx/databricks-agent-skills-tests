@@ -24,9 +24,13 @@ TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates"
 ARCHIVE = "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip"
 
 
-def init(folder: str, name: str, archive: str) -> list[str]:
+CODE = {"checks/verify.py", "source/setup_source.py", "transform/n1.py", "transform/refresh.py"}   # the pack's own
+
+
+def init(folder: str, name: str, archive: str, refresh: bool = False) -> list[str]:
     """Write the templates into folder (a file already there is kept): both bundles, the source and verify notebooks,
-    the n:1 pipeline file and <name>.yaml."""
+    the n:1 pipeline file and <name>.yaml. refresh: also rewrite the pack's own notebooks (CODE), which a project
+    doesn't edit, so their fixes reach a project made before them; the project's YAML and bundles stay."""
     lobs_mod.NAME.match(name) or sys.exit(f"--name {name}: lower-case letters, digits and _")
     out = []
     for root, _, files in os.walk(TEMPLATES):
@@ -34,7 +38,7 @@ def init(folder: str, name: str, archive: str) -> list[str]:
             src = os.path.join(root, f)
             rel = os.path.relpath(src, TEMPLATES)
             dst = os.path.join(folder, f"{name}.yaml" if rel == "project.yaml" else rel)
-            if os.path.exists(dst):
+            if os.path.exists(dst) and not (refresh and rel in CODE):
                 continue
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             with open(src) as fh:
@@ -52,6 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("dir")
     i.add_argument("--name", required=True)
     i.add_argument("--archive", default=ARCHIVE)
+    i.add_argument("--refresh", action="store_true", help="also rewrite the pack's own notebooks (not the project's "
+                                                          "YAML or bundles)")
     r = sub.add_parser("render")
     r.add_argument("project")
     c = sub.add_parser("check")
@@ -100,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(timings.predict(rows, a.tables), indent=1))
         return 0
     if a.cmd == "init":
-        for f in init(a.dir, a.name, a.archive):
+        for f in init(a.dir, a.name, a.archive, a.refresh):
             print(f)
         return 0
     if a.cmd == "render":

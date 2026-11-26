@@ -36,6 +36,7 @@ layers:
     skills:
       - lfc-source-contract
       - lfc-workload-contract
+      - lfc-change-source
 
   sources:
     may_use: [shape, contract, common]
@@ -64,6 +65,9 @@ layers:
       - lfc-schema-change-test
       - lfc-downstream-history
       - lfc-medallion
+      - lfc-routing
+      - lfc-log-silver
+      - lfc-fanin
       - lfc-connection-sync
       - lfc-workspace-setup
       - lfc-meta-ads

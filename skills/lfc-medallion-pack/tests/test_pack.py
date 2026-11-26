@@ -10,6 +10,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import types
 
 import yaml
 
@@ -91,6 +93,13 @@ class Plan(unittest.TestCase):
         mixed = plan.plan(project(self.d, bank={"pack": "tpcb", "lobs": 70}))["modules"][0]["groups"]
         self.assertEqual([(x["class"], x["table_names"]) for x in mixed], [("all", None), ("all", None)])   # the default
 
+    def test_module_sf_sets_every_lob(self):   # a scale test's small data; the tiers keep their signals
+        m = plan.plan(project(self.d, scale={"pack": "tpcb", "lobs": 10, "sf": 0.01}))["modules"][0]
+        self.assertEqual({x["sf"] for x in m["lobs"]}, {0.01})
+        self.assertEqual({x["tier"] for x in m["lobs"]}, {"high", "core", "low"})
+        with self.assertRaisesRegex(ValueError, "sf 0: a number above 0"):
+            plan.plan(project(self.d, scale={"pack": "tpcb", "lobs": 10, "sf": 0}))
+
     def test_limits_refused(self):
         f = project(self.d, bank={"pack": "tpcb", "lobs": 3})
         p = yaml.safe_load(open(f))
@@ -170,6 +179,25 @@ class Verify(unittest.TestCase):
         self.assertEqual(verify.mart_names(sql), ["transactions", "unusual_by_hour", "lob_summary"])
         self.assertEqual(verify.bind("(:base + :teller) / 1000.0", {"base": 5, "teller": 60}), "(5 + 60) / 1000.0")
 
+    def test_built_signals_from_the_source_comments(self):   # a re-tiered LOB keeps the numbers it was built with
+        import types
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 3, "data": True}))
+        finally:
+            shutil.rmtree(d)
+        lobs = pl["modules"][0]["lobs"]
+        seen = []
+        comment = 'lfc:rows=10 lfc:signal={"signal": "unusual_withdrawal", "parameters": {"base": 7, "big_min": 900}}'
+        rows = [types.SimpleNamespace(s=lobs[0]["source_schema"], t="history", d=comment),
+                types.SimpleNamespace(s=lobs[1]["source_schema"], t="history", d="lfc:rows=10")]   # no signal: left out
+        spark = types.SimpleNamespace(sql=lambda q, args=None: seen.append(args) or types.SimpleNamespace(
+            collect=lambda: rows))
+        got = verify.built_signals(spark, pl, "bank", "conn", "db")
+        self.assertEqual(got, {lobs[0]["name"]: {"base": 7, "big_min": 900}})
+        self.assertEqual(len(seen), 1)   # one remote_query for every LOB
+        self.assertIn("obj_description", seen[0]["q"])
+
 
 class Checksum(unittest.TestCase):
     def test_an_instant_and_a_wall_time(self):   # timestamptz: its own epoch, not through the session's time zone
@@ -177,6 +205,64 @@ class Checksum(unittest.TestCase):
         pg = checksum.row_text([{"name": "a", "type": "timestamptz"}, {"name": "b", "type": "timestamp"}], "postgres")
         self.assertIn('EXTRACT(EPOCH FROM ("a")::timestamptz)', pg)
         self.assertIn('EXTRACT(EPOCH FROM ("b")::timestamp)', pg)
+
+
+class ChecksumQueries(unittest.TestCase):
+    def test_one_source_and_one_n1_query_per_table_bronze_per_lob(self):   # not three per table and LOB
+        from lfc_medallion_pack import checksum
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 5, "data": True}))
+        finally:
+            shutil.rmtree(d)
+        m = pl["modules"][0]
+        ran = []
+
+        def sql(q, args=None):
+            ran.append(args["q"] if args else q)
+            if args:   # the source: a row per LOB
+                rows = [types.SimpleNamespace(g=x["name"], n_rows=3, digest=7) for x in m["lobs"]]
+            elif "GROUP BY 1" in q:
+                rows = [types.SimpleNamespace(g=x["name"], n_rows=3, digest=7) for x in m["lobs"]]
+            elif "SHOW TABLES" in q:
+                rows = []
+            else:
+                rows = [types.SimpleNamespace(n_rows=3, digest=7)]
+            return types.SimpleNamespace(collect=lambda: rows)
+        got = checksum._run(types.SimpleNamespace(sql=sql), pl, "bank", "main", "p", "c", "db", None)
+        self.assertEqual(len(got), 5 * 4)
+        self.assertEqual({r["status"] for r in got}, {"match"})
+        src = [q for q in ran if "UNION ALL" in q]
+        self.assertEqual(len(src), 4)   # one per table, every LOB in it
+        self.assertEqual(sum(1 for q in ran if "GROUP BY 1" in q), 4)
+        self.assertEqual(sum(1 for q in ran if "_bank_bronze_" in q), 5 * 4)
+
+
+class Capture(unittest.TestCase):
+    def test_one_insert_each_per_gateway_from_its_staging_volume(self):   # telemetry and change files, new files only
+        from lfc_medallion_pack import cdc
+        d = tempfile.mkdtemp()
+        try:
+            pl = plan.plan(project(d, bank={"pack": "tpcb", "lobs": 70}))
+        finally:
+            shutil.rmtree(d)
+        ran = []
+        spark = types.SimpleNamespace(sql=ran.append)
+        with mock.patch.object(cdc, "staging", lambda w, name: ("id", f"/Volumes/c/s/{name}")), \
+                mock.patch.object(cdc.os.path, "isdir", lambda p: True):
+            done = cdc.capture(spark, pl, "p", "main", "ctl", workspace=object())
+        self.assertEqual([(g["gateway"], g["found"]) for g in done], [("bank_gw_1", True), ("bank_gw_2", True)])
+        with mock.patch.object(cdc, "staging", lambda w, name: None):   # a gateway it can't see: said, not skipped
+            lost = cdc.capture(types.SimpleNamespace(sql=ran.append), pl, "p", "main", "ctl", workspace=object())
+        self.assertEqual([g["found"] for g in lost], [False, False])
+        self.assertIn("no gateway pipeline named p_bank_gw_1", lost[0]["why"])
+        self.assertEqual(len(ran), 4)   # two gateways x (telemetry, change files): not a statement per LOB or file
+        ev, staged = ran[0], ran[1]
+        self.assertIn("read_files('/Volumes/c/s/p_bank_gw_1/telemetry/', format => 'json')", ev)
+        self.assertIn("upstream_fetch_timestamp_watermark_ms", ev)
+        self.assertIn("NOT IN (SELECT file FROM `main`.`ctl`.gateway_events WHERE gateway = 'bank_gw_1')", ev)
+        self.assertIn("_metadata.file_modification_time", staged)
+        self.assertIn("substr(table_id.schema, 6)", staged)   # bank_lob_001 -> lob_001
 
 
 class Dashboard(unittest.TestCase):

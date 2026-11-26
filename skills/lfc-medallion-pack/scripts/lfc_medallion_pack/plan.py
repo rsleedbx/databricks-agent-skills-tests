@@ -45,6 +45,9 @@ TABLES_PER_PIPELINE = 250      # recommended; a pipeline takes at most 999 sourc
 HARD_TABLES = 999
 
 
+MEDALLION = ("lfc-change-source", "lfc-medallion")   # the packages the jobs and pipelines install from the archive
+
+
 def lob_groups(lobs: int, tables: int, limit: int) -> list[tuple[int, int]]:
     """The LOBs [first, end) of each ingestion pipeline of one class (`tables` per LOB, at most `limit` a pipeline)."""
     per = max(1, limit // tables)
@@ -68,9 +71,12 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
     p = pack_mod.load(m["pack"], base)
     items = lobs_mod.lobs(m.get("lobs") if isinstance(m.get("lobs"), int) else None, m.get("seed", 1),
                           m.get("lobs") if isinstance(m.get("lobs"), list) else m.get("names"))
+    sf = m.get("sf")   # every LOB at this scale factor (a scale test's small data); else each tier's own
+    if sf is not None and not (isinstance(sf, (int, float)) and sf > 0):
+        raise ValueError(f"module {name}: sf {sf!r}: a number above 0")
     for x in items:
         t = p["tiers"][x["tier"]]
-        x |= {"sf": t.get("sf", 1), "signals": pack_mod.signals(p, x["tier"]), "source_schema": f"{name}_{x['name']}"}
+        x |= {"sf": sf if sf is not None else t.get("sf", 1), "signals": pack_mod.signals(p, x["tier"]), "source_schema": f"{name}_{x['name']}"}
     limit = int(m.get("tables_per_pipeline") or project["limits"]["tables_per_pipeline"])
     if limit > HARD_TABLES:
         raise ValueError(f"tables_per_pipeline {limit}: an ingestion pipeline takes at most {HARD_TABLES} source tables")
@@ -97,7 +103,8 @@ def module_plan(name: str, m: dict, project: dict, base: str) -> dict:
                            "slot": slot, "publication": f"{slot}_pub"})
     return {"module": name, "pack": p["name"], "pack_dir": p["dir"], "model": p["model"],
             "source_column": p["source_column"], "tables": p["tables"], "roles": p.get("roles", {}),
-            "data": bool(m.get("data", False)),
+            "data": bool(m.get("data", False)), "merge_path": m.get("merge_path") or "auto",
+            "merge_read_by": m.get("merge_read_by") or "time",
             "lobs": items, "groups": groups, "configuration": p.get("configuration", {}),
             "readout": p.get("readout"), "marts": p["marts"], "tables_per_pipeline": limit,
             "hints": m.get("hints") or {}, "dimension_tables": dims,
@@ -180,7 +187,7 @@ def resources(m: dict, archive: str) -> dict:
         "name": f"${{var.prefix}}_{n}_transform", "catalog": "${var.catalog}",
         "schema": f"${{resources.schemas.{n}_silver.name}}", "serverless": True, "photon": True,
         "event_log": log(f"{n}_transform"),
-        "environment": {"dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]},
+        "environment": {"dependencies": [f"{archive}#subdirectory=skills/{d}/scripts" for d in MEDALLION]},
         "configuration": conf,
         "libraries": [{"file": {"path": "../transform/n1.py"}}] +
                      [{"file": {"path": f"../marts/{m['pack']}/{f}"}} for f in m["marts"]]}
@@ -204,13 +211,18 @@ def resources(m: dict, archive: str) -> dict:
                                             "log": f"${{var.catalog}}.{ctl}.merge_log_{n}",
                                             # only the sources whose bronze got rows since their state are read
                                             "events": ",".join(f"${{var.catalog}}.{ctl}.events_{n}_ingest_{g['k']}"
-                                                               for g in m["groups"])}}}
+                                                               for g in m["groups"]),
+                                            # the MERGE optimizer may run a table's MERGEs on the warehouse, k at
+                                            # once (lfc_medallion.paths); merge_path forces one: spark, warehouse:8
+                                            "warehouse": "${var.warehouse_id}",
+                                            "path": m.get("merge_path") or "auto",
+                                            "read-by": m.get("merge_read_by") or "time"}}}
     if not merge_task["depends_on"]:   # every pipeline continuous: nothing to wait for
         merge_task.pop("depends_on")
     jobs = {f"{n}_refresh": {
         "name": f"${{var.prefix}}_{n}_refresh",
         "environments": [{"environment_key": "medallion", "spec": {
-            "client": "2", "dependencies": [f"{archive}#subdirectory=skills/lfc-medallion/scripts"]}}],
+            "client": "2", "dependencies": [f"{archive}#subdirectory=skills/{d}/scripts" for d in MEDALLION]}}],
         "tasks": ingest_tasks + [merge_task,
             {"task_key": "transform", "depends_on": [{"task_key": "merge"}],   # waits for a facts cycle running
              "notebook_task": {"notebook_path": "../transform/refresh.py", "base_parameters": {

@@ -33,9 +33,10 @@ left for the next run.
     merge_all(spark, "main", "sales_bronze_", target="sales_silver", tables=quiet, source_column="division")
 """
 import json
+import datetime as dt
 import time
 
-from . import coltypes, discover, evidence
+from . import coltypes, discover, evidence, paths
 from .stack import spark_string
 
 STATE = "_lfc_medallion_merge_state"
@@ -364,26 +365,30 @@ def _ensure_target(spark, tgt: str, exists: bool, source_column: str, cols, have
 
 
 def changes_sql(src: str, source: str, source_column: str, key: list[str], cols: list[str], since: int | None,
-                until: int, start: str | None = None, absent: dict | None = None) -> str:
+                until: int, start: str | None = None, absent: dict | None = None, after_ts: str | None = None) -> str:
     """One source's rows for a MERGE: the whole table at `until` (since=None), or its changes since `since` (each key's
     last change, update pre-images dropped), with the source column and the change in `__lfc_change`. start: the
     SELECT expression for __START_AT (start_sql: a snapshot row's start filled), in place of the column. absent:
     {column: type} the table didn't have yet at `until` (a column added since): NULL of that type."""
+    from lfc_change_source.contract import Position, last_change_sql
+    from lfc_change_source.lfc_bronze import KIND, Bronze
     lit = spark_string(source)
     absent = absent or {}
     data = ", ".join(f"CAST(NULL AS {absent[c]}) AS {_q(c)}" if c in absent else start if start and c == START
                      else _q(c) for c in cols)
+    bronze = Bronze(source, src, "", list(key), list(cols))
+    at = Position(KIND, str(int(until)))
     if since is None:
         # pinned to the version saved in the state, so a commit in between isn't applied twice
         return (f"SELECT {lit} AS {_q(source_column)}, {data}, 'insert' AS `__lfc_change` "
-                f"FROM {src} VERSION AS OF {int(until)}")
-    part = ", ".join(_q(k) for k in key)
-    return (f"SELECT {lit} AS {_q(source_column)}, {data}, _change_type AS `__lfc_change` FROM ("
-            # each key's last change; in one version a delete and an insert of a key is a replacement: the insert
-            f"SELECT *, ROW_NUMBER() OVER (PARTITION BY {part} ORDER BY _commit_version DESC, "
-            "CASE _change_type WHEN 'delete' THEN 1 ELSE 0 END) AS `__lfc_n` "
-            f"FROM table_changes({spark_string(src.replace('`', ''))}, {int(since) + 1}, {int(until)}) "
-            "WHERE _change_type != 'update_preimage') WHERE `__lfc_n` = 1")
+                f"FROM ({bronze.snapshot_sql(at, data)})")
+    # each key's last change (the change source's _seq: the version, a delete before an insert in one version);
+    # after_ts: from a saved time to the latest commit (lfc_bronze commit_ts), no version needed
+    from lfc_change_source.lfc_bronze import TS
+    rng = (Position(TS, after_ts), None) if after_ts else (Position(KIND, str(int(since))), at)
+    names = ", ".join(_q(c) for c in cols)
+    return (f"SELECT {lit} AS {_q(source_column)}, {names}, _change_type AS `__lfc_change` FROM ("
+            f"{last_change_sql(bronze.changes_sql(*rng, data), list(key))})")
 
 
 def merge_into(tgt: str, rows: str, source_column: str, key: list[str], cols: list[str],
@@ -441,7 +446,7 @@ def _last_metrics(spark, fq: str) -> tuple:
 def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], source_column: str = "_source",
               only=None, name: str = "all_{table}", keys: dict | None = None, workspace=None,
               take_over: bool = False, run_id: str = "", log: str | None = None, changed: set | None = None,
-              context: dict | None = None, keep_gone: bool = False) -> dict:
+              context: dict | None = None, keep_gone: bool = False, planner=None, read_by: str = "time") -> dict:
     """Keep <catalog>.<target>.<name> current for each table in `tables`, from every source (schema <prefix><source>)
     that has it. keys: {table: [columns]} where the recorded key isn't the one to use. take_over: a target that is
     still a view (the pipeline's, left over when the table moved to this route) is dropped and the table copied whole;
@@ -468,7 +473,8 @@ def merge_all(spark, catalog: str, prefix: str, target: str, tables: list[str], 
         try:
             _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                          fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed,
-                         ctx.get("cols"), keep_gone)
+                         ctx.get("cols"), keep_gone, planner, read_by, ctx.get("refreshed") or set(),
+                         ctx.get("event_at") or {}, ctx.get("created"))
         finally:
             _log_rows(spark, fq_log, logged)
     return report
@@ -482,15 +488,48 @@ def load_context(spark, catalog: str, prefix: str, target: str, only=None) -> di
     kinds = {r.table_name: r.table_type for r in _rows(
         spark, f"SELECT table_name, table_type FROM {_q(catalog)}.information_schema.tables "
                f"WHERE table_schema = {spark_string(target)}")}
-    return {"names": names, "held": held, "cols": cols, "state": _state_full(spark, catalog, target), "kinds": kinds}
+    return {"names": names, "held": held, "cols": cols, "state": _state_full(spark, catalog, target), "kinds": kinds,
+            "created": _created(spark, catalog, prefix, target)}
 
 
-def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state, fresh, cols_known=None) -> dict:
+def _created(spark, catalog: str, prefix: str, target: str, name: str = "all_{table}") -> dict | None:
+    """{(table, source): when it was created} for each source table created after its own saved time: recreated, so
+    reading it by time is refused (the version path copies it). One query joins the catalog's tables with the state,
+    so only the recreated come back, at any table count; None when it can't run (then no source is read by time).
+    (last_altered isn't used: it lags the table's commits by minutes.)"""
+    head, _, tail = name.partition("{table}")
+    like = spark_string(prefix.replace("_", "\\_") + "%")
+    try:
+        return {(r.table_name, r.table_schema[len(prefix):]): r.created for r in _rows(
+            spark, f"SELECT t.table_schema, t.table_name, t.created FROM {_q(catalog)}.information_schema.tables t "
+                   f"JOIN {_fq(catalog, target, STATE)} s ON s.source = substr(t.table_schema, {len(prefix) + 1}) "
+                   f"AND s.target_table = concat({spark_string(head)}, t.table_name, {spark_string(tail)}) "
+                   f"WHERE t.table_schema LIKE {like} AND t.created > s.updated_at")}
+    except Exception:  # noqa: BLE001  no information_schema, or no state table yet: no source is read by time
+        return None
+
+
+def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state, fresh, cols_known=None,
+             by_time=False, event_at=None, created=None) -> dict:
     """One source of one table, read only (metadata: no data, no writes): its columns, key, version, table id, the
-    version last merged and what changed since. Run for every source at once (threads)."""
+    version last merged and what changed since. Run for every source at once (threads). by_time: a source the event
+    logs flag as changed (no snapshot) and with a saved state is read from its saved time (after_ts), with no history
+    or table id read, when it's SCD type 1 (no __START_AT), its last ingestion event is after its saved time
+    (event_at) and the table was created before it (created: not recreated since); its saved version stays as it
+    was (a lower bound)."""
     src = _fq(catalog, f"{prefix}{s}", table)
     saved = state.get((out_name, s))
     cols = [(c, t) for c, t in (cols_known or columns(spark, src)) if c not in CHANGE_COLUMNS]
+    if (by_time and not fresh and saved and len(saved) > 3 and saved[0] is not None and saved[1] and saved[3]
+            and START not in {c for c, _ in cols} and _after(event_at, saved[3]) and not _after(created, saved[3])):
+        key = list((keys or {}).get(table) or (saved[2] if len(saved) > 2 and saved[2] else None) or [])
+        if key:
+            from .route import MARGIN_S
+            t = saved[3] if saved[3].tzinfo else saved[3].replace(tzinfo=dt.timezone.utc)   # Spark: naive, UTC
+            after = (t - dt.timedelta(seconds=MARGIN_S)).astimezone(dt.timezone.utc)
+            return {"s": s, "src": src, "cols": cols, "key": key, "now": saved[0], "tid": saved[1],
+                    "last": saved[0], "whole": False, "changed": True,
+                    "after_ts": after.strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
     key = list((keys or {}).get(table) or (saved[2] if saved and len(saved) > 2 and saved[2] else None) or
                evidence.recorded_keys(spark, src, f"{catalog}.{prefix}{s}.{table}", workspace))
     if not key:
@@ -524,6 +563,34 @@ def _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
                     # a target merged before the snapshot times were kept: its snapshot rows' start unfilled, once
                     migrate=bool(saved) and stored is None and last is not None and last >= 0)
     return info
+
+
+def _after(t, saved_at) -> bool:
+    """Whether time t (a source's last ingestion event, or when its table was created) is after its saved time.
+    By time, a source is read only when its last event is after it (a commit is then after the start, the saved time
+    less the margin; one flagged only within the margin, its rows maybe already merged, is read by version: a start
+    after its last commit would fail) and its table wasn't created after it (recreated: the version path copies)."""
+    if t is None or saved_at is None:
+        return False
+    utc = lambda x: x if x.tzinfo else x.replace(tzinfo=dt.timezone.utc)  # noqa: E731  Spark: naive, UTC
+    return utc(t) > utc(saved_at)
+
+
+_UNKNOWN = dt.datetime.max.replace(tzinfo=dt.timezone.utc)   # creation unknown: taken as after any saved time
+
+
+def _recreated(created: dict | None, pair: tuple):
+    """When the pair's table was created, if after the oldest saved time; _UNKNOWN when the catalog couldn't say."""
+    return _UNKNOWN if created is None else created.get(pair)
+
+
+def _current(spark, i: dict) -> dict:
+    """Source i with its latest version and table id, for a whole copy: one read by time has neither (its saved
+    version is only a lower bound), and copying that version would copy old rows."""
+    if i.get("after_ts"):
+        i.update(now=latest_version(spark, i["src"]), tid=table_id(spark, i["src"]))
+        i.pop("after_ts")
+    return i
 
 
 def _saved(i: dict) -> tuple:
@@ -590,14 +657,61 @@ def _before(spark, tgt: str) -> int | None:
         return None
 
 
+def _merge_split(eng, tgt: str, parts: list[list[str]], source_column: str, key: list[str], cols: list[str],
+                 tries: int = 8) -> tuple[int, list[str]]:
+    """One MERGE per part (each a UNION ALL of its sources' changes), the parts at once on threads, on one engine; a
+    MERGE that meets another's commit (CONCURRENT...) is tried again. (The retries, the statements' ids where the
+    engine gives them: a warehouse's, for their phases in query history), for the paths log."""
+    def one(p):
+        q = merge_into(tgt, " UNION ALL ".join(p), source_column, key, cols)
+        for attempt in range(tries):
+            try:
+                return attempt, getattr(eng.sql(q), "statement_id", None)
+            except Exception as e:  # noqa: BLE001
+                if attempt == tries - 1 or "CONCURRENT" not in str(e).upper():
+                    raise
+                time.sleep(0.2 * 2 ** attempt)
+    if len(parts) == 1:
+        got = [one(parts[0])]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(parts)) as ex:
+            got = list(ex.map(one, parts))
+    return sum(a for a, _ in got), [i for _, i in got if i]
+
+
+def _counts_by_source(spark, tgt: str, source_column: str) -> dict:
+    """Each source's rows in the target, one GROUP BY: the planner's denominator for merge or copy."""
+    return {r[0]: int(r[1]) for r in spark.sql(f"SELECT {_q(source_column)}, COUNT(*) FROM {tgt} GROUP BY 1").collect()}
+
+
+def _insights(spark, tgt: str) -> list[str]:
+    """What the target's Delta features say about its MERGE cost, as the materialized-view planner's insights:
+    without deletion vectors a MERGE rewrites every file a changed key is in; row tracking is kept for incremental
+    readers. Read once per table and run."""
+    try:
+        props = {str(r[0]).lower(): str(r[1]).lower() for r in spark.sql(f"SHOW TBLPROPERTIES {tgt}").collect()}
+    except Exception:  # noqa: BLE001  not there yet: nothing to say
+        return []
+    out = []
+    if props.get("delta.enabledeletionvectors") == "false" or (
+            "delta.feature.deletionvectors" not in props and "delta.enabledeletionvectors" not in props):
+        out.append("DELTA_FEATURE_NOT_ENABLED: deletion vectors (a MERGE rewrites whole files)")
+    if props.get("delta.enablerowtracking") != "true":
+        out.append("DELTA_FEATURE_NOT_ENABLED: row tracking")
+    return out
+
+
 def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, held, state, kinds, existing,
                  fresh_targets, report, source_column, keys, workspace, take_over, logged, run_id, changed=None,
-                 cols_known=None, keep_gone=False):
+                 cols_known=None, keep_gone=False, planner=None, read_by="version", refreshed=frozenset(),
+                 event_at=None, created_at=None):
     """merge_all's work on one table: every source read at once (metadata, threads), then a whole copy for each source
     that needs one, ONE MERGE for all the sources whose changes come from the change feed, and one state write: so a
     table of hundreds of sources costs a few statements, not a few per source (logged: what it copied or merged)."""
     from concurrent.futures import ThreadPoolExecutor
     srcs = [x for x in names if table in held[x]]
+    started = time.time()   # to the first MERGE: this table's planning (paths log planning_s)
     if kinds.get(out_name) in ("MATERIALIZED_VIEW", "VIEW"):   # a pipeline's view (moved to this route)
         if not take_over:
             raise ValueError(f"{catalog}.{target}.{out_name} is a view (a pipeline's?): leave it out of the "
@@ -614,8 +728,12 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     look = [x for x in srcs if x not in quiet]
     read_at = time.time()   # before any version is read: the watermark (_save_states)
     with ThreadPoolExecutor(max_workers=max(1, min(16, len(look)))) as ex:
+        by_time = read_by == "time" and changed is not None   # the event logs say what changed: no history read
         info = list(ex.map(lambda s: _inspect(spark, catalog, prefix, table, out_name, s, keys, workspace, state,
-                                              fresh, (cols_known or {}).get(s, {}).get(table)), look))
+                                              fresh, (cols_known or {}).get(s, {}).get(table),
+                                              by_time and (table, s) not in refreshed,
+                                              (event_at or {}).get((table, s)),
+                                              _recreated(created_at, (table, s))), look))
     shapes = {tuple(i["cols"]) for i in info}   # names and types: a source holding a column wider widens the target
     for i in (info if len(shapes) > 1 or created else info[:1]) if info else []:   # every source's columns in the target
         have = {} if out_name not in existing else dict(columns(spark, tgt))
@@ -630,7 +748,7 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
     saves, feed, failed = [], [], []
     try:   # what finished is saved even when a later copy or MERGE fails: the next run doesn't redo it
         for i in info:
-            if i["last"] is not None and i["now"] == i["last"]:
+            if i["last"] is not None and i["now"] == i["last"] and not i.get("after_ts"):   # by time: now is unknown
                 report[out_name][i["s"]] = {"done": "unchanged", "version": i["now"]}
             elif i.get("plan") and i["plan"]["waiting"]:   # a full refresh not reloaded yet: the next run
                 report[out_name][i["s"]] = {"done": "waiting (full refresh reloading)", "version": i["last"]}
@@ -649,32 +767,62 @@ def _merge_table(spark, catalog, prefix, target, table, out_name, tgt, names, he
                 saves.append(_saved(i))
             else:
                 feed.append(i)
+        if planner is not None and feed and planner.needs_counts(table, [i["s"] for i in feed]):
+            # a source whose changes are a large share of its rows is copied whole (paths.technique)
+            how = planner.techniques(table, [i["s"] for i in feed], _counts_by_source(spark, tgt, source_column))
+            for i in [i for i in feed if how[i["s"]][0] == "copy"]:
+                _copy(spark, tgt, _current(spark, i), source_column, logged, run_id, out_name, report,
+                      f"copied ({how[i['s']][1]})")
+                saves.append(_saved(i))
+            feed = [i for i in feed if how[i["s"]][0] != "copy"]
+        insights = _insights(spark, tgt) if planner is not None and feed else []
         groups: dict[tuple, list] = {}   # sources with the same key and columns share one MERGE
         for i in feed:
             groups.setdefault((tuple(i["key"]), tuple(c for c, _ in i["cols"])), []).append(i)
         for (key, cols), part in groups.items():
-            rows = " UNION ALL ".join(changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"],
-                                                  i["now"], _start(i, i["now"])) for i in part)
+            each = {i["s"]: changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"],
+                                        _start(i, i["now"]), after_ts=i.get("after_ts")) for i in part}
+            # the path: the engine and how many MERGEs at once (paths.Planner, by cost); none: one MERGE on spark
+            fp = paths.fingerprint(list(key), list(cols))
+            e, eng, k, crows, preds = ("spark", spark, 1, 0, None) if planner is None else \
+                planner.pick(table, [i["s"] for i in part], out_name, fp)
             try:
                 t0 = time.time()
-                before = _before(spark, tgt)
-                spark.sql(merge_into(tgt, rows, source_column, list(key), list(cols)))
-                n = _merged_counts(spark, tgt, source_column, before)
+                before = _before(eng, tgt)
+                retries, ids = _merge_split(eng, tgt, [[each[i["s"]] for i in g] for g in paths.groups(part, k)],
+                                            source_column, list(key), list(cols))
+                n = _merged_counts(eng, tgt, source_column, before)
+                if planner is not None:
+                    planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, retries, fp=fp,
+                                   insights=insights, statements=ids, planning_s=t0 - started)
             # the change data vacuumed or expired, or the feed off: the error class varies, so each source alone
-            except Exception:  # noqa: BLE001
-                for i in part:
+            # (on spark; a source's changes merged again change nothing: the same rows match)
+            except Exception as err:  # noqa: BLE001
+                if planner is not None:
+                    planner.record(out_name, e, k, len(part), crows, preds, time.time() - t0, 0,
+                                   f"failed, each source alone: {str(err).splitlines()[0][:120]}", fp=fp,
+                                   insights=insights)
+                def alone(i, key=key, cols=cols):   # one source's MERGE (or copy); the sources at once, below
                     try:
                         t1 = time.time()
                         one = changes_sql(i["src"], i["s"], source_column, list(key), list(cols), i["last"], i["now"],
-                                          _start(i, i["now"]))
+                                          _start(i, i["now"]), after_ts=i.get("after_ts"))
                         before = _before(spark, tgt)
-                        spark.sql(merge_into(tgt, one, source_column, list(key), list(cols)))
+                        _merge_split(spark, tgt, [[one]], source_column, list(key), list(cols))   # retried on a conflict
                         _done(logged, report, run_id, out_name, i, "merged",
                               _of(_merged_counts(spark, tgt, source_column, before), i["s"]), t1)
                     except Exception as e:  # noqa: BLE001
-                        _copy(spark, tgt, i, source_column, logged, run_id, out_name, report,
-                              f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})")
-                    saves.append(_saved(i))
+                        from lfc_change_source.lfc_bronze import nothing_newer
+                        if i.get("after_ts") and nothing_newer(e):   # no commit after its start: nothing changed
+                            report[out_name][i["s"]] = {"done": "unchanged", "version": i["last"]}
+                        else:
+                            _copy(spark, tgt, _current(spark, i), source_column, logged, run_id, out_name, report,
+                                  f"copied (change feed unreadable: {str(e).splitlines()[0][:100]})")
+                    return _saved(i)
+                # the target is partitioned by source, so one source's MERGE doesn't conflict with another's: 16 at
+                # once, not one a source in turn (126 sources one by one took about 1,000 s)
+                with ThreadPoolExecutor(max_workers=max(1, min(16, len(part)))) as ex:
+                    saves.extend(ex.map(alone, part))
                 continue
             for i in part:   # seconds: the shared MERGE's, for every source in it
                 _done(logged, report, run_id, out_name, i, "merged", _of(n, i["s"]), t0)

@@ -252,6 +252,8 @@ podman run -d \
 
 **Readiness:** `(*) Setup has completed.` in the log: 295 s at first start (Lima, Rosetta, 2 CPUs), and it answers 231 s after a restart (setup rechecks everything). Watch the log for `Failed to`: setup keeps going after an error and the container stays up.
 
+**A disk with 4096-byte logical sectors** (`blockdev --getss <device>`; the cloud VM's XFS container disk, Azure Premium SSD v2's default): the image's `CREATE DATABASE` fails with `SQL0293N Error accessing a table space container.`, and setup still ends with `(*) Setup has completed.`, so a script that waits only for that line waits on a database that isn't there. Start without `DBNAME`, then, as `db2inst1`: `db2set DB2_4K_DEVICE_SUPPORT=ON`, `db2stop force; db2start`, `db2 create database LFCDB` (archive logging, if change capture needs it, is then yours to set: `db2 update db cfg for LFCDB using LOGARCHMETH1 DISK:<folder>`, a folder `db2inst1` can write: its home, not `/database`; the database is then backup pending, SQL1116N, until `db2 backup db LFCDB to /dev/null`). Check `db2 connect to LFCDB` before going on. lfc-source-cloud-vm's `slot.sh` (`db2_db`) and zerobus-debezium-test do this; details in lfc-source-cloud-vm `references/disk-setup.md`.
+
 **Query** (every `db2` call in one CLP session, from a file: separate `db2` commands don't share a connection):
 
 ```bash

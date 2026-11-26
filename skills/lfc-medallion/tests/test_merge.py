@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-change-source", "scripts"))
 from lfc_medallion import evidence, merge, merge_all, stack_all
 from lfc_medallion import merge as merge_mod
 from lfc_medallion.merge import STATE, merge_sql
@@ -185,6 +186,147 @@ class FirstAndLater(unittest.TestCase):
         sources_read = [q for q in spark.done if "table_changes('main.shop_bronze_" in q]
         self.assertEqual(len(sources_read), 1)   # each source's feed only inside the one MERGE
         self.assertEqual({r[2]: r[6:9] for r in logged}, {"east": (0, 1, 0), "west": (2, 0, 0)})
+
+    def test_a_forced_split_runs_k_merges_and_is_recorded(self):   # the optimizer's k: here 2 MERGEs at once
+        from lfc_medallion import paths
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        planner = paths.Planner({"spark": spark}, forced="spark:2", rows={("nation", "east"): 1, ("nation", "west"): 2})
+        report = run(spark, planner=planner)
+        self.assertEqual({s: r["done"] for s, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
+        merges = spark.merges()
+        self.assertEqual(len(merges), 2)
+        self.assertTrue(all("UNION ALL" not in m for m in merges))   # one source each
+        (rec,) = planner.records
+        self.assertEqual((rec["engine"], rec["k"], rec["sources"], rec["change_rows"], rec["forced"]),
+                         ("spark", 2, 2, 3, True))
+        self.assertGreaterEqual(rec["planning_s"], 0)   # the table's time to its first MERGE
+
+    def test_a_large_share_of_changes_is_copied_not_merged(self):   # the planner's recompute, by source
+        from lfc_medallion import paths
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        real = spark.sql
+        counts = [("east", 60000), ("west", 9)]   # each source's rows in the target
+        spark.sql = lambda q: R(collect=lambda: counts) if " GROUP BY 1" in q and q.startswith(
+            "SELECT `division`, COUNT(*) FROM `main`.`shop_silver`.`all_nation`") else real(q)
+        planner = paths.Planner({"spark": spark}, rows={("nation", "east"): 50000, ("nation", "west"): 2})
+        report = run(spark, planner=planner)
+        self.assertEqual(report["all_nation"]["east"]["done"], "copied (THRESHOLD_LARGE_CHANGES_RECOMPUTE)")
+        self.assertEqual(report["all_nation"]["west"]["done"], "merged")
+        feeds = [m for m in spark.merges() if "table_changes(" in m]
+        self.assertEqual(len(feeds), 1)   # one MERGE of the change feeds, west's only: east was copied whole
+        self.assertNotIn("shop_bronze_east", feeds[0])
+        (rec,) = planner.records
+        self.assertEqual(rec["sources"], 1)
+        self.assertRegex(rec["fingerprint"], r"^[0-9a-f]{12}$")   # the table's key and columns
+
+    def test_read_by_time_reads_no_history(self):   # the event logs said it changed: from its saved time, no reads
+        import datetime as dt
+        class NoReads:
+            def sql(self, q):
+                raise AssertionError(f"read: {q[:60]}")
+        saved = (5, "id-east", ["n_nationkey"], dt.datetime(2026, 11, 23, 12, 0, 0), None)
+        later = dt.datetime(2026, 11, 23, 12, 5, 0)   # its last ingestion event: after its saved time
+        i = merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
+                               {("all_nation", "east"): saved}, False, COLS, by_time=True, event_at=later)
+        self.assertEqual((i["after_ts"], i["last"], i["now"], i["whole"]), ("2026-11-23T11:58:00.000000Z", 5, 5, False))
+        with self.assertRaises(AssertionError):   # an event within the margin only (already merged): by version
+            merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
+                               {("all_nation", "east"): saved}, False, COLS, by_time=True,
+                               event_at=dt.datetime(2026, 11, 23, 11, 59, 0))
+        q = merge_mod.changes_sql(i["src"], "east", "division", i["key"], [c for c, _ in COLS], i["last"], i["now"],
+                                  after_ts=i["after_ts"])
+        self.assertIn("TIMESTAMP'2026-11-23T11:58:00.000000Z' + INTERVAL 1 MICROSECOND)", q)   # to the latest commit
+        self.assertEqual(merge_mod._saved(i)[1], 5)   # its saved version stays: a lower bound
+        scd2 = [("n_nationkey", "int"), ("__START_AT", "struct<x:int>")]
+        with self.assertRaises(AssertionError):   # SCD type 2: read by version (its history is needed)
+            merge_mod._inspect(NoReads(), "main", "shop_bronze_", "nation", "all_nation", "east", None, None,
+                               {("all_nation", "east"): saved}, False, scd2, by_time=True, event_at=later)
+
+    def test_read_by_time_merges_through_merge_all(self):   # the whole table path, not only _inspect
+        import datetime as dt
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        real = spark.sql
+        at = dt.datetime(2026, 11, 23, 12, 0, 0)
+        spark.sql = lambda q: R(collect=lambda: [R(target_table=t, source=x, version=v, table_id=i, updated_at=at,
+                                                   key_columns='["n_nationkey"]', snapshots=None)
+                                                 for (t, x), (v, i) in spark.state.items()]) \
+            if q.startswith("SELECT target_table, source, version") else R(collect=lambda: []) \
+            if q.startswith("SELECT t.table_schema, t.table_name, t.created") else real(q)   # none recreated
+        real_ctx = merge_mod.load_context
+        def ctx(*a, **k):   # the route's changed_since leaves each pair's last ingestion event in the context
+            c = real_ctx(*a, **k)
+            c["event_at"] = {("nation", "east"): at + dt.timedelta(minutes=5), ("nation", "west"): at + dt.timedelta(minutes=5)}
+            return c
+        with mock.patch.object(merge_mod, "load_context", ctx):
+            report = run(spark, read_by="time", changed={("nation", "east"): 1, ("nation", "west"): 2})
+        self.assertEqual({x: r["done"] for x, r in report["all_nation"].items()}, {"east": "merged", "west": "merged"})
+        merges = spark.merges()
+        self.assertEqual(len(merges), 1)
+        self.assertIn("TIMESTAMP'2026-11-23T11:58:00.000000Z' + INTERVAL 1 MICROSECOND", merges[0])
+        self.assertFalse(any("DESCRIBE HISTORY" in q and "shop_bronze_" in q for q in spark.reads))   # no history read
+
+    def test_a_table_created_after_its_saved_time_is_read_by_version(self):   # recreated: copied, not read by time
+        import datetime as dt
+        saved_at, later = dt.datetime(2026, 11, 23, 12, 0, 0), dt.datetime(2026, 11, 23, 12, 5, 0)
+        saved = (5, "id-east", ["n_nationkey"], saved_at, None)
+        args = ("main", "shop_bronze_", "nation", "all_nation", "east", None, None, {("all_nation", "east"): saved},
+                False, COLS)
+        ok = merge_mod._inspect(None, *args, by_time=True, event_at=later, created=None)          # not recent
+        self.assertIn("after_ts", ok)
+        for created in (later, merge_mod._recreated(None, ("nation", "east"))):   # recreated; or the catalog can't say
+            class NoReads:
+                def sql(self, q):
+                    raise AssertionError("read by version")
+            with self.assertRaises(AssertionError):
+                merge_mod._inspect(NoReads(), *args, by_time=True, event_at=later, created=created)
+        seen = []
+        class Ask:
+            def sql(self, q):
+                seen.append(q)
+                return R(collect=lambda: [R(table_schema="shop_bronze_east", table_name="nation", created=later)])
+        self.assertEqual(merge_mod._created(Ask(), "main", "shop_bronze_", "shop_silver"), {("nation", "east"): later})
+        self.assertIn("t.created > s.updated_at", seen[0])   # only the recreated come back, at any table count
+        self.assertIn("s.target_table = concat('all_', t.table_name, '')", seen[0])
+
+    def test_a_refresh_the_event_log_missed_is_copied_from_its_latest_version(self):   # by time, then the feed fails
+        import datetime as dt
+        spark = Spark(versions={"east": 9, "west": 8}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
+                      history={"east": [(8, "MERGE", {}, {"numTargetRowsMatchedUpdated": "1"})],
+                               "west": [(8, "MERGE", {}, {"numTargetRowsInserted": "2"})]},
+                      targets={"all_nation"})
+        real = spark.sql
+        at = dt.datetime(2026, 11, 23, 12, 0, 0)
+        def sql(q):
+            if q.startswith("SELECT target_table, source, version"):
+                return R(collect=lambda: [R(target_table=t, source=x, version=v, table_id=i, updated_at=at,
+                                            key_columns='["n_nationkey"]', snapshots=None)
+                                          for (t, x), (v, i) in spark.state.items()])
+            if q.startswith("SELECT t.table_schema, t.table_name, t.created"):
+                return R(collect=lambda: [])
+            if q.startswith("MERGE INTO `main`.`shop_silver`.`all_nation`") and "table_changes('main.shop_bronze_east" in q:
+                raise RuntimeError("[DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA] a full refresh in between")
+            return real(q)
+        spark.sql = sql
+        real_ctx = merge_mod.load_context
+        def ctx(*a, **k):
+            c = real_ctx(*a, **k)
+            c["event_at"] = {("nation", "east"): at + dt.timedelta(minutes=5), ("nation", "west"): at + dt.timedelta(minutes=5)}
+            return c   # no refreshed pairs: the event log missed east's refresh
+        with mock.patch.object(merge_mod, "load_context", ctx):
+            report = run(spark, read_by="time", changed={("nation", "east"): 1, ("nation", "west"): 2})
+        self.assertTrue(report["all_nation"]["east"]["done"].startswith("copied (change feed unreadable"), report)
+        self.assertEqual(report["all_nation"]["west"]["done"], "merged")
+        copy = [m for m in spark.merges() if "shop_bronze_east" in m and "table_changes" not in m]
+        self.assertTrue(copy and "VERSION AS OF 9" in copy[0], copy)   # its latest version, not the stale 5
 
     def test_a_merge_that_commits_nothing_counts_nothing(self):   # no new version: not the commit before it
         spark = Spark(versions={"east": 9, "west": 7}, state={("all_nation", "east"): 5, ("all_nation", "west"): 7},
@@ -546,7 +688,8 @@ class Shapes(unittest.TestCase):
 
     def test_replacement_in_one_version_keeps_the_insert(self):
         sql = merge_sql("`c`.`s`.`t`", "`c`.`b`.`t`", "east", "division", ["k"], ["k", "v"], 1, 2)
-        self.assertIn("ORDER BY _commit_version DESC, CASE _change_type WHEN 'delete' THEN 1 ELSE 0 END", sql)
+        self.assertIn("ORDER BY _seq DESC", sql)   # the version, then the insert after the delete: the insert wins
+        self.assertIn("named_struct('v', _commit_version, 'o', CASE _change_type WHEN 'delete' THEN 0 ELSE 1 END)", sql)
 
 
 def _h(version, operation, ts="2026-11-22T17:00:00.000Z"):
@@ -626,11 +769,13 @@ class Scd2AcrossRefresh(unittest.TestCase):
                                 merge.start_sql("cdc", "T0"))
         # the filled start in the outer SELECT; the inner dedup partitions by the raw start (a range never crosses a
         # refresh, so its snapshot rows share one snapshot)
-        self.assertIn("TIMESTAMP 'T0') ELSE `__START_AT` END AS `__START_AT`, _change_type AS `__lfc_change`", sql)
+        self.assertIn("TIMESTAMP 'T0') ELSE `__START_AT` END AS `__START_AT`, CASE _change_type", sql)   # filled
+        self.assertIn("_change_type AS `__lfc_change`", sql)
 
     def test_a_column_added_since_is_null_in_an_older_copy(self):
         sql = merge.changes_sql("`c`.`b`.`t`", "east", "division", ["k"], ["k", "v", "c"], None, 8, absent={"c": "int"})
-        self.assertIn("`k`, `v`, CAST(NULL AS int) AS `c`, 'insert' AS `__lfc_change` FROM `c`.`b`.`t` VERSION AS OF 8", sql)
+        self.assertIn("`k`, `v`, CAST(NULL AS int) AS `c`, 'insert' AS `__lfc_change` FROM (SELECT `k`, `v`, "
+                      "CAST(NULL AS int) AS `c`, 'upsert' AS _op FROM `c`.`b`.`t` VERSION AS OF 8)", sql)
 
     def test_close_time_is_the_refresh_after_the_last_read(self):
         i = {"last": 2, "gens": merge.generations(TWO_REFRESHES), "end_kind": "cdc",

@@ -1,0 +1,13 @@
+[project]
+name = "lfc-log-silver"
+version = "0.1.0"
+description = "Silver from a change log: a typed table per source table, by view, MERGE (every round or when changed) or AUTO CDC"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lfc_log_silver"]

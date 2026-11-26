@@ -16,13 +16,17 @@ import yaml
 
 # ctype and spark_type: lfc_medallion's (lfc-medallion/scripts in a checkout; on a workspace lfc_medallion/ is uploaded
 # next to this file), so the n:1 layer and this skill name types the same way
-_PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-medallion", "scripts")
-if os.path.isdir(_PKG):
-    sys.path.insert(0, _PKG)
+# and Debezium's value encodings: lfc_change_source.debezium (lfc-change-source/scripts in a checkout; on a workspace
+# lfc_change_source/ is uploaded next to this file too), the one copy cdc_log's columns use as well
+for _skill in ("lfc-medallion", "lfc-change-source"):
+    _PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", _skill, "scripts")
+    if os.path.isdir(_PKG):
+        sys.path.insert(0, _PKG)
 # re-exported: the scripts import ctype and spark_type from here
-from lfc_medallion.coltypes import ctype, spark_type
+from lfc_change_source import debezium  # noqa: E402
+from lfc_medallion.coltypes import ctype, spark_type  # noqa: E402
 
-TEMPORAL = ("date", "timestamp", "timestamptz", "time", "timetz")
+TEMPORAL = debezium.TEMPORAL
 
 def path(base, n):
     """A VARIANT field: the plain form for simple names, brackets for the rest (TPC-DI's mixed-case names)."""
@@ -36,41 +40,17 @@ def shard_of(name, n):
 
 
 def decode(c, s, cast="CAST"):
-    """s, a STRING expression with the value as text or a number -> the column's type. A number is Debezium's: days
-    for a date; for a timestamp, epoch milliseconds when the column holds 3 digits of fraction or fewer, else
-    microseconds (without a precision too: PostgreSQL's and CockroachDB's default is 6 digits);
-    microseconds of the day for a time; with 7 to 9 digits of fraction (SQL Server's DATETIME2 and TIME), Debezium's
-    nanoseconds. cast: CAST, or TRY_CAST (NULL where the text doesn't fit)."""
-    t, ty = ctype(c), spark_type(c)
-    num = f"{s} RLIKE '^-?[0-9]+$'"
-    p = c.get("precision")
-    n = f"CAST({s} AS BIGINT)"
-    # no precision: 6 digits, as PostgreSQL and CockroachDB default to, so microseconds (a guess by size took a
-    # date near 1970 for milliseconds: 1 s after the epoch, 1000000 us, read as 1000 s)
-    us = n if p is None or 3 < int(p) <= 6 else f"{n} * 1000" if int(p) <= 3 else f"{n} DIV 1000"   # 7-9 digits: nanoseconds
-    if t == "date":
-        return f"CASE WHEN {num} THEN date_add(DATE'1970-01-01', CAST({s} AS INT)) ELSE {cast}({s} AS DATE) END"
-    if t == "timestamp":
-        return (f"CASE WHEN {num} THEN timestampadd(MICROSECOND, {us}, TIMESTAMP_NTZ'1970-01-01 00:00:00') "
-                f"ELSE {cast}({s} AS TIMESTAMP_NTZ) END")
-    if t == "timestamptz":   # text from PostgreSQL ends +00; Spark takes +00:00
-        return (f"CASE WHEN {num} THEN timestamp_micros({us}) "
-                f"ELSE {cast}(regexp_replace({s}, '([+-][0-9]{{2}})$', '$1:00') AS TIMESTAMP) END")
-    if t in ("time", "timetz"):
-        tus = f"{n} * 1000" if p is not None and int(p) <= 3 else f"{n} DIV 1000" if p is not None and int(p) > 6 else n
-        return (f"date_format(CASE WHEN {num} THEN timestampadd(MICROSECOND, {tus}, TIMESTAMP_NTZ'1970-01-01 00:00:00') "
-                # a snapshot's text: HH:MM:SS, or a whole timestamp where the source keeps a time as one (Oracle's
-                # TIMESTAMP(0)): its time of day
-                f"WHEN {s} RLIKE '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}[ T]' THEN {cast}({s} AS TIMESTAMP_NTZ) "
-                f"ELSE {cast}(concat('1970-01-01 ', {s}) AS TIMESTAMP_NTZ) END, 'HH:mm:ss.SSSSSS')")
-    return f"{cast}({s} AS {ty})"
+    """s, a STRING expression with the value as text or a number -> the column's type: Debezium's encodings
+    (lfc_change_source.debezium.decode) by the canonical column's kind and precision."""
+    return debezium.decode(ctype(c), spark_type(c), c.get("precision"), s, cast)
 
 
 def typed(c, v, cast, binhex=False):
     """A VARIANT field v as the column's type; binhex: binary comes as hex text (Debezium's binary.handling.mode=hex)."""
     if ctype(c) == "binary" and binhex:
         return f"unhex({v}::STRING)"
-    return decode(c, f"{v}::STRING", cast) if ctype(c) in TEMPORAL else f"{cast}({v} AS {spark_type(c)})"
+    k = ctype(c)
+    return debezium.typed(v, spark_type(c), k if k in TEMPORAL else None, c.get("precision"), cast)
 
 
 

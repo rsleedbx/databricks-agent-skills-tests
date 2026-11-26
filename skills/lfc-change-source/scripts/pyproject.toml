@@ -1,0 +1,13 @@
+[project]
+name = "lfc-change-source"
+version = "0.1.0"
+description = "The change-source contract: snapshot, changes, watermark and stats per source and table, whatever carries the changes"
+requires-python = ">=3.10"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lfc_change_source"]

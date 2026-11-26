@@ -154,7 +154,12 @@ check "zerobus-sdk-freshness-test: producer.py's run file (dups_sent, Kafka erro
 check "zerobus-debezium-test canonical_sql: the column SQL the scripts share, against the copies it replaced" python3 -m unittest -q "$SK/zerobus-debezium-test/tests/test_canonical_sql.py"
 check "pipeline-diagram.py on saved pipeline JSON (gateway on an AG, integrated, Kafka)" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_pipeline_diagram.py"
 check "lfc_medallion merge_route: one route per table across sources, last run's routes, the plan written, released and merged; merged_tables; the entry point (stubs)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_route.py"
+check "lfc_medallion paths and engine: the MERGE optimizer's k and engine by cost, a cold start, forced paths, the refit, the warehouse adapter's values" python3 -m unittest -q "$SK/lfc-medallion/tests/test_paths.py"
+check "lfc_change_source: the contract (positions, last change per key) and the Lakeflow Connect bronze adapter (snapshot, changes with _op and _seq, watermark, stats)" python3 -m unittest -q "$SK/lfc-change-source/tests/test_change_source.py"
+check "lfc_medallion methods: refresh techniques from an event log, each technique's time against its own input, fit_r2" python3 -m unittest -q "$SK/lfc-medallion/tests/test_methods.py"
 check "lfc_medallion merge_all: copy, change-feed MERGE, unchanged, full refresh, new column, SCD type 2 key, stack_all skip (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_merge.py"
+check "lfc_fanin: names quoted, what each connector type refuses, folders not written yet, an added connector type (fake spark)" python3 -m unittest -q "$SK/lfc-fanin/tests/test_fanin.py"
+check "lfc_log_silver: build and MERGE SQL from a change source, positions kept per table, the staged apply, a round by method, AUTO CDC lists (fake session)" python3 -m unittest -q "$SK/lfc-log-silver/tests/test_log_silver.py"
 check "lfc_medallion coltypes: the widening rule across sources, schema-union's answers kept, Spark types, aligned() on local Spark (pyspark through uv: Databricks Connect's pyspark opens no local session)" uv run -q --no-project --with pyspark python -m unittest -q "$SK/lfc-medallion/tests/test_coltypes.py"
 check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred foreign keys, the connection's catalog, roles, routes, hints (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_evidence.py"
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
@@ -163,7 +168,7 @@ done
 check "classify.py never reads role: (TPC-E's plan is the same without it); --truth schema scores against it" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/cdc-table-plan/tests/test_classify.py"
 check "lfc_medallion: sources and tables found, one n:1 view per table, a table some sources lack (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_stack.py"
 check "lfc_medallion_pack: 20-70-10 tiers, pipelines within the table limit, render, the TPC-B marts against the model, timings and predict" \
-  sh -c "PYTHONPATH='$SK/lfc-medallion-pack/scripts:$SK/lfc-medallion/scripts:$DG:$SS:$SK/lfc-source-contract/scripts' uv run -q --no-project --with pyyaml --with sqlglot python -W ignore -m unittest -q '$SK/lfc-medallion-pack/tests/test_pack.py' 2>&1"
+  sh -c "PYTHONPATH='$SK/lfc-medallion-pack/scripts:$SK/lfc-medallion/scripts:$SK/lfc-change-source/scripts:$DG:$SS:$SK/lfc-source-contract/scripts' uv run -q --no-project --with pyyaml --with sqlglot python -W ignore -m unittest -q '$SK/lfc-medallion-pack/tests/test_pack.py' 2>&1"
 check "history-snapshot-scd2.py: the guards (a reload not finished, an emptied table); with pyspark + Java 17/21 also their DataFrame form and versions" python3 -m unittest -q "$SK/lfc-downstream-history/tests/test_history_snapshot_scd2.py"
 check "medallion.py: layer counts, how each table is written; the medallion box and the Zerobus drawing" python3 -m unittest -q "$SK/lfc-pipeline-diagram/tests/test_medallion.py"
 check "pipeline-diagram.py's model table counts match the statschema schemas" python3 "$R/bin/check_model_counts.py"

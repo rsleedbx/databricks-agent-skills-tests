@@ -26,6 +26,7 @@ Found while building the test (what a pipeline itself meets is in [What a produc
 - **`mssql-python` on Linux needs OS libraries**: `libltdl7`, `libkrb5-3` and `libgssapi-krb5-2`, none of them in `python:3.12-slim`. The harness builds an image with them once on the VM (`localhost/lfc-datagen-mssql:3.12-2`).
 - **Containers that run as their own user** (SQL Server's `mssql`, Oracle's `oracle`) can't read a mounted file the run wrote at mode 0600, so the client scripts (no secrets in them) are mounted readable.
 - **`AUDIT` is a reserved word in Oracle**: the audit table there is `LFC_AUDIT`, which the test's table list and capture leave out with every `LFC_` table.
+- **Db2 on the VM's 4096-byte-sector disk**: the image's own `CREATE DATABASE` fails (`SQL0293N`) while its log still says setup completed. The harness starts Db2 without `DBNAME`, sets `DB2_4K_DEVICE_SUPPORT=ON`, restarts the instance, creates `LFCDB` with archive logging (`LOGARCHMETH1`) and stops if it can't connect (lfc-source-podman's engines.md, Db2).
 - **Db2 names an unnamed result column `1`, `2`, ...**: a query's header row then reads like data; the harness names every column it parses.
 - **Informix's developer image needs its volumes given to its user**: `/opt/ibm/data` and `/opt/ibm/config` mounted with `:U` (lfc-source-podman's engines.md), without `--privileged`; otherwise its start script's `sudo` fails and the server goes offline. The tested image, 14.10.FC7W1DE, is the harness's default.
 - **The checks trim strings on both sides for Informix**, which ignores trailing blanks.

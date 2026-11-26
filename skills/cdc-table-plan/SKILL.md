@@ -47,6 +47,14 @@ little, `ask`: the question to put to the customer ("Is page_hits insert-only?")
 | log | append | no primary key; named like a log (log, history, audit, events, stats, hits) with no modified column and nothing below; inserts only per the activity |
 | queue | scd1 | named like a queue; inserts and deletes per the activity |
 
+## Routes: which log, which snapshot path
+
+Each table in the plan also gets a `route`: its class (`small_slow`, `small_fast`, `big_slow`, `big_fast`), its snapshot's
+path, its change log and its silver method, suggested from `--stats` (bytes) and `--activity` over `--activity-seconds` (rate). Edit it like
+`silver`; `plan.py diff` names what each route change takes (most are a cut-over at a position, with no new snapshot).
+The rules and what to choose at the start: lfc-change-source's
+[references/routing.md](../lfc-routing/references/routing.md).
+
 ## What it gets right
 
 The rules one by one, what each miss costs (changes lost, history lost, or only extra work), and the signals from

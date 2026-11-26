@@ -12,6 +12,19 @@ the delta between them (PostgreSQL: WAL positions, LSNs, and the bytes between t
                         keeps no position per table); read it next to the slot's delta
 Read from Databricks: the source through the UC connection's remote_query, the staging volume through /Volumes and
 read_files. Rows go to <control>.cdc_positions with the time, for the dashboard.
+
+capture(): where a change's time goes between the gateway and the applier, from what the gateway keeps on its staging
+volume (more than its event log has), into two control tables, each by one INSERT ... SELECT FROM read_files per
+gateway (only the files not read before):
+  gateway_events  telemetry/*.json: CDC_EXTRACTION (about once a minute per gateway: upstream_commit_ and
+                  upstream_fetch_timestamp_watermark_ms, the newest source commit read and when it was fetched) and
+                  REALTIME_PROGRESS with rows (per table flow, about once a minute: insert, update and delete counts,
+                  the window, duration_ms)
+  staged_files    cdc/: each change file per LOB, when the gateway wrote it (the file's modification time), its rows
+                  and the newest and oldest source commit in it (cursor.timestampUtc)
+So a change's path is: source commit -> fetched (the extraction watermark) -> staged (the file's write time; for the
+file's newest row that is exact) -> bronze (the applier: v_changes) -> n:1 and gold. v_latency puts the times side by
+side per batch and LOB (observe.py).
 """
 from __future__ import annotations
 
@@ -107,3 +120,66 @@ def save(spark, rows: list[dict], catalog: str, schema: str) -> None:
         "current_timestamp() AS checked_at", "*", "timestamp_millis(last_change_at) AS last_change_time").drop(
         "last_change_at").write.mode("append").option("mergeSchema", "true").saveAsTable(
         f"`{catalog}`.`{schema}`.cdc_positions")
+
+
+def _added(result) -> int | None:
+    """The rows an INSERT added, from its result (num_inserted_rows), where the session gives it."""
+    try:
+        rows = result.collect()
+        return int(rows[0][-1]) if rows else 0
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def capture(spark, plan: dict, prefix: str, catalog: str, control: str, workspace=None) -> list[dict]:
+    """The gateway's own timings into <control>.gateway_events and .staged_files (the module's docstring), one
+    INSERT ... SELECT FROM read_files each per gateway, the files read before left out. One row per gateway: found
+    (its staging volume, else why not), and the rows each INSERT added, so a gateway skipped or empty shows."""
+    from lfc_medallion.stack import spark_string
+    if workspace is None:
+        from databricks.sdk import WorkspaceClient
+        workspace = WorkspaceClient()
+    w = workspace
+    ctl = f"`{catalog}`.`{control}`"
+    done = []
+    for m in plan["modules"]:
+        mod = m["module"]
+        for g in m["groups"]:
+            gw = f"{mod}_gw_{g['k']}"
+            found = staging(w, f"{prefix}_{gw}")
+            row = {"module": mod, "gateway": gw, "found": bool(found), "events": None, "files": None}
+            done.append(row)
+            if not found:
+                row["why"] = f"no gateway pipeline named {prefix}_{gw} visible to this identity"
+                continue
+            if not os.path.isdir(found[1]):
+                row["why"] = f"its staging folder isn't readable here: {found[1]}"
+                continue
+            root, lit = found[1], spark_string
+            lob = f"substr({{col}}, {len(mod) + 2})"
+            if os.path.isdir(f"{root}/telemetry"):
+                row["events"] = _added(spark.sql(f"INSERT INTO {ctl}.gateway_events SELECT {lit(mod)}, {lit(gw)}, "
+                          "CASE event_subtype WHEN 'CDC_EXTRACTION' THEN 'extraction' ELSE 'flow' END, "
+                          f"timestamp_seconds(event_timestamp_seconds), {lob.format(col='schema_name')}, table_name, "
+                          "timestamp_millis(CAST(operation_details.cdc_extraction_report"
+                          ".upstream_commit_timestamp_watermark_ms AS BIGINT)), "
+                          "timestamp_millis(CAST(operation_details.cdc_extraction_report"
+                          ".upstream_fetch_timestamp_watermark_ms AS BIGINT)), "
+                          "to_timestamp(statistics.startTimestamp), to_timestamp(statistics.endTimestamp), "
+                          "CAST(statistics.insertCount AS BIGINT), CAST(statistics.updateCount AS BIGINT), "
+                          "CAST(statistics.deleteCount AS BIGINT), CAST(statistics.duration_ms AS BIGINT), "
+                          f"_metadata.file_path FROM read_files({lit(root + '/telemetry/')}, format => 'json') "
+                          "WHERE (event_subtype = 'CDC_EXTRACTION' OR (event_subtype = 'REALTIME_PROGRESS' AND "
+                          "CAST(statistics.insertCount AS BIGINT) + CAST(statistics.updateCount AS BIGINT) + "
+                          "CAST(statistics.deleteCount AS BIGINT) > 0)) AND _metadata.file_path NOT IN "
+                          f"(SELECT file FROM {ctl}.gateway_events WHERE gateway = {lit(gw)})"))
+            if os.path.isdir(f"{root}/cdc"):
+                row["files"] = _added(spark.sql(f"INSERT INTO {ctl}.staged_files SELECT {lit(mod)}, {lit(gw)}, "
+                          f"{lob.format(col='table_id.schema')}, _metadata.file_path, "
+                          "_metadata.file_modification_time, COUNT(*), "
+                          "MAX(timestamp_millis(CAST(cursor.timestampUtc AS BIGINT))), "
+                          "MIN(timestamp_millis(CAST(cursor.timestampUtc AS BIGINT))) "
+                          f"FROM read_files({lit(root + '/cdc/')}, format => 'json') "
+                          f"WHERE startswith(table_id.schema, {lit(mod + '_')}) AND _metadata.file_path NOT IN "
+                          f"(SELECT file FROM {ctl}.staged_files WHERE gateway = {lit(gw)}) GROUP BY 1, 2, 3, 4, 5"))
+    return done

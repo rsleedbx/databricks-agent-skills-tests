@@ -14,6 +14,7 @@ rows.
 """
 import argparse
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import discover, evidence, merge
@@ -37,10 +38,13 @@ def merged_tables(spark, catalog: str, target: str) -> list[str]:
 
 def write_plan(spark, catalog: str, target: str, rows: list, apply: dict, proposed: dict) -> None:
     """<target>._lfc_medallion_plan: each source's plan of each table, the route applied, and any proposal."""
-    spark.createDataFrame([(*r, apply[r[1]], json.dumps(proposed[r[1]]) if r[1] in proposed else "") for r in rows],
-                          "source string, table_name string, role string, planned string, decided_by string, "
-                          "why string, route string, proposed string") \
-        .write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"`{catalog}`.`{target}`.{PLAN}")
+    from .stack import spark_string
+    cols = ("source", "table_name", "role", "planned", "decided_by", "why", "route", "proposed")
+    vals = [(*r, apply[r[1]], json.dumps(proposed[r[1]]) if r[1] in proposed else "") for r in rows]
+    body = (" UNION ALL ".join("SELECT " + ", ".join(f"{spark_string('' if v is None else str(v))} AS {c}"
+                                                    for c, v in zip(cols, x)) for x in vals) if vals else
+            "SELECT " + ", ".join(f"CAST(NULL AS STRING) AS {c}" for c in cols) + " WHERE false")
+    spark.sql(f"CREATE OR REPLACE TABLE `{catalog}`.`{target}`.{PLAN} AS {body}")   # SQL: either engine runs it
 
 
 class _Workspace:
@@ -72,7 +76,8 @@ def _kinds(spark, catalog: str, target: str) -> dict:
 
 def merge_route(spark, catalog: str, prefix: str, target: str, source_column: str = "_source", hints=None,
                 name: str = "all_{table}", workspace=None, log: str | None = None, replan: bool = False,
-                parallel: int = 8, events: list[str] | None = None, history_target: str | None = None) -> dict:
+                parallel: int = 8, events: list[str] | None = None, history_target: str | None = None,
+                warehouse: str | None = None, path: str | None = None, read_by: str = "time") -> dict:
     """Plan, release, merge, then record, for every source <prefix><source> into <target>. Returns what it did.
     A table bound for `merge` with no primary key in some source (or whose key can't be read) stays on the pipeline;
     one merged before keeps its table and route, with no merge this run. A merge that fails keeps a table merged
@@ -91,9 +96,14 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     import uuid
     run_id = str(uuid.uuid4())
     workspace = workspace or _Workspace()
+    timings, t = {}, time.time()   # the route's own seconds, part by part: the fan-in planner's planning time
     ctx = merge.load_context(spark, catalog, prefix, target)   # read once, for every table
     sources, held = ctx["names"], ctx["held"]
+    timings["context_s"], t = round(time.time() - t, 1), time.time()
     changed = changed_since(spark, catalog, prefix, ctx, events, name) if events else None
+    timings["changed_since_s"], t = round(time.time() - t, 1), time.time()
+    planner = make_planner(spark, catalog, target, log, warehouse, path, changed)
+    timings["planner_s"], t = round(time.time() - t, 1), time.time()
     rows, planned = [], {}
     kept: dict[str, list] = {}   # the last plan's rows, per source
     if not replan and _has(spark, catalog, target, PLAN):
@@ -155,12 +165,22 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
         try:
             return table, merge.merge_all(spark, catalog, prefix, target, [table], source_column=source_column,
                                           name=name, workspace=workspace, take_over=True, run_id=run_id, log=log,
-                                          changed=changed, context=ctx), None
+                                          changed=changed, context=ctx, planner=planner, read_by=read_by), None
         except Exception as e:  # noqa: BLE001  one table's failure doesn't stop the others
             return table, None, e
     todo = sorted(t for t, r in apply.items() if r == "merge" and t not in skip)
+    planner.at_once = max(1, min(parallel, len(todo)))   # the tables whose MERGEs share an engine at once
     with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(todo)))) as ex:
         results = list(ex.map(merge_one, todo))
+    timings["tables_s"], t = round(time.time() - t, 1), time.time()
+    try:
+        add_phases(planner, planner.records)   # each warehouse MERGE's compile, execute, queue and bytes
+    except Exception as e:  # noqa: BLE001  query history unreadable: the log without phases
+        print(f"phases not read: {str(e).splitlines()[0][:200]}")
+    try:
+        write_paths(spark, catalog, target, log, run_id, planner.records)   # the optimizer's choices and costs
+    except Exception as e:  # noqa: BLE001  a log write doesn't undo the merges
+        print(f"paths log not written: {str(e).splitlines()[0][:200]}")
     for table, report, e in results:   # what each did, one at a time, in table order
         if e is None:
             done.update({t: {s: x["done"] for s, x in v.items()} for t, v in report.items()})
@@ -182,7 +202,8 @@ def merge_route(spark, catalog: str, prefix: str, target: str, source_column: st
     history = keep_history(spark, catalog, prefix, history_target, ctx,
                            sorted(t for t, r in apply.items() if r == "pipeline"), source_column, name, workspace,
                            run_id, log, events, parallel) if history_target else {}
-    return {"run_id": run_id, "planned_sources": sorted(new), "history": history,
+    timings["after_s"] = round(time.time() - t, 1)
+    return {"run_id": run_id, "timings": timings, "planned_sources": sorted(new), "history": history,
             "changed": None if changed is None else len(changed), "merge": sorted(t for t, r in apply.items() if r == "merge"),
             "pipeline": sorted(t for t, r in apply.items() if r == "pipeline"), "released": sorted(set(released)),
             "proposed": proposed, "done": done}
@@ -240,10 +261,105 @@ def _hints_changed(rows: list, hints: dict | None) -> bool:
     return False
 
 
+def paths_log(catalog: str, target: str, log: str | None) -> str:
+    """The paths log beside the merge log: <log>_paths (or <target>._lfc_medallion_merge_paths)."""
+    if not log:
+        return f"`{catalog}`.`{target}`.`_lfc_medallion_merge_paths`"
+    return log[:-1] + "_paths`" if log.endswith("`") else log + "_paths"
+
+
+def make_planner(spark, catalog: str, target: str, log: str | None, warehouse: str | None, path: str | None,
+                 changed: dict | None):
+    """The run's paths.Planner: spark, and the warehouse when given (cold unless it is running), the model refit from
+    the paths log's merged runs, a forced path unless `path` is auto (or none), and each pair's change rows."""
+    from . import paths
+    engines, cold, units = {"spark": spark}, set(), {"spark": 1.0}
+    if warehouse:
+        from .engine import Warehouse
+        wh = Warehouse(warehouse)
+        engines["warehouse"] = wh
+        try:
+            if wh.state() != "RUNNING":
+                cold.add("warehouse")
+            units["warehouse"] = wh.units()
+        except Exception:  # noqa: BLE001
+            cold.add("warehouse")
+    got = []
+    for cols in ("target_table, fingerprint, ", "target_table, NULL AS fingerprint, "):   # a log from before fingerprints
+        try:
+            got = spark.sql(f"SELECT {cols}engine, k, sources, change_rows, seconds, at_once, units FROM "
+                            f"{paths_log(catalog, target, log)} WHERE done = 'merged' ORDER BY at DESC "
+                            "LIMIT 2000").collect()
+            break
+        except Exception:  # noqa: BLE001  no log yet (or one from before at_once and units): the measured defaults
+            continue
+    runs = [(r.target_table, r.fingerprint, r.engine, int(r.k), int(r.sources), int(r.change_rows or 0),
+             float(r.seconds), int(r.at_once or 1), float(r.units or 1.0)) for r in got]
+    pooled = paths.Model().fit([r[2:] for r in runs])
+    forced = None if path in (None, "", "auto") else path
+    return paths.Planner(engines, pooled, forced, changed if isinstance(changed, dict) else {}, cold, units,
+                         tables=paths.table_models(runs, pooled))
+
+
+def add_phases(planner, records: list[dict]) -> None:
+    """Each record's warehouse statements' phases and bytes from query history (engine.Warehouse.phases), summed
+    into it: compile, execute, queue, bytes and files read. Nothing without a warehouse or statements."""
+    wh = planner.engines.get("warehouse")
+    ids = [i for r in records for i in r.get("statements") or []]
+    if wh is None or not ids or not hasattr(wh, "phases"):
+        return
+    got = wh.phases(ids)
+    for r in records:
+        ph = [got[i] for i in r.get("statements") or [] if i in got]
+        for k in ("compile_s", "execute_s", "queue_s", "read_bytes", "read_files"):
+            vals = [p[k] for p in ph if p.get(k) is not None]
+            r[k] = round(sum(vals), 2) if vals else None
+
+
+NEWER = ("fingerprint STRING, own_model BOOLEAN, insights STRING, statements STRING, compile_s DOUBLE, "
+         "execute_s DOUBLE, queue_s DOUBLE, read_bytes BIGINT, read_files BIGINT, planning_s DOUBLE")
+
+
+def write_paths(spark, catalog: str, target: str, log: str | None, run_id: str, records: list[dict]) -> None:
+    """The planner's records into the paths log: each table's MERGE, its path, predicted and taken seconds."""
+    if not records:
+        return
+    from .merge import _shared
+    from .stack import spark_string
+    fq = paths_log(catalog, target, log)
+    _shared(spark, f"CREATE TABLE IF NOT EXISTS {fq} (run_id STRING, target_table STRING, engine STRING, k INT, "
+                   "sources INT, change_rows BIGINT, predicted_s DOUBLE, seconds DOUBLE, retries INT, done STRING, "
+                   f"forced BOOLEAN, predictions STRING, at TIMESTAMP, at_once INT, units DOUBLE, {NEWER}) COMMENT "
+                   "'lfc_medallion: each MERGE, its path (engine, k at once), its predicted and taken seconds, the "
+                   "tables merged at once and the engine units (paths.py)'")
+    have = {r[0] for r in spark.sql(f"DESCRIBE TABLE {fq}").collect()}   # a log from before some columns
+    missing = [c for c in ("at_once INT, units DOUBLE, " + NEWER).split(", ") if c.split()[0] not in have]
+    if missing:   # only those: one ALTER of columns some of which exist fails as a whole
+        spark.sql(f"ALTER TABLE {fq} ADD COLUMNS ({', '.join(missing)})")
+    num = lambda v: "NULL" if v is None else str(v)  # noqa: E731
+    vals = ", ".join(f"({spark_string(run_id)}, {spark_string(r['target_table'])}, {spark_string(r['engine'])}, "
+                     f"{int(r['k'])}, {int(r['sources'])}, {int(r['change_rows'] or 0)}, {num(r['predicted_s'])}, "
+                     f"{r['seconds']}, {int(r['retries'])}, {spark_string(r['done'])}, {str(r['forced']).lower()}, "
+                     f"{spark_string(json.dumps(r['predictions']))}, current_timestamp(), "
+                     f"{int(r.get('at_once') or 1)}, {float(r.get('units') or 1.0)}, "
+                     f"{spark_string(r['fingerprint']) if r.get('fingerprint') else 'NULL'}, "
+                     f"{str(bool(r.get('own_model'))).lower()}, {spark_string(json.dumps(r.get('insights') or []))}, "
+                     f"{spark_string(json.dumps(r.get('statements') or []))}, {num(r.get('compile_s'))}, "
+                     f"{num(r.get('execute_s'))}, {num(r.get('queue_s'))}, {num(r.get('read_bytes'))}, "
+                     f"{num(r.get('read_files'))}, {num(r.get('planning_s'))})" for r in records)
+    _shared(spark, f"INSERT INTO {fq} (run_id, target_table, engine, k, sources, change_rows, predicted_s, seconds, "
+                   f"retries, done, forced, predictions, at, at_once, units, fingerprint, own_model, insights, "
+                   f"statements, compile_s, execute_s, queue_s, read_bytes, read_files, planning_s) VALUES {vals}")
+
+
+MARGIN_S = 120   # event-log times against the state's: a run's own rows count as changed; reading by time starts this
+                 # far before the state's time, so every source flagged as changed has a commit after its start
+
+
 def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str], name: str = "all_{table}",
-                  margin_s: int = 120) -> set | None:
+                  margin_s: int = MARGIN_S) -> dict | None:
     """The (table, source) pairs whose bronze table got rows (upserted or deleted), or any completed snapshot (a full
-    refresh, even of an empty table; snapshots run only in the first update and a refresh: 3 of 17 updates measured),
+    refresh, even of an empty table; snapshots run only in the first update and a refresh),
     after its state was saved, from ONE query over the ingestion pipelines' event logs (flow_progress per flow: a
     destination table's flow is named <catalog>_<prefix><source>_<table>_<cdc|snapshot>_flow); a pair with no state
     is changed. None when the logs can't be read: then every source is read."""
@@ -261,24 +377,33 @@ def changed_since(spark, catalog: str, prefix: str, ctx: dict, events: list[str]
         f"WHERE event_type = 'flow_progress'" for e in events)
     oldest = min(times)
     try:
-        got = spark.sql(f"SELECT element_at(split(f, '\\\\.'), -1) AS flow, MAX(timestamp) AS at FROM ({union}) "
+        got = spark.sql(f"SELECT element_at(split(f, '\\\\.'), -1) AS flow, MAX(timestamp) AS at, "
+                        "SUM(COALESCE(CAST(m:num_upserted_rows AS BIGINT), 0) + "
+                        f"COALESCE(CAST(m:num_deleted_rows AS BIGINT), 0)) AS n FROM ({union}) "
                         f"WHERE timestamp > timestamp'{oldest}' - INTERVAL {int(margin_s)} SECONDS "
                         "AND (COALESCE(CAST(m:num_upserted_rows AS BIGINT), 0) > 0 "
                         "OR COALESCE(CAST(m:num_deleted_rows AS BIGINT), 0) > 0 "
                         "OR (endswith(f, '_snapshot_flow') AND status = 'COMPLETED')) GROUP BY 1").collect()
     except Exception:  # noqa: BLE001  an event log not there yet, no access: read every source
         return None
-    out = set()
+    out: dict = {}   # (table, source) -> its change rows since about its state (the planner's cardinality)
+    ctx["refreshed"] = set()   # pairs whose snapshot flow ran: read by version (it detects the reset), not by time
+    ctx["event_at"] = {}       # each pair's last ingestion event: read by time only when it's after the saved time
     for r in got:
         pair = flows.get(r.flow)
         if not pair:
             continue
+        if r.flow.endswith("_snapshot_flow"):
+            ctx["refreshed"].add(pair)
+        ctx["event_at"][pair] = max(r.at, ctx["event_at"].get(pair, r.at))
         saved = ctx["state"].get((name.format(table=pair[0]), pair[1]))
         at = saved[3] if saved and len(saved) > 3 else None
         if at is None or (r.at.timestamp() if hasattr(r.at, "timestamp") else 0) > at.timestamp() - margin_s:
-            out.add(pair)
+            out[pair] = out.get(pair, 0) + int(getattr(r, "n", 0) or 0)
     for x, tabs in ctx["held"].items():   # never merged: read it
-        out |= {(t, x) for t in tabs if (name.format(table=t), x) not in ctx["state"]}
+        for t in tabs:
+            if (name.format(table=t), x) not in ctx["state"]:
+                out.setdefault((t, x), None)
     return out
 
 
@@ -292,6 +417,12 @@ def main(argv=None) -> None:
     ap.add_argument("--hints", default="", help='JSON: {"table": "role"}')
     ap.add_argument("--log", default="", help="the merge log's table, catalog.schema.table (default in --target)")
     ap.add_argument("--replan", action="store_true", help="plan every source again, not only new ones")
+    ap.add_argument("--warehouse", default="", help="a SQL warehouse id: a path the optimizer may take (paths.py)")
+    ap.add_argument("--path", default="auto", help="auto (by cost), or force one: spark, warehouse, warehouse:8 ...")
+    ap.add_argument("--read-by", default="time", choices=("version", "time"),
+                    help="time (the default): an SCD type 1 source the event logs flag as changed is read from its "
+                         "saved time, with no history read per source (SCD type 2, first reads, refreshed and "
+                         "recreated tables go by version); version: every source by Delta versions")
     ap.add_argument("--events", default="", help="the ingestion pipelines' event log tables, comma-separated: only the "
                                                   "sources whose bronze got rows since their state are read")
     ap.add_argument("--history-target", default="", help="a schema that keeps the SCD type 2 history of the tables "
@@ -302,4 +433,5 @@ def main(argv=None) -> None:
     print(json.dumps(merge_route(spark, a.catalog, a.prefix, a.target, a.source_column,
                                  json.loads(a.hints) if a.hints else None, log=a.log or None,
                                  replan=a.replan, events=[e for e in a.events.split(",") if e] or None,
-                                 history_target=a.history_target or None)))
+                                 history_target=a.history_target or None, warehouse=a.warehouse or None,
+                                 path=a.path or None, read_by=a.read_by)))

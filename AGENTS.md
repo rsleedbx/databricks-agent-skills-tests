@@ -20,6 +20,9 @@ to plugin users).
   [lfc-test-results](skills/lfc-test-results/SKILL.md)), the vendor's docs or a skill already show how it behaves, make
   the change, run the offline checks (`bash bin/test_scripts.sh`) and say what wasn't run; the next run that needs it
   shows the effect, and it's fixed then. Suggest a live run only when nothing covers the behavior, or the user asks.
+- **A measurement run must be able to change a decision.** Before it, write down what it should show (from the
+  model, the docs and the runs before it), which decision changes if it doesn't, and why the docs, the system tables
+  and earlier runs can't settle it. No decision at stake: don't run it. Record the prediction with the result.
 - **Before creating anything,** show what will be created (a diagram for a pipeline: **lfc-pipeline-diagram**) and wait
   for one yes. Clean up only what the run created.
 - **Scripts, not instructions:** each skill runs the scripts in its own `scripts/` folder; run one with no arguments for

@@ -170,16 +170,21 @@ def _all(cur, q: str, params=None) -> list[tuple]:
     return [tuple(r) for r in cur.fetchall()]
 
 
-def _verify(cur, model: str, copy: str, tables: list[str]) -> int:
+WHOLE_SF = "bad at a whole scale factor"   # a check's label: a scaling rule that holds only at SF 1, 2, ...
+
+
+def _verify(cur, model: str, copy: str, tables: list[str], sf: float = 1) -> int:
     """The spec checks' broken-rule count (0 when the model has none). The checks name the tables bare: qualified
-    here, as a JDBC read resolves names before any SET search_path."""
+    here, as a JDBC read resolves names before any SET search_path. A check labelled WHOLE_SF runs only at a whole
+    scale factor: below one, the rows floor at 1 per table and the spec's ratios can't hold."""
+    whole = sf >= 1 and float(sf).is_integer()
     path = os.path.join(TPC, f"{model}-verify.sql")
     if not os.path.exists(path):
         return 0
     text = re.sub(r"DATEDIFF\(([^,]+), ([^)]+)\)", r"(\1 - \2)", read_sql(f"{model}-verify.sql"))
     text = re.sub(r"(\b(?:FROM|JOIN)\s+)(" + "|".join(map(re.escape, tables)) + r")\b",
                   lambda m: f"{m.group(1)}{ident(copy)}.{m.group(2)}", text, flags=re.IGNORECASE)
-    return sum(1 for s in statements(text) for r in _all(cur, s)
+    return sum(1 for s in statements(text) if whole or WHOLE_SF not in s for r in _all(cur, s)
                if str(r[0]).startswith("bad") for v in r[1:] if v not in (0, None))
 
 
@@ -216,7 +221,7 @@ def build(connect, model: str, sources, login: str | None = None, publication: s
         if fill:
             _fill(connect, cp, sessions)
         if fill and _all(cur, "SELECT obj_description(oid, 'pg_namespace') FROM pg_namespace WHERE nspname = %s", (cp,))[0][0] != CHECKED:
-            bad = _verify(cur, model, cp, tables)
+            bad = _verify(cur, model, cp, tables, sf)
             if bad:
                 raise RuntimeError(f"{bad} {model} spec rules broken in {database}.{cp}")
             cur.execute(f"COMMENT ON SCHEMA {ident(cp)} IS {literal(CHECKED)}")
