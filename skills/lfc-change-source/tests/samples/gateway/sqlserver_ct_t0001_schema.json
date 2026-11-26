@@ -1,0 +1,34 @@
+{
+  "schemas": [{
+    "catalog": "gwscale",
+    "schema": "s",
+    "tables": [{
+      "name": "t0001",
+      "objectType": "TABLE",
+      "primaryKey": {
+        "name": "PK__t0001__3213E83FE5761D2D",
+        "columns": ["id"]
+      },
+      "columns": [{
+        "name": "id",
+        "type": "INTEGER",
+        "notNull": true,
+        "uoid": "C_CJX1UKxnzX_5_997578592_1",
+        "sourceDataType": "INT"
+      }, {
+        "name": "v",
+        "type": "STRING",
+        "notNull": false,
+        "uoid": "C_CJX1UKxnzX_5_997578592_2",
+        "sourceDataType": "NVARSTRING(40)"
+      }, {
+        "name": "n",
+        "type": "INTEGER",
+        "notNull": false,
+        "uoid": "C_CJX1UKxnzX_5_997578592_3",
+        "sourceDataType": "INT"
+      }],
+      "uoid": "T_CJX1UKxnzX_5_997578592"
+    }]
+  }]
+}
