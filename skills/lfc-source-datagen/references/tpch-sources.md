@@ -37,6 +37,19 @@ cdc.slot(connect().cursor(), "orders_slot")      # after the gateway and ingesti
 
 From the laptop: `connector("orders", lakebase="<project>", profile="<profile>")` (you, the project owner) or `connector("orders", host=..., password=...)` in place of `connect`. Or the commands: `lfc-tpch-sources --lakebase <project> --profile <profile> [--login R] [--labels anonymous] orders express:0.05:1,0,1,1,5,0,0,1,2 ...`, `lfc-tpcc-sources ... orders local:1:3,0,2,5,2,1,2,12,3,2 ...`, `lfc-tpcds-sources ... retail mass:1:40,80,40,15,1,30/6,1,3,2,5,3,80,2,3 ...`, `lfc-sources --model tpcds ...`, and `--slot <slot> [--drop]` for the slot. As a job: a `python_wheel_task` with those entry points and the archive URL in the environment's dependencies.
 
+**In a notebook or Genie Code, the same commands** for a Lakebase project in that workspace: call each one's `main()` with its arguments in the notebook's own process. The SDK has the notebook's login there; a `!` or `%sh` subprocess has none. You are the project owner, so no JDBC connection is needed. Tested on serverless, 5 s each: a new project, then TPC-B at SF 1, 200,011 rows and the publication.
+
+```python
+%pip install "lfc-source-datagen @ https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-datagen/scripts"
+dbutils.library.restartPython()
+```
+```python
+from lfc_source_contract.lakebase import main as lakebase_source
+from lfc_source_datagen.sources import main as lfc_sources
+lakebase_source(["--project", "tpcb-demo", "--role", "lfc_cdc", "--connection", "tpcb_pg", "--create-project"])
+lfc_sources(["--model", "tpcb", "--lakebase", "tpcb-demo", "--login", "lfc_cdc", "tpcb", "bank:1"])
+```
+
 It fills with the skill's Python planner, which writes the same SQL as the SQL planners apart from its scramble constants. So every column a formula defines (keys, prices, quantities, dates, and so the lead times and labels) is the one `fill.sh` writes, and the filler text columns differ (`references/python-drivers.md`).
 
 ## Text values

@@ -12,17 +12,16 @@ set -uo pipefail
 P=$1; CONN=$2; E=$3; shift 3; DB=; SVC=; OUT=.; TOP=15
 while [ $# -gt 0 ]; do case $1 in --database) DB=$2; shift 2;; --service) SVC=$2; shift 2;; --out) OUT=$2; shift 2;; --top) TOP=$2; shift 2;; *) echo "unknown $1"; exit 2;; esac; done
 HERE=$(cd "$(dirname "$0")" && pwd); mkdir -p "$OUT"
-SQL=$E; case $E in mariadb) SQL=mysql;; yugabytedb) SQL=yugabytedb;; cockroachdb) SQL=cockroachdb;; esac
-[ -f "$HERE/$SQL.sql" ] || { echo "engine: postgres, mysql, mariadb, sqlserver, oracle, cockroachdb or yugabytedb (db2 and informix: run scripts/db2.sql or informix.sql by hand)"; exit 2; }
-case $E in postgres|sqlserver|cockroachdb|yugabytedb) [ -n "$DB" ] || { echo "--database is needed for $E"; exit 2; }; arg=", database => '$DB'";; oracle) [ -n "$SVC" ] || { echo "--service (the PDB) is needed for oracle"; exit 2; }; arg=", service_name => '$SVC'";; *) arg=;; esac
-runq() { inner=$(sed "s/--.*\$//; s/__DB__/$DB/g" "$HERE/$1.sql" | tr '\n' ' ' | tr -s ' '); echo "SELECT * FROM remote_query('$CONN'$arg, query => \"$inner\")" > "$OUT/size.sql"
+Q=(python3 "$HERE/size_query.py" "$CONN" "$E"); [ -n "$DB" ] && Q+=(--database "$DB"); [ -n "$SVC" ] && Q+=(--service "$SVC")
+"${Q[@]}" > /dev/null || exit 2                     # the engine and its --database / --service (size_query.py says which)
+runq() { "${Q[@]}" ${1:+--file "$1"} > "$OUT/size.sql" || return 2
         databricks experimental aitools tools query --file "$OUT/size.sql" --profile "$P" -o csv > "$OUT/tables.csv" 2> "$OUT/err.txt"; }
 if [ $E = mysql ]; then
   if runq mysql-process; then echo "(MySQL: with current tablespace file sizes)"
   elif grep -q PROCESS "$OUT/err.txt"; then runq mysql || { echo "query failed: $(head -c 400 "$OUT/err.txt")"; exit 1; }
     echo "(MySQL: no PROCESS privilege, so no current file sizes: rows and bytes are information_schema estimates; GRANT PROCESS ON *.* adds them)"
   else echo "query failed: $(head -c 400 "$OUT/err.txt")"; exit 1; fi
-else runq $SQL || { echo "query failed: $(head -c 400 "$OUT/err.txt")"; exit 1; }; fi
+else runq || { echo "query failed: $(head -c 400 "$OUT/err.txt")"; exit 1; }; fi
 duckdb -box -c "
 CREATE TABLE t AS SELECT * FROM read_csv('$OUT/tables.csv', header = true, all_varchar = true);
 CREATE TABLE r AS SELECT table_schema AS s, table_name AS n,

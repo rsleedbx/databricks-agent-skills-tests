@@ -24,6 +24,7 @@ connection page); each defaults to `lfcsaas-<connector>`.
 | OpenAI | [notebook](notebooks/openai-pipeline.py) | [bundle](bundles/openai) | `lfcsaas-openai` | audit_logs, users, usage_completions |
 | Adobe Commerce | [notebook](notebooks/adobe-commerce-pipeline.py) | [bundle](bundles/adobe-commerce) | `lfcsaas-adobe-commerce` | products, customers, orders; no public docs page yet |
 | GitHub | [notebook](notebooks/github-pipeline.py) | [bundle](bundles/github) | `lfcsaas-github` | repositories, pull_requests; sign in to GitHub to make the connection; `org` required (`run_tests.py --var org=...`) |
+| Meta Ads | [notebook](notebooks/meta-ads-pipeline.py) | [bundle](bundles/meta-ads) | `lfcsaas-metaads` | campaigns, ad_sets, ads, ad_insights; sign in to Meta to make the connection; `account_id` (`act_<id>`) required (`run_tests.py --var account_id=...`) |
 
 | Way | Files | When |
 |---|---|---|

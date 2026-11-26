@@ -21,6 +21,14 @@ bash $S/size.sh <PROFILE> <connection> yugabytedb --database <database>        #
 bash $S/size.sh <PROFILE> <pdb-connection> oracle --service <PDB>              # a connection whose service is the PDB
 ```
 
+**In a notebook or Genie Code** (the CLI doesn't run there): the same query from [`size_query.py`](scripts/size_query.py), which `size.sh` uses too, run with `spark.sql`; one row per table, the columns of `tables.csv`:
+
+```python
+import sys; sys.path.insert(0, "<skills folder>/lfc-source-sizing/scripts")
+from size_query import remote_query
+display(spark.sql(remote_query("<connection>", "postgres", database="<database>")))   # or "oracle", service="<PDB>"; "mysql"
+```
+
 [`size.sh`](scripts/size.sh) runs the engine's query ([`postgres.sql`](scripts/postgres.sql), [`mysql.sql`](scripts/mysql.sql) / [`mysql-process.sql`](scripts/mysql-process.sql), [`sqlserver.sql`](scripts/sqlserver.sql), [`oracle.sql`](scripts/oracle.sql), [`yugabytedb.sql`](scripts/yugabytedb.sql), [`cockroachdb.sql`](scripts/cockroachdb.sql)), keeps one row per table in `tables.csv`, and prints, with DuckDB:
 
 | Line | For | What it counts |

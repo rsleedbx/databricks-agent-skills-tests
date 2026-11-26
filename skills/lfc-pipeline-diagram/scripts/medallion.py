@@ -21,8 +21,9 @@ usage: medallion.py --layer NAME=CATALOG.SCHEMA[,CATALOG.SCHEMA...][:only=t1,t2]
 """
 import argparse
 import json
-import subprocess
 import sys
+
+import workspace_api as api  # beside this script
 
 KINDS = ("scd1", "scd2", "append", "recomputed", "keyed", "view", "unknown")
 LABEL = {"scd1": "SCD 1", "scd2": "SCD 2", "append": "append-only", "recomputed": "recomputed (MV)",
@@ -31,11 +32,6 @@ MATERIALIZED = {"STREAMING_TABLE", "MATERIALIZED_VIEW", "MANAGED", "EXTERNAL", "
 WRITTEN = {"append": "append", "scd1": "scd1", "scd2": "scd2", "merge": "keyed"}   # --written values -> KINDS
 FLOW_KIND = {"APPEND": "append", "COMPLETE": "recomputed", "MATERIALIZED_VIEW": "recomputed", "VIEW": "view",
              "MERGE": "keyed", "UPDATE": "keyed", "REPLACE_USING": "keyed", "REPLACE_WHERE": "keyed"}
-
-
-def cli(args, profile):
-    cmd = ["databricks", *args, "-o", "json"] + (["-p", profile] if profile else [])
-    return json.loads(subprocess.run(cmd, check=True, capture_output=True, text=True).stdout or "null")
 
 
 def norm(name):
@@ -54,10 +50,10 @@ def flow_types(pipeline_id, profile, cache, max_pages=40):
         return cache[pipeline_id]
     out, update, token = {}, None, None
     for _ in range(max_pages):
-        q = f"/api/2.0/pipelines/{pipeline_id}/events?max_results=250" + (f"&page_token={token}" if token else "")
+        q = {"max_results": 250, **({"page_token": token} if token else {})}
         try:
-            ev = cli(["api", "get", q], profile) or {}
-        except subprocess.CalledProcessError:
+            ev = api.get(f"/api/2.0/pipelines/{pipeline_id}/events", profile, q)
+        except api.ApiError:
             break
         done = False
         for e in ev.get("events", []):
@@ -103,10 +99,9 @@ def count_layer(name, schemas, profile, written=None, only=None, cache=None):
     for cs in schemas:
         cat, sch = cs.split(".", 1)
         try:
-            listed = cli(["tables", "list", cat, sch], profile) or []
-        except subprocess.CalledProcessError as e:      # no access, or gone: draw the layer as not readable
-            err = (e.stderr or "").strip().splitlines()
-            unreadable.append(f"{cs}: {err[0][:120] if err else 'tables list failed'}")
+            listed = api.tables(cat, sch, profile)
+        except api.ApiError as e:                        # no access, or gone: draw the layer as not readable
+            unreadable.append(f"{cs}: {str(e)[:120] or 'tables list failed'}")
             continue
         for t in listed:
             if only and t["name"] not in only:
