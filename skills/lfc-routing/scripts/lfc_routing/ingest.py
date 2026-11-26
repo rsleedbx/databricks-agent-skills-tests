@@ -81,12 +81,15 @@ def run_ingestion(session, schema: str, source: str, producer, shared_log: str, 
     from lfc_change_source.cdc_log import SEQUENCES
     kind_sql = SEQUENCES.get(getattr(producer, "seq", "gateway_cursor"), SEQUENCES["gateway_cursor"])
 
-    def has_event(p) -> bool:
-        dests = ", ".join(_lit(prefix + t.split(".", 1)[-1]) for t in p.tables)
+    def count(log: str, tables) -> int:
+        dests = ", ".join(_lit(prefix + t.split(".", 1)[-1]) for t in tables)
         try:
-            return int(session.sql(f"SELECT count(*) FROM {p.log} WHERE destination IN ({dests})").collect()[0][0]) > 0
+            return int(session.sql(f"SELECT count(*) FROM {log} WHERE destination IN ({dests})").collect()[0][0])
         except Exception:  # noqa: BLE001  the new log not made yet
-            return False
+            return 0
+
+    def has_event_after(before: int):   # an event that arrived after the split started (not an earlier try's)
+        return lambda p: count(p.log, p.tables) > before
     from lfc_change_source import producer as prod
     reqs = [r for r in _dicts(session.sql(f"SELECT * FROM {schema}.{REQUEST} WHERE source = {_lit(source)}").collect())]
     done = {int(r["run"]) for r in _dicts(session.sql(f"SELECT run FROM {schema}.{RUNS} WHERE source = {_lit(source)}").collect())}
@@ -104,7 +107,8 @@ def run_ingestion(session, schema: str, source: str, producer, shared_log: str, 
                     want = [t for t in running.tables if t.split(".", 1)[-1] in set(tbls)]
                     if log == shared_log or not want:   # already in their log (an earlier request): nothing to split
                         continue
-                    landed[log] = prod.carry_out(prod.split(running, want, log, make), landed=landed_check or has_event)
+                    check = landed_check or has_event_after(count(log, want))
+                    landed[log] = prod.carry_out(prod.split(running, want, log, make), landed=check)
                     running = prod.Spec(running.name, running.log, tuple(t for t in running.tables if t not in want))
             copied = producer.copy_snapshots(snapshot_schema) if hasattr(producer, "copy_snapshots") and snapshot_schema else []
             record_snapshots(session, schema, source, copied)

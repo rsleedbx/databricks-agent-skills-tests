@@ -45,6 +45,7 @@ class Spec:
     name: str
     log: str
     tables: tuple = field(default_factory=tuple)
+    fresh: bool = False   # a producer a split makes: its own position (a Debezium Server: a slot of its own)
 
 
 def split(old: Spec, moved: list, new_log: str, make: Callable, new_name: str | None = None) -> list:
@@ -60,7 +61,7 @@ def split(old: Spec, moved: list, new_log: str, make: Callable, new_name: str | 
     rest = tuple(t for t in old.tables if t not in moved)
     import hashlib
     tag = hashlib.sha1(new_log.encode()).hexdigest()[:8]   # one name a new log: two splits never share a server
-    new = make(Spec(new_name or f"{old.name}-{tag}", new_log, moved))
+    new = make(Spec(new_name or f"{old.name}-{tag}", new_log, moved, fresh=True))
     kept = make(replace(old, tables=rest))
     steps = [Step("start", new, f"{len(moved)} tables into {new_log}"),
              Step("wait_landed", new, "its first change landed: the new log carries them from here"),
@@ -141,7 +142,7 @@ class DebeziumServer:
         self.slot, self.position_fn, self.podman, self.wait_s = slot, position_fn, podman, wait_s
         self.seq = seq   # its log's position kind (cdc_log SEQUENCES): how a reader finds a position in its events
         self._folder = folder   # a server made before this module (its own folder, its offsets in it)
-        if slot is None and folder is None:   # a new server: a slot of its own (sharing the template's would fight it)
+        if slot is None and getattr(spec, "fresh", False):   # a split's new server: a slot of its own (not the old one's)
             import re
             slot = "dbz_" + re.sub(r"[^a-z0-9_]", "_", self.name.lower())[-56:]
             self.slot = slot

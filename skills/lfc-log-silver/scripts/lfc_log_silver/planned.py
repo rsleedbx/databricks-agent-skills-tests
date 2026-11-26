@@ -40,9 +40,7 @@ def tables(plan_rows: list, snaps: dict, source_of, kind: str = "gateway_cursor"
     out = {}
     for r in plan_rows:
         src = source_of(r["tbl"], r.get("log"))
-        method, only = silver.method_of(src, r.get("cell") or "view")
-        if method == "shared" and not getattr(src, "shareable", True):   # a moved table reads two logs
-            method, only = "merge", False
+        method, only = silver.method_of(src, r.get("cell") or "view")   # a moved table: never shared
         s = snaps.get(r["tbl"]) or {}
         pos = s.get("position")
         out[r["tbl"]] = silver.Table(src, method, only, snapshot_table=s.get("snapshot_table"),
@@ -73,7 +71,8 @@ def _group(log: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", log.strip("`").split("`.`")[-1].split(".")[-1].strip("`")) or "0"
 
 
-def upto(session, logs: list, kind_sql: str = "value:cursor.sequence::STRING", destinations: list | None = None) -> str | None:
+def upto(session, logs: list, kind_sql: str = "value:cursor.sequence::STRING", destinations: list | None = None,
+         stuck: set | None = None) -> str | None:
     """A round's upper position over several logs: the smallest of their complete positions, of `destinations`'
     events only when given (one cursor family); None when a log holds none of them. A log's newest position isn't
     complete: one position can hold many rows written in several change files (SQL Server change tracking: a
@@ -86,7 +85,10 @@ def upto(session, logs: list, kind_sql: str = "value:cursor.sequence::STRING", d
         if newest is None:   # holds none of them: no bound from it
             continue
         below = session.sql(f"SELECT max({kind_sql}) FROM {log} WHERE {where} AND {kind_sql} < '{newest}'").collect()[0][0]
-        if below is None:    # every event at one position, still incomplete: the round waits for it
+        if below is None:    # every event at one position, still incomplete: this log's tables wait (stuck)
+            if stuck is not None:
+                stuck.add(log)
+                continue
             return None
         tops.append(str(below))
     return min(tops) if tops else None
@@ -101,7 +103,10 @@ def run_families(session, schema: str, tables_: dict, fams: dict, kind: str = "g
         by.setdefault(fams.get(t.src.destination, "ct"), {})[n] = t
     out = {}
     for fam, ts in sorted(by.items()):
-        hi = upto(session, sorted({t.src.fq for t in ts.values()}), destinations=[t.src.destination for t in ts.values()])
-        if hi is not None:
-            out[fam] = {"to": hi, **run(session, schema, ts, Position(kind, hi))}
+        stuck: set = set()   # a log whose events sit at one position: its tables wait, the family's others go on
+        hi = upto(session, sorted({t.src.fq for t in ts.values()}), destinations=[t.src.destination for t in ts.values()],
+                  stuck=stuck)
+        go = {n: t for n, t in ts.items() if t.src.fq not in stuck}
+        if hi is not None and go:
+            out[fam] = {"to": hi, "waiting": sorted(set(ts) - set(go)), **run(session, schema, go, Position(kind, hi))}
     return out

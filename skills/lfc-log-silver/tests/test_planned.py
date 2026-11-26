@@ -63,6 +63,9 @@ class Planned(unittest.TestCase):
             def sql(self, q):
                 return R([(None if " < '" in q else "00000000000000000005",)])   # every event at its newest
         self.assertIsNone(planned.upto(S(), ["`c`.`s`.l1"]))
+        stuck = set()
+        self.assertIsNone(planned.upto(S(), ["`c`.`s`.l1"], stuck=stuck))
+        self.assertEqual(stuck, {"`c`.`s`.l1"})   # named, so only its tables wait
 
     def test_upto_none_when_a_log_holds_none(self):
         class S:
@@ -76,11 +79,13 @@ class Planned(unittest.TestCase):
         m = Moved(src("a", "`c`.`s`.cdc_log"), src("a", "`c`.`s`.`cdc_log_a`"), Position("gateway_cursor", "00000000000000000003"))
         t = planned.tables([{"tbl": "a", "cell": "shared", "log": "x"}], {}, lambda n, log: m)
         self.assertEqual((t["a"].method, t["a"].group), ("merge", ""))
+        from lfc_log_silver import silver
+        self.assertEqual(silver.method_of(m, "shared"), ("merge", False))   # from_route takes the same guard
 
     def test_run_families_a_round_a_family_with_its_own_bound(self):
         calls = []
         orig_upto, orig_run = planned.upto, planned.run
-        planned.upto = lambda session, logs, kind_sql=None, destinations=None: "B-" + ",".join(sorted(destinations))
+        planned.upto = lambda session, logs, kind_sql=None, destinations=None, stuck=None: "B-" + ",".join(sorted(destinations))
         planned.run = lambda session, schema, ts, to, first=None: calls.append((sorted(ts), to.value)) or {}
         try:
             t = {"a": src("a"), "b": src("b")}

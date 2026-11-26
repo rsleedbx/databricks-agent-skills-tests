@@ -149,8 +149,8 @@ class Debezium(unittest.TestCase):
 
     def test_a_new_server_gets_a_slot_of_its_own(self):
         run, _ = self.vm([])
-        new = producer.DebeziumServer(Spec("robertlee-dbz-1-abc", "c.s.l", ("s.b",)), run, "/h", "/t", "i", "n")
-        old = producer.DebeziumServer(Spec("dbz1", "c.s.l", ("s.a",)), run, "/h", "/t", "i", "n", folder="/h/src1")
+        new = producer.DebeziumServer(Spec("robertlee-dbz-1-abc", "c.s.l", ("s.b",), fresh=True), run, "/h", "/t", "i", "n")
+        old = producer.DebeziumServer(Spec("dbz1", "c.s.l", ("s.a",)), run, "/h", "/t", "i", "n")   # no folder given
         self.assertEqual((new.slot, old.slot), ("dbz_robertlee_dbz_1_abc", None))   # an old one keeps its template's
 
     def test_position_is_the_slot_s(self):

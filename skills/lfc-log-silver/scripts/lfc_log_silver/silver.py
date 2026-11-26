@@ -67,7 +67,12 @@ class Table:
 def method_of(src, silver_name: str) -> tuple:
     """(method, only_changed) for a route's silver name; a keyless table's is always append, its rows appended
     (the one place that decides it)."""
-    return FROM_ROUTE[silver_name] if src.keys else ("append", False)
+    if not src.keys:
+        return "append", False
+    method, only = FROM_ROUTE[silver_name]
+    if method == "shared" and not getattr(src, "shareable", True):   # a moved table reads two logs; a group scans one
+        return "merge", False
+    return method, only
 
 
 def from_route(src, route, snapshot_table=None, position=None) -> Table:

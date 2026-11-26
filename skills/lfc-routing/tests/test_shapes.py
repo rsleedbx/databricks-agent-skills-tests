@@ -32,10 +32,13 @@ class Shapes(unittest.TestCase):
         self.assertFalse(g["orders"]["variant"])
 
     def test_a_group_keeps_its_tables_own_name(self):
-        docs = {"t1": {"tables": [dict(CUST, name="Customer")]}, "t2": {"tables": [dict(CUST, name="customer")]}}
+        docs = {"t1": {"tables": [dict(CUST, name="Customer")]}, "t2": {"tables": [dict(CUST, name="customer")]},
+                "t3": {"tables": [dict(CUST, name="Customer")]}}
         g = shapes.group(docs)
-        self.assertEqual(list(g), ["Customer"])           # grouped lower-case, named as the first member names it
-        self.assertEqual(g["Customer"]["members"], [("t1", "Customer"), ("t2", "customer")])
+        self.assertEqual(list(g), ["Customer"])           # grouped lower-case, named as most members spell it
+        self.assertEqual(len(g["Customer"]["members"]), 3)
+        tie = shapes.group({"a": {"tables": [dict(CUST, name="customer")]}, "b": {"tables": [dict(CUST, name="Customer")]}})
+        self.assertEqual(list(tie), ["Customer"])         # a tie: by the spelling, whichever source sorts first
 
     def test_a_deviating_tenant_is_a_variant(self):
         g = shapes.group({k: v[0] for k, v in tenants(5, odd={3}).items()})
