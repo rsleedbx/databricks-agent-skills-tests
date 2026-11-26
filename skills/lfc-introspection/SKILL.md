@@ -27,9 +27,20 @@ Engines: PostgreSQL, YugabyteDB, CockroachDB (keys from `pg_catalog`: `informati
 only tables the login owns), SQL Server, MySQL and MariaDB (`information_schema`; MySQL names its columns in upper
 case). Oracle, Db2 and Informix have size queries but no columns or keys query yet.
 
+## On demand, kept by run
+
+A person asks for a run by adding a row to `introspection_request` (n, source, engine, database, src_schema), from the
+dashboard's editable table; the bundle's job ([bundle/](bundle/databricks.yml), a table update trigger on that table)
+runs [`history.run_pending`](scripts/lfc_introspection/history.py). Each run is appended: `introspection_runs` (status,
+error, the documents classify reads, what changed since that source's previous run: tables and columns added or
+dropped, a type or key changed, rows grown), `introspection_schema` (columns) and `introspection_stats` (rows, bytes).
+`history.latest(session, schema, source)` gives a source's last documents. Live (2026-11-26): a row added, the
+triggered run 76 s later; a bad connection recorded as a failed run.
+
 ## Checks
 
 `python3 -m unittest skills/lfc-introspection/tests/test_introspect.py` (offline, a fake session): the three
 statements, type text per engine, a composite foreign key and its action, a keyless table, rows and bytes of the
-schema asked for. Live (2026-11-26): the demo VM's PostgreSQL, MySQL and SQL Server `lfcddemo` tables, keys and
+schema asked for. `tests/test_history.py` (offline): rows, changes between runs, pending requests, a failed run.
+Live (2026-11-26): the demo VM's PostgreSQL, MySQL and SQL Server `lfcddemo` tables, keys and
 row counts as the databases have them.
