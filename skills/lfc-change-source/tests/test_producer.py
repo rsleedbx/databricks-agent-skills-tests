@@ -44,7 +44,7 @@ class Split(unittest.TestCase):
         self.assertEqual(Fake.log_, [("start", "dbz2", "c.s.cdc_log_b", ("s.b",)),
                                      ("stop", "dbz1", ("s.a", "s.b", "s.c")), ("position", "dbz1"),
                                      ("start", "dbz1", "c.s.cdc_log", ("s.a", "s.c"))])
-        self.assertEqual(out, {"moved": ("s.b",), "log": "c.s.cdc_log_b", "cut": "0/1A2B"})
+        self.assertEqual(out, {"moved": ("s.b",), "log": "c.s.cdc_log_b", "stopped_at": "0/1A2B"})
 
     def test_the_old_producer_runs_on_until_the_new_log_has_a_change(self):
         n = iter([False, False, True])

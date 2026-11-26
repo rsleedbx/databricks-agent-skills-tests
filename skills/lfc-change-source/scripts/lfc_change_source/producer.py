@@ -8,8 +8,9 @@ log; an adapter gives it three operations:
 
 A split moves some tables to a new log make before break: the new producer first, until its first change has landed,
 then the old one restarted without them. The logs overlap for the moved tables (never a gap); silver applies an event
-at a position once, so a moved table reads its old log up to the cut (the old producer's position when it stopped
-carrying the table) and its new log after it. split() plans the steps as plain data; carry_out() runs them.
+at a position once, so a moved table reads its old log up to the cut and its new log after it. The cut is the moved
+table's last position in the old log once the old producer has stopped: the producer's own position (a slot's
+confirmed_flush_lsn) can trail the last event it sent (live: 29736808 against an event at 29736864). split() plans the steps as plain data; carry_out() runs them.
 
     steps = producer.split(old, ["db.s.orders"], new_log="`c`.`s`.`cdc_log_orders`", make=debezium_producer)
     cuts = producer.carry_out(steps, landed=lambda p: ...)
@@ -69,7 +70,8 @@ def split(old: Spec, moved: list, new_log: str, make: Callable, new_name: str | 
 
 def carry_out(steps: list, landed: Callable, wait: Callable | None = None) -> dict:
     """Runs split()'s steps. landed(producer) -> bool: its first change is in its log; wait(seconds) between checks.
-    Returns {"cut": the old producer's position when it stopped, "moved": its tables, "log": the new log}."""
+    Returns {"stopped_at": the old producer's position when it stopped (not the cut: module doc), "moved": its
+    tables, "log": the new log}."""
     import time
     wait = wait or time.sleep
     out: dict = {}
@@ -86,7 +88,7 @@ def carry_out(steps: list, landed: Callable, wait: Callable | None = None) -> di
                 raise TimeoutError(f"{s.producer.name}: no change landed in its log; the old producer still runs")
         elif s.op == "stop":
             s.producer.stop()
-            out["cut"] = s.producer.position()
+            out["stopped_at"] = s.producer.position()
         elif s.op == "start_again":
             s.producer.start()
         elif s.op != "retire":
@@ -130,16 +132,17 @@ class DebeziumServer:
 
     def __init__(self, spec: Spec, run: Callable, home: str, template: str, image: str, network: str,
                  slot: str | None = None, position_fn: Callable | None = None, podman: str = "sudo podman",
-                 wait_s: int = 300, sleep: Callable | None = None):
+                 wait_s: int = 300, sleep: Callable | None = None, folder: str | None = None):
         self.name, self.log, self.tables = spec.name, spec.log, tuple(spec.tables)
         self.run, self.home, self.template, self.image, self.network = run, home, template, image, network
         self.slot, self.position_fn, self.podman, self.wait_s = slot, position_fn, podman, wait_s
+        self._folder = folder   # a server made before this module (its own folder, its offsets in it)
         import time
         self.sleep = sleep or time.sleep
 
     @property
     def folder(self) -> str:
-        return f"{self.home}/{self.name}"
+        return self._folder or f"{self.home}/{self.name}"
 
     def properties(self) -> str:
         return debezium_properties(self.run(f"cat {self.template}"), tables=self.tables, log=self.log, slot=self.slot)
@@ -171,3 +174,14 @@ class DebeziumServer:
         if self.position_fn is None:
             raise ValueError(f"{self.name}: no position_fn")
         return self.position_fn(self.slot)
+
+
+def zerobus_log_sql(fq: str, principal: str) -> list:
+    """A change log Debezium Server's Zerobus sink writes (its envelope mode's columns), and the grants its service
+    principal needs, directly on the table (a producer's token is scoped to its tables: inherited grants may not
+    do, error 4024). fq: the quoted catalog.schema.table."""
+    return [f"CREATE TABLE IF NOT EXISTS {fq} (target_table STRING NOT NULL, destination STRING NOT NULL, "
+            "partition INT, operation STRING NOT NULL, idempotency_key STRING, key VARIANT, value VARIANT, "
+            "source_position VARIANT, headers VARIANT) CLUSTER BY (destination) "
+            "COMMENT 'Append-only change log: one Debezium envelope per source change'",
+            f"GRANT SELECT, MODIFY ON TABLE {fq} TO `{principal}`"]
