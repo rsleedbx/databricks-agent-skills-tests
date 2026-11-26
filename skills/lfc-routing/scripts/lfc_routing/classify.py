@@ -118,7 +118,7 @@ def classify(schema: dict, stats: dict | None = None, activity: dict | None = No
             r.update(log=c["log"], why="; ".join(x for x in (r.get("why"), f"log chosen: {c['log']}") if x))
     picked = {n: {k: c[k] for k in ("role", "silver", "cite") if k in c}
               for n, c in ((decisions or {}).get("tables") or {}).items() if c.get("role")}
-    p["problems"] = review(p, picked, "decisions")
+    p["problems"] = list((decisions or {}).get("problems") or []) + review(p, picked, "decisions")
     if observed and observed.get("round") is not None:
         p["round"] = observed["round"]
     return p

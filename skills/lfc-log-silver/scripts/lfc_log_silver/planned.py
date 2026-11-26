@@ -41,6 +41,8 @@ def tables(plan_rows: list, snaps: dict, source_of, kind: str = "gateway_cursor"
     for r in plan_rows:
         src = source_of(r["tbl"], r.get("log"))
         method, only = silver.method_of(src, r.get("cell") or "view")
+        if method == "shared" and not getattr(src, "shareable", True):   # a moved table reads two logs
+            method, only = "merge", False
         s = snaps.get(r["tbl"]) or {}
         pos = s.get("position")
         out[r["tbl"]] = silver.Table(src, method, only, snapshot_table=s.get("snapshot_table"),
@@ -78,10 +80,16 @@ def upto(session, logs: list, kind_sql: str = "value:cursor.sequence::STRING", d
     transaction's version), so its other rows may land later; a round goes up to the one below it, never past a
     position whose rows are still arriving."""
     where = (f"destination IN ({', '.join(repr(d) for d in destinations)})" if destinations else "true")
-    tops = [session.sql(f"SELECT max({kind_sql}) FROM {log} WHERE {where} AND {kind_sql} < "
-                        f"(SELECT max({kind_sql}) FROM {log} WHERE {where})").collect()[0][0] for log in logs]
-    tops = [t for t in tops if t is not None]
-    return min(str(t) for t in tops) if tops else None
+    tops = []
+    for log in logs:
+        newest = session.sql(f"SELECT max({kind_sql}) FROM {log} WHERE {where}").collect()[0][0]
+        if newest is None:   # holds none of them: no bound from it
+            continue
+        below = session.sql(f"SELECT max({kind_sql}) FROM {log} WHERE {where} AND {kind_sql} < '{newest}'").collect()[0][0]
+        if below is None:    # every event at one position, still incomplete: the round waits for it
+            return None
+        tops.append(str(below))
+    return min(tops) if tops else None
 
 
 def run_families(session, schema: str, tables_: dict, fams: dict, kind: str = "gateway_cursor") -> dict:

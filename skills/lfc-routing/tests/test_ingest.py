@@ -81,5 +81,53 @@ class Ingest(unittest.TestCase):
         self.assertEqual(ingest.run_ingestion(s, "`c`.`s`", "src", gw, shared_log=SHARED, prefix="db.s."), [])   # once
 
 
+class DebeziumSession(Session):
+    """Two tables with logs of their own; a new log has an event once its producer started."""
+    started = set()
+
+    def sql(self, q):
+        self.seen.append(q)
+        if "FROM `c`.`s`.routing_plan" in q:
+            return R([{"round": 4, "tbl": "a", "log": "shared", "cell": "shared", "snapshot_by": "qbc"},
+                      {"round": 4, "tbl": "b", "log": "`c`.`s`.`cdc_log_b`", "cell": "merge_round", "snapshot_by": "qbc"},
+                      {"round": 4, "tbl": "d", "log": "`c`.`s`.`cdc_log_d`", "cell": "merge_round", "snapshot_by": "qbc"}])
+        if "SELECT count(*) FROM `c`.`s`.`cdc_log_" in q:
+            return R([(1 if any(f"`cdc_log_{t}`" in q for t in self.started) else 0,)])
+        return super().sql(q)
+
+
+class Dbz:
+    log_ = []
+
+    def __init__(self, spec):
+        self.name, self.log, self.tables, self.seq = spec.name, spec.log, spec.tables, "lsn"
+
+    def start(self):
+        Dbz.log_.append(("start", self.name, self.log, self.tables))
+        if self.log != SHARED:
+            DebeziumSession.started.add(self.log.split("cdc_log_")[1].strip("`"))
+
+    def stop(self):
+        Dbz.log_.append(("stop", self.name, self.tables))
+
+    def position(self):
+        return "100"
+
+
+class IngestDebezium(unittest.TestCase):
+    def test_two_splits_in_turn_each_make_before_break(self):
+        Dbz.log_, DebeziumSession.started = [], set()
+        s = DebeziumSession()
+        p = Dbz(type("S", (), {"name": "dbz1", "log": SHARED, "tables": ("s.a", "s.b", "s.d")})())
+        out = ingest.run_ingestion(s, "`c`.`s`", "src", p, shared_log=SHARED, prefix="db.s.", make=Dbz)
+        self.assertEqual(out[0]["status"], "ok", out[0].get("error"))
+        starts_again = [e[3] for e in Dbz.log_ if e[0] == "start" and e[2] == SHARED]
+        self.assertEqual(starts_again, [("s.a", "s.d"), ("s.a",)])          # the second split from the first's rest
+        new_logs = [e for e in Dbz.log_ if e[0] == "start" and e[2] != SHARED]
+        self.assertEqual([e[3] for e in new_logs], [("s.b",), ("s.d",)])
+        self.assertNotEqual(new_logs[0][1], new_logs[1][1])                 # a name a new log
+        self.assertTrue(any("min(value:source:lsn" in q for q in s.seen))       # first positions by the producer's kind
+
+
 if __name__ == "__main__":
     unittest.main()

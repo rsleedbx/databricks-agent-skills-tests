@@ -84,7 +84,8 @@ def changes(old: tuple | None, new: tuple, grew: float = 0.5) -> list:
 def pending(requests: list, runs: list) -> list:
     """The requests with no run yet (a run's number is its request's n), oldest first."""
     done = {(r["source"], int(r["run"])) for r in runs}
-    return sorted((r for r in requests if (r["source"], int(r["n"])) not in done), key=lambda r: int(r["n"]))
+    ok = [r for r in requests if r.get("n") is not None and r.get("source")]   # a half-filled row: not a request
+    return sorted((r for r in ok if (r["source"], int(r["n"])) not in done), key=lambda r: int(r["n"]))
 
 
 def _dicts(rs) -> list:

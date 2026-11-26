@@ -85,7 +85,11 @@ class Tables(unittest.TestCase):
                 {"tbl": "orders", "override_log": "c.s.cdc_log_orders"},        # a later row adds the log
                 {"tbl": "customer", "override_class": None}]                    # nothing set: the heuristic
         d = tables.decisions(rows)
-        self.assertEqual(d, {"tables": {"orders": {"method": "merge_round", "log": "c.s.cdc_log_orders"}}})
+        self.assertEqual(d, {"tables": {"orders": {"method": "merge_round", "log": "c.s.cdc_log_orders"}}, "problems": []})
+        bad = tables.decisions([{"tbl": "hits", "override_cell": "merge_rond", "override_class": "small_fast"}])
+        self.assertEqual(bad["tables"], {"hits": {"class": "small_fast"}})       # the typo left out, the rest kept
+        self.assertIn("override_cell = 'merge_rond'", bad["problems"][0])
+        self.assertIn(bad["problems"][0], classify(SCHEMA, STATS, decisions=bad)["problems"])   # the round runs on
         out = {r["tbl"]: r for r in tables.plan_rows(classify(SCHEMA, STATS, decisions=d), round_=3)}
         self.assertEqual((out["orders"]["cell"], out["orders"]["log"], out["orders"]["round"]),
                          ("merge_round", "c.s.cdc_log_orders", 3))

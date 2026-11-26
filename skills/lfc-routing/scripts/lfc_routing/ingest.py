@@ -74,9 +74,19 @@ def record_snapshots(session, schema: str, source: str, copied: list, method: st
 
 
 def run_ingestion(session, schema: str, source: str, producer, shared_log: str, prefix: str,
-                  snapshot_schema: str | None = None, make=None) -> list:
+                  snapshot_schema: str | None = None, make=None, landed_check=None) -> list:
     """Each pending ingestion_start row of `source` carried out (module doc). make(Spec) -> Producer: for a split of a
-    producer that writes its own log (Debezium). The runs' rows."""
+    producer that writes its own log (Debezium); landed_check(p) -> bool: a moved table's change is in p's new log (default:
+    an event of its tables there, so the old producer stops only then: make before break). The runs' rows."""
+    from lfc_change_source.cdc_log import SEQUENCES
+    kind_sql = SEQUENCES.get(getattr(producer, "seq", "gateway_cursor"), SEQUENCES["gateway_cursor"])
+
+    def has_event(p) -> bool:
+        dests = ", ".join(_lit(prefix + t.split(".", 1)[-1]) for t in p.tables)
+        try:
+            return int(session.sql(f"SELECT count(*) FROM {p.log} WHERE destination IN ({dests})").collect()[0][0]) > 0
+        except Exception:  # noqa: BLE001  the new log not made yet
+            return False
     from lfc_change_source import producer as prod
     reqs = [r for r in _dicts(session.sql(f"SELECT * FROM {schema}.{REQUEST} WHERE source = {_lit(source)}").collect())]
     done = {int(r["run"]) for r in _dicts(session.sql(f"SELECT run FROM {schema}.{RUNS} WHERE source = {_lit(source)}").collect())}
@@ -89,18 +99,19 @@ def run_ingestion(session, schema: str, source: str, producer, shared_log: str, 
             if hasattr(producer, "land"):          # a gateway: one staging, a log a landing
                 landed = {log: producer.land(log, [prefix + t for t in tbls]) for log, tbls in logs.items()}
             else:                                  # writes its log itself: a split for each log of its own
-                landed = {}
+                landed, running = {}, prod.Spec(producer.name, producer.log, tuple(producer.tables))
                 for log, tbls in logs.items():
-                    if log != shared_log:
-                        steps = prod.split(prod.Spec(producer.name, producer.log, producer.tables),
-                                           [f"{prefix.split('.', 1)[-1]}{t}" for t in tbls], log, make)
-                        landed[log] = prod.carry_out(steps, landed=lambda p: True)
+                    want = [t for t in running.tables if t.split(".", 1)[-1] in set(tbls)]
+                    if log == shared_log or not want:   # already in their log (an earlier request): nothing to split
+                        continue
+                    landed[log] = prod.carry_out(prod.split(running, want, log, make), landed=landed_check or has_event)
+                    running = prod.Spec(running.name, running.log, tuple(t for t in running.tables if t not in want))
             copied = producer.copy_snapshots(snapshot_schema) if hasattr(producer, "copy_snapshots") and snapshot_schema else []
             record_snapshots(session, schema, source, copied)
             runs = {r["tbl"]: r for r in _dicts(session.sql(
                 f"SELECT * FROM {schema}.{snapshots.RUNS} WHERE source = {_lit(source)} AND status = 'ok' "
                 "QUALIFY row_number() OVER (PARTITION BY tbl ORDER BY at DESC) = 1").collect())}
-            firsts = first_positions(session, logs, prefix)
+            firsts = first_positions(session, logs, prefix, kind_sql)
             verdicts = {t: snapshots.keep_or_take(runs.get(t), firsts.get(t, {})) for t in plan}
             for t, v in verdicts.items():
                 if not v["keep"] and hasattr(producer, "resnapshot"):

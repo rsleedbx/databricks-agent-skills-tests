@@ -39,7 +39,8 @@ class History(unittest.TestCase):
                           "orders.amt: type numeric(10,2) -> numeric(12,2)", "orders: rows 1,000 -> 4,000"])
 
     def test_pending(self):
-        reqs = [{"n": 2, "source": "a"}, {"n": 1, "source": "a"}, {"n": 1, "source": "b"}]
+        reqs = [{"n": 2, "source": "a"}, {"n": 1, "source": "a"}, {"n": 1, "source": "b"}, {"n": None, "source": "c"},
+                {"n": 3, "source": None}]   # half-filled rows (from a dashboard) are skipped, not fatal
         self.assertEqual(history.pending(reqs, [{"run": 1, "source": "a"}]), [{"n": 1, "source": "b"}, {"n": 2, "source": "a"}])
 
     def test_run_pending_records_runs_and_failures(self):

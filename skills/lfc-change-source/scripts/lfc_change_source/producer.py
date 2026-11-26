@@ -58,7 +58,9 @@ def split(old: Spec, moved: list, new_log: str, make: Callable, new_name: str | 
     if missing:
         raise ValueError(f"split: not carried by {old.name}: {missing}")
     rest = tuple(t for t in old.tables if t not in moved)
-    new = make(Spec(new_name or f"{old.name}-{len(moved)}t", new_log, moved))
+    import hashlib
+    tag = hashlib.sha1(new_log.encode()).hexdigest()[:8]   # one name a new log: two splits never share a server
+    new = make(Spec(new_name or f"{old.name}-{tag}", new_log, moved))
     kept = make(replace(old, tables=rest))
     steps = [Step("start", new, f"{len(moved)} tables into {new_log}"),
              Step("wait_landed", new, "its first change landed: the new log carries them from here"),
@@ -133,11 +135,16 @@ class DebeziumServer:
     def __init__(self, spec: Spec, run: Callable, home: str, template: str, image: str, network: str,
                  slot: str | None = None, position_fn: Callable | None = None, podman: str = "sudo podman",
                  wait_s: int = 300, sleep: Callable | None = None, folder: str | None = None,
-                 prepare: Callable | None = None):
+                 prepare: Callable | None = None, seq: str = "lsn"):
         self.name, self.log, self.tables = spec.name, spec.log, tuple(spec.tables)
         self.run, self.home, self.template, self.image, self.network = run, home, template, image, network
         self.slot, self.position_fn, self.podman, self.wait_s = slot, position_fn, podman, wait_s
+        self.seq = seq   # its log's position kind (cdc_log SEQUENCES): how a reader finds a position in its events
         self._folder = folder   # a server made before this module (its own folder, its offsets in it)
+        if slot is None and folder is None:   # a new server: a slot of its own (sharing the template's would fight it)
+            import re
+            slot = "dbz_" + re.sub(r"[^a-z0-9_]", "_", self.name.lower())[-56:]
+            self.slot = slot
         # prepare(tables): the source made ready for them before each start (PostgreSQL: its publication has them,
         # lfc_source_contract.cdc.publication; a table added later isn't in a FOR TABLE publication otherwise)
         self.prepare = prepare

@@ -29,9 +29,10 @@ def group(docs: dict) -> dict:
     out = {}
     for name, shapes_ in sorted(by.items()):
         ranked = sorted(shapes_.items(), key=lambda kv: (-len(kv[1]), json.dumps(kv[0])))
+        own = ranked[0][1][0][1]   # the first member's own name (grouped lower-case, named as the source names it)
         for i, (sh, members) in enumerate(ranked):
             h = hashlib.sha1(json.dumps(sh).encode()).hexdigest()[:8]
-            out[name if i == 0 else f"{name}~{h}"] = {"name": name, "shape": h, "members": members, "variant": i > 0}
+            out[own if i == 0 else f"{own}~{h}"] = {"name": own, "shape": h, "members": members, "variant": i > 0}
     return out
 
 

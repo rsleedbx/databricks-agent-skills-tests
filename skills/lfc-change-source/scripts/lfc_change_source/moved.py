@@ -27,6 +27,7 @@ class Moved:
         if cut.kind != new.seq:
             raise ValueError(f"Moved: the cut is a {new.seq}, not {cut.kind}")
         self.old, self.new, self.cut = old, new, cut
+        self.shareable = False   # two logs: a shared group scans one log (lfc-log-silver keeps it by MERGE instead)
 
     def __getattr__(self, name):   # columns, keys, seq, destination, fq, position_sql, ...: the new log's
         return getattr(self.new, name)

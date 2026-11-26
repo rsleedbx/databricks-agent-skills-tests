@@ -57,6 +57,11 @@ class Split(unittest.TestCase):
             carry_out(split(OLD, ["s.a"], "c.s.l2", Fake), landed=lambda p: False, wait=lambda s: None)
         self.assertFalse(any(e[0] == "stop" for e in Fake.log_))
 
+    def test_two_splits_of_one_producer_get_two_names(self):
+        a = split(OLD, ["s.a"], "c.s.l_a", Fake)[0].producer.name
+        b = split(OLD, ["s.b"], "c.s.l_b", Fake)[0].producer.name
+        self.assertNotEqual(a, b)
+
     def test_every_table_moved_retires_the_old_producer(self):
         steps = split(OLD, list(OLD.tables), "c.s.l2", Fake)
         self.assertEqual(steps[-1].op, "retire")
@@ -141,6 +146,12 @@ class Debezium(unittest.TestCase):
         d = producer.DebeziumServer(Spec("dbz2", "c.s.l", ("s.b",)), run, "/h", "/t", "i", "n", sleep=lambda s: None)
         with self.assertRaises(RuntimeError):
             d.start()
+
+    def test_a_new_server_gets_a_slot_of_its_own(self):
+        run, _ = self.vm([])
+        new = producer.DebeziumServer(Spec("robertlee-dbz-1-abc", "c.s.l", ("s.b",)), run, "/h", "/t", "i", "n")
+        old = producer.DebeziumServer(Spec("dbz1", "c.s.l", ("s.a",)), run, "/h", "/t", "i", "n", folder="/h/src1")
+        self.assertEqual((new.slot, old.slot), ("dbz_robertlee_dbz_1_abc", None))   # an old one keeps its template's
 
     def test_position_is_the_slot_s(self):
         run, _ = self.vm([])

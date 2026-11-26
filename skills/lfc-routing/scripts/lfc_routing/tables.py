@@ -90,16 +90,33 @@ def ddl(schema: str, warehouse: str | None = None) -> list:
             "COMMENT 'lfc_routing: add a row (n + 1) when the decisions are done: the next round runs'"]
 
 
+# the values each override takes (override_log: any log name)
+ALLOWED = {"override_role": ("dimension", "lookup", "bridge", "fact", "log", "queue"),
+           "override_class": ("small_slow", "small_fast", "big_slow", "big_fast"),
+           "override_cell": ("view", "shared", "merge_round", "merge_changed", "auto_cdc"),
+           "override_snapshot_by": ("qbc", "transport", "files")}
+
+
 def decisions(rows: list) -> dict:
     """classify's decisions from routing_decisions rows (dicts or Rows): each non-null override; the last row of a
-    table wins, a column at a time."""
+    table wins, a column at a time. A value an override doesn't take is left out and named in "problems" (the round
+    runs on: one typo doesn't stop every table)."""
     out: dict = {}
+    bad = []
     for r in rows:
         d = r.asDict() if hasattr(r, "asDict") else dict(r)
-        got = {f: d[c] for c, f in OVERRIDES.items() if d.get(c) not in (None, "")}
+        got = {}
+        for c, f in OVERRIDES.items():
+            v = d.get(c)
+            if v in (None, ""):
+                continue
+            if c in ALLOWED and v not in ALLOWED[c]:
+                bad.append(f"{d.get('tbl')}: {c} = {v!r} isn't one of {', '.join(ALLOWED[c])}; the plan's kept")
+                continue
+            got[f] = v
         if got:
             out.setdefault(d["tbl"], {}).update(got)
-    return {"tables": out}
+    return {"tables": out, "problems": bad}
 
 
 def plan_rows(plan: dict, round_: int | None = None) -> list:

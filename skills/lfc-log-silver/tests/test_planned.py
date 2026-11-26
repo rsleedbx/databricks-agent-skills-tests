@@ -46,20 +46,36 @@ class Planned(unittest.TestCase):
         self.assertEqual(t["m"].method, "merge")
 
     def test_upto_is_below_each_logs_newest_and_the_smallest_of_the_logs(self):
-        seen, tops = [], {"`c`.`s`.l1": "00000000000000000009", "`c`.`s`.l2": "00000000000000000007"}
+        seen = []
+        logs = {"`c`.`s`.l1": ("00000000000000000009", "00000000000000000008"),
+                "`c`.`s`.l2": ("00000000000000000007", "00000000000000000006")}   # (newest, the one below it)
 
         class S:
             def sql(self, q):
                 seen.append(q)
-                return R([(next(v for k, v in tops.items() if f"FROM {k} " in q),)])
-        self.assertEqual(planned.upto(S(), list(tops), destinations=["db.s.a"]), "00000000000000000007")
-        self.assertTrue(all("< (SELECT max(" in q and "destination IN ('db.s.a')" in q for q in seen))
+                newest, below = next(v for k, v in logs.items() if f"FROM {k} " in q)
+                return R([(below if " < '" in q else newest,)])
+        self.assertEqual(planned.upto(S(), list(logs), destinations=["db.s.a"]), "00000000000000000006")
+        self.assertTrue(all("destination IN ('db.s.a')" in q for q in seen))
+
+    def test_upto_waits_while_a_log_holds_one_position_only(self):
+        class S:
+            def sql(self, q):
+                return R([(None if " < '" in q else "00000000000000000005",)])   # every event at its newest
+        self.assertIsNone(planned.upto(S(), ["`c`.`s`.l1"]))
 
     def test_upto_none_when_a_log_holds_none(self):
         class S:
             def sql(self, q):
                 return R([(None,)])
         self.assertIsNone(planned.upto(S(), ["`c`.`s`.l1"]))
+
+    def test_a_moved_table_is_never_in_a_shared_group(self):
+        from lfc_change_source.contract import Position
+        from lfc_change_source.moved import Moved
+        m = Moved(src("a", "`c`.`s`.cdc_log"), src("a", "`c`.`s`.`cdc_log_a`"), Position("gateway_cursor", "00000000000000000003"))
+        t = planned.tables([{"tbl": "a", "cell": "shared", "log": "x"}], {}, lambda n, log: m)
+        self.assertEqual((t["a"].method, t["a"].group), ("merge", ""))
 
     def test_run_families_a_round_a_family_with_its_own_bound(self):
         calls = []
