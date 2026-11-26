@@ -489,14 +489,19 @@ elif [ "$SOURCE" = informix ]; then
   SRC_VERSION=$(echo "SELECT DBINFO('version', 'full') AS v FROM sysmaster:sysdual;" | src | tail -1 | cut -c1-80)
   snap_select() { msel "$1" --side source --prefix "$MPFX"; }   # the rows now; at T they're in the snapT files
 elif [ "$SOURCE" = db2 ]; then
-  # Db2 Community: one database, LFCDB, with archive logging (ASN capture reads the logs), created by the image's own
-  # setup (about 6 minutes); the instance user's password: a file on the host and the container's env
+  # Db2 Community: one database, LFCDB, with archive logging (ASN capture reads the logs). The image makes the
+  # instance (about 6 minutes), not the database: on a disk of 4096-byte logical sectors (the shared VM's) CREATE
+  # DATABASE fails with SQL0293N unless DB2_4K_DEVICE_SUPPORT=ON is set first (lfc-source-cloud-vm slot.sh db2_db,
+  # references/disk-setup.md). The instance user's password: a file on the host and the container's env
   vm "umask 077; mkdir -p $RD && P=P\$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9') && echo \$P > $RD/src.pw \
-    && printf 'LICENSE=accept\nDB2INSTANCE=db2inst1\nDB2INST1_PASSWORD=%s\nDBNAME=LFCDB\nARCHIVE_LOGS=true\nAUTOCONFIG=false\n' \$P > $RD/src.env \
+    && printf 'LICENSE=accept\nDB2INSTANCE=db2inst1\nDB2INST1_PASSWORD=%s\nAUTOCONFIG=false\n' \$P > $RD/src.env \
     && $PODMAN network create $NET >/dev/null && $PODMAN run -d --name $SRCC --privileged --network $NET --network-alias db2 --env-file $RD/src.env \
     $([ "$SCHEMA_VIA" = connection ] && echo "-p $SRC_PORT:50000") $SRC_IMAGE >/dev/null" || { echo "Db2 start failed"; exit 2; }
   for _ in $(seq 1 180); do vm "$PODMAN logs $SRCC 2>&1 | grep -q 'Setup has completed'" && break; sleep 5; done
   db2c() { vm "$PODMAN exec -u 0 $SRCC su - db2inst1 -c \"$1\""; }   # db2c <command>: as the instance user
+  db2c "db2set DB2_4K_DEVICE_SUPPORT=ON && { db2stop force; db2start; } >/dev/null 2>&1; db2 create database LFCDB >/dev/null \
+    && mkdir -p /database/archive && db2 update db cfg for LFCDB using LOGARCHMETH1 DISK:/database/archive >/dev/null" \
+    && db2c "db2 connect to LFCDB" >/dev/null 2>&1 || { echo "Db2: LFCDB wasn't created"; exit 2; }
   # Debezium's management scripts (debezium-examples, tutorial/debezium-db2-init/db2server, pinned): the ASN control
   # tables, ADDTABLE, and the UDF that starts the capture agent; dbsetup.sh compiles the UDF (bldrtn, gcc: in the
   # image), binds the catalog for JDBC, backs up and restarts the database. Before it, lfc-source-datagen's settings
