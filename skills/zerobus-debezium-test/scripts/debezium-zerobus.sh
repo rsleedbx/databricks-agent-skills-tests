@@ -500,7 +500,7 @@ elif [ "$SOURCE" = db2 ]; then
   for _ in $(seq 1 180); do vm "$PODMAN logs $SRCC 2>&1 | grep -q 'Setup has completed'" && break; sleep 5; done
   db2c() { vm "$PODMAN exec -u 0 $SRCC su - db2inst1 -c \"$1\""; }   # db2c <command>: as the instance user
   db2c "db2set DB2_4K_DEVICE_SUPPORT=ON && { db2stop force; db2start; } >/dev/null 2>&1; db2 create database LFCDB >/dev/null \
-    && mkdir -p /database/archive && db2 update db cfg for LFCDB using LOGARCHMETH1 DISK:/database/archive >/dev/null" \
+    && mkdir -p ~/archive && db2 update db cfg for LFCDB using LOGARCHMETH1 DISK:\\\$HOME/archive >/dev/null" \
     && db2c "db2 connect to LFCDB" >/dev/null 2>&1 || { echo "Db2: LFCDB wasn't created"; exit 2; }
   # Debezium's management scripts (debezium-examples, tutorial/debezium-db2-init/db2server, pinned): the ASN control
   # tables, ADDTABLE, and the UDF that starts the capture agent; dbsetup.sh compiles the UDF (bldrtn, gcc: in the
