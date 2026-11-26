@@ -96,6 +96,14 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
                  "*/*", where)
 
 
+def gateway_keyed(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None) -> int | None:
+    """gateway() with each table's keys from the gateway's own schema files, into a log made if missing: what a
+    producer lands each round. The rows added."""
+    from . import gateway_staging
+    ensure_log(session, log)
+    return gateway(session, root, log, name, only, skip, keys=gateway_keys(gateway_staging.schemas(session, root)))
+
+
 def changefeed(session, root: str, log: str, destination: str, keys: list[str], name: str) -> int | None:
     """A CockroachDB changefeed's files (format='json') for one table, not landed before, into the log; the rows
     added. destination: <database>.<schema>.<table>; keys: the primary key's columns in order."""
