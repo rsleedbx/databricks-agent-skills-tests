@@ -18,12 +18,34 @@ import json
 # (the silver cell: view, shared, merge_round, merge_changed, auto_cdc), snapshot_by, log (a log of its own: a split)
 OVERRIDES = {"override_role": "role", "override_class": "class", "override_cell": "method",
              "override_snapshot_by": "snapshot_by", "override_log": "log"}
-# what each override takes: the comment on its column, so a person or an assistant writing the UPDATE knows
-COMMENTS = {"override_role": "dimension, lookup, bridge, fact, log or queue; NULL: the plan''s",
-            "override_class": "small_slow, small_fast, big_slow or big_fast; NULL: the plan''s",
-            "override_cell": "the silver cell: view, shared, merge_round, merge_changed or auto_cdc; NULL: the plan''s",
-            "override_snapshot_by": "qbc, transport (the gateway''s own) or files; NULL: the plan''s",
-            "override_log": "catalog.schema.table of a log of its own (a split); NULL: the shared log"}
+# what each override takes, and what each value does: the comment on its column, so a person or an assistant (Genie)
+# can suggest a value as well as write it. NULL in every column: take the plan's (routing_plan) choice
+COMMENTS = {
+    "override_role": "The table's role, which picks how silver keeps its rows. NULL: the plan's. "
+                     "dimension: a described thing others point at (customer); current rows, and its history if asked. "
+                     "lookup: small reference data (country codes); current rows. "
+                     "bridge: links two tables (a key of two foreign keys); current rows. "
+                     "fact: business events with several parents (orders); current rows. "
+                     "log: rows only added, never changed (audit, clicks); appended. "
+                     "queue: rows added and removed, rarely changed (jobs to do); current rows.",
+    "override_class": "Its size and change rate, which pick its log and silver cell. NULL: the plan's (measured). "
+                      "small_slow: small, few changes (most tables). small_fast: small, many changes. "
+                      "big_slow: big (over 1 GB), few changes. big_fast: big and busy; gets a log of its own, sharded.",
+    "override_cell": "How silver keeps it each round (cost and freshness). NULL: the plan's. "
+                     "view: a view over its snapshot and log; nothing stored, every read pays the work (rarely read tables). "
+                     "shared: its changes in a group table with other small tables, one MERGE a round for the group "
+                     "(cheapest for many small tables; reads cast from VARIANT). "
+                     "merge_round: a table of its own, MERGEd every round (read often, or streaming reads, CDF, time travel). "
+                     "merge_changed: a table of its own, MERGEd only in rounds that changed it (big, quiet tables). "
+                     "auto_cdc: a continuous pipeline keeps it (big and busy; lowest latency, a pipeline to pay for).",
+    "override_snapshot_by": "How its one snapshot is taken. NULL: the plan's (by size). "
+                            "qbc: a query-based read through its connection (default). "
+                            "transport: the change capture's own (a gateway snapshots each new table; no second read). "
+                            "files: files the customer exports (past 10 TB), made a Delta table in place.",
+    "override_log": "The change log it goes to. NULL: the shared log. A catalog.schema.table name: a log of its own "
+                    "(a split): its changes land there from now on, the shared log stops taking them, its snapshot is "
+                    "kept (make before break, no gap). For a table whose changes slow the others' reads.",
+}
 PLAN_COLUMNS = ("round", "tbl", "role", "class", "cell", "snapshot_by", "log", "keys", "key_kind", "members", "variant",
                 "introspection_runs", "why")
 
@@ -32,7 +54,11 @@ def decisions_comment(schema: str, warehouse: str | None = None) -> str:
     """routing_decisions' table comment: what it is, and how an assistant (Genie) carries out a person's change by
     itself, with no further prompt: the UPDATE, then the next round, each through the SQL Statement Execution API."""
     on = f" on warehouse {warehouse}" if warehouse else ""
-    return ("lfc_routing: a person's overrides of routing_plan, a row a table (tbl); NULL takes the plan. To carry out a "
+    return ("lfc_routing: a person's overrides of how FlowThrough ingests each source table, a row a table (tbl, as in "
+            "routing_plan.tbl; a group of repeating tables is one row and applies to every member). Each override_* "
+            "column's comment says what each value does; NULL keeps the plan's choice. A change takes effect in the next "
+            "round (routing_iteration) and shows in routing_plan with 'chosen' in its why. To help: explain the "
+            "plan's choice (routing_plan.why) and what a value would change before setting it. To carry out a "
             "change a person asks for, without asking again: (1) POST /api/2.0/sql/statements" + on + " with the "
             f"statement UPDATE {schema}.routing_decisions SET override_<x> = '<value>', note = '<why>', `by` = "
             "current_user(), at = current_timestamp() WHERE tbl = '<table>' (each column's comment lists its values; "
