@@ -7,7 +7,7 @@
 # MAGIC
 # MAGIC | `connector_type` | Source, deployed by you | What it creates |
 # MAGIC |---|---|---|
-# MAGIC | `fanin_dbz_zbus` | Debezium Server through Zerobus: `change_log` (its log), `snapshot_volume` (the snapshot and schema), `source_type` | a view `cdc_log` over your log and the silver pipeline `<name>-silver` |
+# MAGIC | `fanin_dbz_zbus` | Debezium Server through Zerobus: `change_log` (its log), `snapshot_volume` (each source's snapshot table and the schema), `source_type` | a view `cdc_log` over your log, and silver by FlowThrough's routing (no pipeline) |
 # MAGIC | `fanin_crdb_cdf` | CockroachDB changefeed files (`format='json'`) in a Volume: `changefeed_path`, `tables` | the change log `cdc_log` |
 # MAGIC
 # MAGIC `catalog` and `schema` hold this ingestion's own tables, its state (`_fanin`) and its silver. Running the
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 archive = dbutils.widgets.get("tests_repo_archive")
-for skill in ("lfc-change-source", "lfc-fanin"):
+for skill in ("lfc-change-source", "lfc-routing", "lfc-medallion", "lfc-log-silver", "lfc-fanin"):
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", f"{archive}#subdirectory=skills/{skill}/scripts"])
 
 # COMMAND ----------

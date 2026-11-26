@@ -2,10 +2,10 @@
 ingestion_definition with a connector_type and objects), with these connector types:
 
   fanin_dbz_zbus   Debezium Server through Zerobus, deployed by you: change_log names the append-only log it writes,
-                   snapshot_volume the Volume with the snapshot as of T, _sources.yaml and _schema/ (what
-                   zerobus-debezium-test writes there), source_type the database. create() makes a view cdc_log over
-                   your log in catalog.schema and the silver pipeline <name>-silver (zerobus-debezium-test's
-                   silver-from-schema.py, fetched from code_archive); land() runs one silver update
+                   snapshot_volume the Volume with _sources.yaml (each source's snapshot table and position) and
+                   _schema/ (what zerobus-debezium-test writes there), source_type the database. create() makes a
+                   view cdc_log over your log in catalog.schema; land() runs one FlowThrough round (lfc-log-silver
+                   flowthrough: routing, then each table's silver), no pipeline
   fanin_crdb_cdf   CockroachDB changefeed files (format='json') in a Volume: changefeed_path holds a folder a table
                    (changefeed_folder, default the table's name); table objects with primary_keys, in key order;
                    land() copies the new files into <catalog>.<schema>.cdc_log (lfc-change-source land.changefeed)
@@ -24,21 +24,12 @@ from __future__ import annotations
 
 import json
 
-from lfc_change_source.pipeline import run_pipeline, upsert_pipeline
-
-# silver-from-schema.py's settings for each source_type, as zerobus-debezium-test sets them: cdc.seq, the event field
-# that orders a source's changes (ts_ns, the default, for CockroachDB and YugabyteDB); MySQL: binary values as hex
-# text, and ON DELETE CASCADE / SET NULL applied by silver (InnoDB's own aren't in the binlog through 9.5);
-# YugabyteDB: its log comes through Kafka Connect (the Kafka endpoint's layout)
-SOURCE_CONF = {"SQLSERVER": {"cdc.seq": "change_lsn"}, "POSTGRESQL": {"cdc.seq": "lsn"},
-               "MYSQL": {"cdc.seq": "binlog", "cdc.binary": "hex", "cdc.fk_actions": "apply"},
-               "ORACLE": {"cdc.seq": "scn"}, "DB2": {"cdc.seq": "db2_lsn"}, "INFORMIX": {"cdc.seq": "ifx_lsn"},
-               "COCKROACHDB": {}, "YUGABYTEDB": {"cdc.bronze": "kafka"}}
-SILVER_FILES = ["skills/zerobus-debezium-test/scripts/" + f for f in
-                ("silver-from-schema.py", "canonical_sql.py", "fanout.py", "merge-silver.py")]
-MEDALLION = "skills/lfc-medallion/scripts/lfc_medallion/"
-CHANGE_SOURCE = "skills/lfc-change-source/scripts/lfc_change_source/"   # Debezium's encodings, which canonical_sql imports
-ARCHIVE = "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip"
+# each source_type's position in its Debezium events (lfc-change-source cdc_log SEQUENCES); MySQL: binary values as
+# hex text. YugabyteDB isn't here: its log comes through Kafka Connect, another layout
+DBZ_SEQ = {"SQLSERVER": "change_lsn", "POSTGRESQL": "lsn", "MYSQL": "binlog", "ORACLE": "scn", "DB2": "db2_lsn",
+           "INFORMIX": "ifx_lsn", "COCKROACHDB": "ts_ns"}
+DBZ_BINHEX = {"MYSQL"}
+DBZ_FK_ACTIONS = {"MYSQL"}   # a log without its foreign keys' ON DELETE actions: silver derives them (lfc-log-silver fk)
 
 
 def _q(name: str) -> str:
@@ -81,66 +72,116 @@ def not_yet(e: Exception) -> bool:
     return "PATH_NOT_FOUND" in t or (type(e).__name__ in ("NotFound", "ResourceDoesNotExist") and "/Volumes/" in t)
 
 
-def silver_code(w, folder: str, archive: str) -> None:
-    """The silver pipeline's files from the tests repo archive into a workspace folder: silver-from-schema.py and its
-    helpers, and the lfc_medallion and lfc_change_source packages they import."""
-    import io
-    import urllib.request
-    import zipfile
-
-    from databricks.sdk.service.workspace import ImportFormat
-    with urllib.request.urlopen(archive, timeout=120) as r:   # the tests repo archive (https)
-        z = zipfile.ZipFile(io.BytesIO(r.read()))
-    top = z.namelist()[0].split("/")[0]
-    w.workspace.mkdirs(folder)
-    for f in SILVER_FILES:
-        w.workspace.upload(f"{folder}/{f.rsplit('/', 1)[1]}", io.BytesIO(z.read(f"{top}/{f}")),
-                           format=ImportFormat.RAW, overwrite=True)
-    for pkg, prefix in (("lfc_medallion", MEDALLION), ("lfc_change_source", CHANGE_SOURCE)):
-        w.workspace.mkdirs(f"{folder}/{pkg}")
-        for n in z.namelist():
-            if n.startswith(f"{top}/{prefix}") and n.endswith(".py") and n.count("/") == f"{top}/{prefix}".count("/"):
-                w.workspace.upload(f"{folder}/{pkg}/{n.rsplit('/', 1)[1]}", io.BytesIO(z.read(n)),
-                                   format=ImportFormat.RAW, overwrite=True)
+def _read_yaml(w, path: str):
+    import yaml
+    return yaml.safe_load(w.files.download(path).contents.read())
 
 
-def silver_pipeline(w, name: str, catalog: str, schema: str, log: str, volume: str, conf: dict, archive: str) -> str:
-    """The silver pipeline <name>-silver over a change log in its schema and the snapshot Volume (created, or updated
-    when it exists): its id."""
-    folder = f"/Users/{w.current_user.me().user_name}/.lfc_fanin/{name}"
-    silver_code(w, folder, archive)
-    spec = {"name": f"{name}-silver", "catalog": catalog, "schema": schema, "serverless": True, "continuous": False,
-            "channel": "CURRENT",
-            "libraries": [{"file": {"path": f"{folder}/silver-from-schema.py"}}],
-            "configuration": {"cdc.volume": volume, "cdc.bronze": "zerobus", "cdc.bronze_table": log,
-                              "cdc.code": f"/Workspace{folder}", "cdc.bronze_shards": "1", "cdc.nodedup_table": "",
-                              "cdc.history_suffix": "_history", "cdc.on_drift": "record", **conf}}
-    return upsert_pipeline(w, spec)
+def dbz_schema(w, volume: str) -> dict:
+    """{table: canonical columns}: <volume>/_schema/schema.yaml, then each _schema/tables/<table>.yaml over it (a
+    table's evolved schema)."""
+    out = {t["name"]: t["columns"] for t in _read_yaml(w, f"{volume}/_schema/schema.yaml")["tables"]}
+    try:
+        for e in w.files.list_directory_contents(f"{volume}/_schema/tables"):
+            if e.name.endswith(".yaml"):
+                out.update({t["name"]: t["columns"] for t in _read_yaml(w, f"{volume}/_schema/tables/{e.name}")["tables"]})
+    except Exception as e:  # noqa: BLE001  no evolved tables
+        if not not_yet(e):
+            raise
+    return out
+
+
+def dbz_sources(w, p: dict) -> list:
+    """Each source in _sources.yaml: {label (its destination prefix, its rows' _source), tag (a name for its schema),
+    sources: {table: a change source over the customer's log}, extra: {table: its snapshot table and position},
+    edges: {child: its foreign keys with an ON DELETE action}}. Columns typed by the canonical schema (lfc_medallion's
+    types, Debezium's encodings), a value that doesn't fit NULL and recorded (drift), a missing one its default;
+    ordered by the source type's position; foreign key actions where the log lacks them (DBZ_FK_ACTIONS)."""
+    import re
+
+    from lfc_change_source.cdc_log import CdcLog
+    from lfc_change_source.contract import Position
+    from lfc_change_source.debezium import TEMPORAL
+    from lfc_medallion.coltypes import ctype, spark_type
+    part, st = p["parts"], p["parts"]["source_type"]
+    schema, seq = dbz_schema(w, part["volume"]), DBZ_SEQ[st]
+    fks = _read_yaml(w, f"{part['volume']}/_schema/schema.yaml")["tables"] if st in DBZ_FK_ACTIONS else []
+    out = []
+    for s in _read_yaml(w, f"{part['volume']}/_sources.yaml")["sources"]:
+        sources, extra = {}, {}
+        for t, cols in schema.items():
+            tem = {c["name"]: ctype(c) for c in cols if ctype(c) in TEMPORAL}
+            sources[t] = CdcLog(s["prefix"], p["log"], t, f"{s['prefix']}.{t}",
+                                [c["name"] for c in cols if c.get("primary_key")],
+                                {c["name"]: spark_type(c) for c in cols}, seq=seq,
+                                precision={c["name"]: c.get("precision") for c in cols if c["name"] in tem},
+                                binhex=st in DBZ_BINHEX, kinds=tem, cast="TRY_CAST",
+                                defaults={c["name"]: c["default"] for c in cols if c.get("default")})
+            if s.get("snapshot_table"):
+                extra[t] = {"snapshot_table": f"{quoted(s['snapshot_table'])}.{_q(t)}",
+                            "position": Position(seq, str(s.get("t_ns", 0)))}
+        edges = {t["name"]: [{"cols": f["columns"], "parent": f["parent_table"], "parent_cols": f["parent_columns"],
+                              "on_delete": f["on_delete"]} for f in t.get("fk_constraints") or []
+                             if str(f.get("on_delete") or "").upper().replace("_", " ") in ("CASCADE", "SET NULL")]
+                 for t in fks if t["name"] in sources}
+        out.append({"label": s["prefix"], "tag": re.sub(r"[^a-z0-9_]", "_", s["prefix"].lower()), "sources": sources,
+                    "extra": extra, "edges": {k: v for k, v in edges.items() if v}})
+    return out
 
 
 def _dbz_create(w, spark, p: dict, d: dict) -> None:
-    log, vol = d.get("change_log") or "", d.get("snapshot_volume") or ""
+    log, vol = d.get("change_log") or "", (d.get("snapshot_volume") or "").rstrip("/")
     if not log or not vol.startswith("/Volumes/"):
         raise ValueError("fanin_dbz_zbus: change_log (the append-only log Debezium writes, catalog.schema.table) and "
-                         "snapshot_volume (/Volumes/..., its snapshot, _sources.yaml and _schema/)")
-    conf = SOURCE_CONF.get((d.get("source_type") or "").upper())
-    if conf is None:
-        raise ValueError(f"fanin_dbz_zbus: source_type, one of {', '.join(SOURCE_CONF)}")
+                         "snapshot_volume (/Volumes/..., _sources.yaml with each source's snapshot table, and _schema/)")
+    st = (d.get("source_type") or "").upper()
+    if st not in DBZ_SEQ:
+        raise ValueError(f"fanin_dbz_zbus: source_type, one of {', '.join(DBZ_SEQ)}")
     log = quoted(log)
     rows = spark.sql(f"SELECT destination, count(*) AS n FROM {log} GROUP BY 1 ORDER BY 1").collect()
     p["log"] = log
-    # silver-from-schema.py names its views after the bronze table: give it a plain name in the fan-in's schema
+    # the log under a plain name in the fan-in's schema: what its dashboard reads (lfc-log-silver dashboard)
     spark.sql(f"CREATE OR REPLACE VIEW {fq(p['catalog'], p['schema'], 'cdc_log')} COMMENT 'the change log Debezium "
               f"writes (fanin_dbz_zbus)' AS SELECT * FROM {log}")
-    pid = silver_pipeline(w, p["name"], p["catalog"], p["schema"], "cdc_log", vol, conf, d.get("code_archive") or ARCHIVE)
-    p["parts"] = {"destinations": {r["destination"]: int(r["n"]) for r in rows}, "silver_pipeline": pid}
+    p["parts"] = {"destinations": {r["destination"]: int(r["n"]) for r in rows}, "volume": vol, "source_type": st}
 
 
-def _dbz_land(w, spark, p: dict) -> dict:   # Zerobus writes the log; silver catches up from it
-    st = run_pipeline(w, p["parts"]["silver_pipeline"])
-    if st != "COMPLETED":   # the job fails with it, so a stale silver doesn't pass as a run
-        raise RuntimeError(f"silver pipeline {p['parts']['silver_pipeline']}: update {st}")
-    return {"silver": st}
+def _dbz_land(w, spark, p: dict) -> dict:
+    """One FlowThrough round a source (lfc-log-silver flowthrough.step): each table routed by its size and measured
+    rate (lfc-routing), its silver and its history (every keyed table) built or brought up to the log's newest
+    position. One source: in the fan-in's schema. Several: each in <schema>_<source>, then one n:1 view a table in the
+    fan-in's schema, with _source (lfc-medallion stack_sql)."""
+    from lfc_change_source.cdc_log import SEQUENCES
+    from lfc_change_source.contract import Position
+    from lfc_log_silver import fk, flowthrough, history
+    from lfc_medallion.stack import stack_sql
+    from lfc_routing import routing
+    seq = DBZ_SEQ[p["parts"]["source_type"]]
+    newest = spark.sql(f"SELECT max({SEQUENCES[seq]}) FROM {p['log']} WHERE operation <> 'resolved'").collect()[0][0]
+    to = Position(seq, str(newest if newest is not None else 0))
+    srcs = dbz_sources(w, p)
+    many, out = len(srcs) > 1, {}
+    for src in srcs:
+        sch = f"{p['schema']}_{src['tag']}" if many else p["schema"]
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {_q(p['catalog'])}.{_q(sch)}")
+        snaps = {t: (f"SELECT * FROM {e['snapshot_table']}", e["position"]) for t, e in src["extra"].items()}
+        sources = fk.with_actions(src["sources"], src["edges"], snaps)
+        policy = routing.Policy(shared_log=p["log"], history="all",
+                                own_table={t: "foreign key actions" for t in src["edges"]})
+        got = flowthrough.step(spark, f"{_q(p['catalog'])}.{_q(sch)}", sources, to, policy, extra=src["extra"])
+        if got["auto_cdc"]:   # its flows need a continuous pipeline, which this job doesn't run yet
+            raise RuntimeError(f"fanin_dbz_zbus: AUTO CDC routes need their pipeline: {sum(map(len, got['auto_cdc']))} tables")
+        out[src["label"]] = {k: got[k] for k in ("routes", "moves", "held", "silver")}
+    if many:   # n:1: one table a name, every source's rows with its _source
+        kind = "STRING" if seq in ("gateway_cursor", "hlc") else "BIGINT"
+        for t, s0 in srcs[0]["sources"].items():
+            names = [t] + ([t + history.SUFFIX] if s0.keys else [])
+            for n in names:
+                extra_cols = [("__START_AT", kind), ("__END_AT", kind)] if n != t else []
+                cols = {x["tag"]: list(x["sources"][t].columns.items()) + extra_cols for x in srcs if t in x["sources"]}
+                sql = stack_sql(p["catalog"], f"{p['schema']}_", n, cols, labels={x["tag"]: x["label"] for x in srcs})
+                spark.sql(f"CREATE OR REPLACE VIEW {fq(p['catalog'], p['schema'], n)} AS {sql}")
+    return out
 
 
 def _crdb_create(w, spark, p: dict, d: dict) -> None:

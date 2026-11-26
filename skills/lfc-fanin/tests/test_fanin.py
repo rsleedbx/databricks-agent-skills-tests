@@ -10,7 +10,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
-sys.path.insert(0, os.path.join(HERE, "..", "..", "lfc-change-source", "scripts"))
+for skill in ("lfc-change-source", "lfc-medallion", "lfc-routing", "lfc-log-silver"):
+    sys.path.insert(0, os.path.join(HERE, "..", "..", skill, "scripts"))
 from lfc_fanin import fanin  # noqa: E402
 
 SPARK = types.SimpleNamespace(sql=lambda *a, **k: types.SimpleNamespace(collect=lambda: []))
@@ -106,6 +107,39 @@ class Harness(unittest.TestCase):
         self.assertFalse(fanin_test.round_passed({**ok, "compare": {"tables": 16, "equal": 15}}))
         self.assertFalse(fanin_test.round_passed({**ok, "fanin_job": "INTERNAL_ERROR FAILED"}))
         self.assertFalse(fanin_test.round_passed({**ok, "compare": {"tables": 0, "equal": 0}}))
+
+
+
+class DebeziumSources(unittest.TestCase):
+    def test_typed_by_the_canonical_schema_with_keyless_tables_and_foreign_key_actions(self):
+        import io
+        files = {
+            "/V/_sources.yaml": "sources:\n  - {prefix: my1.shop, t_ns: 42, snapshot_table: c.s_snap1}\n",
+            "/V/_schema/schema.yaml": """tables:
+  - name: o
+    columns: [{name: id, type: integer, primary_key: true}, {name: at, type: time, precision: 3},
+              {name: note, type: string, default: "'n/a'"}]
+  - name: l
+    columns: [{name: id, type: integer, primary_key: true}, {name: o_id, type: integer}]
+    fk_constraints: [{columns: [o_id], parent_table: o, parent_columns: [id], on_delete: CASCADE}]
+  - name: h
+    columns: [{name: x, type: integer}]
+"""}
+        def download(path):
+            return types.SimpleNamespace(contents=io.BytesIO(files[path].encode()))
+        def ls(path):
+            raise Exception("[PATH_NOT_FOUND] no such folder")
+        w = types.SimpleNamespace(files=types.SimpleNamespace(download=download, list_directory_contents=ls))
+        p = {"log": "`c`.`zb`.`cdc_log`", "parts": {"volume": "/V", "source_type": "MYSQL"}}
+        (src,) = fanin.dbz_sources(w, p)
+        self.assertEqual((src["label"], src["tag"]), ("my1.shop", "my1_shop"))
+        o, h = src["sources"]["o"], src["sources"]["h"]
+        self.assertEqual((o.seq, o.binhex, o.cast, h.keys), ("binlog", True, "TRY_CAST", []))   # h: keyless, appended
+        self.assertEqual((o.kinds, o.precision), ({"at": "time"}, {"at": 3}))                   # a time decoded
+        self.assertIn("THEN CAST('n/a' AS STRING)", o.column_exprs()[2])                         # its default
+        self.assertEqual(src["edges"]["l"][0]["parent"], "o")                                    # MySQL: derived
+        self.assertEqual(src["extra"]["o"]["snapshot_table"], "`c`.`s_snap1`.`o`")
+        self.assertEqual(src["extra"]["o"]["position"].value, "42")
 
 
 if __name__ == "__main__":

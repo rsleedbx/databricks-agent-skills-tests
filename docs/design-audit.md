@@ -22,7 +22,6 @@ what has been tested, and where it falls short. When a gap closes, its row goes 
 
 | Design says | Today | Next |
 |---|---|---|
-| The fan-in builds silver by FlowThrough's routing | lfc-fanin `fanin_dbz_zbus` builds silver with zerobus-debezium-test's AUTO CDC pipeline, one per table | silver through `flowthrough.observe` then `step` |
 | The snapshot comes from a snapshot method, inside Databricks | `SNAP=qbc` for PostgreSQL only; the other engines' test still exports on the VM, copies to a laptop and uploads to a Volume, then `intake.files` | QBC for each engine, then delete the export and upload, engine by engine |
 | Configuration stays in Databricks | the test uploads `_sources.yaml`, `_schema/` and `_plan.yaml` from the laptop | the fan-in job writes them |
 | Busy is measured before the change capture starts | source counters for PostgreSQL, MySQL and SQL Server only; other engines start slow until the log's rate moves them | collectors for Oracle, Db2, Informix, CockroachDB, YugabyteDB |
@@ -40,7 +39,7 @@ what has been tested, and where it falls short. When a gap closes, its row goes 
 | Routing plans first: schema, statistics and the tables in scope, before CDC and snapshot | routing runs per round over tables already captured; the schema and statistics are read by separate tools (lfc-source-statschema, cdc-table-plan), not by a plan step | a plan step that reads them per source and writes each table's route before CDC starts |
 | The snapshot method is chosen per table, by size, table count and transport | `snapshot_by` is `qbc`, or `files` past 10 TB; no direct read; no account of QBC's 250 tables a pipeline or of a gateway's own snapshot | a direct-read method (`intake` from `remote_query` or `spark.read.jdbc` through the UC connection) for small tables; routing choosing among it, QBC (in pipelines of up to 250 tables), the gateway's and files |
 | Routing is a layer of its own | its decision is lfc-routing `routing.py` (the CDC package) and its runner lfc-log-silver `flowthrough.py` (the silver package) | one routing module both call |
-| One silver | zerobus-debezium-test's `silver-from-schema.py` and `merge-silver.py` combine snapshot and CDC on their own, and the fan-in uses them | the fan-in and the test on lfc-log-silver (the first row above) |
+| One silver | the fan-in builds silver with lfc-log-silver (routing, history, append, drift, foreign key actions); zerobus-debezium-test still keeps its own (`silver-from-schema.py`, `merge-silver.py`), now the reference the fan-in is compared against | the test on lfc-log-silver too |
 | Each layer in its own skill | the snapshot sources (`qbc`, `intake`) live in the CDC package | a snapshot skill of its own |
 | The log without snapshots is faster | expected, not measured | the same round with and without snapshot rows in the log, bytes read and time |
 

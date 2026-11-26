@@ -11,7 +11,7 @@ a name, a destination catalog and schema, and an ingestion definition with a con
 
 | `connector_type` | You give | It creates in `<catalog>.<schema>` | Each run |
 |---|---|---|---|
-| `fanin_dbz_zbus` | `change_log` (the log Debezium writes), `snapshot_volume` (the snapshot as of T, `_sources.yaml`, `_schema/`), `source_type` | a view `cdc_log` over your log, the silver pipeline `<name>-silver`, `_fanin` | one silver update |
+| `fanin_dbz_zbus` | `change_log` (the log Debezium writes), `snapshot_volume` (`_sources.yaml`: each source's snapshot table and position; `_schema/`), `source_type` | a view `cdc_log` over your log, each table's silver and `<table>_history`, `_fanin` (several sources: a schema each and an n:1 view a table) | one FlowThrough round |
 | `fanin_crdb_cdf` | `changefeed_path` (a folder a table), `tables` (`database.schema.table:key1\|key2`) | the change log `cdc_log`, `_fanin` | the new files into the log |
 
 The source side, set up and checked end to end: [zerobus-debezium-test](../zerobus-debezium-test/SKILL.md) (`SOURCE=<engine>`,
@@ -38,13 +38,16 @@ p = fanin.create(w, spark, name=..., catalog=..., schema=..., ingestion_definiti
 fanin.land(w, spark, p)
 ```
 
-Its `fanin_dbz_zbus` silver is zerobus-debezium-test's AUTO CDC pipeline, one per source table; it doesn't use
-FlowThrough's routing ([docs/design.md](../../docs/design.md): a shared group, views, MERGE, AUTO CDC by each table's
-size and rate) yet.
+Its `fanin_dbz_zbus` silver is FlowThrough's ([docs/design.md](../../docs/design.md)): each run routes each table by
+its size and measured rate (lfc-routing) and keeps its silver by that cell (lfc-log-silver: a shared group, a view, a
+MERGE), with every keyed table's history (SCD type 2), a keyless table appended, a value that doesn't fit recorded in
+`schema_drift`, and, for MySQL, the foreign keys' ON DELETE actions the binlog lacks. Several sources: each in
+`<schema>_<source>`, then one n:1 view a table with `_source` (lfc-medallion). A table routed to AUTO CDC fails the
+run: this job doesn't run that pipeline yet.
 
 Code: [scripts/lfc_fanin/fanin.py](scripts/lfc_fanin/fanin.py), installed as the package `lfc-fanin`
-(`pip install <archive>#subdirectory=skills/lfc-fanin/scripts`) next to `lfc-change-source`. The silver pipeline is
-zerobus-debezium-test's `silver-from-schema.py`, fetched from the same archive.
+(`pip install <archive>#subdirectory=skills/lfc-fanin/scripts`) next to `lfc-change-source`, `lfc-routing`,
+`lfc-medallion` and `lfc-log-silver`; no pipeline.
 
 ## Test a database end to end
 
