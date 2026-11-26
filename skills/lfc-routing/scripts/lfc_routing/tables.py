@@ -50,6 +50,11 @@ PLAN_COLUMNS = ("round", "tbl", "role", "class", "cell", "snapshot_by", "log", "
                 "introspection_runs", "why")
 
 
+def _sq(text: str) -> str:
+    """Text inside a SQL string literal: a quote doubled."""
+    return text.replace("'", "''")
+
+
 def decisions_comment(schema: str, warehouse: str | None = None) -> str:
     """routing_decisions' table comment: what it is, and how an assistant (Genie) carries out a person's change by
     itself, with no further prompt: the UPDATE, then the next round, each through the SQL Statement Execution API."""
@@ -77,7 +82,7 @@ def ddl(schema: str, warehouse: str | None = None) -> list:
             "COMMENT 'lfc_routing: classify''s plan, a row a table a round'",
             f"CREATE TABLE IF NOT EXISTS {schema}.routing_decisions (tbl STRING COMMENT 'the table (or group of "
             "repeating tables) in routing_plan.tbl', "
-            + ", ".join(f"{c} STRING COMMENT '{COMMENTS[c]}'" for c in OVERRIDES)
+            + ", ".join(f"{c} STRING COMMENT '{_sq(COMMENTS[c])}'" for c in OVERRIDES)
             + ", note STRING COMMENT 'why', `by` STRING COMMENT 'who', at TIMESTAMP COMMENT 'when') "
             "COMMENT '" + decisions_comment(schema, warehouse).replace("'", "''") + "'",
             f"CREATE TABLE IF NOT EXISTS {schema}.routing_iteration (n INT, `by` STRING, at TIMESTAMP, note STRING) "
