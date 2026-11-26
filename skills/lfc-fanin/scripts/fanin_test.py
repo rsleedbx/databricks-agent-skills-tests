@@ -13,7 +13,8 @@
 
 RESULTS (default ~/.lfc-test/results/fanin): <source>-skill.md/.log/.json, <source>-rounds.jsonl, <source>-times.json;
 fanin_page.py writes the docs page from them. VM_USER (azureuser) and SSH_KEY: the VM's login, as for the skill.
-ARCHIVE: where the bundle installs lfc-change-source and lfc-fanin from (default: this repo's main). Every process it
+ARCHIVE: where the bundle installs lfc-change-source and lfc-fanin from (default: this repo's main). NSRC: source
+databases feeding the one log (default 1; more: each in its own silver schema, then the fan-in's n:1 views). Every process it
 starts gets no standard input, and arguments go as lists: nothing waits on a terminal or splits on a comma.
 """
 from __future__ import annotations
@@ -130,7 +131,7 @@ def engine(source: str, source_type: str) -> dict:
     hook = f"{sys.executable} -I {HERE / 'fanin_test.py'} round --source {source} --source-type {source_type}"
     t0 = time.time()
     rc = run(["bash", "scripts/debezium-zerobus.sh"], res / f"{source}-skill.log", copy / "skills/zerobus-debezium-test",
-             {"SOURCE": source, "MODEL": "tpch", "NSRC": "1", "PHASE": "2", "KEEP": "1", "OUT": str(res / f"{source}-skill.md"),
+             {"SOURCE": source, "MODEL": "tpch", "NSRC": os.environ.get("NSRC", "1"), "PHASE": "2", "KEEP": "1", "OUT": str(res / f"{source}-skill.md"),
               "ROUND_HOOK": hook, "FANIN_RESULTS": str(res)})
     text = (res / f"{source}-skill.log").read_text(errors="replace")
     e = (re.search(r"run (\d+):", text) or [None, ""])[1]
