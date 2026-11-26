@@ -56,13 +56,13 @@ def first_positions(session, logs: dict, prefix: str, kind_sql: str = "value:cur
         got = {}
         try:
             got = {r["destination"][len(prefix):]: r["p"] for r in _dicts(session.sql(
-                f"SELECT destination, min({kind_sql}) AS p FROM {log} WHERE destination IN "
-                f"({', '.join(_lit(prefix + t) for t in tbls)}) GROUP BY destination").collect())}
+                f"SELECT lower(destination) AS destination, min({kind_sql}) AS p FROM {log} WHERE lower(destination) IN "
+                f"({', '.join(_lit((prefix + t).lower()) for t in tbls)}) GROUP BY 1").collect())}
         except Exception as e:  # noqa: BLE001  a new log not made yet holds nothing
             if "TABLE_OR_VIEW_NOT_FOUND" not in str(e):
                 raise
-        for t in tbls:
-            out.setdefault(t, {})[log] = got.get(t)
+        for t in tbls:   # a plan's table is its group's lower-case key; the log has the source's spelling
+            out.setdefault(t, {})[log] = got.get(t.lower())
     return out
 
 
@@ -82,10 +82,12 @@ def run_ingestion(session, schema: str, source: str, producer, shared_log: str, 
     kind_sql = SEQUENCES.get(getattr(producer, "seq", "gateway_cursor"), SEQUENCES["gateway_cursor"])
 
     def count(log: str, tables) -> int:
-        dests = ", ".join(_lit(prefix + t.split(".", 1)[-1]) for t in tables)
+        dests = ", ".join(_lit((prefix + t.split(".", 1)[-1]).lower()) for t in tables)
         try:
-            return int(session.sql(f"SELECT count(*) FROM {log} WHERE destination IN ({dests})").collect()[0][0])
-        except Exception:  # noqa: BLE001  the new log not made yet
+            return int(session.sql(f"SELECT count(*) FROM {log} WHERE lower(destination) IN ({dests})").collect()[0][0])
+        except Exception as e:  # noqa: BLE001  only a new log not made yet counts as none
+            if "TABLE_OR_VIEW_NOT_FOUND" not in str(e):
+                raise
             return 0
 
     def has_event_after(before: int):   # an event that arrived after the split started (not an earlier try's)

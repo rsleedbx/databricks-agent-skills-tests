@@ -29,9 +29,10 @@ def group(docs: dict) -> dict:
     out = {}
     for name, shapes_ in sorted(by.items()):
         ranked = sorted(shapes_.items(), key=lambda kv: (-len(kv[1]), json.dumps(kv[0])))
-        from collections import Counter   # named as most members spell it, ties by the spelling: stable across rounds
-        spell = Counter(t for _, ms in shapes_.items() for _, t in ms)
-        own = sorted(spell, key=lambda n: (-spell[n], n))[0]
+        # keyed by the lower-case name: stable across rounds (decisions, plans and snapshots stay keyed to it however
+        # a new member spells the table); the members keep the source's own spelling, and readers of the logs match
+        # destinations case-insensitively (land.gateway's filter, ingest)
+        own = name
         for i, (sh, members) in enumerate(ranked):
             h = hashlib.sha1(json.dumps(sh).encode()).hexdigest()[:8]
             out[own if i == 0 else f"{own}~{h}"] = {"name": own, "shape": h, "members": members, "variant": i > 0}

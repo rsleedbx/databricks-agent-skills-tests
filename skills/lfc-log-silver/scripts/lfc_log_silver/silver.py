@@ -76,7 +76,11 @@ def method_of(src, silver_name: str) -> tuple:
 
 
 def from_route(src, route, snapshot_table=None, position=None) -> Table:
-    """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
+    """A Table from a routing.Route: its silver name as a method here (shared: in its route's group). A moved table
+    (two logs) can't be routed shared here: flowthrough would keep its route as a group member (lfc_log_silver.planned
+    keeps it by MERGE)."""
+    if route.silver == "shared" and not getattr(src, "shareable", True):
+        raise ValueError(f"{src.destination}: a moved table (two logs) can't be in a shared group; route it merge_round")
     method, only = method_of(src, route.silver)
     return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "",
                  bool(getattr(route, "history", False)) and bool(src.keys))

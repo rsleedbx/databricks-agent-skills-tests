@@ -89,9 +89,9 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
     each row's key filled in (silver's shared groups need it)."""
     where = ""
     if only:
-        where = f" WHERE {GATEWAY_DESTINATION} IN ({', '.join(_lit(t) for t in only)})"
+        where = f" WHERE lower({GATEWAY_DESTINATION}) IN ({', '.join(_lit(t.lower()) for t in only)})"   # any spelling
     elif skip:
-        where = f" WHERE {GATEWAY_DESTINATION} NOT IN ({', '.join(_lit(t) for t in skip)})"
+        where = f" WHERE lower({GATEWAY_DESTINATION}) NOT IN ({', '.join(_lit(t.lower()) for t in skip)})"
     return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql(keys), name, f"{root}/cdc/",
                  "*/*", where)
 
