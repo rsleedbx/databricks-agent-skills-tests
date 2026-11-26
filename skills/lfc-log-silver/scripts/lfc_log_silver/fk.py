@@ -63,10 +63,20 @@ class WithFkActions:
             out = ", ".join(f"CAST(NULL AS {t}) AS {_q(c)}" if c in e["cols"] else f"v.{_q(c)}"
                             for c, t in self._src.columns.items())
             op, o = f"'{UPSERT}'", 1
-        last = (f"SELECT v.*, d.{SEQ}.v AS _at FROM ({self._versions(to)}) v JOIN ({deletes}) d ON {match} AND "
-                f"v.{SEQ} < d.{SEQ} QUALIFY ROW_NUMBER() OVER (PARTITION BY {keys}, d.{SEQ} ORDER BY v.{SEQ} DESC) = 1")
+        # each child key that ever referenced a deleted parent before its delete, then that key's newest version
+        # before the delete (any foreign key): it cascades only if that version still references the parent
+        vers = self._versions(to)
+        ck = ", ".join(f"v.{_q(k)} AS {_q(k)}" for k in self._src.keys)
+        dc = ", ".join(f"d.{_q(p)} AS {_q('_p_' + p)}" for p in e["parent_cols"])
+        cand = (f"SELECT DISTINCT {ck}, {dc}, d.{SEQ} AS _dseq FROM ({vers}) v JOIN ({deletes}) d ON {match} "
+                f"AND v.{SEQ} < d.{SEQ}")
+        on = " AND ".join(f"v.{_q(k)} <=> c.{_q(k)}" for k in self._src.keys)
+        still = " AND ".join(f"v.{_q(c)} = v.{_q('_p_' + p)}" for c, p in zip(e["cols"], e["parent_cols"]))
+        pc = ", ".join(f"c.{_q('_p_' + p)}" for p in e["parent_cols"])
+        last = (f"SELECT v.*, {pc}, c._dseq.v AS _at FROM ({vers}) v JOIN ({cand}) c ON {on} AND v.{SEQ} < c._dseq "
+                f"QUALIFY ROW_NUMBER() OVER (PARTITION BY {keys}, c._dseq ORDER BY v.{SEQ} DESC) = 1")
         return (f"SELECT {out}, {op} AS {OP}, named_struct('v', v._at, 'o', {o}) AS {SEQ} FROM ({last}) v "
-                f"WHERE v.{OP} <> '{DELETE}'")
+                f"WHERE v.{OP} <> '{DELETE}' AND {still}")
 
 
 def with_actions(sources: dict, edges: dict, snapshots: dict | None = None, depth: int = 4) -> dict:

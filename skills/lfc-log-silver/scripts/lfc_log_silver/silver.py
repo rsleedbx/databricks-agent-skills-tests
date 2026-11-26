@@ -64,9 +64,15 @@ class Table:
         return f"SELECT * FROM {self.snapshot_table}" if self.snapshot_table else None
 
 
+def method_of(src, silver_name: str) -> tuple:
+    """(method, only_changed) for a route's silver name; a keyless table's is always append, its rows appended
+    (the one place that decides it)."""
+    return FROM_ROUTE[silver_name] if src.keys else ("append", False)
+
+
 def from_route(src, route, snapshot_table=None, position=None) -> Table:
     """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
-    method, only = FROM_ROUTE[route.silver] if src.keys else ("append", False)   # keyless: its rows, appended
+    method, only = method_of(src, route.silver)
     return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "",
                  bool(getattr(route, "history", False)) and bool(src.keys))
 
@@ -139,9 +145,9 @@ def _typed_snapshot(t: Table) -> str:
 
 def append_build_sql(t: Table, target: str, to) -> str:
     """A keyless table: its snapshot's rows and every insert after the snapshot's position up to `to` (an update or
-    delete can't name a row). An insert replayed at the same position counts once."""
+    delete can't name a row). An event replayed counts once; two events of the same row at one position count twice."""
     cols = ", ".join(_q(c) for c in t.src.columns)
-    ins = f"SELECT DISTINCT {cols}, _seq FROM ({t.src.inserts_sql(t.position, to)})"
+    ins = f"SELECT DISTINCT {cols}, _seq, _event FROM ({t.src.inserts_sql(t.position, to)})"
     snap = f"SELECT {_typed_snapshot(t)} FROM {t.snapshot_table} UNION ALL " if t.snapshot_table else ""
     return f"CREATE OR REPLACE TABLE {target} AS {snap}SELECT {cols} FROM ({ins})"
 
@@ -149,7 +155,7 @@ def append_build_sql(t: Table, target: str, to) -> str:
 def append_sql(t: Table, target: str, after, to) -> str:
     """A round of a keyless table: the inserts after its kept position up to `to`, appended."""
     cols = ", ".join(_q(c) for c in t.src.columns)
-    return (f"INSERT INTO {target} ({cols}) SELECT {cols} FROM (SELECT DISTINCT {cols}, _seq FROM "
+    return (f"INSERT INTO {target} ({cols}) SELECT {cols} FROM (SELECT DISTINCT {cols}, _seq, _event FROM "
             f"({t.src.inserts_sql(after, to)}))")
 
 
@@ -532,6 +538,7 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     record_drift(session, {n: t for n, t in tables.items() if t.method != "auto_cdc"}, schema, to, threads)   # kept positions
     by = {m: {n: t for n, t in tables.items() if t.method == m} for m in METHODS}
     moved = [] if first else schema_changed(session, {n: t for n, t in tables.items() if t.method != "auto_cdc"}, schema)
+    reshaped = list(moved)   # their history too is rebuilt: its MERGE would name columns the table lacks
     bad = [n for n, t in tables.items() if t.method not in METHODS]
     if bad:
         raise ValueError(f"tables with no method here: {bad[:5]} (one of {', '.join(METHODS)})")
@@ -560,6 +567,6 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     t0 = time.time()
     hist = {n: t for n, t in tables.items() if t.history and t.method != "auto_cdc"}   # AUTO CDC keeps its own
     from . import history
-    done = history.run(session, hist, schema, to, threads, first) if hist else {}
+    done = history.run(session, hist, schema, to, threads, first, rebuild=reshaped) if hist else {}
     out["history"] = {"tables": len(hist), "done": len(done), "seconds": round(time.time() - t0, 1)}
     return out

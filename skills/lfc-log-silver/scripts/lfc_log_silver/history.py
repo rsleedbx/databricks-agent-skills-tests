@@ -70,9 +70,10 @@ def merge_sql(t, target: str, after, to) -> str:
             f"VALUES ({', '.join('s.' + _q(c) for c in t.src.columns)}, s.p, s.e)")
 
 
-def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False) -> dict:
-    """Each table's history built (first, or not built yet) or merged from its kept position, kept at `to`.
-    {name: (rows, seconds)}."""
+def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False, rebuild=()) -> dict:
+    """Each table's history built (first, not built yet, or in `rebuild`: its columns changed) or merged from its kept
+    position, kept at `to`. A new snapshot with the same columns merges: a rebuild would lose the versions before
+    the snapshot once the log is trimmed. {name: (rows, seconds)}."""
     from lfc_change_source.contract import Position
 
     from . import silver
@@ -81,7 +82,7 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     for n, t in tables.items():
         target = silver._target(schema, n + SUFFIX)
         kind, pos = kept.get(n + SUFFIX, (to.kind, None))
-        stmts[n + SUFFIX] = (build_sql(t, target, to) if first or pos is None else
+        stmts[n + SUFFIX] = (build_sql(t, target, to) if first or pos is None or n in rebuild else
                              merge_sql(t, target, Position(kind, pos), to))
     done = silver._each(session, stmts, threads)
     silver._save(session, schema, [(n, to.kind, to.value, r, s) for n, (r, s) in done.items()])

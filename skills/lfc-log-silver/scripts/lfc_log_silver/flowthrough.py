@@ -136,6 +136,8 @@ def step(session, schema: str, sources: dict, to, policy, sizes: dict | None = N
         for n in tables:
             old = prev.get(n, (None,))[0]
             new = route_dict(routes[n])
+            if tables[n].method == "append":   # keyless: appended whatever its route says, never moved
+                continue
             if old is None or (old.get("silver"), old.get("group")) != (new["silver"], new["group"]):
                 if (old or {}).get("silver") == "auto_cdc":   # its streaming table belongs to its pipeline: held
                     held.append({"table": n, "to": new["silver"], "why": "leaving AUTO CDC: remove it from its "
@@ -186,11 +188,12 @@ def checkpoint(session, schema: str, sources: dict, to, into: str, names: list |
     from lfc_change_source import land
     t0 = time.time()
     prev = load(session, schema)
-    names = [n for n in (names or sources) if n in prev]
+    # a keyless (append) table isn't checkpointed: its rows are its log's inserts, which the trim would delete
+    names = [n for n in (names or sources) if n in prev and sources[n].keys]
     tables = {}
     for n in names:
         r = prev[n][0]
-        method, only = silver.FROM_ROUTE[r["silver"]]
+        method, only = silver.method_of(sources[n], r["silver"])
         tables[n] = silver.Table(sources[n], method, only, group=r.get("group") or "", **snapshot_of(prev, n))
     got = silver.checkpoint(session, tables, schema, to, into, threads)
     save(session, schema, {n: {**prev[n][0], "snapshot_table": got[n]["snapshot_table"], "checkpoint": got[n]}

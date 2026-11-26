@@ -167,8 +167,10 @@ class CdcLog:
 
     def inserts_sql(self, after: Position | None, to: Position | None) -> str:
         """Its inserts (operation create) after `after` up to `to`: a keyless table's rows (append-only), whose updates
-        and deletes can't name a row. _seq as changes_sql's."""
-        return (f"SELECT {self._cols()}, named_struct('v', {SEQUENCES[self.seq]}, 'o', 1) AS {SEQ} FROM {self.fq} "
+        and deletes can't name a row. _seq as changes_sql's; _event: a hash of the whole event, so a replayed event
+        is told from another event with the same row at the same position."""
+        return (f"SELECT {self._cols()}, named_struct('v', {SEQUENCES[self.seq]}, 'o', 1) AS {SEQ}, "
+                f"xxhash64(to_json(value)) AS _event FROM {self.fq} "
                 f"WHERE {self._where(after, to)} AND operation = 'create'")
 
     def changes_sql(self, after: Position | None, to: Position | None) -> str:

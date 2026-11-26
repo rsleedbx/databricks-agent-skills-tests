@@ -25,23 +25,27 @@ LOG = f"{S}.cdc_log"
 q(f"CREATE OR REPLACE TABLE {LOG} (destination STRING, operation STRING, key VARIANT, value VARIANT)")
 # snapshots: customers 1, 2; orders 10 (cust 1), 11 (cust 2); notes 20 (cust 1), 21 (cust 2); events e1
 for t, cols, rows in (("customers", "id INT, name STRING", "(1, 'a'), (2, 'b')"),
-                      ("orders", "id INT, cust INT", "(10, 1), (11, 2)"),
-                      ("notes", "id INT, cust INT", "(20, 1), (21, 2)"),
+                      ("orders", "id INT, cust INT", "(10, 1), (11, 2), (12, 1)"),
+                      ("notes", "id INT, cust INT", "(20, 1), (21, 2), (22, 1)"),
                       ("events", "e STRING, n INT", "('e1', 1)")):
     q(f"CREATE OR REPLACE TABLE {S}.snap_{t} ({cols})")
     q(f"INSERT INTO {S}.snap_{t} VALUES {rows}")
 
 
-def ev(dest, op, key, after, n):
+def ev(dest, op, key, after, n, row=0):
     k = f"parse_json('{json.dumps(key)}')" if key is not None else "NULL"
-    v = json.dumps({"after": after, "ts_ns": n})
+    v = json.dumps({"after": after, "ts_ns": n, **({"source": {"row": row}} if row else {})})
     return f"('my1.s.{dest}', '{op}', {k}, parse_json('{v}'))"
 
 
 q(f"INSERT INTO {LOG} VALUES " + ", ".join([
+    ev("orders", "update", {"id": 12}, {"id": 12, "cust": 2}, 90),          # moved off customer 1 first: stays
+    ev("notes", "update", {"id": 22}, {"id": 22, "cust": 2}, 90),            # moved off customer 1 first: keeps cust 2
     ev("customers", "delete", {"id": 1}, None, 100),                     # cascades to orders 10, sets notes 20's cust NULL
     ev("events", "create", None, {"e": "e2", "n": 2}, 110),              # appended
     ev("events", "create", None, {"e": "e2", "n": 2}, 110),              # a replay at one position: once
+    ev("events", "create", None, {"e": "e3", "n": 3}, 115, row=1),       # two events of one row at one position
+    ev("events", "create", None, {"e": "e3", "n": 3}, 115, row=2),       # (one statement's rows): both kept
     ev("events", "update", None, {"e": "e1", "n": 9}, 120),              # keyless: an update can't name a row
     ev("customers", "update", {"id": 2}, {"id": 2, "name": "b2", "extra": 1}, 130),   # a column it doesn't know: drift new
     ev("orders", "update", {"id": 11}, {"id": 11, "cust": "notanumber"}, 140),        # drift type: NULL
@@ -68,8 +72,8 @@ def rows(t):
     return sorted(tuple(r) for r in q(f"SELECT * FROM {S}.`{t}`"))
 
 
-want = {"customers": [("2", "b2")], "orders": [("11", None)], "notes": [("20", None), ("21", "2")],
-        "events": [("e1", "1"), ("e2", "2")]}
+want = {"customers": [("2", "b2")], "orders": [("11", None), ("12", "2")],
+        "notes": [("20", None), ("21", "2"), ("22", "2")], "events": [("e1", "1"), ("e2", "2"), ("e3", "3"), ("e3", "3")]}
 ok = True
 for t, exp in want.items():
     got = [tuple(None if v is None else str(v) for v in r) for r in rows(t)]
