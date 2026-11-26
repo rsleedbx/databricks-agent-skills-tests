@@ -88,13 +88,10 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
     big_fast table's own log, lfc-routing), each log landing whole files with its own filter: listed with LIST and
     read once a log (a ledger, <log>__scanned, of the files it scanned). keys (gateway_keys):
     each row's key filled in (silver's shared groups need it)."""
-    where = ""
-    if only:
-        where = f" WHERE lower({GATEWAY_DESTINATION}) IN ({', '.join(_lit(t.lower()) for t in only)})"   # any spelling
-    elif skip:
-        where = f" WHERE lower({GATEWAY_DESTINATION}) NOT IN ({', '.join(_lit(t.lower()) for t in skip)})"
+    if only or skip:   # COPY INTO takes no WHERE: a filtered landing reads only what it hasn't read for its tables
+        return _filtered(session, log, gateway_key_sql(keys), name, f"{root}/cdc/", only, skip)
     return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql(keys), name, f"{root}/cdc/",
-                 "*/*", where)
+                 "*/*")
 
 
 def gateway_keyed(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None) -> int | None:
@@ -137,13 +134,10 @@ def _inserted(rows, field: str = "num_inserted_rows") -> int | None:
         return None
 
 
-def _copy(session, log: str, destination: str, operation: str, key: str, name: str, src: str, pattern: str,
-          where: str = ""):
+def _copy(session, log: str, destination: str, operation: str, key: str, name: str, src: str, pattern: str):
     """One COPY INTO of a transport's JSON files into the log, each event as it is (VARIANT): the rows added."""
     cols = (f"{destination} AS destination, {operation} AS operation, {key} AS key, event AS value, "
             f"{_lit(name)} AS gateway, _metadata.file_path AS file")
-    if where:   # COPY INTO takes no WHERE: a filtered landing reads only the files it hasn't scanned yet
-        return _filtered(session, log, cols, name, src, where)
     rows = session.sql(
         f"COPY INTO {log} FROM (SELECT {cols} FROM '{src}') "
         f"FILEFORMAT = JSON PATTERN = '{pattern}' FORMAT_OPTIONS ('singleVariantColumn' = 'event')").collect()
@@ -159,7 +153,8 @@ def _bare(path: str) -> str:
 
 
 def ledger(log: str) -> str:
-    """The table of the files a filtered landing into `log` has scanned (rows or none): <log>__scanned."""
+    """The table of what a filtered landing into `log` has read: <log>__scanned, a row a change file and table (its
+    rows landed, or none in that file)."""
     head, _, last = log.rpartition(".")
     return f"{head}.`{last.strip('`')}__scanned`"
 
@@ -176,25 +171,44 @@ def _files(session, src: str, now_ms: float) -> list:
     return sorted(out)
 
 
-def _filtered(session, log: str, cols: str, name: str, src: str, where: str) -> int:
-    """A filtered landing: the files neither in the ledger nor named in the log listed (_files), read in batches of
-    BATCH, their rows of this log's tables inserted, then the files recorded in the ledger (with rows or without), so
-    each file is read once a log. A round stopped between the two is safe: the log's file column names the files it
-    inserted from, so they aren't read again. The rows added."""
+def _filtered(session, log: str, key: str, name: str, src: str, only: list | None, skip: list | None) -> int:
+    """A filtered landing, read once a file and table: the change files listed (_files); each read only for the
+    tables of `only` it hasn't been read for (the ledger's (file, table) rows, or the log's own rows of that table
+    from it: a round stopped before recording stays safe), so a table added to `only` later gets every file read for
+    it once; files needing the same tables read together in batches of BATCH, then recorded. `skip` (every table but
+    these: not a list of tables) is recorded under one key for the skip list, so changing it reads every file again.
+    The rows added."""
+    import hashlib
     import time
     led = ledger(log)
-    session.sql(f"CREATE TABLE IF NOT EXISTS {led} (gateway STRING, file STRING, at TIMESTAMP) COMMENT "
-                "'lfc_change_source land: the change files a filtered landing into this log scanned'").collect()
-    seen = {_bare(str(r[0])) for r in session.sql(
-        f"SELECT file FROM {led} WHERE gateway = {_lit(name)} UNION SELECT DISTINCT file FROM {log} "
-        f"WHERE gateway = {_lit(name)} AND file IS NOT NULL").collect()}
-    new = [f for f in _files(session, src, time.time() * 1000) if f not in seen]
+    session.sql(f"CREATE TABLE IF NOT EXISTS {led} (gateway STRING, file STRING, tbl STRING, at TIMESTAMP) COMMENT "
+                "'lfc_change_source land: each change file and table a filtered landing into this log has read'").collect()
+    dest = f"lower({GATEWAY_DESTINATION})"
+    if only:
+        want = sorted({t.lower() for t in only})
+    else:
+        want = ["skip:" + hashlib.sha1(",".join(sorted(t.lower() for t in skip)).encode()).hexdigest()[:12]]
+    wl = ", ".join(_lit(t) for t in want)
+    done = {(_bare(str(r[0])), str(r[1])) for r in session.sql(
+        f"SELECT file, tbl FROM {led} WHERE gateway = {_lit(name)} AND tbl IN ({wl}) "
+        + (f"UNION SELECT DISTINCT file, lower(destination) FROM {log} WHERE gateway = {_lit(name)} AND file IS NOT "
+           f"NULL AND lower(destination) IN ({wl})" if only else "")).collect()}
+    groups: dict = {}   # the tables a file still needs -> the files
+    for f in _files(session, src, time.time() * 1000):
+        need = tuple(t for t in want if (f, t) not in done)
+        if need:
+            groups.setdefault(need, []).append(f)
+    cols = (f"{GATEWAY_DESTINATION} AS destination, {GATEWAY_OPERATION} AS operation, {key} AS key, event AS value, "
+            f"{_lit(name)} AS gateway, _metadata.file_path AS file")
     added = 0
-    for i in range(0, len(new), BATCH):
-        part = new[i:i + BATCH]
-        reads = " UNION ALL ".join(f"SELECT {cols} FROM read_files('{f}', format => 'json', singleVariantColumn => "
-                                   f"'event'){where}" for f in part)
-        added += _inserted(session.sql(f"INSERT INTO {log} {reads}").collect()) or 0
-        session.sql(f"INSERT INTO {led} VALUES " + ", ".join(f"({_lit(name)}, {_lit(f)}, current_timestamp())"
-                                                            for f in part)).collect()
+    for need, files in sorted(groups.items()):
+        where = (f" WHERE {dest} IN ({', '.join(_lit(t) for t in need)})" if only else
+                 f" WHERE {dest} NOT IN ({', '.join(_lit(t.lower()) for t in skip)})")
+        for i in range(0, len(files), BATCH):
+            part = files[i:i + BATCH]
+            reads = " UNION ALL ".join(f"SELECT {cols} FROM read_files('{f}', format => 'json', singleVariantColumn => "
+                                       f"'event'){where}" for f in part)
+            added += _inserted(session.sql(f"INSERT INTO {log} {reads}").collect()) or 0
+            session.sql(f"INSERT INTO {led} VALUES " + ", ".join(
+                f"({_lit(name)}, {_lit(f)}, {_lit(t)}, current_timestamp())" for f in part for t in need)).collect()
     return added

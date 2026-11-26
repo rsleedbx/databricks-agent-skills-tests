@@ -68,11 +68,18 @@ class Routing(unittest.TestCase):
         q = CdcLog("s", fq, "t", "db.s.t", ["id"], {"id": "INT"}, seq="gateway_cursor").changes_sql(None, None)
         self.assertIn(f"FROM {fq} WHERE destination = 'db.s.t'", q)
         seen = []
-        s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: []))
+
+        def sql(q):   # one change file, listed (LIST), never read before
+            seen.append(q)
+            rows = ([("/V/g/cdc/1/", "1/", 0, 0)] if q == "LIST '/V/g/cdc/'" else
+                    [("/V/g/cdc/1/0", "0", 9, 0)] if q == "LIST '/V/g/cdc/1/'" else [])
+            return types.SimpleNamespace(collect=lambda: rows)
+        s = types.SimpleNamespace(sql=sql)
         land.gateway(s, "/V/g", "`m`.`c`.`cdc_log_t`", "gw", only=["db.s.t"])
         land.gateway(s, "/V/g", "`m`.`c`.`cdc_log`", "gw", skip=["db.s.t"])
-        self.assertIn("event:table_id.name::STRING) IN ('db.s.t')) FILEFORMAT", seen[0])
-        self.assertIn("event:table_id.name::STRING) NOT IN ('db.s.t')) FILEFORMAT", seen[1])
+        ins = [q for q in seen if q.startswith("INSERT INTO `m`.`c`.`cdc_log") and "read_files(" in q]
+        self.assertIn("event:table_id.name::STRING)) IN ('db.s.t')", ins[0])       # the moved table: its own log
+        self.assertIn("event:table_id.name::STRING)) NOT IN ('db.s.t')", ins[1])   # every other: the shared log
 
     def test_transitions_name_what_a_route_change_takes(self):
         from lfc_routing import routing
