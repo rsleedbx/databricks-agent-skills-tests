@@ -1,0 +1,37 @@
+# Routing's notebooks as a bundle: the provisional snapshot (step 3), one generic notebook whose parameters say the
+# source, its JDBC connection and where its tables go. Run it after the provisional change capture (step 2):
+#   databricks bundle deploy -p <profile> --var routing_schema=<c.s> --var target_schema=<c.s> --var source=<name> \
+#     --var jdbc_connection=<uc jdbc connection>
+#   databricks bundle run provisional_snapshot_job -p <profile>
+bundle:
+  name: lfc_routing
+
+include:
+  - resources/*.yml
+
+variables:
+  jdbc_connection:
+    description: the Unity Catalog JDBC connection the snapshot reads through
+  source:
+    description: the source's name in the introspection tables (its introspection connection)
+  routing_schema:
+    description: catalog.schema of the introspection and routing tables
+  target_schema:
+    description: catalog.schema the snapshot tables go to
+  position_kind:
+    description: the source's position kind (lsn for PostgreSQL)
+    default: lsn
+  tables:
+    description: optional, comma separated - these tables instead of the small ones with statistics
+    default: ""
+  max_bytes:
+    description: the largest table the provisional snapshot reads
+    default: "1073741824"
+  tests_repo_archive:
+    description: where pip installs the skills from
+    default: https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip
+
+targets:
+  dev:
+    mode: development
+    default: true
