@@ -170,7 +170,7 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
                                      "cursor": {"sequence": _cursor(n)}, "data": data}))
         _put(w, f"{root}/cdc/1/{n}", "\n".join(lines) + "\n")
     src = Staging("conformance", root, schemas(session, root)[("conformance", "public", "t")])
-    return src, [Position(KIND, _cursor(n)) for n in range(len(steps) + 1)]
+    return src, [Position(KIND, _cursor(n)) for n in range(len(steps) + 1)], None   # its snapshot_sql is its own
 
 
 def _put(w, path: str, text: str) -> None:

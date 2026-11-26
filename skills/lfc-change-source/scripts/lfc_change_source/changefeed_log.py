@@ -9,7 +9,7 @@ there: read as a Debezium change log (cdc_log). The changefeed writes JSON lines
 Positions are the HLC (`hlc`, text of fixed width, compared as text). The watermark is the newest resolved position,
 not the newest event's: a changefeed's files from several nodes can arrive out of order below it. The changefeed runs with
 initial_scan = 'no': the table's snapshot is a table of its own (a snapshot method: qbc, or an initial_scan = 'only'
-export through intake.files), given as `snapshot`; without one, a table is its changes from the start.
+export through intake.files), combined by silver; without one, a table is its changes from the start.
 
     from lfc_change_source import land, changefeed_log
     land.changefeed(spark, "/Volumes/c/s/landing/orders", "`c`.`ctl`.`cdc_log`", "shop.public.orders", ["id"], "crdb1")
@@ -30,11 +30,9 @@ class ChangefeedLog(CdcLog):
     """A CdcLog of a CockroachDB changefeed: HLC positions, the watermark from RESOLVED."""
 
 
-def from_changefeed(name: str, log: str, destination: str, keys: list[str], columns: dict,
-                    snapshot: str | None = None) -> ChangefeedLog:
+def from_changefeed(name: str, log: str, destination: str, keys: list[str], columns: dict) -> ChangefeedLog:
     """A changefeed's table in a landed change log (land.changefeed): columns by name from the after image."""
-    return ChangefeedLog(name, log, destination.split(".")[-1], destination, list(keys), columns, seq=KIND,
-                         snapshot=snapshot)
+    return ChangefeedLog(name, log, destination.split(".")[-1], destination, list(keys), columns, seq=KIND)
 
 
 def hlc(n: int, logical: int = 0) -> str:
@@ -72,6 +70,5 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
     session.sql(f"DROP TABLE IF EXISTS {log}")
     land.ensure_log(session, log)
     land.changefeed(session, root, log, "conformance.public.t", list(keys), "conformance")
-    src = from_changefeed("conformance", log, "conformance.public.t", list(keys), {k: "INT", v: "STRING"},
-                          snapshot=f"SELECT * FROM {snap}")
-    return src, [Position(KIND, a) for a in at]
+    src = from_changefeed("conformance", log, "conformance.public.t", list(keys), {k: "INT", v: "STRING"})
+    return src, [Position(KIND, a) for a in at], f"SELECT * FROM {snap}"

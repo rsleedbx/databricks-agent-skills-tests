@@ -13,7 +13,7 @@ code path follows two things only, how its silver is kept and where its snapshot
 | snapshot in the log | 0 | 1 | 2 | 3 |
 | snapshot read in place | - | 4 | 5 | 6 |
 
-Every method reads a table's current rows one way, the source's `current_sql` (the snapshot wherever it is, then each
+Every method reads a table's current rows one way, `combine.current_sql` (the snapshot wherever it is, then each
 key's last change after it), so every cell gives the same table. lfc-routing `routing.py`'s classes pick the
 cell: `small_slow` and `small_fast` 0, `big_slow` 5 (merged only in a round that changed it), `big_fast` 6; `routing.plan`
 takes a small table out of its group (to 1 or 2) when it needs its own table, carries much of its group's changes, or

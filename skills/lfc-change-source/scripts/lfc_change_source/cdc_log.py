@@ -4,13 +4,12 @@ source), as Debezium Server writes it through its Zerobus sink (zerobus-debezium
 event's key and its envelope, value:after, value:before, value:source). shared: one scan serves every table.
 
 Positions are the source's own order for its changes, a kind from SEQUENCES (the event field that gives commit order:
-an LSN, a binlog position, an SCN, the event time); its value is that number. The snapshot is the table's rows as of
-the time the change log starts from (T), a Delta table of its own (the snapshot contract: intake, qbc), as SQL.
+an LSN, a binlog position, an SCN, the event time); its value is that number. A table's
+snapshot is a Delta table of its own (intake, qbc), not part of this source: silver combines the two.
 
     from lfc_change_source.cdc_log import CdcLog
     src = CdcLog("crdb1", "`main`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", keys=["id"],
-                 columns={"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="ts_ns",
-                 snapshot="SELECT * FROM `main`.`zb_snap`.`orders`")
+                 columns={"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="ts_ns")
 """
 from __future__ import annotations
 
@@ -60,7 +59,6 @@ class CdcLog:
     keys: list[str]
     columns: dict                   # {column: SQL type}, in order
     seq: str = "ts_ns"              # a SEQUENCES kind
-    snapshot: str | None = None     # the snapshot's rows as SQL (columns by name)
     exprs: dict = field(default_factory=dict)   # {column: SQL expression AS column}: a caller's own typing
     shared: bool = True
     precision: dict = field(default_factory=dict)   # {column: digits of fraction}: a temporal column's (Debezium's unit)
@@ -117,29 +115,13 @@ class CdcLog:
         return ", ".join(self.column_exprs())
 
     def snapshot_sql(self, at: Position | None = None) -> str:
-        """The snapshot given (its own as-of time: the log starts after it), else the table as of `at` (None: the
-        latest) from the log's changes alone (a log that starts with the table: each key's last change, deletes
-        dropped). The log carries changes only: a snapshot is a table of its own (docs/design-no-full-refresh.md)."""
+        """The table as of `at` (None: the latest) from the log's changes alone (a log that starts with the table:
+        each key's last change, deletes dropped). The log carries changes only: a snapshot is a table of its own, and
+        silver combines the two (lfc-log-silver combine)."""
         names = ", ".join(quote(c) for c in self.columns)
-        if self.snapshot:
-            return f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({self.snapshot})"
         changes = self.changes_sql(None, at)
         return (f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({last_change_sql(changes, self.keys)}) "
                 f"WHERE {OP} <> '{DELETE}'")
-
-    def current_sql(self, snapshot_sql: str | None = None, position: Position | None = None) -> str:
-        """The table's current rows (its columns, _op upsert), wherever its snapshot is: with no snapshot given (here or
-        in `snapshot`), from the log alone (snapshot_sql); else that snapshot's rows at its position (`position`; None:
-        before every change) and each key's last change after it, deletes dropped. Every reader of a table's rows (a
-        view, a build, a check) calls this, so every method gives the same table."""
-        snap = snapshot_sql or self.snapshot
-        if not snap:
-            return self.snapshot_sql()
-        cols = ", ".join(quote(c) for c in self.columns)
-        v = self._kind(position) if position is not None else ("''" if self.seq in TEXT else "-1")
-        both = (f"SELECT {cols}, '{UPSERT}' AS {OP}, named_struct('v', {v}, 'o', 0) AS {SEQ} FROM ({snap}) "
-                f"UNION ALL SELECT {cols}, {OP}, {SEQ} FROM ({self.changes_sql(position, None)})")
-        return f"SELECT {cols}, {OP} FROM ({last_change_sql(both, self.keys)}) WHERE {OP} <> '{DELETE}'"
 
     def changes_sql(self, after: Position | None, to: Position | None) -> str:
         """Its events after `after` up to `to` (None: from the start, to the latest); _seq: the source's order, then
@@ -191,7 +173,6 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
             rows.append(f"('{dest}', '{operation}', parse_json('{{\"{k}\": {key}}}'), "
                         f"parse_json('{{\"after\": {after}, \"ts_ns\": {n * 1000}}}'))")
     session.sql(f"INSERT INTO {log} VALUES " + ", ".join(rows))
-    src = CdcLog("conformance", log, "t", dest, list(keys), {k: "INT", v: "STRING"}, seq="ts_ns",
-                 snapshot=f"SELECT * FROM {snap}")
-    return src, [Position("ts_ns", str(n * 1000)) for n in range(len(steps) + 1)]
+    src = CdcLog("conformance", log, "t", dest, list(keys), {k: "INT", v: "STRING"}, seq="ts_ns")
+    return src, [Position("ts_ns", str(n * 1000)) for n in range(len(steps) + 1)], f"SELECT * FROM {snap}"
 

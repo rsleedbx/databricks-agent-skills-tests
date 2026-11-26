@@ -67,7 +67,7 @@ class CdcLog(unittest.TestCase):
     def test_changes_from_the_shared_log_by_destination_and_sequence(self):
         from lfc_change_source.cdc_log import SEQUENCES, CdcLog as Log
         src = Log("crdb1", "`m`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", ["id"],
-                  {"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="lsn", snapshot="SELECT * FROM `m`.`zb`.`snap`")
+                  {"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="lsn")
         q = src.changes_sql(Position("lsn", "100"), Position("lsn", "200"))
         self.assertIn("CAST(key:id AS BIGINT) AS `id`", q)                       # a delete has only its key
         self.assertIn("CAST(value:after:total AS DECIMAL(12,2)) AS `total`", q)
@@ -76,7 +76,7 @@ class CdcLog(unittest.TestCase):
                       "value:source:lsn::BIGINT <= 200", q)
         self.assertIn("CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS _seq", q)   # a delete before an insert
         self.assertTrue(src.shared)
-        self.assertIn("'upsert' AS _op FROM (SELECT * FROM `m`.`zb`.`snap`)", src.snapshot_sql())
+        self.assertIn("ROW_NUMBER() OVER (PARTITION BY `id`", src.snapshot_sql())   # from the log alone: no snapshot here
         with self.assertRaises(ValueError):
             src.changes_sql(Position("ts_ns", "1"), None)   # another source's kind of position
         with self.assertRaises(ValueError):
@@ -101,12 +101,9 @@ class CdcLog(unittest.TestCase):
         from lfc_change_source.cdc_log import CdcLog
         from lfc_change_source.gateway_log import from_gateway
         src = from_gateway("gw", "`c`.`x`.`log`", {"id": "T", "keys": ["id"], "columns": [("id", "INT", "C1")]}, "db.s.t")
-        self.assertNotIn("'read'", src.current_sql())
-        dbz = CdcLog("pg1", "`c`.`x`.`log`", "t", "pg1.public.t", ["id"], {"id": "INT"}, seq="lsn",
-                     snapshot="SELECT * FROM `c`.`snap`.`t`")
-        q = dbz.current_sql()
-        self.assertIn("FROM (SELECT * FROM `c`.`snap`.`t`)", q)                     # the snapshot table
-        self.assertIn("UNION ALL", q)                                                # and the log's changes over it
+        self.assertNotIn("'read'", src.snapshot_sql())
+        self.assertFalse(hasattr(CdcLog("pg1", "`c`.`x`.`log`", "t", "pg1.public.t", ["id"], {"id": "INT"}, seq="lsn"),
+                                 "current_sql"))                              # combining with a snapshot is silver's
 
 class GatewayStaging(unittest.TestCase):
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples", "gateway")

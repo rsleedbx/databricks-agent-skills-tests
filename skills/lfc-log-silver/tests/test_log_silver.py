@@ -246,6 +246,18 @@ class Checkpoint(unittest.TestCase):
         self.assertEqual(flowthrough.snapshot_of(prev, "c"), {})
 
 
+class Combine(unittest.TestCase):
+    def test_the_snapshot_table_and_the_logs_changes_after_it(self):
+        from lfc_change_source.cdc_log import CdcLog
+        from lfc_log_silver import combine
+        dbz = CdcLog("pg1", "`c`.`x`.`log`", "t", "pg1.public.t", ["id"], {"id": "INT"}, seq="lsn")
+        q = combine.current_sql(dbz, "SELECT * FROM `c`.`snap`.`t`", Position("lsn", "7"))
+        self.assertIn("FROM (SELECT * FROM `c`.`snap`.`t`)", q)                     # the snapshot table
+        self.assertIn("named_struct('v', 7, 'o', 0)", q)                             # at its position
+        self.assertIn("value:source:lsn::BIGINT > 7", q)                              # and the changes after it
+        self.assertEqual(combine.current_sql(dbz), dbz.snapshot_sql())                # none: the log alone
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),

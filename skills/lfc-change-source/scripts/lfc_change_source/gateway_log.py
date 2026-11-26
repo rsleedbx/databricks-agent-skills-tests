@@ -5,8 +5,7 @@ transport is read one way.
 
     from lfc_change_source import gateway_staging as gs, gateway_log
     entry = gs.schemas(spark, root)[("db", "lob_001", "account")]
-    src = gateway_log.from_gateway("lob_001", "`main`.`ctl`.`cdc_log`", entry, "db.lob_001.account",
-                                   snapshot=gs.Staging("lob_001", root, entry).snapshot_sql())
+    src = gateway_log.from_gateway("lob_001", "`main`.`ctl`.`cdc_log`", entry, "db.lob_001.account")
 """
 from __future__ import annotations
 
@@ -23,14 +22,13 @@ class GatewayLog(CdcLog):
         return {c: f"parse_json({col})[{i}]::{self.columns[c]}" for i, c in enumerate(self.keys)}
 
 
-def from_gateway(name: str, log: str, entry: dict, destination: str, snapshot: str | None = None) -> "GatewayLog":
+def from_gateway(name: str, log: str, entry: dict, destination: str) -> "GatewayLog":
     """A gateway's table in a landed change log (land.gateway): its columns from the event's data by column id
-    (gateway_staging.schemas()'s entry), positions the gateway's cursor, the snapshot (gateway_staging's
-    snapshot_sql) as given."""
+    (gateway_staging.schemas()'s entry), positions the gateway's cursor."""
     cols = {c: t for c, t, _ in entry["columns"]}
     exprs = {c: f"value:data.{quote(cid)}::{t} AS {quote(c)}" for c, t, cid in entry["columns"]}
     return GatewayLog(name, log, destination.split(".")[-1], destination, list(entry["keys"]), cols,
-                      seq="gateway_cursor", snapshot=snapshot, exprs=exprs)
+                      seq="gateway_cursor", exprs=exprs)
 
 
 def build(session, schema: str, snapshot: list, steps: list, columns: list[str], keys: list[str]):
@@ -38,11 +36,11 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
     read as a change log."""
     from . import gateway_staging as gs
     from . import land
-    staged, positions = gs.build(session, schema, snapshot, steps, columns, keys)
+    staged, positions, _ = gs.build(session, schema, snapshot, steps, columns, keys)
     cat, sch = schema.split(".", 1)
     log = f"{quote(cat)}.{quote(sch)}.{quote('lfc_change_source_landed')}"
     session.sql(f"DROP TABLE IF EXISTS {log}")
     land.ensure_log(session, log)
     land.gateway(session, staged.root, log, "conformance")
-    src = from_gateway("conformance", log, staged.entry, "conformance.public.t", snapshot=staged.snapshot_sql())
-    return src, [Position("gateway_cursor", p.value) for p in positions]
+    src = from_gateway("conformance", log, staged.entry, "conformance.public.t")
+    return src, [Position("gateway_cursor", p.value) for p in positions], staged.snapshot_sql()   # its snapshot, in staging

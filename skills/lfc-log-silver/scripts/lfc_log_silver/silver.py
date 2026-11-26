@@ -54,7 +54,9 @@ class Table:
     group: str = ""                      # shared: its group (routing.Route.group)
 
     def current_sql(self) -> str:
-        return self.src.current_sql(self.snapshot_sql, self.position)
+        # silver's one rule: the snapshot table and the log's changes after it
+        from .combine import current_sql
+        return current_sql(self.src, self.snapshot_sql, self.position)
 
     @property
     def snapshot_sql(self) -> str | None:

@@ -18,7 +18,7 @@ needs are measured meanwhile ([design-intelligent.md](design-intelligent.md)).
 
 A snapshot is a Delta table (a streaming table too) with the source's column names and types. Views and MERGE read it
 in batch, AUTO CDC streams it, each with the log's changes after its position over it (lfc-log-silver
-`Table.snapshot_table`, lfc-change-source `CdcLog.current_sql`). Files alone aren't a snapshot: lfc-change-source
+`Table.snapshot_table`, `combine.current_sql`). Files alone aren't a snapshot: lfc-change-source
 `intake` turns every arrival into the contract's table (a table as it is, Parquet converted in place, other files
 copied once and typed, a gateway's staging copied by name with its position), so no silver cell knows a format,
 decodes text or lists folders.
