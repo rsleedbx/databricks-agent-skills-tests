@@ -61,4 +61,3 @@ log/direct snapshot path) is at the tag `snapshot-in-log-last`, if it's ever nee
   to the source after shaped rounds).
 - **n:1:** the n:1 routes on their own (lfc-medallion's tests and scale runs).
 - **Gold:** the marts against the model (lfc-medallion-pack's checks).
-| A filtered landing reads only new files | a filtered landing (a gateway's split) skips the files it inserted rows from, so a change file with none of its tables is read again every round (cost grows with the staging: Isaac Review, PR #181) | a ledger of the files each filtered landing scanned |
