@@ -50,8 +50,8 @@ ok "default: stops both pipelines and the extra one, deletes nothing" \
   '[ "$(grep -c "^pipelines stop" "$T/calls")" = 3 ] && ! grep -q "delete" "$T/calls"'
 ok "default: one record with the run's fields" \
   '[ "$(wc -l < "$LFC_KEPT")" -eq 1 ] && jq -e ".id == \"run_1790000000\" and .pipelines == [\"ap1\",\"gw1\"] and .db == \"x_1790000000\" and .staging == \"run_1790000000_stg\" and .extra_schemas == [\"main.extra_1790000000\"] and .extra_pipelines == [\"dp1\"] and .stopped == true and .host == \"https://ws.example\"" "$LFC_KEPT" >/dev/null'
-ok "default: delete_after is 7 days out" \
-  '[ "$(jq -r .delete_after "$LFC_KEPT")" = "$(jq -rn "now + 7 * 86400 | strftime(\"%Y-%m-%d\")")" ]'
+ok "default: delete_after is 14 days out" \
+  '[ "$(jq -r .delete_after "$LFC_KEPT")" = "$(jq -rn "now + 14 * 86400 | strftime(\"%Y-%m-%d\")")" ]'
 cp "$LFC_KEPT" "$T/kept.first"; : > "$LFC_KEPT"
 at_exit 0
 ok "KEEP_DAYS=0: deletes the pipelines, schemas, extras and the source database; records nothing" \
