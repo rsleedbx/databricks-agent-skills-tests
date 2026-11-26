@@ -110,6 +110,11 @@ For one engine, mechanism and setup:
 4. When the updates have finished, and before the pipeline is destroyed (`collect` reads the runtime from its events), `scripts/ddl-matrix.py collect --pipeline <id> --profile <p> --warehouse <wh> --dest <c>.<s> --env <env.yaml> --since <utc> --out results/ddl-matrix/<engine>-<mechanism>-<setup>-<date>.yaml`.
 5. `scripts/ddl-matrix-validate.py results/ddl-matrix/*.yaml`, then `scripts/ddl-matrix.py render > references/ddl-matrix-results.md`.
 
+What the gateway stages for the same cases, plus 10 data-change cases (keyless updates, transactions, rollbacks, type
+extremes, large values, a bulk insert), on SQL Server CDC: [samples/gateway-staging/sqlserver-cdc](samples/gateway-staging/sqlserver-cdc/README.md),
+real change records, schema files and gateway events with one line of input and output per case, for testing a
+staging reader or applier offline.
+
 The rules that make the comparison valid:
 
 - Run each mechanism with and without the setup script (`none` and `utility-1.7`), on the same cases. The two columns are the comparison; a difference between them is a finding.

@@ -1,0 +1,32 @@
+{
+  "id": "gateway-decimal-scientific-notation",
+  "title": "Gateway staging: a DECIMAL value can be written in scientific notation",
+  "kind": "connector-behavior",
+  "status": "workaround",
+  "applies": {
+    "source": [
+      "sqlserver"
+    ],
+    "route": [
+      "lfc-scdc"
+    ],
+    "layer": [
+      "capture",
+      "bronze"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-26",
+    "by": "lfc-schema-change-test gateway-staging samples: SQL Server 2022 CU27, standard CDC, utility 1.7, serverless gateway"
+  },
+  "symptom": "DECIMAL(38,10) -0.0000000001 is staged as the string \"-1E-10\"",
+  "cause": "decimals are staged as strings in their shortest form, which uses an exponent for small values",
+  "effect": "a parser that expects plain digits rejects or misreads the value",
+  "fix": "parse with an exponent-aware decimal parser (Python Decimal, Spark CAST to DECIMAL) into the schema file's precision and scale",
+  "where": [
+    "skills/lfc-schema-change-test/samples/gateway-staging/sqlserver-cdc/README.md"
+  ]
+}

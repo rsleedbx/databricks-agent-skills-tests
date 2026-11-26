@@ -1,0 +1,35 @@
+{
+  "id": "gateway-keyless-update-pair-same-sequence",
+  "title": "Gateway staging: a keyless table's update is a DELETE and an INSERT with the same sequence",
+  "kind": "connector-behavior",
+  "status": "workaround",
+  "applies": {
+    "source": [
+      "sqlserver"
+    ],
+    "route": [
+      "lfc-scdc"
+    ],
+    "layer": [
+      "capture",
+      "bronze"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-26",
+    "by": "lfc-schema-change-test gateway-staging samples: SQL Server 2022 CU27, standard CDC, utility 1.7, serverless gateway"
+  },
+  "symptom": "UPDATE TOP (1) ... on a table with no primary key stages DELETE (1,a) and INSERT (1,a2) with identical cursor.sequence",
+  "cause": "the keyless row has no key to update, so the change is written as a delete of the old row and an insert of the new, both at the change's one position",
+  "effect": "a reader that orders by sequence alone can apply the INSERT before the DELETE and lose the row",
+  "fix": "order by sequence, then by the record's position in its change file (line number); for the destination side see sqlserver-keyless-duplicates-collapse",
+  "where": [
+    "skills/lfc-schema-change-test/samples/gateway-staging/sqlserver-cdc/README.md"
+  ],
+  "refs": [
+    "sqlserver-keyless-duplicates-collapse"
+  ]
+}

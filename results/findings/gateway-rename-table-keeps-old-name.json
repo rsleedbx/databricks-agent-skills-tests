@@ -1,0 +1,31 @@
+{
+  "id": "gateway-rename-table-keeps-old-name",
+  "title": "Gateway staging, SQL Server CDC: rows of a renamed table keep the old name",
+  "kind": "connector-behavior",
+  "status": "open",
+  "applies": {
+    "source": [
+      "sqlserver"
+    ],
+    "route": [
+      "lfc-scdc"
+    ],
+    "layer": [
+      "capture"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-26",
+    "by": "lfc-schema-change-test gateway-staging samples: SQL Server 2022 CU27, standard CDC, utility 1.7, serverless gateway"
+  },
+  "symptom": "after sp_rename rename_table -> rename_table_new, an insert into rename_table_new is staged as table rename_table, schemaVersion 0; no schema change event",
+  "cause": "the CDC capture instance keeps its table's object id across a rename; the gateway reads it under the name it started with",
+  "effect": "the new name never appears in staging; a reader keyed by table name keeps the rows under the old name without knowing of the rename",
+  "fix": "track tables by table_id.uoid, not name; detect renames on the source (sys.tables) if the name matters",
+  "where": [
+    "skills/lfc-schema-change-test/samples/gateway-staging/sqlserver-cdc/README.md"
+  ]
+}

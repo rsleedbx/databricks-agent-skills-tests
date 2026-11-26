@@ -62,8 +62,13 @@ def sub(text: str, **kw: str) -> str:
     return text
 
 
+RESERVED = {"truncate"}   # a case id that is a reserved word where a table can't be named so (SQL Server: TRUNCATE)
+
+
 def tname(cid: str) -> str:
-    return cid.replace("-", "_")
+    """A case's table: its id with _ for -, and _table after one that is a reserved word."""
+    t = cid.replace("-", "_")
+    return t + "_table" if t in RESERVED else t
 
 
 def resolve(ids: str | None, engine: str | None = None, mech: str | None = None) -> list[dict]:

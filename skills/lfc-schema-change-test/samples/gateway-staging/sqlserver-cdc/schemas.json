@@ -1,0 +1,1981 @@
+{
+ "add_computed_column": {
+  "0": {
+   "name": "add_computed_column",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_computed_column",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1141579105_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1141579105_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1141579105_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1141579105"
+  }
+ },
+ "add_identity_column": {
+  "0": {
+   "name": "add_identity_column",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_identity_column",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1173579219"
+  },
+  "1": {
+   "name": "add_identity_column",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_identity_column",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_3",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "ident",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1173579219_4",
+     "sourceDataType": "INT"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1173579219"
+  }
+ },
+ "add_not_null_with_default": {
+  "0": {
+   "name": "add_not_null_with_default",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_not_null_with_default",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1109578991"
+  },
+  "1": {
+   "name": "add_not_null_with_default",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_not_null_with_default",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_3",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "c",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1109578991_4",
+     "sourceDataType": "INT"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1109578991"
+  }
+ },
+ "add_nullable": {
+  "0": {
+   "name": "add_nullable",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_nullable",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1029578706"
+  },
+  "1": {
+   "name": "add_nullable",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_nullable",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_3",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "c",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1029578706_4",
+     "sourceDataType": "INT"
+    }
+   ],
+   "changes": {
+    "isAdditive": true
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1029578706"
+  }
+ },
+ "add_nullable_keyless": {
+  "0": {
+   "name": "add_nullable_keyless",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "add_nullable_keyless_pk",
+    "columns": [
+     "id",
+     "n",
+     "v"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1061578820"
+  },
+  "1": {
+   "name": "add_nullable_keyless",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "add_nullable_keyless_pk",
+    "columns": [
+     "id",
+     "n",
+     "v",
+     "c"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_3",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "c",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1061578820_4",
+     "sourceDataType": "INT"
+    }
+   ],
+   "changes": {
+    "isAdditive": true
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1061578820"
+  }
+ },
+ "add_nullable_with_default": {
+  "0": {
+   "name": "add_nullable_with_default",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_nullable_with_default",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1077578877"
+  },
+  "1": {
+   "name": "add_nullable_with_default",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_nullable_with_default",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_3",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "c",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1077578877_4",
+     "sourceDataType": "INT"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1077578877"
+  }
+ },
+ "add_unique": {
+  "0": {
+   "name": "add_unique",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_add_unique",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1589580701_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1589580701_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1589580701_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1589580701"
+  }
+ },
+ "bigint_to_int": {
+  "0": {
+   "name": "bigint_to_int",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_bigint_to_int",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1333579789_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "LONG",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1333579789_2",
+     "sourceDataType": "LONG"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1333579789_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1333579789"
+  },
+  "1": {
+   "name": "bigint_to_int",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_bigint_to_int",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1333579789_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1333579789_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1333579789_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1333579789"
+  }
+ },
+ "date_to_timestamp": {
+  "0": {
+   "name": "date_to_timestamp",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_date_to_timestamp",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1493580359_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "DATE",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1493580359_2",
+     "sourceDataType": "DATE"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1493580359_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1493580359"
+  },
+  "1": {
+   "name": "date_to_timestamp",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_date_to_timestamp",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1493580359_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "TIMESTAMP",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1493580359_2",
+     "sourceDataType": "TIMESTAMP(0)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1493580359_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1493580359"
+  }
+ },
+ "datetime_precision_up": {
+  "0": {
+   "name": "datetime_precision_up",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_datetime_precision_up",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1461580245_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "TIMESTAMP",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1461580245_2",
+     "sourceDataType": "TIMESTAMP(3)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1461580245_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1461580245"
+  },
+  "1": {
+   "name": "datetime_precision_up",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_datetime_precision_up",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1461580245_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "TIMESTAMP",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1461580245_2",
+     "sourceDataType": "TIMESTAMP(7)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1461580245_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1461580245"
+  }
+ },
+ "decimal_10_2_to_18_4": {
+  "0": {
+   "name": "decimal_10_2_to_18_4",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_decimal_10_2_to_18_4",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1269579561_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "DECIMAL(10, 2)",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1269579561_2",
+     "sourceDataType": "DECIMAL(10, 2)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1269579561_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1269579561"
+  },
+  "1": {
+   "name": "decimal_10_2_to_18_4",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_decimal_10_2_to_18_4",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1269579561_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "DECIMAL(18, 4)",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1269579561_2",
+     "sourceDataType": "DECIMAL(18, 4)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1269579561_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1269579561"
+  }
+ },
+ "dml_basic": {
+  "0": {
+   "name": "dml_basic",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_basi__3213E83FC33F3F0E",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1781581385_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1781581385_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1781581385_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1781581385"
+  }
+ },
+ "dml_bulk": {
+  "0": {
+   "name": "dml_bulk",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_bulk__3213E83FA033E583",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_2053582354_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2053582354_2",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_2053582354"
+  }
+ },
+ "dml_keyless": {
+  "0": {
+   "name": "dml_keyless",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "dml_keyless_pk",
+    "columns": [
+     "n",
+     "v"
+    ]
+   },
+   "columns": [
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2005582183_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2005582183_2",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_2005582183"
+  }
+ },
+ "dml_nulls_lob": {
+  "0": {
+   "name": "dml_nulls_lob",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_null__3213E83F4D976116",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1973582069_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "s",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1973582069_2",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1973582069_3",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "lob",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1973582069_4",
+     "sourceDataType": "NCLOB"
+    },
+    {
+     "name": "bin",
+     "type": "BINARY",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1973582069_5",
+     "sourceDataType": "BLOB"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1973582069"
+  }
+ },
+ "dml_pk_update": {
+  "0": {
+   "name": "dml_pk_update",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_pk_u__3213E83FAA101775",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1813581499_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1813581499_2",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1813581499"
+  }
+ },
+ "dml_same_row_many": {
+  "0": {
+   "name": "dml_same_row_many",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_same__3213E83FCCF5C123",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1909581841_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1909581841_2",
+     "sourceDataType": "INT"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1909581841"
+  }
+ },
+ "dml_txn_commit": {
+  "0": {
+   "name": "dml_txn_commit",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_txn___3213E83FFFBA3AF1",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1845581613_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1845581613_2",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1845581613"
+  }
+ },
+ "dml_txn_rollback": {
+  "0": {
+   "name": "dml_txn_rollback",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_txn___3213E83FE4CB1EC4",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1877581727_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1877581727_2",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1877581727"
+  }
+ },
+ "dml_types": {
+  "0": {
+   "name": "dml_types",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_type__3213E83FC9DB6F4F",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "d2",
+     "type": "TIMESTAMP",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_2",
+     "sourceDataType": "TIMESTAMP(7)"
+    },
+    {
+     "name": "dto",
+     "type": "TIMESTAMP",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_3",
+     "sourceDataType": "TIMESTAMP(7) WITH TIME ZONE"
+    },
+    {
+     "name": "dec38",
+     "type": "DECIMAL(38, 10)",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_4",
+     "sourceDataType": "DECIMAL(38, 10)"
+    },
+    {
+     "name": "u",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_5",
+     "sourceDataType": "STRING(38)"
+    },
+    {
+     "name": "b",
+     "type": "BOOLEAN",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_6",
+     "sourceDataType": "BOOLEAN"
+    },
+    {
+     "name": "f",
+     "type": "DOUBLE",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_7",
+     "sourceDataType": "DOUBLE"
+    },
+    {
+     "name": "m",
+     "type": "DECIMAL(19, 4)",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_8",
+     "sourceDataType": "DECIMAL(19, 4)"
+    },
+    {
+     "name": "dt",
+     "type": "DATE",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_9",
+     "sourceDataType": "DATE"
+    },
+    {
+     "name": "t",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_10",
+     "sourceDataType": "NVARSTRING(16)"
+    },
+    {
+     "name": "x",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_2021582240_11",
+     "sourceDataType": "NCLOB"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_2021582240"
+  }
+ },
+ "dml_wide_one_col": {
+  "0": {
+   "name": "dml_wide_one_col",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "PK__dml_wide__3213E83FA0D49587",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "c1",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_2",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "c2",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_3",
+     "sourceDataType": "NVARSTRING(50)"
+    },
+    {
+     "name": "c3",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_4",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "c4",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_5",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "c5",
+     "type": "TIMESTAMP",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_6",
+     "sourceDataType": "TIMESTAMP(7)"
+    },
+    {
+     "name": "big",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1941581955_7",
+     "sourceDataType": "NCLOB"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1941581955"
+  }
+ },
+ "drop_column": {
+  "0": {
+   "name": "drop_column",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_drop_column",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1205579333_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1205579333_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1205579333_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1205579333"
+  },
+  "1": {
+   "name": "drop_column",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_drop_column",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1205579333_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1205579333_2",
+     "sourceDataType": "INT"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1205579333"
+  }
+ },
+ "drop_primary_key": {
+  "0": {
+   "name": "drop_primary_key",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_drop_primary_key",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1621580815_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1621580815_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1621580815_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1621580815"
+  }
+ },
+ "drop_table": {
+  "0": {
+   "name": "drop_table",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_drop_table",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1717581157_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1717581157_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1717581157_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1717581157"
+  }
+ },
+ "int_to_bigint": {
+  "0": {
+   "name": "int_to_bigint",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_int_to_bigint",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1237579447_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1237579447_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1237579447_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1237579447"
+  },
+  "1": {
+   "name": "int_to_bigint",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_int_to_bigint",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1237579447_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "LONG",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1237579447_2",
+     "sourceDataType": "LONG"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1237579447_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1237579447"
+  }
+ },
+ "int_to_decimal_18_2": {
+  "0": {
+   "name": "int_to_decimal_18_2",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_int_to_decimal_18_2",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1397580017_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1397580017_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1397580017_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1397580017"
+  },
+  "1": {
+   "name": "int_to_decimal_18_2",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_int_to_decimal_18_2",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1397580017_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "DECIMAL(18, 2)",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1397580017_2",
+     "sourceDataType": "DECIMAL(18, 2)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1397580017_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1397580017"
+  }
+ },
+ "int_to_string": {
+  "0": {
+   "name": "int_to_string",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_int_to_string",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1365579903_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1365579903_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1365579903_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1365579903"
+  },
+  "1": {
+   "name": "int_to_string",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_int_to_string",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1365579903_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1365579903_2",
+     "sourceDataType": "NVARSTRING(20)"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1365579903_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1365579903"
+  }
+ },
+ "not_null_to_null": {
+  "0": {
+   "name": "not_null_to_null",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_not_null_to_null",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1557580587_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1557580587_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1557580587_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1557580587"
+  },
+  "1": {
+   "name": "not_null_to_null",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_not_null_to_null",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1557580587_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1557580587_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1557580587_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1557580587"
+  }
+ },
+ "null_to_not_null": {
+  "0": {
+   "name": "null_to_not_null",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_null_to_not_null",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1525580473_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1525580473_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1525580473_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1525580473"
+  },
+  "1": {
+   "name": "null_to_not_null",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_null_to_not_null",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1525580473_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1525580473_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1525580473_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1525580473"
+  }
+ },
+ "rename_column": {
+  "0": {
+   "name": "rename_column",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_rename_column",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1653580929_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1653580929_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1653580929_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1653580929"
+  }
+ },
+ "rename_table": {
+  "0": {
+   "name": "rename_table",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_rename_table",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1685581043_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1685581043_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1685581043_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1685581043"
+  }
+ },
+ "start_first_update": {
+  "0": {
+   "name": "start_first_update",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_start_first_update",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_997578592_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_997578592_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_997578592_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_997578592"
+  }
+ },
+ "string_length_narrow": {
+  "0": {
+   "name": "string_length_narrow",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_string_length_narrow",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1301579675_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1301579675_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1301579675_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1301579675"
+  },
+  "1": {
+   "name": "string_length_narrow",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_string_length_narrow",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1301579675_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1301579675_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1301579675_3",
+     "sourceDataType": "NVARSTRING(20)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1301579675"
+  }
+ },
+ "truncate_table": {
+  "0": {
+   "name": "truncate_table",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_truncate_table",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1749581271_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1749581271_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1749581271_3",
+     "sourceDataType": "NVARSTRING(50)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1749581271"
+  }
+ },
+ "varchar_to_nvarchar": {
+  "0": {
+   "name": "varchar_to_nvarchar",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_varchar_to_nvarchar",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1429580131_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1429580131_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1429580131_3",
+     "sourceDataType": "VARSTRING(20)"
+    }
+   ],
+   "uoid": "T_j6dUYEnSgyBt_5_1429580131"
+  },
+  "1": {
+   "name": "varchar_to_nvarchar",
+   "objectType": "TABLE",
+   "primaryKey": {
+    "name": "pk_varchar_to_nvarchar",
+    "columns": [
+     "id"
+    ]
+   },
+   "columns": [
+    {
+     "name": "id",
+     "type": "INTEGER",
+     "notNull": true,
+     "uoid": "C_j6dUYEnSgyBt_5_1429580131_1",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "n",
+     "type": "INTEGER",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1429580131_2",
+     "sourceDataType": "INT"
+    },
+    {
+     "name": "v",
+     "type": "STRING",
+     "notNull": false,
+     "uoid": "C_j6dUYEnSgyBt_5_1429580131_3",
+     "sourceDataType": "NVARSTRING(20)"
+    }
+   ],
+   "changes": {
+    "isAdditive": false
+   },
+   "uoid": "T_j6dUYEnSgyBt_5_1429580131"
+  }
+ }
+}

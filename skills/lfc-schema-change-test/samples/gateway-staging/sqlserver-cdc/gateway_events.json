@@ -1,0 +1,362 @@
+[
+ {
+  "timestamp": "2026-11-26T03:38:19.466Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.add_nullable'.",
+  "flow": "edgecases.edge.add_nullable_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.add_nullable ADD c INT NULL"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:24.599Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.add_not_null_with_default'.",
+  "flow": "edgecases.edge.add_not_null_with_default_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.add_not_null_with_default ADD c INT NOT NULL CONSTRAINT df_add_not_null_with_default_c DEFAULT 5"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:24.601Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.add_identity_column'.",
+  "flow": "edgecases.edge.add_identity_column_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.add_identity_column ADD ident INT IDENTITY(1,1)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:24.748Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.add_computed_column'.",
+  "flow": "edgecases.edge.add_computed_column_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.add_computed_column ADD cc AS (n * 2)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:24.829Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.add_nullable_with_default'.",
+  "flow": "edgecases.edge.add_nullable_with_default_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.add_nullable_with_default ADD c INT NULL CONSTRAINT df_add_nullable_with_default_c DEFAULT 5"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:24.898Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.add_nullable_keyless'.",
+  "flow": "edgecases.edge.add_nullable_keyless_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.add_nullable_keyless ADD c INT NULL"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:25.267Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.drop_column'.",
+  "flow": "edgecases.edge.drop_column_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.drop_column DROP COLUMN v"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:25.842Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.int_to_bigint'.",
+  "flow": "edgecases.edge.int_to_bigint_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.int_to_bigint ALTER COLUMN n BIGINT"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:26.116Z",
+  "level": "ERROR",
+  "event_type": "flow_progress",
+  "message": "Flow 'edgecases.edge.add_computed_column_cdc_flow' has FAILED.",
+  "flow": "edgecases.edge.add_computed_column_cdc_flow",
+  "error": [
+   {
+    "class_name": "tech.replicant.common.ExtractorException",
+    "message": "CDC Connector encountered a DDL operation on table `edgecases.edge.add_computed_column` that is not supported for replication. This DDL statement: `ALTER TABLE edge.add_computed_column ADD cc AS (n * 2)` requires a full refresh on the target table.\nError message: Parser exception during ALTER TABLE. DDL: ALTER TABLE edge.add_computed_column ADD cc AS (n * 2). Error: Cannot parse generated column.\n\nPrevious schema: root\n |-- id: integer (nullable = false)\n |-- n: integer (nullable = true)\n |-- v: string (nullable = true)\n\nCurrent schema: root\n |-- id: integer (nullable = false)\n |-- n: integer "
+   }
+  ],
+  "details": {
+   "flow_progress": {
+    "status": "FAILED"
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.284Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.decimal_10_2_to_18_4'.",
+  "flow": "edgecases.edge.decimal_10_2_to_18_4_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.decimal_10_2_to_18_4 ALTER COLUMN n DECIMAL(18,4)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.287Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.string_length_narrow'.",
+  "flow": "edgecases.edge.string_length_narrow_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.string_length_narrow ALTER COLUMN v NVARCHAR(20)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.400Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.int_to_decimal_18_2'.",
+  "flow": "edgecases.edge.int_to_decimal_18_2_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.int_to_decimal_18_2 ALTER COLUMN n DECIMAL(18,2)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.419Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.int_to_string'.",
+  "flow": "edgecases.edge.int_to_string_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.int_to_string ALTER COLUMN n NVARCHAR(20)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.461Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.varchar_to_nvarchar'.",
+  "flow": "edgecases.edge.varchar_to_nvarchar_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.varchar_to_nvarchar ALTER COLUMN v NVARCHAR(20)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.470Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.datetime_precision_up'.",
+  "flow": "edgecases.edge.datetime_precision_up_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.datetime_precision_up ALTER COLUMN n DATETIME2(7)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.504Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.bigint_to_int'.",
+  "flow": "edgecases.edge.bigint_to_int_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.bigint_to_int ALTER COLUMN n INT"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:32.832Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.date_to_timestamp'.",
+  "flow": "edgecases.edge.date_to_timestamp_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.date_to_timestamp ALTER COLUMN n DATETIME2(0)"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:33.246Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.not_null_to_null'.",
+  "flow": "edgecases.edge.not_null_to_null_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.not_null_to_null ALTER COLUMN n INT NULL"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:33.323Z",
+  "level": "INFO",
+  "event_type": "cdc_extraction_details",
+  "message": "Detected a schema change on table 'edgecases.edge.null_to_not_null'.",
+  "flow": "edgecases.edge.null_to_not_null_cdc_flow",
+  "error": [],
+  "details": {
+   "cdc_extraction_details": {
+    "event_type": "SCHEMA_CHANGE_DETAILS",
+    "schema_change_details": {
+     "ddl_type": "DDL_TYPE_NON_IGNORABLE",
+     "schema_change_type": "SCHEMA_CHANGE_TYPE_UNSPECIFIED",
+     "parsed_schema_change_statement": "ALTER TABLE edge.null_to_not_null ALTER COLUMN n INT NOT NULL"
+    }
+   }
+  }
+ },
+ {
+  "timestamp": "2026-11-26T03:38:33.909Z",
+  "level": "ERROR",
+  "event_type": "flow_progress",
+  "message": "Flow 'edgecases.edge.add_unique_cdc_flow' has FAILED.",
+  "flow": "edgecases.edge.add_unique_cdc_flow",
+  "error": [
+   {
+    "class_name": "tech.replicant.common.ExtractorException",
+    "message": "CDC Connector encountered a DDL operation on table `edgecases.edge.add_unique` that is not supported for replication. This DDL statement: `ADD unique key` requires a full refresh on the target table.\nError message: ADD unique key\n\nPrevious schema: root\n |-- id: integer (nullable = false)\n |-- n: integer (nullable = true)\n |-- v: string (nullable = true)\n\nCurrent schema: root\n |-- id: integer (nullable = false)\n |-- n: integer (nullable = true)\n |-- v: string (nullable = true)"
+   }
+  ],
+  "details": {
+   "flow_progress": {
+    "status": "FAILED"
+   }
+  }
+ }
+]

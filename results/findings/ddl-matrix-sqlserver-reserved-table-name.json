@@ -1,0 +1,31 @@
+{
+  "id": "ddl-matrix-sqlserver-reserved-table-name",
+  "title": "ddl-matrix named the truncate case's table TRUNCATE, which SQL Server refuses",
+  "kind": "tooling",
+  "status": "fixed",
+  "applies": {
+    "source": [
+      "sqlserver"
+    ],
+    "route": [
+      "*"
+    ],
+    "layer": [
+      "test"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-26",
+    "by": "lfc-schema-change-test gateway-staging samples: SQL Server 2022 CU27, standard CDC, utility 1.7, serverless gateway"
+  },
+  "symptom": "ddl-matrix.py sql sqlserver: CREATE TABLE <schema>.truncate fails with Msg 156 (incorrect syntax near the keyword); the run's setup stops at that table",
+  "cause": "the table is named after the case id, and TRUNCATE is a reserved word in T-SQL",
+  "effect": "the setup script stops at that table: the truncate case and every statement after it in the batch file don't run",
+  "fix": "ddl-matrix.py tname(): a case id that is a reserved word gets _table (truncate -> truncate_table), for every engine",
+  "where": [
+    "skills/lfc-schema-change-test/scripts/ddl-matrix.py"
+  ]
+}

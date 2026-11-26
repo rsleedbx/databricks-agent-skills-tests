@@ -1,0 +1,31 @@
+{
+  "id": "sqlserver-cdc-lob-over-max-text-repl-size",
+  "title": "SQL Server CDC: a text or binary value over 64 KB fails the source statement",
+  "kind": "source-behavior",
+  "status": "documented-limit",
+  "applies": {
+    "source": [
+      "sqlserver"
+    ],
+    "route": [
+      "*"
+    ],
+    "layer": [
+      "source"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-26",
+    "by": "lfc-schema-change-test gateway-staging samples: SQL Server 2022 CU27, standard CDC, utility 1.7, serverless gateway"
+  },
+  "symptom": "UPDATE ... SET lob = <1 MB NVARCHAR(MAX)> on a CDC table fails with Msg 7139 (length of LOB data to be replicated exceeds configured maximum 65536); a 60 KB value works",
+  "cause": "SQL Server's 'max text repl size (B)' (default 65,536 bytes) applies to tables enabled for CDC",
+  "effect": "the source's own write fails, so the application sees the error and nothing is captured",
+  "fix": "Not tested: raise it on the source, EXEC sp_configure 'max text repl size', -1; RECONFIGURE (SQL Server's documented setting)",
+  "where": [
+    "skills/lfc-schema-change-test/samples/gateway-staging/sqlserver-cdc/README.md"
+  ]
+}

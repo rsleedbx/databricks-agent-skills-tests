@@ -1,0 +1,32 @@
+{
+  "id": "gateway-sqlserver-cdc-txnid-zero",
+  "title": "Gateway staging, SQL Server CDC: txnID is always \"0\"",
+  "kind": "connector-behavior",
+  "status": "workaround",
+  "applies": {
+    "source": [
+      "sqlserver"
+    ],
+    "route": [
+      "lfc-scdc"
+    ],
+    "layer": [
+      "capture",
+      "bronze"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-26",
+    "by": "lfc-schema-change-test gateway-staging samples: SQL Server 2022 CU27, standard CDC, utility 1.7, serverless gateway"
+  },
+  "symptom": "every change record has txnID \"0\", including the 4 records of one multi-statement transaction",
+  "cause": "the field isn't filled for SQL Server CDC; the transaction is in the sequence instead (~v00001-<commit LSN>-<counter>)",
+  "effect": "grouping or ordering by txnID merges every transaction into one",
+  "fix": "group by the commit LSN part of cursor.sequence, order by its counter",
+  "where": [
+    "skills/lfc-schema-change-test/samples/gateway-staging/sqlserver-cdc/README.md"
+  ]
+}
