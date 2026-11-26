@@ -19,6 +19,22 @@ checkpointed. The layers carry each decision out; none of them decides it.
 | 7 | **Real snapshot**: each table by the method the plan says | after 6 (its CDC started first) |
 | 8, 9, 10 | **Silver, n:1, gold** | from 6 and 7 |
 
+**The provisional snapshot is for small tables with statistics only** (step 3): a table whose introspection gives
+its size, and is small, is read by our own `spark.read.jdbc` through its connection, after the provisional CDC has
+started, so a person sees real rows in silver while deciding. A table with no statistics gets none (it could take
+long). It is never taken twice without need: it is a snapshot table with its position like any other, and step 7
+keeps it as the real one while that position is still in a log the table reads from (a split overlaps, so it stays);
+step 7 takes a new one only for a table that had none, or whose schema or method the decisions changed.
+
+**The mapping is a person's to override too.** The dashboard shows each source column's place and type in
+Databricks: catalog, schema, table, column, data type, from introspection and the routing rules; a person overrides any
+of them (`mapping_overrides`, NULL meaning the default), and silver builds from the result.
+
+**Classify finds the n:1 on its own.** Tables that repeat across databases or schemas (the same columns and keys, per
+customer or per shard) are one table to decide, not thousands: classify groups them by their shape and shows a group
+as one row with its members, so the dashboard shows the 50 shapes of a 10,000-table source, and a decision on the group
+applies to each member. Later: show each shape and where it repeats.
+
 Steps 2 to 5 are a loop: a start, a restart, a change in the data or a change of mind goes round it again. Each
 step a person starts is a row in a table a job watches (a table update trigger): `introspection_request` runs 1,
 `routing_iteration` runs 4, `ingestion_start` runs 6 and 7. Nothing is overwritten: each introspection is a run in
