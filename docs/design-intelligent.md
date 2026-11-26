@@ -33,7 +33,9 @@ of them (`mapping_overrides`, NULL meaning the default), and silver builds from 
 **Classify finds the n:1 on its own.** Tables that repeat across databases or schemas (the same columns and keys, per
 customer or per shard) are one table to decide, not thousands: classify groups them by their shape and shows a group
 as one row with its members, so the dashboard shows the 50 shapes of a 10,000-table source, and a decision on the group
-applies to each member. Later: show each shape and where it repeats.
+applies to each member. A mapping override on a group applies to every member
+(the n:1 needs one shape: a member that deviates would leave the group's union); no member-by-member deviation for
+now, to revisit after use. Later: show each shape and where it repeats.
 
 Steps 2 to 5 are a loop: a start, a restart, a change in the data or a change of mind goes round it again. Each
 step a person starts is a row in a table a job watches (a table update trigger): `introspection_request` runs 1,
