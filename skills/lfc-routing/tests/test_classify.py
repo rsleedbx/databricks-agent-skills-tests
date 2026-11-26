@@ -76,5 +76,31 @@ class Observed(unittest.TestCase):
         self.assertEqual((plan["round"], plan["tables"]["orders"]["route"]["class"]), (2, "big_fast"))
 
 
+class Tables(unittest.TestCase):
+    """lfc_routing.tables: routing_decisions rows -> decisions -> classify -> routing_plan rows."""
+
+    def test_overrides_through_classify_into_plan_rows(self):
+        from lfc_routing import tables
+        rows = [{"tbl": "orders", "override_cell": "merge_round", "override_log": None, "override_role": ""},
+                {"tbl": "orders", "override_log": "c.s.cdc_log_orders"},        # a later row adds the log
+                {"tbl": "customer", "override_class": None}]                    # nothing set: the heuristic
+        d = tables.decisions(rows)
+        self.assertEqual(d, {"tables": {"orders": {"method": "merge_round", "log": "c.s.cdc_log_orders"}}})
+        out = {r["tbl"]: r for r in tables.plan_rows(classify(SCHEMA, STATS, decisions=d), round_=3)}
+        self.assertEqual((out["orders"]["cell"], out["orders"]["log"], out["orders"]["round"]),
+                         ("merge_round", "c.s.cdc_log_orders", 3))
+        self.assertIn("log chosen", out["orders"]["why"])
+        self.assertEqual((out["audit_log"]["key_kind"], out["audit_log"]["keys"]), ("all_columns", ["at", "msg"]))
+        self.assertEqual(set(out["customer"]), set(tables.PLAN_COLUMNS))
+
+    def test_ddl_and_the_round_asked_for(self):
+        from lfc_routing import tables
+        d = tables.ddl("`c`.`s`")
+        self.assertEqual([x.split()[5] for x in d], ["`c`.`s`.routing_plan", "`c`.`s`.routing_decisions",
+                                                     "`c`.`s`.routing_iteration"])
+        self.assertIn("enableChangeDataFeed", d[2])
+        self.assertEqual((tables.latest_round([]), tables.latest_round([{"n": 1}, {"n": 4}])), (0, 4))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,8 @@ and no workspace, so a round is replayed and tested from its files:
   activity   each table's inserts, updates, deletes since the statistics were reset, over activity_seconds (optional)
   observed   what the change log showed (flowthrough.measure): {"round": n, "tables": {table: {"events_per_s": r}}};
              a table's observed rate replaces the activity's (optional)
-  decisions  what a person chose: {"tables": {table: {role, silver, class, method, snapshot_by, own_table, history}},
+  decisions  what a person chose: {"tables": {table: {role, silver, class, method, snapshot_by, log, own_table,
+             history}},
              "policy": {Policy field: value}} (optional)
 
 The plan: {version, model, round, tables: {table: {role, silver, confidence, decided_by, why, keys, key, route}}}.
@@ -111,6 +112,10 @@ def classify(schema: dict, stats: dict | None = None, activity: dict | None = No
             if t["name"] in p["tables"]:
                 cols, kind = keys(t)
                 p["tables"][t["name"]].update(keys=cols, key=kind)
+    for n, c in ((decisions or {}).get("tables") or {}).items():   # a log a person chose: a split (lfc_change_source.producer)
+        r = p["tables"].get(n, {}).get("route")
+        if r is not None and c.get("log"):
+            r.update(log=c["log"], why="; ".join(x for x in (r.get("why"), f"log chosen: {c['log']}") if x))
     picked = {n: {k: c[k] for k in ("role", "silver", "cite") if k in c}
               for n, c in ((decisions or {}).get("tables") or {}).items() if c.get("role")}
     p["problems"] = review(p, picked, "decisions")
