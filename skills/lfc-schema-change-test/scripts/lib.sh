@@ -18,7 +18,7 @@
 #   errs_for <table>, needs_refresh <table>, q <sql>, claim, observe, result_md <title>
 #
 # FP_TABLES (space-separated destination tables) drives the integrated-CDC early stop. The EXIT trap stops the
-# pipelines and keeps them, the schemas and the source database for KEEP_DAYS days (default 7), recorded in $LFC_KEPT;
+# pipelines and keeps them, the schemas and the source database for KEEP_DAYS days (default 14), recorded in $LFC_KEPT;
 # kept-sweep.sh deletes them after that, or earlier on request. KEEP_DAYS=0 deletes at exit; KEEP=1 leaves everything
 # as it is (running) and unrecorded.
 export PATH=/opt/homebrew/bin:$PATH
@@ -334,7 +334,7 @@ settle_rows() {
 # so cleanup left those databases behind while reporting none left.
 src_owned() { [[ "${DB:-}" == *"_${E:-none}" ]] && echo 1 || echo 0; }
 LFC_KEPT=${LFC_KEPT:-$HOME/.local/state/lfc-tests/kept.jsonl}
-KEEP_DAYS=${KEEP_DAYS:-7}
+KEEP_DAYS=${KEEP_DAYS:-14}
 # A script's own resources besides AP, GW, S and STG (space-separated): kept and deleted with the run.
 #   EXTRA_PIPELINES="<id> ..."  EXTRA_SCHEMAS="<catalog>.<schema> ..."  EXTRA_SQL="<SQL run in $DB when the run is deleted>"
 EXTRA_PIPELINES=${EXTRA_PIPELINES:-}; EXTRA_SCHEMAS=${EXTRA_SCHEMAS:-}; EXTRA_SQL=${EXTRA_SQL:-}

@@ -118,4 +118,4 @@ The rules that make the comparison valid:
 
 ## Trade-offs
 
-- Kept runs (7 days by default): a result can be read back after the run, at the cost of a week of stopped pipelines, schemas and a source database. A kept PostgreSQL slot holds WAL on the source for that week; on a busy shared server use `KEEP_DAYS=0` or set `max_slot_wal_keep_size`.
+- Kept runs (14 days by default): a result can be read back after the run, at the cost of two weeks of stopped pipelines, schemas and a source database. A kept PostgreSQL slot holds WAL on the source for that week; on a busy shared server use `KEEP_DAYS=0` or set `max_slot_wal_keep_size`.
