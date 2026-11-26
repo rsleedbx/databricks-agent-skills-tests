@@ -97,5 +97,48 @@ class DebeziumProperties(unittest.TestCase):
             debezium_properties(PROPS.replace("debezium.source.slot.name=dbz_slot_1\n", ""), slot="x")
 
 
+class Debezium(unittest.TestCase):
+    """DebeziumServer's commands on a fake VM: its folder and properties, the container, waiting for streaming."""
+
+    def vm(self, logs):
+        seen = []
+
+        def run(cmd):
+            seen.append(cmd)
+            if cmd.startswith("cat "):
+                return PROPS
+            if " logs " in cmd:
+                return logs.pop(0) if logs else "Starting streaming"
+            return ""
+        return run, seen
+
+    def test_start_writes_its_properties_runs_and_waits_for_streaming(self):
+        run, seen = self.vm(["", "Starting streaming"])
+        d = producer.DebeziumServer(Spec("dbz2", "`c`.`s`.`cdc_log_b`", ("s.b",)), run, "/tmp/dbz", "/tmp/dbz/src1/application.properties",
+                                    "img:1", "net1", slot="dbz_slot_b", sleep=lambda s: None)
+        d.start()
+        written = next(c for c in seen if "LFC_PROPS" in c)
+        self.assertIn("/tmp/dbz/dbz2/application.properties", written)
+        self.assertIn("table.include.list=s.b\n", written)
+        self.assertIn("zerobus.table=c.s.cdc_log_b\n", written)
+        self.assertIn("slot.name=dbz_slot_b\n", written)
+        run_cmd = next(c for c in seen if " run -d " in c)
+        self.assertIn("--name dbz2 --network net1", run_cmd)
+        self.assertIn("/tmp/dbz/dbz2/data:/debezium/data:U img:1", run_cmd)
+        self.assertEqual(sum(" logs " in c for c in seen), 2)
+
+    def test_a_failed_engine_raises(self):
+        run, _ = self.vm(["Engine has failed"])
+        d = producer.DebeziumServer(Spec("dbz2", "c.s.l", ("s.b",)), run, "/h", "/t", "i", "n", sleep=lambda s: None)
+        with self.assertRaises(RuntimeError):
+            d.start()
+
+    def test_position_is_the_slot_s(self):
+        run, _ = self.vm([])
+        d = producer.DebeziumServer(Spec("dbz1", "c.s.l", ("s.a",)), run, "/h", "/t", "i", "n", slot="s1",
+                                    position_fn=lambda slot: f"0/AB for {slot}")
+        self.assertEqual(d.position(), "0/AB for s1")
+
+
 if __name__ == "__main__":
     unittest.main()

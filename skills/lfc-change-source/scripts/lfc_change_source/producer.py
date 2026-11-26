@@ -117,3 +117,57 @@ def debezium_properties(text: str, tables=None, log: str | None = None, slot: st
             raise ValueError(f"debezium_properties: no {key} line to replace")
         text = pat.sub(lambda _m, key=key, v=v: f"{key}={v}", text, count=1)
     return text
+
+
+class DebeziumServer:
+    """A Debezium Server in a container, as a Producer. Its folder <home>/<name> holds its application.properties
+    (the template's, retargeted to its tables, log and slot) and its data (the offsets): a restart under the same name
+    resumes from its offsets, a new name starts where its new slot does (make before break). run(command) runs a shell
+    command where the containers are (the VM) and returns its output; position_fn(slot) reads the source's position
+    for the slot (PostgreSQL: pg_replication_slots.confirmed_flush_lsn)."""
+
+    READY, FAILED = "Starting streaming", "Engine has failed"
+
+    def __init__(self, spec: Spec, run: Callable, home: str, template: str, image: str, network: str,
+                 slot: str | None = None, position_fn: Callable | None = None, podman: str = "sudo podman",
+                 wait_s: int = 300, sleep: Callable | None = None):
+        self.name, self.log, self.tables = spec.name, spec.log, tuple(spec.tables)
+        self.run, self.home, self.template, self.image, self.network = run, home, template, image, network
+        self.slot, self.position_fn, self.podman, self.wait_s = slot, position_fn, podman, wait_s
+        import time
+        self.sleep = sleep or time.sleep
+
+    @property
+    def folder(self) -> str:
+        return f"{self.home}/{self.name}"
+
+    def properties(self) -> str:
+        return debezium_properties(self.run(f"cat {self.template}"), tables=self.tables, log=self.log, slot=self.slot)
+
+    def start(self) -> None:
+        import shlex
+        text = self.properties()
+        f = self.folder
+        self.run(f"umask 077; mkdir -p {f}/data && cat > {f}/application.properties <<'LFC_PROPS'\n{text}LFC_PROPS")
+        self.run(f"{self.podman} rm -f --ignore {shlex.quote(self.name)} >/dev/null")
+        self.run(f"{self.podman} run -d --name {shlex.quote(self.name)} --network {self.network} "
+                 f"-v {f}/application.properties:/debezium/config/application.properties:ro,U "
+                 f"-v {f}/data:/debezium/data:U {self.image} >/dev/null")
+        for _ in range(max(1, self.wait_s // 5)):
+            logs = self.run(f"{self.podman} logs {shlex.quote(self.name)} 2>&1 | grep -o -E "
+                            f"'{self.READY}|{self.FAILED}' | tail -1 || true").strip()
+            if logs == self.READY:
+                return
+            if logs == self.FAILED:
+                raise RuntimeError(f"{self.name}: {self.FAILED}")
+            self.sleep(5)
+        raise TimeoutError(f"{self.name}: not streaming after {self.wait_s} s")
+
+    def stop(self) -> None:
+        import shlex
+        self.run(f"{self.podman} stop -t 60 {shlex.quote(self.name)} >/dev/null")   # its offsets flushed on the way down
+
+    def position(self) -> str:
+        if self.position_fn is None:
+            raise ValueError(f"{self.name}: no position_fn")
+        return self.position_fn(self.slot)
