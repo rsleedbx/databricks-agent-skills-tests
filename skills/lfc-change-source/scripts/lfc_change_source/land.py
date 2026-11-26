@@ -89,11 +89,19 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
     each row's key filled in (silver's shared groups need it)."""
     where = ""
     if only:
-        where = f" WHERE {GATEWAY_DESTINATION} IN ({', '.join(_lit(t) for t in only)})"
+        where = f" WHERE lower({GATEWAY_DESTINATION}) IN ({', '.join(_lit(t.lower()) for t in only)})"   # any spelling
     elif skip:
-        where = f" WHERE {GATEWAY_DESTINATION} NOT IN ({', '.join(_lit(t) for t in skip)})"
+        where = f" WHERE lower({GATEWAY_DESTINATION}) NOT IN ({', '.join(_lit(t.lower()) for t in skip)})"
     return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql(keys), name, f"{root}/cdc/",
                  "*/*", where)
+
+
+def gateway_keyed(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None) -> int | None:
+    """gateway() with each table's keys from the gateway's own schema files, into a log made if missing: what a
+    producer lands each round. The rows added."""
+    from . import gateway_staging
+    ensure_log(session, log)
+    return gateway(session, root, log, name, only, skip, keys=gateway_keys(gateway_staging.schemas(session, root)))
 
 
 def changefeed(session, root: str, log: str, destination: str, keys: list[str], name: str) -> int | None:
@@ -131,8 +139,15 @@ def _inserted(rows, field: str = "num_inserted_rows") -> int | None:
 def _copy(session, log: str, destination: str, operation: str, key: str, name: str, src: str, pattern: str,
           where: str = ""):
     """One COPY INTO of a transport's JSON files into the log, each event as it is (VARIANT): the rows added."""
+    cols = (f"{destination} AS destination, {operation} AS operation, {key} AS key, event AS value, "
+            f"{_lit(name)} AS gateway, _metadata.file_path AS file")
+    if where:   # COPY INTO takes no WHERE: a filtered landing reads the files itself, skipping the ones it landed
+        rows = session.sql(
+            f"INSERT INTO {log} SELECT {cols} FROM read_files('{src}{pattern}', format => 'json', "
+            f"singleVariantColumn => 'event'){where} AND _metadata.file_path NOT IN "
+            f"(SELECT DISTINCT file FROM {log} WHERE gateway = {_lit(name)} AND file IS NOT NULL)").collect()
+        return _inserted(rows)
     rows = session.sql(
-        f"COPY INTO {log} FROM (SELECT {destination} AS destination, {operation} AS operation, {key} AS key, "
-        f"event AS value, {_lit(name)} AS gateway, _metadata.file_path AS file FROM '{src}'{where}) "
+        f"COPY INTO {log} FROM (SELECT {cols} FROM '{src}') "
         f"FILEFORMAT = JSON PATTERN = '{pattern}' FORMAT_OPTIONS ('singleVariantColumn' = 'event')").collect()
     return _inserted(rows)

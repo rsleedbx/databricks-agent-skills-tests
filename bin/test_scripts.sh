@@ -165,6 +165,17 @@ check "lfc_medallion evidence: bronze keys, history after the snapshot, inferred
 for m in tpch tpcb tpcdi; do   # the rules moved into lfc_medallion.roles: classify.py still gets every role in these right
   check "classify.py $m: every role as the schema's role: says" uv run -q "$SK/cdc-table-plan/scripts/classify.py" "$SK/lfc-source-statschema/schemas/$m.yaml" --truth schema
 done
+check "lfc_introspection: schema.yaml and stats.yaml from the catalog (three statements, types per engine, keys, sizes; fake session)" uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q "$SK/lfc-introspection/tests/test_introspect.py"
+check "lfc_introspection history: on demand, kept by run (rows, changes between runs, pending requests, a failed run recorded; fake session)" python3 -m unittest -q "$SK/lfc-introspection/tests/test_history.py"
+check "statschema canonical.convert: a collector's raw document as to-canonical.py wrote it" uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q "$SK/lfc-source-statschema/tests/test_canonical.py"
+check "lfc_change_source moved: a moved table read as its old log up to the cut and its new one after it (the overlap once)" python3 -m unittest -q "$SK/lfc-change-source/tests/test_moved.py"
+check "lfc_change_source producer: a split make before break (steps, order, the cut, refusals), Debezium properties retargeted" python3 -m unittest -q "$SK/lfc-change-source/tests/test_producer.py"
+check "lfc_routing shapes: repeating tables grouped by shape (1,000 tenants: 2 groups, a variant, rows summed, classify once a group)" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/lfc-routing/tests/test_shapes.py"
+check "lfc_routing snapshots: the provisional snapshot's tables (small, with statistics) and step 7's keep or take" python3 -m unittest -q "$SK/lfc-routing/tests/test_snapshots.py"
+check "lfc_routing rounds: a classify round from the tables (latest introspection, the log against the last round, an override, groups; fake session)" uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q "$SK/lfc-routing/tests/test_rounds.py"
+check "lfc_routing ingest: a plan carried out through a landing producer (logs, snapshots recorded, keep or take, resnapshot; fakes)" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/lfc-routing/tests/test_ingest.py"
+check "lfc_log_silver planned: cursor families, a group a log and family, upto below each log's newest, a round a family (fakes)" python3 -m unittest -q "$SK/lfc-log-silver/tests/test_planned.py"
+check "lfc_routing classify: the plan from files (keys, observed over activity, decisions, round, the routing tables' rows)" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/lfc-routing/tests/test_classify.py"
 check "classify.py never reads role: (TPC-E's plan is the same without it); --truth schema scores against it" uv run -q --no-project --with pyyaml python -m unittest -q "$SK/cdc-table-plan/tests/test_classify.py"
 check "lfc_medallion: sources and tables found, one n:1 view per table, a table some sources lack (fake spark)" python3 -m unittest -q "$SK/lfc-medallion/tests/test_stack.py"
 check "lfc_medallion_pack: 20-70-10 tiers, pipelines within the table limit, render, the TPC-B marts against the model, timings and predict" \

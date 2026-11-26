@@ -79,13 +79,14 @@ def _drop(session, schema: str, names: list, kind: str) -> None:
 
 def measure(session, schema: str, sources: dict, now: float | None = None) -> tuple:
     """(now, the last round's state, each table's events in its log, each table's events a second since the last
-    round): the first round has no rate yet (0)."""
+    round): the first round has no rate yet (0). observed() is the same as a document."""
     ensure_state(session, schema)
     now = now or time.time()
     prev = load(session, schema)
     got = counts(session, sources)
-    rates = {n: max(0, got.get(n, 0) - prev[n][1]) / max(now - prev[n][2], 1e-9) if n in prev else 0.0
-             for n in sources}
+    from lfc_routing.rounds import observed   # routing's input, built from flowthrough's counts
+    doc = observed(prev, {n: got.get(n, 0) for n in sources}, now, {n: s.fq for n, s in sources.items()})
+    rates = {n: doc["tables"][n]["events_per_s"] if n in prev else 0.0 for n in sources}
     return now, prev, got, rates
 
 

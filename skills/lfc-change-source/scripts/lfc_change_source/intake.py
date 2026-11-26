@@ -11,6 +11,9 @@ text decoding, no folder listing. One function a kind of arrival; each returns {
                               lfc_change_source.debezium): an export in a Volume, a changefeed's initial scan
   gateway(staging, ...)       a gateway's snapshot in its staging (columns by id) copied once into a table by name,
                               with its position (the gateway's cursor at the snapshot: changes after it apply)
+  jdbc(spark, connection, ...) our own read of a source table through a Unity Catalog JDBC connection (Spark's jdbc
+                              source; the connection holds the login), after the source's position is read the same
+                              way: the routing's provisional snapshot of a small table, kept as its real one
 
 Every function takes a session with .sql() (a SQL warehouse: engine.Warehouse, or Spark) and runs once a snapshot.
 A column is {"name", "type" (Databricks SQL), "kind" (a debezium.TEMPORAL kind or None), "precision"}.
@@ -114,3 +117,24 @@ def gateway(session, staging, target: str) -> dict:
     session.sql(f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({staging.snapshot_sql()})").collect()
     # its position: the gateway's cursor the snapshot was taken at; its changes are the log's after it
     return {**_done(session, target, t0, "gateway snapshot copied"), "position": staging.snapshot_position(session)}
+
+
+# the source's position now, as a change log's position kind reads it (cdc_log SEQUENCES): read just before a jdbc()
+# snapshot, so the log's changes at or after it apply over the snapshot
+POSITION_NOW = {"lsn": "SELECT (pg_current_wal_lsn() - '0/0'::pg_lsn)::BIGINT AS p"}
+
+
+def jdbc(spark, connection: str, source_table: str, target: str, kind: str = "lsn", options: dict | None = None) -> dict:
+    """A source table read through the UC JDBC `connection` into `target` (replaced), with the source's position of
+    `kind` read through it just before (POSITION_NOW). source_table: as the source names it (schema.table);
+    options: more of Spark's jdbc options the connection allows (numPartitions, ...)."""
+    if kind not in POSITION_NOW:
+        raise ValueError(f"intake.jdbc: no position query for {kind!r} yet ({', '.join(POSITION_NOW)})")
+    t0, target = time.time(), quoted(target)
+    rd = lambda: spark.read.format("jdbc").option("databricks.connection", connection)  # noqa: E731
+    pos = rd().option("query", POSITION_NOW[kind]).load().collect()[0][0]
+    df = rd().option("dbtable", source_table)
+    for k, v in (options or {}).items():
+        df = df.option(k, v)
+    df.load().write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(target)
+    return {**_done(spark, target, t0, f"jdbc read of {source_table}"), "position": {"kind": kind, "value": str(pos)}}

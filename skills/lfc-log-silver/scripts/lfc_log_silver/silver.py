@@ -54,10 +54,10 @@ class Table:
     group: str = ""                      # shared: its group (routing.Route.group)
     history: bool = False                # every version kept too, in <name>_history (history.py)
 
-    def current_sql(self) -> str:
-        # silver's one rule: the snapshot table and the log's changes after it
+    def current_sql(self, to=None) -> str:
+        # silver's one rule: the snapshot table and the log's changes after it (up to `to`)
         from .combine import current_sql
-        return current_sql(self.src, self.snapshot_sql, self.position)
+        return current_sql(self.src, self.snapshot_sql, self.position, to)
 
     @property
     def snapshot_sql(self) -> str | None:
@@ -67,11 +67,18 @@ class Table:
 def method_of(src, silver_name: str) -> tuple:
     """(method, only_changed) for a route's silver name; a keyless table's is always append, its rows appended
     (the one place that decides it)."""
-    return FROM_ROUTE[silver_name] if src.keys else ("append", False)
+    if not src.keys:
+        return "append", False
+    method, only = FROM_ROUTE[silver_name]
+    if method == "shared" and not getattr(src, "shareable", True):   # a moved table reads two logs; a group scans one
+        return "merge", False
+    return method, only
 
 
 def from_route(src, route, snapshot_table=None, position=None) -> Table:
-    """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
+    """A Table from a routing.Route: its silver name as a method here (shared: in its route's group). A moved table
+    (two logs) routed shared is kept by MERGE instead (method_of, the same on every path); flowthrough doesn't build
+    moved tables (lfc_log_silver.planned does)."""
     method, only = method_of(src, route.silver)
     return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "",
                  bool(getattr(route, "history", False)) and bool(src.keys))
@@ -134,9 +141,11 @@ def view_sql(t: Table, target: str) -> str:
     return f"CREATE OR REPLACE VIEW {target} AS SELECT {cols} FROM ({t.current_sql()})"
 
 
-def build_sql(t: Table, target: str) -> str:
+def build_sql(t: Table, target: str, to=None) -> str:
+    """A merge table built from its current rows up to `to` (the position it is then kept at: a change after it is
+    the next round's)."""
     cols = ", ".join(_q(c) for c in t.src.columns)
-    return f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({t.current_sql()})"
+    return f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({t.current_sql(to)})"
 
 
 def _typed_snapshot(t: Table) -> str:
@@ -221,7 +230,7 @@ def build(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
     """Each table built from its current rows, kept at `to` (read before the builds: a change after it is applied
     again by the next apply, the same result for SCD type 1). {name: (None, seconds)}."""
     ensure_state(session, schema)
-    done = _each(session, {n: build_sql(t, _target(schema, n)) for n, t in tables.items()}, threads)
+    done = _each(session, {n: build_sql(t, _target(schema, n), to) for n, t in tables.items()}, threads)
     _save(session, schema, [(n, to.kind, to.value, 0, s, tables[n].snapshot_table) for n, (_, s) in done.items()])
     return done
 
@@ -300,7 +309,7 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_sch
     def after(n):
         kind, pos = kept.get(n, (to.kind, None))
         return Position(kind, pos) if pos is not None else None
-    stmts = {n: build_sql(tables[n], _target(schema, n)) for n in redo}
+    stmts = {n: build_sql(tables[n], _target(schema, n), to) for n in redo}
     stmts.update({n: merge_sql(t.src, _target(schema, n), after(n), to) for n, t in todo.items() if n not in redo})
     done = _each(session, stmts, threads)
     _save(session, schema, [(n, to.kind, to.value, r, s, tables[n].snapshot_table) for n, (r, s) in done.items()])

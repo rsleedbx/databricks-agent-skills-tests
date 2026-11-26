@@ -1,0 +1,62 @@
+version: '1.0'
+tables:
+- name: customer
+  row_count: 1000
+  columns:
+  - name: id
+    type: integer
+    not_null: true
+    native_type: integer
+    primary_key: true
+  - name: email
+    type: string
+    length: 80
+    not_null: false
+    native_type: character varying(80)
+    unique: true
+  - name: name
+    type: string
+    not_null: false
+    native_type: text
+    default: '''x'''
+  - name: total
+    type: decimal
+    precision: 12
+    scale: 2
+    not_null: false
+    native_type: numeric(12,2)
+    generated: stored
+  description: people
+- name: orders
+  row_count: 5000
+  columns:
+  - name: oid
+    type: long
+    not_null: true
+    native_type: bigint
+    primary_key: true
+  - name: cust
+    type: integer
+    not_null: false
+    native_type: integer
+  - name: at
+    type: timestamp
+    not_null: false
+    native_type: timestamp(3) without time zone
+  fk_constraints:
+  - columns:
+    - cust
+    parent_table: customer
+    parent_columns:
+    - id
+    fk_distribution: uniform
+    on_delete: CASCADE
+  load_after:
+  - customer
+- name: audit_log
+  row_count: 7
+  columns:
+  - name: msg
+    type: string
+    not_null: false
+    native_type: text

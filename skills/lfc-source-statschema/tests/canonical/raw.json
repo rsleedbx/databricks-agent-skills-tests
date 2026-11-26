@@ -1,0 +1,12 @@
+{"source_dialect": "postgres", "values": "none", "tables": [
+ {"name": "customer", "primary_key": ["id"], "row_count": 1000, "size_bytes": 81920, "comment": "people",
+  "unique": [["email"]], "indexes": [["name"]],
+  "columns": [{"name": "id", "data_type": "integer", "nullable": false, "n_distinct": -1, "avg_width_bytes": 4},
+              {"name": "email", "data_type": "character varying(80)", "nullable": true, "null_fraction": 0.1, "n_distinct": -0.9},
+              {"name": "name", "data_type": "text", "default": "'x'", "most_common_values": [{"value": "a", "frequency": 0.45}], "null_fraction": 0.1},
+              {"name": "total", "data_type": "numeric(12,2)", "generated": "stored"}]},
+ {"name": "orders", "primary_key": ["oid"], "row_count": 5000,
+  "columns": [{"name": "oid", "data_type": "bigint", "nullable": false}, {"name": "cust", "data_type": "integer", "n_distinct": 800},
+              {"name": "at", "data_type": "timestamp(3) without time zone"}],
+  "foreign_keys": [{"columns": ["cust"], "ref_table": "customer", "ref_columns": ["id"], "on_delete": "CASCADE", "on_update": "NO ACTION"}]},
+ {"name": "audit_log", "row_count": 7, "columns": [{"name": "msg", "data_type": "text"}]}]}

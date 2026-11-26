@@ -1,0 +1,18 @@
+resources:
+  jobs:
+    provisional_snapshot_job:
+      name: lfc-provisional-snapshot-${var.source}
+      tasks:
+        - task_key: provisional_snapshot
+          notebook_task:
+            notebook_path: ../notebooks/provisional_snapshot.py
+            base_parameters:
+              jdbc_connection: ${var.jdbc_connection}
+              source: ${var.source}
+              routing_schema: ${var.routing_schema}
+              target_schema: ${var.target_schema}
+              position_kind: ${var.position_kind}
+              tables: ${var.tables}
+              max_bytes: ${var.max_bytes}
+              tests_repo_archive: ${var.tests_repo_archive}
+      max_concurrent_runs: 1

@@ -1,0 +1,30 @@
+# Introspection on demand as a bundle: a job that runs notebooks/run_requests.py whenever introspection_request
+# changes (a table update trigger), so a person asks for a run by adding a row (from the dashboard's editable table).
+# The first deploy needs the table to exist: run the job once (it creates the tables), then the trigger watches it.
+#   databricks bundle deploy -p <profile> --var catalog=<c> --var schema=<s>
+#   databricks bundle run introspection_job -p <profile>
+# After a deploy, run each triggered job once by hand: a table update trigger didn't fire for a change made before
+# the job's first run (2026-11-26: a routing_iteration row waited 20 minutes; after one run by hand, the next fired in
+# 106 s).
+bundle:
+  name: lfc_introspection
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: catalog of the introspection tables (introspection_request, _runs, _schema, _stats)
+  schema:
+    description: schema of the introspection tables
+  min_seconds_between_runs:
+    description: the trigger's wait after a run before it runs again
+    default: 60
+  tests_repo_archive:
+    description: where pip installs lfc-source-statschema and lfc-introspection from
+    default: https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip
+
+targets:
+  dev:
+    mode: development
+    default: true

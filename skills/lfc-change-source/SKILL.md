@@ -55,6 +55,17 @@ which is what grows with the sources (lfc-medallion's `references/performance-re
 
 FlowThrough's six layers (routing, CDC, snapshot, silver, n:1, gold): [docs/design.md](../../docs/design.md).
 
+## Restarting a producer: a log split
+
+[producer.py](scripts/lfc_change_source/producer.py) restarts what writes a log the same way for every transport
+(`position`, `stop`, `start`), and moves tables to a log of their own make before break: the new producer first, until
+a change of theirs lands in the new log, then the old one restarted without them. The logs overlap (never a gap); a
+moved table's cut is its last position in the old log once the old producer has stopped (a slot's
+`confirmed_flush_lsn` can trail the last event sent). `DebeziumServer` is the Debezium Server adapter (its folder, its
+properties retargeted from a template, its offsets kept, its own slot); `zerobus_log_sql` makes a new log and grants
+its service principal. Live: [tests/live_split.py](tests/live_split.py) on a kept PostgreSQL run (2026-11-26: every
+check passes).
+
 ## Conformance: an adapter is done when this passes
 
 [conformance.py](scripts/lfc_change_source/conformance.py) holds one scenario as data:

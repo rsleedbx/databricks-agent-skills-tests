@@ -179,7 +179,7 @@ def suggest(tables: dict, policy: Policy) -> dict:
         speed = route.cls.split("_")[1]
         out[t] = {"class": f"auto_{speed}" if unknown else route.cls, "snapshot_by": route.snapshot_by,
                   "log": "own" if route.log != policy.shared_log else "shared", "shards": route.shards,
-                  "silver": route.silver if not unknown or route.silver == "shared" else
+                  "silver": route.silver if not unknown or route.silver == "shared" or t in policy.silver_chosen else
                   ("merge_round" if speed == "fast" else "view"), "group": route.group, "why": "; ".join(why)}
     return out
 

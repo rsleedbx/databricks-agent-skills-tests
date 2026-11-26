@@ -19,7 +19,8 @@ class GatewayLog(CdcLog):
 
     def stored_key_values(self, col: str = "k") -> dict:
         """The key land.gateway_key_sql filled in: a JSON array of each key column's value as text, in key order."""
-        return {c: f"parse_json({col})[{i}]::{self.columns[c]}" for i, c in enumerate(self.keys)}
+        # variant_get: a VARIANT's array element by path (parse_json(k)[i] is refused on a VARIANT in SQL)
+        return {c: f"variant_get(parse_json({col}), '$[{i}]', '{self.columns[c]}')" for i, c in enumerate(self.keys)}
 
 
 def from_gateway(name: str, log: str, entry: dict, destination: str) -> "GatewayLog":

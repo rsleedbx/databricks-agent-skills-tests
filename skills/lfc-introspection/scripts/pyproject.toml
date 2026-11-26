@@ -1,0 +1,16 @@
+[project]
+name = "lfc-introspection"
+version = "0.1.0"
+description = "A source database's schema.yaml and stats.yaml from its catalog through a Unity Catalog connection, on demand, kept by run"
+requires-python = ">=3.10"
+dependencies = ["lfc-source-statschema"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["lfc_introspection"]
+
+[tool.setuptools.package-data]
+lfc_introspection = ["sql/*.sql", "sql/size/*.sql"]

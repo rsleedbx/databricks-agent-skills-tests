@@ -3,7 +3,6 @@
 # bin/check_layers.py fails on any disallowed reference that has no line here, and on a line here that matches no
 # reference (delete it when the reference goes). The baseline only shrinks; docs/layers.md lists the main ones and why.
 account-token-fallback -> bin/run_matrix.sh: skills/account-token-fallback/SKILL.md:bin/run_matrix.sh
-cdc-table-plan -> lfc-source-statschema: skills/cdc-table-plan/SKILL.md:lfc-source-statschema/scripts/collect-activity-mysql.sql
 lfc-schema-change-test -> lfc-source-cloud-vm: skills/lfc-schema-change-test/SKILL.md:lfc-source-cloud-vm/scripts/add-mssql-container.sh
 lfc-source-aws-aurora -> lfc-source-setup: skills/lfc-source-aws-aurora/SKILL.md:lfc-source-setup/references/engine-mysql.md
 lfc-source-aws-aurora -> lfc-source-setup: skills/lfc-source-aws-aurora/SKILL.md:lfc-source-setup/references/engine-postgres.md
@@ -32,10 +31,6 @@ skill-token-budget -> bin/lint_scripts.py: .claude/skills/skill-token-budget/SKI
 skill-token-budget -> bin/scripts_index.py: .claude/skills/skill-token-budget/SKILL.md:bin/scripts_index.py
 skill-token-budget -> bin/test_scripts.sh: .claude/skills/skill-token-budget/SKILL.md:bin/test_scripts.sh
 zerobus-debezium-test -> lfc-source-cloud-vm: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-cloud-vm/scripts/cloud-links.sh
-zerobus-debezium-test -> lfc-source-datagen: skills/zerobus-debezium-test/scripts/debezium-zerobus.sh:lfc-source-datagen/scripts
-zerobus-debezium-test -> lfc-source-datagen: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-datagen
 zerobus-debezium-test -> lfc-source-podman: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-podman
 zerobus-debezium-test -> lfc-source-podman: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-podman/scripts/ensure-lima-podman.sh
 zerobus-debezium-test -> lfc-source-podman: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-podman/scripts/ensure-podman-socket.sh
-zerobus-debezium-test -> lfc-source-statschema: skills/zerobus-debezium-test/scripts/debezium-zerobus.sh:lfc-source-statschema/scripts
-zerobus-debezium-test -> lfc-source-statschema: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-statschema
