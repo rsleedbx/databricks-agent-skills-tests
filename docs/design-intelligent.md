@@ -6,6 +6,25 @@ its snapshot method (snapshot), its silver cell (view, shared group, MERGE, AUTO
 (from the schema events in the log: [design-no-full-refresh.md](design-no-full-refresh.md)), and when it's
 checkpointed. The layers carry each decision out; none of them decides it.
 
+## The steps
+
+| # | Step | Runs |
+|---|---|---|
+| 1 | **Introspect**: the source's schema and statistics | first, and again on demand from the dashboard |
+| 2 | **Provisional CDC**: every table into one log, to observe | after 1; again when the plan changes |
+| 3 | **Provisional snapshot**: what the classification needs of the rows | after 2 |
+| 4 | **Classify**: the plan from 1 to 3, the observed log and the decisions | every round |
+| 5 | **A person confirms** the plan in the dashboard (or changes it, and 2 to 4 run again) | when asked |
+| 6 | **Real CDC**: the logs, splits and producers the plan says | after 5 |
+| 7 | **Real snapshot**: each table by the method the plan says | after 6 (its CDC started first) |
+| 8, 9, 10 | **Silver, n:1, gold** | from 6 and 7 |
+
+Steps 2 to 5 are a loop: a start, a restart, a change in the data or a change of mind goes round it again. Each
+step a person starts is a row in a table a job watches (a table update trigger): `introspection_request` runs 1,
+`routing_iteration` runs 4, `ingestion_start` runs 6 and 7. Nothing is overwritten: each introspection is a run in
+`introspection_schema` and `introspection_stats`, and each plan a round in `routing_plan` that names the introspection
+run it came from, so the dashboard shows how the source and the plan changed over time.
+
 ## Two boxes: introspect, then classify
 
 Routing is two boxes with files between them, so each one runs, fails and is tested on its own:
