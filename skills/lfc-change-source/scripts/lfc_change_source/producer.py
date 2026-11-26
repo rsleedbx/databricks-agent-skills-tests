@@ -132,11 +132,15 @@ class DebeziumServer:
 
     def __init__(self, spec: Spec, run: Callable, home: str, template: str, image: str, network: str,
                  slot: str | None = None, position_fn: Callable | None = None, podman: str = "sudo podman",
-                 wait_s: int = 300, sleep: Callable | None = None, folder: str | None = None):
+                 wait_s: int = 300, sleep: Callable | None = None, folder: str | None = None,
+                 prepare: Callable | None = None):
         self.name, self.log, self.tables = spec.name, spec.log, tuple(spec.tables)
         self.run, self.home, self.template, self.image, self.network = run, home, template, image, network
         self.slot, self.position_fn, self.podman, self.wait_s = slot, position_fn, podman, wait_s
         self._folder = folder   # a server made before this module (its own folder, its offsets in it)
+        # prepare(tables): the source made ready for them before each start (PostgreSQL: its publication has them,
+        # lfc_source_contract.cdc.publication; a table added later isn't in a FOR TABLE publication otherwise)
+        self.prepare = prepare
         import time
         self.sleep = sleep or time.sleep
 
@@ -150,6 +154,8 @@ class DebeziumServer:
     def start(self) -> None:
         import shlex
         text = self.properties()
+        if self.prepare:
+            self.prepare(self.tables)
         f = self.folder
         self.run(f"umask 077; mkdir -p {f}/data && cat > {f}/application.properties <<'LFC_PROPS'\n{text}LFC_PROPS")
         self.run(f"{self.podman} rm -f --ignore {shlex.quote(self.name)} >/dev/null")
@@ -185,3 +191,38 @@ def zerobus_log_sql(fq: str, principal: str) -> list:
             "source_position VARIANT, headers VARIANT) CLUSTER BY (destination) "
             "COMMENT 'Append-only change log: one Debezium envelope per source change'",
             f"GRANT SELECT, MODIFY ON TABLE {fq} TO `{principal}`"]
+
+
+def reconcile(running: Spec | None, want: list, name: str, log: str) -> dict:
+    """What a producer must do to carry `want` into `log`: {"action": start (none running), restart (its tables
+    differ: the added ones' changes start from the restart, their rows come from a snapshot), or none; "spec": the
+    Spec to start; "added", "dropped"}. A restart under the same name resumes from its offsets."""
+    want = tuple(sorted(set(want)))
+    if not want:
+        raise ValueError("reconcile: no tables")
+    if running is None:
+        return {"action": "start", "spec": Spec(name, log, want), "added": want, "dropped": ()}
+    have = set(running.tables)
+    added, dropped = tuple(sorted(set(want) - have)), tuple(sorted(have - set(want)))
+    if not added and not dropped and running.log == log:
+        return {"action": "none", "spec": running, "added": (), "dropped": ()}
+    return {"action": "restart", "spec": Spec(running.name, log, want), "added": added, "dropped": dropped}
+
+
+def ssh_run(host: str, key: str, user: str = "azureuser", tries: int = 3) -> Callable:
+    """A run(command) for the adapters: a shell command as root on `host` over ssh, sent on stdin (no quoting through
+    ssh), retried when the connection fails (ssh's exit 255) before it ran; its output, or RuntimeError."""
+    import subprocess
+    import time
+
+    def run(cmd: str) -> str:
+        for i in range(tries):
+            p = subprocess.run(["ssh", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "-i", key, f"{user}@{host}",
+                                "sudo bash -s"], input=cmd, text=True, capture_output=True)
+            if p.returncode != 255:
+                break
+            time.sleep(5 * (i + 1))
+        if p.returncode:
+            raise RuntimeError(f"ssh_run: {cmd[:80]}: {p.stderr.strip()[:300]}")
+        return p.stdout
+    return run

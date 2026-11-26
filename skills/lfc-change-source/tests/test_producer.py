@@ -127,6 +127,15 @@ class Debezium(unittest.TestCase):
         self.assertIn("/tmp/dbz/dbz2/data:/debezium/data:U img:1", run_cmd)
         self.assertEqual(sum(" logs " in c for c in seen), 2)
 
+    def test_prepare_runs_before_the_container(self):
+        run, seen = self.vm([])
+        got = []
+        d = producer.DebeziumServer(Spec("dbz2", "c.s.l", ("s.b",)), run, "/h", "/t", "i", "n", sleep=lambda s: None,
+                                    prepare=lambda tables: got.append((tables, len(seen))))
+        d.start()
+        self.assertEqual(got[0][0], ("s.b",))
+        self.assertLess(got[0][1], next(i for i, c in enumerate(seen) if " run -d " in c))
+
     def test_a_failed_engine_raises(self):
         run, _ = self.vm(["Engine has failed"])
         d = producer.DebeziumServer(Spec("dbz2", "c.s.l", ("s.b",)), run, "/h", "/t", "i", "n", sleep=lambda s: None)
@@ -138,6 +147,19 @@ class Debezium(unittest.TestCase):
         d = producer.DebeziumServer(Spec("dbz1", "c.s.l", ("s.a",)), run, "/h", "/t", "i", "n", slot="s1",
                                     position_fn=lambda slot: f"0/AB for {slot}")
         self.assertEqual(d.position(), "0/AB for s1")
+
+
+class Reconcile(unittest.TestCase):
+    def test_start_restart_none(self):
+        r = producer.reconcile(None, ["s.b", "s.a"], "dbz1", "c.s.l")
+        self.assertEqual((r["action"], r["spec"].tables), ("start", ("s.a", "s.b")))
+        run = Spec("dbz1", "c.s.l", ("s.a", "s.b"))
+        self.assertEqual(producer.reconcile(run, ["s.a", "s.b"], "dbz1", "c.s.l")["action"], "none")
+        r = producer.reconcile(run, ["s.a", "s.c"], "dbz1", "c.s.l")
+        self.assertEqual((r["action"], r["added"], r["dropped"], r["spec"].name), ("restart", ("s.c",), ("s.b",), "dbz1"))
+        self.assertEqual(producer.reconcile(run, ["s.a", "s.b"], "dbz1", "c.s.l2")["action"], "restart")   # a new log
+        with self.assertRaises(ValueError):
+            producer.reconcile(run, [], "dbz1", "c.s.l")
 
 
 if __name__ == "__main__":

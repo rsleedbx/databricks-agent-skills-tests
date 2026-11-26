@@ -8,7 +8,6 @@ the overlap holds no gap. Both servers are stopped at the end (the run is kept).
     PROFILE=<p> WAREHOUSE=<id> CATALOG=<c> VM_IP=<ip> SSH_KEY=<key> RUN=<run id> [TABLE=orders] python3 -I live_split.py
 """
 import os
-import subprocess
 import sys
 import time
 
@@ -29,18 +28,7 @@ wh = Warehouse(os.environ["WAREHOUSE"], WorkspaceClient(profile=os.environ["PROF
 q = lambda s: wh.sql(s).collect()  # noqa: E731
 
 
-def vm(cmd: str) -> str:
-    """A shell command on the VM as root, through stdin (no quoting through ssh), retried on a connection failure."""
-    for i in range(3):
-        p = subprocess.run(["ssh", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "-i", os.environ["SSH_KEY"],
-                            f"azureuser@{os.environ['VM_IP']}", "sudo bash -s"], input=cmd, text=True,
-                           capture_output=True)
-        if p.returncode != 255:
-            break
-        time.sleep(5 * (i + 1))
-    if p.returncode:
-        raise RuntimeError(f"vm: {cmd[:80]}: {p.stderr.strip()[:300]}")
-    return p.stdout
+vm = producer.ssh_run(os.environ["VM_IP"], os.environ["SSH_KEY"])   # a shell command on the VM as root
 
 
 def psql(sql: str) -> str:
