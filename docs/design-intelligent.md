@@ -6,6 +6,26 @@ its snapshot method (snapshot), its silver cell (view, shared group, MERGE, AUTO
 (from the schema events in the log: [design-no-full-refresh.md](design-no-full-refresh.md)), and when it's
 checkpointed. The layers carry each decision out; none of them decides it.
 
+## Two boxes: introspect, then classify
+
+Routing is two boxes with files between them, so each one runs, fails and is tested on its own:
+
+| Box | Inputs | Outputs | Runs |
+|---|---|---|---|
+| **Introspect** | the source database (a read-only login) | `schema` (tables, columns, keys, foreign keys) and `stats` (rows, bytes, inserts, updates and deletes over a known time) | once, before change capture starts; again when asked |
+| **Classify** | `schema`, `stats`, `observed` (each table's events counted in its change log, by round), `decisions` (what a person chose) | `plan`: each table's role, class, change log and shards, snapshot method and silver cell, with why | every round |
+
+Between the two, the change capture starts, every table into one change log. Classify then runs in a loop: round n
+reads what the log shows and what a person decided since round n-1, and writes plan n. The layers below carry out
+plan n; nothing below decides. A plan is a file, so a round can be replayed from its inputs and two plans compared.
+
+**A log can be split while it runs.** A change log is append-only, so a split never rewrites one: the plan names a
+new log for some tables, the producer (a gateway, a Debezium Server) is stopped and started again from its last
+position, sending those tables to the new log and the rest to the old one, and silver reads each table from its log
+after that position. This works after the snapshot has started too, as long as the change capture started before it:
+the position the snapshot is combined from is still in a log. A person can ask for a split (`decisions`), or the plan
+can propose one when a table's rate outgrows its log.
+
 **The plan, before anything is captured.** Routing reads, for every source:
 1. the schema: tables, keys, foreign keys (each table's role, below);
 2. the statistics: rows, bytes, and inserts, updates and deletes over a known time;
