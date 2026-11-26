@@ -81,30 +81,29 @@ def backfill_keys(session, log: str, name: str, keys: dict) -> int | None:
     return _inserted(rows, "num_affected_rows")
 
 
-def gateway(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None,
-            keys: dict | None = None) -> int | None:
-    """The gateway's change files not landed before into the log; the rows added. only / skip: the tables
-    (<catalog>.<schema>.<table>) whose events go to this log, or don't: one gateway's events split between logs (a
-    big_fast table's own log, lfc-routing), each log landing whole files with its own filter: listed with LIST and
-    read once a log (a ledger, <log>__scanned, of the files it scanned). keys (gateway_keys):
-    each row's key filled in (silver's shared groups need it)."""
-    if skip and not only:   # every table but these, as a list (gateway_tables): a new table too
-        out = {t.lower() for t in skip}
-        only = [d for d in gateway_tables(session, root, log, name) if d.lower() not in out]
-        if not only:
-            return 0
+def gateway(session, root: str, log: str, name: str, only: list | None = None, keys: dict | None = None) -> int | None:
+    """The gateway's change files not landed before into the log; the rows added. only: the tables
+    (<catalog>.<schema>.<table>, any spelling) whose events go to this log: one gateway's events split between logs
+    (a table's own log, lfc-routing), each log listing its own tables, read once a file and table (a ledger,
+    <log>__scanned). A log takes either every table (no only) or a list: no "every table but" form, which would have
+    to read every change file for the tables it holds (lfc-routing's ingest lists each log's tables). keys
+    (gateway_keys): each row's key filled in (silver's shared groups need it)."""
     if only:   # COPY INTO takes no WHERE: a filtered landing reads only what it hasn't read for its tables
         return _filtered(session, log, gateway_key_sql(keys), name, f"{root}/cdc/", only)
     return _copy(session, log, GATEWAY_DESTINATION, GATEWAY_OPERATION, gateway_key_sql(keys), name, f"{root}/cdc/",
                  "*/*")
 
 
-def gateway_keyed(session, root: str, log: str, name: str, only: list | None = None, skip: list | None = None) -> int | None:
+def gateway_keyed(session, root: str, log: str, name: str, only: list | None = None) -> int | None:
     """gateway() with each table's keys from the gateway's own schema files, into a log made if missing: what a
-    producer lands each round. The rows added."""
+    producer lands each round. A staging laid out by name (no table ids to key by) lands without keys. The rows added."""
     from . import gateway_staging
     ensure_log(session, log)
-    return gateway(session, root, log, name, only, skip, keys=gateway_keys(gateway_staging.schemas(session, root)))
+    try:
+        keys = gateway_keys(gateway_staging.schemas(session, root))
+    except ValueError:   # laid out by name: no keys (only shared groups need them)
+        keys = None
+    return gateway(session, root, log, name, only, keys=keys)
 
 
 def changefeed(session, root: str, log: str, destination: str, keys: list[str], name: str) -> int | None:
@@ -155,29 +154,6 @@ BATCH = 200     # files a statement reads
 
 def _bare(path: str) -> str:
     return path.removeprefix("dbfs:")
-
-
-def gateway_tables(session, root: str, log: str, name: str) -> list:
-    """Every table (catalog.schema.table) the gateway writes changes for: its schema files' tables, and the ones it
-    already landed into `log`; when its schema files can't be read (none yet, or a staging laid out by name), the
-    tables named in its change files instead (one read of them all)."""
-    from . import gateway_staging
-    try:
-        found = {".".join(k) for k in gateway_staging.schemas(session, root)}
-    except Exception:  # noqa: BLE001  no schema files to read: the change files say which tables they hold
-        try:
-            found = {str(r[0]) for r in session.sql(
-                f"SELECT DISTINCT {GATEWAY_DESTINATION} FROM read_files('{root}/cdc/*/*', format => 'json', "
-                "singleVariantColumn => 'event')").collect()}
-        except Exception:  # noqa: BLE001  no change files yet either
-            found = set()
-    try:
-        found |= {str(r[0]) for r in session.sql(f"SELECT DISTINCT destination FROM {log} WHERE gateway = "
-                                                 f"{_lit(name)}").collect()}
-    except Exception as e:  # noqa: BLE001  a log not made yet
-        if "TABLE_OR_VIEW_NOT_FOUND" not in str(e):
-            raise
-    return sorted(found)
 
 
 def ledger(log: str) -> str:

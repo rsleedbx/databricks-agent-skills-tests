@@ -82,40 +82,6 @@ class Filtered(unittest.TestCase):
         land.gateway(s, ROOT, LOG, "gw", only=["db.s.d", "db.s.e"])
         self.assertEqual(s.reads(), [])
 
-    def test_a_skip_is_the_gateways_other_tables_read_once_each(self):
-        from lfc_change_source import gateway_staging
-        old = int(time.time() * 1000) - 60_000
-        s = Session({f"{ROOT}/cdc/100/0": old})
-        orig = gateway_staging.schemas
-        gateway_staging.schemas = lambda session, root: {("db", "s", "a"): {}, ("db", "s", "b"): {}, ("db", "s", "d"): {}}
-        try:
-            land.gateway(s, ROOT, LOG, "gw", skip=["db.s.d"])
-            self.assertEqual(s.filters(), ["'db.s.a', 'db.s.b'"])
-            s.seen = []
-            land.gateway(s, ROOT, LOG, "gw", skip=["db.s.d", "db.s.b"])   # b moved out too: nothing read again
-            self.assertEqual(s.reads(), [])
-        finally:
-            gateway_staging.schemas = orig
-
-    def test_a_skip_without_schema_files_reads_the_tables_from_the_change_files(self):
-        from lfc_change_source import gateway_staging
-        old = int(time.time() * 1000) - 60_000
-        s = Session({f"{ROOT}/cdc/100/0": old})
-        base = s.sql
-
-        def sql(q):
-            if q.startswith("SELECT DISTINCT concat_ws"):
-                return R([("db.s.a",), ("db.s.d",)])
-            return base(q)
-        s.sql = sql
-        orig = gateway_staging.schemas
-        gateway_staging.schemas = lambda session, root: (_ for _ in ()).throw(ValueError("a staging laid out by name"))
-        try:
-            land.gateway(s, ROOT, LOG, "gw", skip=["db.s.d"])
-        finally:
-            gateway_staging.schemas = orig
-        self.assertEqual(s.filters(), ["'db.s.a'"])
-
     def test_the_ledger_beside_the_log(self):
         self.assertEqual(land.ledger("`c`.`s`.cdc_log"), "`c`.`s`.`cdc_log__scanned`")
         self.assertEqual(land.ledger(LOG), "`c`.`s`.`cdc_log_d__scanned`")

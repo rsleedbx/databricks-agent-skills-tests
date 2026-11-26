@@ -75,17 +75,11 @@ class Routing(unittest.TestCase):
                     [("/V/g/cdc/1/0", "0", 9, 0)] if q == "LIST '/V/g/cdc/1/'" else [])
             return types.SimpleNamespace(collect=lambda: rows)
         s = types.SimpleNamespace(sql=sql)
-        from lfc_change_source import gateway_staging
-        orig = gateway_staging.schemas
-        gateway_staging.schemas = lambda session, root: {("db", "s", "t"): {}, ("db", "s", "u"): {}}   # its tables
-        try:
-            land.gateway(s, "/V/g", "`m`.`c`.`cdc_log_t`", "gw", only=["db.s.t"])
-            land.gateway(s, "/V/g", "`m`.`c`.`cdc_log`", "gw", skip=["db.s.t"])
-        finally:
-            gateway_staging.schemas = orig
+        land.gateway(s, "/V/g", "`m`.`c`.`cdc_log_t`", "gw", only=["db.s.t"])
+        land.gateway(s, "/V/g", "`m`.`c`.`cdc_log`", "gw", only=["db.s.u"])
         ins = [q for q in seen if q.startswith("INSERT INTO `m`.`c`.`cdc_log") and "read_files(" in q]
         self.assertIn("event:table_id.name::STRING)) IN ('db.s.t')", ins[0])   # the moved table: its own log
-        self.assertIn("event:table_id.name::STRING)) IN ('db.s.u')", ins[1])   # skip t: every other table, listed
+        self.assertIn("event:table_id.name::STRING)) IN ('db.s.u')", ins[1])   # every other table: listed
 
     def test_transitions_name_what_a_route_change_takes(self):
         from lfc_routing import routing
