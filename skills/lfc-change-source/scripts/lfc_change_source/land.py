@@ -85,7 +85,8 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
             keys: dict | None = None) -> int | None:
     """The gateway's change files not landed before into the log; the rows added. only / skip: the tables
     (<catalog>.<schema>.<table>) whose events go to this log, or don't: one gateway's events split between logs (a
-    big_fast table's own log, lfc-routing), each log landing whole files with its own filter. keys (gateway_keys):
+    big_fast table's own log, lfc-routing), each log landing whole files with its own filter: listed with LIST and
+    read once a log (a ledger, <log>__scanned, of the files it scanned). keys (gateway_keys):
     each row's key filled in (silver's shared groups need it)."""
     where = ""
     if only:
@@ -141,13 +142,59 @@ def _copy(session, log: str, destination: str, operation: str, key: str, name: s
     """One COPY INTO of a transport's JSON files into the log, each event as it is (VARIANT): the rows added."""
     cols = (f"{destination} AS destination, {operation} AS operation, {key} AS key, event AS value, "
             f"{_lit(name)} AS gateway, _metadata.file_path AS file")
-    if where:   # COPY INTO takes no WHERE: a filtered landing reads the files itself, skipping the ones it landed
-        rows = session.sql(
-            f"INSERT INTO {log} SELECT {cols} FROM read_files('{src}{pattern}', format => 'json', "
-            f"singleVariantColumn => 'event'){where} AND _metadata.file_path NOT IN "
-            f"(SELECT DISTINCT file FROM {log} WHERE gateway = {_lit(name)} AND file IS NOT NULL)").collect()
-        return _inserted(rows)
+    if where:   # COPY INTO takes no WHERE: a filtered landing reads only the files it hasn't scanned yet
+        return _filtered(session, log, cols, name, src, where)
     rows = session.sql(
         f"COPY INTO {log} FROM (SELECT {cols} FROM '{src}') "
         f"FILEFORMAT = JSON PATTERN = '{pattern}' FORMAT_OPTIONS ('singleVariantColumn' = 'event')").collect()
     return _inserted(rows)
+
+
+SETTLE_S = 10   # a change file modified this recently may still be written: the next round takes it
+BATCH = 200     # files a statement reads
+
+
+def _bare(path: str) -> str:
+    return path.removeprefix("dbfs:")
+
+
+def ledger(log: str) -> str:
+    """The table of the files a filtered landing into `log` has scanned (rows or none): <log>__scanned."""
+    head, _, last = log.rpartition(".")
+    return f"{head}.`{last.strip('`')}__scanned`"
+
+
+def _files(session, src: str, now_ms: float) -> list:
+    """Every change file under src (<root>/cdc/: a folder a producer run, its files numbered), by LIST: metadata
+    only, no file read; the ones modified in the last SETTLE_S seconds left for the next round."""
+    out = []
+    for d in session.sql(f"LIST '{src}'").collect():
+        if not str(d[0]).endswith("/"):
+            continue
+        out += [_bare(str(f[0])) for f in session.sql(f"LIST '{d[0]}'").collect()
+                if not str(f[0]).endswith("/") and int(f[3] or 0) <= now_ms - SETTLE_S * 1000]
+    return sorted(out)
+
+
+def _filtered(session, log: str, cols: str, name: str, src: str, where: str) -> int:
+    """A filtered landing: the files neither in the ledger nor named in the log listed (_files), read in batches of
+    BATCH, their rows of this log's tables inserted, then the files recorded in the ledger (with rows or without), so
+    each file is read once a log. A round stopped between the two is safe: the log's file column names the files it
+    inserted from, so they aren't read again. The rows added."""
+    import time
+    led = ledger(log)
+    session.sql(f"CREATE TABLE IF NOT EXISTS {led} (gateway STRING, file STRING, at TIMESTAMP) COMMENT "
+                "'lfc_change_source land: the change files a filtered landing into this log scanned'").collect()
+    seen = {_bare(str(r[0])) for r in session.sql(
+        f"SELECT file FROM {led} WHERE gateway = {_lit(name)} UNION SELECT DISTINCT file FROM {log} "
+        f"WHERE gateway = {_lit(name)} AND file IS NOT NULL").collect()}
+    new = [f for f in _files(session, src, time.time() * 1000) if f not in seen]
+    added = 0
+    for i in range(0, len(new), BATCH):
+        part = new[i:i + BATCH]
+        reads = " UNION ALL ".join(f"SELECT {cols} FROM read_files('{f}', format => 'json', singleVariantColumn => "
+                                   f"'event'){where}" for f in part)
+        added += _inserted(session.sql(f"INSERT INTO {log} {reads}").collect()) or 0
+        session.sql(f"INSERT INTO {led} VALUES " + ", ".join(f"({_lit(name)}, {_lit(f)}, current_timestamp())"
+                                                            for f in part)).collect()
+    return added
