@@ -88,10 +88,9 @@ def gateway(session, root: str, log: str, name: str, only: list | None = None, s
     big_fast table's own log, lfc-routing), each log landing whole files with its own filter: listed with LIST and
     read once a log (a ledger, <log>__scanned, of the files it scanned). keys (gateway_keys):
     each row's key filled in (silver's shared groups need it)."""
-    if skip and not only:   # every table but these, as a list: from the gateway's schema files (a new table too)
-        from . import gateway_staging
+    if skip and not only:   # every table but these, as a list (gateway_tables): a new table too
         out = {t.lower() for t in skip}
-        only = [d for d in (".".join(k) for k in gateway_staging.schemas(session, root)) if d.lower() not in out]
+        only = [d for d in gateway_tables(session, root, log, name) if d.lower() not in out]
         if not only:
             return 0
     if only:   # COPY INTO takes no WHERE: a filtered landing reads only what it hasn't read for its tables
@@ -158,6 +157,29 @@ def _bare(path: str) -> str:
     return path.removeprefix("dbfs:")
 
 
+def gateway_tables(session, root: str, log: str, name: str) -> list:
+    """Every table (catalog.schema.table) the gateway writes changes for: its schema files' tables, and the ones it
+    already landed into `log`; when its schema files can't be read (none yet, or a staging laid out by name), the
+    tables named in its change files instead (one read of them all)."""
+    from . import gateway_staging
+    try:
+        found = {".".join(k) for k in gateway_staging.schemas(session, root)}
+    except Exception:  # noqa: BLE001  no schema files to read: the change files say which tables they hold
+        try:
+            found = {str(r[0]) for r in session.sql(
+                f"SELECT DISTINCT {GATEWAY_DESTINATION} FROM read_files('{root}/cdc/*/*', format => 'json', "
+                "singleVariantColumn => 'event')").collect()}
+        except Exception:  # noqa: BLE001  no change files yet either
+            found = set()
+    try:
+        found |= {str(r[0]) for r in session.sql(f"SELECT DISTINCT destination FROM {log} WHERE gateway = "
+                                                 f"{_lit(name)}").collect()}
+    except Exception as e:  # noqa: BLE001  a log not made yet
+        if "TABLE_OR_VIEW_NOT_FOUND" not in str(e):
+            raise
+    return sorted(found)
+
+
 def ledger(log: str) -> str:
     """The table of what a filtered landing into `log` has read: <log>__scanned, a row a change file and table (its
     rows landed, or none in that file)."""
@@ -211,6 +233,6 @@ def _filtered(session, log: str, key: str, name: str, src: str, only: list) -> i
             reads = " UNION ALL ".join(f"SELECT {cols} FROM read_files('{f}', format => 'json', singleVariantColumn => "
                                        f"'event'){where}" for f in part)
             added += _inserted(session.sql(f"INSERT INTO {log} {reads}").collect()) or 0
-            session.sql(f"INSERT INTO {led} VALUES " + ", ".join(
+            session.sql(f"INSERT INTO {led} (gateway, file, tbl, at) VALUES " + ", ".join(
                 f"({_lit(name)}, {_lit(f)}, {_lit(t)}, current_timestamp())" for f in part for t in need)).collect()
     return added

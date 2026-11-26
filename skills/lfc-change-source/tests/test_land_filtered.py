@@ -37,7 +37,7 @@ class Session:
             return R([(p, p.rsplit("/", 1)[1], 9, m) for p, m in sorted(self.files.items())])
         if q.startswith(f"SELECT file, tbl FROM {land.ledger(LOG)}"):
             return R(list(self.ledger) + [("dbfs:" + f, t) for f, t in self.logged])
-        if q.startswith(f"INSERT INTO {land.ledger(LOG)}"):
+        if q.startswith(f"INSERT INTO {land.ledger(LOG)} (gateway, file, tbl, at)"):
             self.ledger += [(x.split("'")[3], x.split("'")[5]) for x in q.split("), (")]
         if q.startswith(f"INSERT INTO {LOG}"):
             return R([{"num_affected_rows": 3, "num_inserted_rows": 3}])
@@ -96,6 +96,25 @@ class Filtered(unittest.TestCase):
             self.assertEqual(s.reads(), [])
         finally:
             gateway_staging.schemas = orig
+
+    def test_a_skip_without_schema_files_reads_the_tables_from_the_change_files(self):
+        from lfc_change_source import gateway_staging
+        old = int(time.time() * 1000) - 60_000
+        s = Session({f"{ROOT}/cdc/100/0": old})
+        base = s.sql
+
+        def sql(q):
+            if q.startswith("SELECT DISTINCT concat_ws"):
+                return R([("db.s.a",), ("db.s.d",)])
+            return base(q)
+        s.sql = sql
+        orig = gateway_staging.schemas
+        gateway_staging.schemas = lambda session, root: (_ for _ in ()).throw(ValueError("a staging laid out by name"))
+        try:
+            land.gateway(s, ROOT, LOG, "gw", skip=["db.s.d"])
+        finally:
+            gateway_staging.schemas = orig
+        self.assertEqual(s.filters(), ["'db.s.a'"])
 
     def test_the_ledger_beside_the_log(self):
         self.assertEqual(land.ledger("`c`.`s`.cdc_log"), "`c`.`s`.`cdc_log__scanned`")
