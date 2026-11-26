@@ -56,7 +56,9 @@ GATEWAY = {"sample": "gateway/cdc_history_update.jsonl", "position": "gateway_cu
                     "data (columns by id, C_<uoid>_<n>)",
            "ties": "a keyless table's update is a DELETE and an INSERT at one cursor.sequence: its key is every "
                    "column, and a delete orders before an insert at one position (cdc_log changes_sql), so the pair "
-                   "applies in order; a SQL Server CDC gateway's txnID is always 0 (group by the LSN in sequence)",
+                   "applies in order. Neither txnID (a SQL Server CDC gateway's is always 0) nor the LSN names a transaction "
+                   "(after a schema change, separate commits share one LSN; only cursor.seqNum differs): each "
+                   "record is its own change, ordered by sequence, then seqNum, then its line in the file",
            "schema": "gateway/target_schema.0.json: metadata/table_schemas/<table id>/, each column id's name and type",
            "not recorded yet": "a snapshot's parquet (read through intake.gateway, checked live on a 500-table run)"}
 
