@@ -30,6 +30,7 @@ layers:
     skills:
       - lfc-source-statschema
       - lfc-source-datagen
+      - lfc-introspection
 
   contract:
     may_use: [common]
@@ -57,7 +58,7 @@ layers:
       - lfc-medallion-pack
 
   lakeflow:
-    may_use: [contract, common]
+    may_use: [shape, contract, common]
     skills:
       - lfc-source-setup
       - lfc-source-log-state

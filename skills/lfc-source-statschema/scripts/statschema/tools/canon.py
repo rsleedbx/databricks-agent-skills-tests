@@ -8,6 +8,7 @@ CANON = {T.TINYINT: "integer", T.SMALLINT: "integer", T.MEDIUMINT: "integer", T.
          T.USMALLINT: "integer", T.UMEDIUMINT: "integer", T.UINT: "integer", T.BIGINT: "long", T.UBIGINT: "long",
          T.FLOAT: "float", T.DOUBLE: "double", T.DECIMAL: "decimal", T.MONEY: "decimal", T.BOOLEAN: "boolean",
          T.DATE: "date", T.DATETIME: "timestamp", T.TIMESTAMP: "timestamp", T.TIMESTAMPTZ: "timestamptz",
+         T.DATETIME2: "timestamp", T.SMALLDATETIME: "timestamp", T.TIMESTAMPNTZ: "timestamp",
          T.TIME: "time", T.TIMETZ: "timetz", T.BINARY: "binary", T.VARBINARY: "binary", T.BLOB: "binary",
          T.MEDIUMBLOB: "binary", T.LONGBLOB: "binary", T.TINYBLOB: "binary", T.CHAR: "char", T.NCHAR: "char"}
 
@@ -25,4 +26,8 @@ def canon(d, dialect=None):
     # MySQL's DATETIME and TIMESTAMP hold no fraction unless declared (fsp 0), where PostgreSQL's default is 6: the
     # precision says which, and a change log's epoch number is milliseconds up to 3 digits (Debezium), microseconds above
     if dialect == "mysql" and c["type"] == "timestamp": c["precision"] = args[0] if args else 0
+    # SQL Server's DATETIME2 and DATETIMEOFFSET default to 7 digits (Debezium sends 7 to 9 as nanoseconds), DATETIME to
+    # about 3 (milliseconds), SMALLDATETIME to none
+    if dialect == "tsql" and c["type"] in ("timestamp", "timestamptz"):
+        c["precision"] = args[0] if args else {"DATETIME": 3, "SMALLDATETIME": 0}.get(d.this.name, 7)
     return c

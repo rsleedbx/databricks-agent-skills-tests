@@ -14,38 +14,10 @@ import os
 import re
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-SQL_FILE = {"mariadb": "mysql"}                          # MariaDB: a MYSQL connection and the MySQL query
-NEEDS_DATABASE = ("postgres", "sqlserver", "cockroachdb", "yugabytedb")
-ENGINES = ("postgres", "mysql", "mariadb", "sqlserver", "oracle", "cockroachdb", "yugabytedb")
-
-
-class SizeQueryError(ValueError):
-    """A missing engine, file, --database or --service."""
-
-
-def remote_query(connection, engine, database=None, service=None, file=None):
-    """SELECT * FROM remote_query(...) for the engine; file names another query beside this one (mysql-process)."""
-    if engine not in ENGINES:
-        raise SizeQueryError(f"engine: {', '.join(ENGINES)} (db2 and informix: run scripts/db2.sql or informix.sql "
-                             "by hand)")
-    path = os.path.join(HERE, (file or SQL_FILE.get(engine, engine)) + ".sql")
-    if not os.path.isfile(path):
-        raise SizeQueryError(f"no query {path}")
-    if engine in NEEDS_DATABASE:
-        if not database:
-            raise SizeQueryError(f"--database is needed for {engine}")
-        arg = f", database => '{database}'"
-    elif engine == "oracle":
-        if not service:
-            raise SizeQueryError("--service (the PDB) is needed for oracle")
-        arg = f", service_name => '{service}'"
-    else:
-        arg = ""
-    with open(path) as f:                                 # comments off, __DB__ filled in, one line
-        inner = " ".join(re.sub(r"--.*$", "", line.rstrip("\n")).replace("__DB__", database or "") for line in f)
-    inner = re.sub(" +", " ", inner + " ")
-    return f"SELECT * FROM remote_query('{connection}'{arg}, query => \"{inner}\")"
+# the statement and the per-engine queries live in lfc-introspection (lfc_introspection.catalog), which data
+# generation and routing read too; this file is sizing's command line over them
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lfc-introspection", "scripts"))
+from lfc_introspection.catalog import ENGINES, HERE, NEEDS_DATABASE, SQL_FILE, SizeQueryError, remote_query  # noqa: E402,F401
 
 
 def main(argv=None):
