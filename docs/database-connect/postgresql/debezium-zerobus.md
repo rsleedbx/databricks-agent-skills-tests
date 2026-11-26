@@ -15,8 +15,8 @@ workspace. The source holds [TPC-H](../../tpc-models.md#tpc-h) at SF 0.001 (8 ta
 | The fan-in bundle: `bundle deploy`, `bundle run fanin_job` | the view `cdc_log` over your log and the silver pipeline; one update |
 | The fan-in's silver | all 16 tables (8 tables and their `_history`) equal to the skill's (row count and a hash of every row) |
 
-Repeat the whole test, both sides and the check: [test-engine.sh](../../../skills/lfc-fanin/scripts/test-engine.sh)
-(`SOURCE=pg SOURCE_TYPE=POSTGRESQL`); this page is written from its results by `fanin_page.py`.
+Repeat the whole test, both sides and the check: [fanin_test.py](../../../skills/lfc-fanin/scripts/fanin_test.py)
+(`engine --source pg --source-type POSTGRESQL`); this page is written from its results by `fanin_page.py`.
 
 ## Your side: PostgreSQL, Debezium, Zerobus
 

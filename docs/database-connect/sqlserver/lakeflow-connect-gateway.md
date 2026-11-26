@@ -40,7 +40,7 @@ snap = {t: intake.gateway(spark, gs.Staging("sales_gw", root, e), f"main.sales_s
 land.gateway(spark, root, "`main`.`ctl`.`cdc_log`", "sales_gw", keys=land.gateway_keys(entries))
 ```
 
-Then silver as on the [Zerobus page](debezium-zerobus.md#deploy). A continuous alternative to `COPY INTO`: the
+Then silver as on the [Zerobus page](debezium-zerobus.md#the-fan-in-deploy). A continuous alternative to `COPY INTO`: the
 Auto Loader pipeline in lfc-change-source `pipelines/gateway_autoloader.py`.
 
 Tested on a sandbox workspace: one gateway from 100 to 5,000 SQL Server tables landed and rebuilt equal to the
