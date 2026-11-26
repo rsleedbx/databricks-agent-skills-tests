@@ -120,7 +120,7 @@ class Shared(unittest.TestCase):
     def test_a_member_view_reads_its_snapshot_table_for_keys_the_group_has_not_changed(self):
         t = silver.Table(src("a"), "shared", snapshot_table=SNAP, group="0")
         v = silver.shared_view_sql(t, "`c`.`s`", "`c`.`s`.`a`")
-        self.assertIn(f"UNION ALL SELECT s.`id`, s.`v` FROM {SNAP} s WHERE NOT EXISTS (SELECT 1 FROM "
+        self.assertIn(f"UNION ALL SELECT CAST(s.`id` AS INT) AS `id`, CAST(s.`v` AS STRING) AS `v` FROM {SNAP} s WHERE NOT EXISTS (SELECT 1 FROM "
                       "`c`.`s`.`_shared_0` x WHERE x.destination = 'db.s.a' AND parse_json(x.k)[0]::INT <=> s.`id`)", v)
         seen = []
         silver.run(session(seen), {"a": t}, "`c`.`s`", Position("gateway_cursor", "09"), threads=1, first=True)
@@ -258,6 +258,25 @@ class Combine(unittest.TestCase):
         self.assertEqual(combine.current_sql(dbz), dbz.snapshot_sql())                # none: the log alone
 
 
+class Append(unittest.TestCase):
+    def test_a_keyless_table_is_its_snapshot_and_its_inserts(self):
+        from lfc_change_source.cdc_log import CdcLog
+        src = CdcLog("pg1", LOG, "h", "pg1.s.h", [], {"id": "INT", "v": "STRING"}, seq="lsn")
+        route = routing.log_for("pg1.s.h", 0, 0.0, routing.Policy(LOG))
+        t = silver.from_route(src, route, SNAP, Position("lsn", "5"))
+        self.assertEqual(t.method, "append")                                      # keyless: whatever its route
+        seen = []
+        silver.run(session(seen), {"h": t}, "`c`.`s`", Position("lsn", "9"), threads=1, first=True)
+        build = next(q for q in seen if q.startswith("CREATE OR REPLACE TABLE `c`.`s`.`h`"))
+        self.assertIn(f"FROM {SNAP} UNION ALL", build)                            # its snapshot's rows
+        self.assertIn("operation = 'create'", build)                              # then the inserts only
+        self.assertIn("value:source:lsn::BIGINT > 5 AND value:source:lsn::BIGINT <= 9", build)
+        seen.clear()
+        silver.run(session(seen, kept=[("h", "lsn", "9")]), {"h": t}, "`c`.`s`", Position("lsn", "12"), threads=1)
+        ins = next(q for q in seen if q.startswith("INSERT INTO `c`.`s`.`h`"))
+        self.assertIn("value:source:lsn::BIGINT > 9 AND value:source:lsn::BIGINT <= 12", ins)   # from its kept position
+
+
 class Merge(unittest.TestCase):
     def test_merge_sql(self):
         m = silver.merge_sql(src(), "`c`.`silver`.`t`", Position("gateway_cursor", "05"),
@@ -288,7 +307,7 @@ class Round(unittest.TestCase):
         seen = []
         got = silver.run(session(seen), tables, "`c`.`silver`", Position("gateway_cursor", "09"), threads=1, first=True)
         self.assertEqual({m: (v["tables"], v["done"]) for m, v in got.items()},
-                         {"shared": (0, 0), "view": (1, 1), "merge": (1, 1), "auto_cdc": (1, 0)})
+                         {"shared": (0, 0), "view": (1, 1), "merge": (1, 1), "auto_cdc": (1, 0), "append": (0, 0)})
         self.assertTrue(any(q.startswith("CREATE OR REPLACE VIEW `c`.`silver`.`v`") for q in seen))
         self.assertTrue(any(q.startswith("CREATE OR REPLACE TABLE `c`.`silver`.`m`") for q in seen))
         seen.clear()

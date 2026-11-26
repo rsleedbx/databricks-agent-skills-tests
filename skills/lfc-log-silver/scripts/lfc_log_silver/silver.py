@@ -34,10 +34,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 STATE = "_log_silver"
-METHODS = ("shared", "view", "merge", "auto_cdc")
+METHODS = ("shared", "view", "merge", "auto_cdc", "append")
 # routing.py's silver names onto the methods here: merge_changed is merge with only_changed
 FROM_ROUTE = {"shared": ("shared", False), "view": ("view", False), "merge_round": ("merge", False),
-              "merge_changed": ("merge", True), "auto_cdc": ("auto_cdc", False)}
+              "merge_changed": ("merge", True), "auto_cdc": ("auto_cdc", False), "append": ("append", False)}
 SHARED = "_shared_{group}"   # a group's table in the silver schema
 
 
@@ -65,7 +65,7 @@ class Table:
 
 def from_route(src, route, snapshot_table=None, position=None) -> Table:
     """A Table from a routing.Route: its silver name as a method here (shared: in its route's group)."""
-    method, only = FROM_ROUTE[route.silver]
+    method, only = FROM_ROUTE[route.silver] if src.keys else ("append", False)   # keyless: its rows, appended
     return Table(src, method, only, snapshot_table, position, getattr(route, "group", "") or "")
 
 
@@ -129,6 +129,43 @@ def view_sql(t: Table, target: str) -> str:
 def build_sql(t: Table, target: str) -> str:
     cols = ", ".join(_q(c) for c in t.src.columns)
     return f"CREATE OR REPLACE TABLE {target} AS SELECT {cols} FROM ({t.current_sql()})"
+
+
+def _typed_snapshot(t: Table) -> str:
+    return ", ".join(f"CAST({_q(c)} AS {ty}) AS {_q(c)}" for c, ty in t.src.columns.items())
+
+
+def append_build_sql(t: Table, target: str, to) -> str:
+    """A keyless table: its snapshot's rows and every insert after the snapshot's position up to `to` (an update or
+    delete can't name a row). An insert replayed at the same position counts once."""
+    cols = ", ".join(_q(c) for c in t.src.columns)
+    ins = f"SELECT DISTINCT {cols}, _seq FROM ({t.src.inserts_sql(t.position, to)})"
+    snap = f"SELECT {_typed_snapshot(t)} FROM {t.snapshot_table} UNION ALL " if t.snapshot_table else ""
+    return f"CREATE OR REPLACE TABLE {target} AS {snap}SELECT {cols} FROM ({ins})"
+
+
+def append_sql(t: Table, target: str, after, to) -> str:
+    """A round of a keyless table: the inserts after its kept position up to `to`, appended."""
+    cols = ", ".join(_q(c) for c in t.src.columns)
+    return (f"INSERT INTO {target} ({cols}) SELECT {cols} FROM (SELECT DISTINCT {cols}, _seq FROM "
+            f"({t.src.inserts_sql(after, to)}))")
+
+
+def appended(session, tables: dict, schema: str, to, threads: int = 16, first: bool = False) -> dict:
+    """Each keyless table built (first) or its new inserts appended from its kept position, kept at `to`."""
+    from lfc_change_source.contract import Position
+    ensure_state(session, schema)
+    kept = positions(session, schema)
+
+    def after(n):
+        kind, pos = kept.get(n, (to.kind, None))
+        return Position(kind, pos) if pos is not None else None
+    stmts = {n: (append_build_sql(t, _target(schema, n), to) if first or n not in kept or
+                 renewed({n: t}, snapshots(session, schema)) else append_sql(t, _target(schema, n), after(n), to))
+             for n, t in tables.items()}
+    done = _each(session, stmts, threads)
+    _save(session, schema, [(n, to.kind, to.value, r, s, tables[n].snapshot_table) for n, (r, s) in done.items()])
+    return done
 
 
 def merge_sql(src, target: str, after, to) -> str:
@@ -305,7 +342,8 @@ def shared_view_sql(t: Table, schema: str, target: str) -> str:
     if not t.snapshot_table:
         return f"CREATE OR REPLACE VIEW {target} AS {live}"
     same = " AND ".join(f"{e} <=> s.{_q(c)}" for c, e in t.src.stored_key_values("x.k").items())
-    snap = (f"SELECT {', '.join('s.' + _q(c) for c in t.src.columns)} FROM {t.snapshot_table} s WHERE NOT EXISTS "
+    snap = (f"SELECT {', '.join(f'CAST(s.{_q(c)} AS {ty}) AS {_q(c)}' for c, ty in t.src.columns.items())} "
+            f"FROM {t.snapshot_table} s WHERE NOT EXISTS "
             f"(SELECT 1 FROM {g} x WHERE x.destination = {d} AND {same})")
     return f"CREATE OR REPLACE VIEW {target} AS {live} UNION ALL {snap}"
 
@@ -483,5 +521,8 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     done = (build(session, by["merge"], schema, to, threads) if first else
             apply(session, by["merge"], schema, to, threads, [n for n in moved if n in by["merge"]])) if by["merge"] else {}
     out["merge"] = {"tables": len(by["merge"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
+    t0 = time.time()
+    done = appended(session, by["append"], schema, to, threads, first) if by["append"] else {}
+    out["append"] = {"tables": len(by["append"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     out["auto_cdc"] = {"tables": len(by["auto_cdc"]), "done": 0, "seconds": 0.0}
     return out

@@ -42,12 +42,13 @@ RESOLVED = {"hlc": "value:resolved::STRING"}
 EVENT = "operation <> 'resolved'"   # a change event, not a landed watermark
 
 
-def column_sql(name: str, sql_type: str, keys: list[str], precision=None, binhex: bool = False) -> str:
+def column_sql(name: str, sql_type: str, keys: list[str], precision=None, binhex: bool = False, kind=None) -> str:
     """A column from an event: a key column from the event's key (a delete has no after image), the rest from the
     after image, as its type: Debezium's encodings decoded (debezium.typed: a date as days, a timestamp as epoch
-    milli-, micro- or nanoseconds by its precision; binary as hex text with binhex)."""
+    milli-, micro- or nanoseconds by its precision; binary as hex text with binhex; kind: a temporal kind its SQL
+    type doesn't say, a time kept as STRING)."""
     src = f"key:{name}" if name in keys else f"value:after:{name}"
-    return f"{debezium.typed(src, sql_type, precision=precision, binhex=binhex)} AS {quote(name)}"
+    return f"{debezium.typed(src, sql_type, kind, precision, binhex=binhex)} AS {quote(name)}"
 
 
 @dataclass
@@ -63,6 +64,7 @@ class CdcLog:
     shared: bool = True
     precision: dict = field(default_factory=dict)   # {column: digits of fraction}: a temporal column's (Debezium's unit)
     binhex: bool = False                            # binary values come as hex text (binary.handling.mode=hex)
+    kinds: dict = field(default_factory=dict)       # {column: temporal kind} its SQL type doesn't say (a time: STRING)
 
     def __post_init__(self):
         if self.seq not in SEQUENCES:
@@ -78,7 +80,7 @@ class CdcLog:
 
     def column_exprs(self) -> list[str]:
         """Each column's SQL from an event (`<expression> AS <name>`), in order."""
-        return [self.exprs.get(c) or column_sql(c, t, self.keys, self.precision.get(c), self.binhex)
+        return [self.exprs.get(c) or column_sql(c, t, self.keys, self.precision.get(c), self.binhex, self.kinds.get(c))
                 for c, t in self.columns.items()]
 
     def column_values(self) -> dict:
@@ -94,7 +96,7 @@ class CdcLog:
     def stored_key_values(self, col: str = "k") -> dict:
         """{key column: its SQL expression} over a stored key (the event's key::STRING kept in a column `col`, as a
         shared group keeps it): typed as column_values types it, so a snapshot's row can be matched to its changes."""
-        return {c: debezium.typed(f"parse_json({col}):{c}", self.columns[c], precision=self.precision.get(c),
+        return {c: debezium.typed(f"parse_json({col}):{c}", self.columns[c], self.kinds.get(c), self.precision.get(c),
                                   binhex=self.binhex) for c in self.keys}
 
     def stored_values(self, col: str = "data") -> dict:
@@ -104,7 +106,7 @@ class CdcLog:
         for c, t in self.columns.items():
             e = self.exprs.get(c)
             out[c] = (e.removesuffix(f" AS {quote(c)}").replace(self.ROW + ":", col + ":").replace(self.ROW + ".", col + ":")
-                      if e else debezium.typed(f"{col}:{quote(c)}", t, precision=self.precision.get(c), binhex=self.binhex))
+                      if e else debezium.typed(f"{col}:{quote(c)}", t, self.kinds.get(c), self.precision.get(c), binhex=self.binhex))
         return out
 
     def position_sql(self, p: Position | None) -> str | None:
@@ -123,13 +125,23 @@ class CdcLog:
         return (f"SELECT {names}, '{UPSERT}' AS {OP} FROM ({last_change_sql(changes, self.keys)}) "
                 f"WHERE {OP} <> '{DELETE}'")
 
+    def _where(self, after: Position | None, to: Position | None) -> str:
+        seq = SEQUENCES[self.seq]
+        lo, hi = self._kind(after), self._kind(to)
+        return " AND ".join([f"destination = '{self.destination}'", EVENT] + ([f"{seq} > {lo}"] if lo is not None else [])
+                            + ([f"{seq} <= {hi}"] if hi is not None else []))
+
+    def inserts_sql(self, after: Position | None, to: Position | None) -> str:
+        """Its inserts (operation create) after `after` up to `to`: a keyless table's rows (append-only), whose updates
+        and deletes can't name a row. _seq as changes_sql's."""
+        return (f"SELECT {self._cols()}, named_struct('v', {SEQUENCES[self.seq]}, 'o', 1) AS {SEQ} FROM {self.fq} "
+                f"WHERE {self._where(after, to)} AND operation = 'create'")
+
     def changes_sql(self, after: Position | None, to: Position | None) -> str:
         """Its events after `after` up to `to` (None: from the start, to the latest); _seq: the source's order, then
         a delete before an insert at one position. Any event but a delete is an upsert."""
         seq = SEQUENCES[self.seq]
-        lo, hi = self._kind(after), self._kind(to)
-        where = [f"destination = '{self.destination}'", EVENT] + ([f"{seq} > {lo}"] if lo is not None else []) + \
-                ([f"{seq} <= {hi}"] if hi is not None else [])
+        where = [self._where(after, to)]
         return (f"SELECT {self._cols()}, CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
                 f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
                 f"FROM {self.fq} WHERE {' AND '.join(where)}")
