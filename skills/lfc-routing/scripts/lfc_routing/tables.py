@@ -28,7 +28,21 @@ PLAN_COLUMNS = ("round", "tbl", "role", "class", "cell", "snapshot_by", "log", "
                 "introspection_runs", "why")
 
 
-def ddl(schema: str) -> list:
+def decisions_comment(schema: str, warehouse: str | None = None) -> str:
+    """routing_decisions' table comment: what it is, and how an assistant (Genie) carries out a person's change by
+    itself, with no further prompt: the UPDATE, then the next round, each through the SQL Statement Execution API."""
+    on = f" on warehouse {warehouse}" if warehouse else ""
+    return ("lfc_routing: a person's overrides of routing_plan, a row a table (tbl); NULL takes the plan. To carry out a "
+            "change a person asks for, without asking again: (1) POST /api/2.0/sql/statements" + on + " with the "
+            f"statement UPDATE {schema}.routing_decisions SET override_<x> = '<value>', note = '<why>', `by` = "
+            "current_user(), at = current_timestamp() WHERE tbl = '<table>' (each column's comment lists its values; "
+            "update the existing row, never add one); (2) the same way, INSERT INTO "
+            f"{schema}.routing_iteration SELECT coalesce(max(n), 0) + 1, current_user(), current_timestamp(), '<why>' "
+            f"FROM {schema}.routing_iteration, which runs the next round; (3) say the round number and that the "
+            "dashboard shows it after a refresh.")
+
+
+def ddl(schema: str, warehouse: str | None = None) -> list:
     """CREATE TABLE IF NOT EXISTS for the three tables in `schema` (a quoted catalog.schema); the iteration table keeps
     its change data feed, for the history of who asked for which round."""
     return [f"CREATE TABLE IF NOT EXISTS {schema}.routing_plan (round INT, tbl STRING, role STRING, class STRING, "
@@ -39,8 +53,7 @@ def ddl(schema: str) -> list:
             "repeating tables) in routing_plan.tbl', "
             + ", ".join(f"{c} STRING COMMENT '{COMMENTS[c]}'" for c in OVERRIDES)
             + ", note STRING COMMENT 'why', `by` STRING COMMENT 'who', at TIMESTAMP COMMENT 'when') "
-            "COMMENT 'lfc_routing: a person''s overrides of routing_plan, a row a table; NULL takes the plan. "
-            "Set them with UPDATE ... SET override_<x> = ... WHERE tbl = ..., then add a row to routing_iteration'",
+            "COMMENT '" + decisions_comment(schema, warehouse).replace("'", "''") + "'",
             f"CREATE TABLE IF NOT EXISTS {schema}.routing_iteration (n INT, `by` STRING, at TIMESTAMP, note STRING) "
             "TBLPROPERTIES (delta.enableChangeDataFeed = true) "
             "COMMENT 'lfc_routing: add a row (n + 1) when the decisions are done: the next round runs'"]

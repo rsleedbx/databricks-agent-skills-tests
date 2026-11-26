@@ -139,8 +139,15 @@ def _inserted(rows, field: str = "num_inserted_rows") -> int | None:
 def _copy(session, log: str, destination: str, operation: str, key: str, name: str, src: str, pattern: str,
           where: str = ""):
     """One COPY INTO of a transport's JSON files into the log, each event as it is (VARIANT): the rows added."""
+    cols = (f"{destination} AS destination, {operation} AS operation, {key} AS key, event AS value, "
+            f"{_lit(name)} AS gateway, _metadata.file_path AS file")
+    if where:   # COPY INTO takes no WHERE: a filtered landing reads the files itself, skipping the ones it landed
+        rows = session.sql(
+            f"INSERT INTO {log} SELECT {cols} FROM read_files('{src}{pattern}', format => 'json', "
+            f"singleVariantColumn => 'event'){where} AND _metadata.file_path NOT IN "
+            f"(SELECT DISTINCT file FROM {log} WHERE gateway = {_lit(name)} AND file IS NOT NULL)").collect()
+        return _inserted(rows)
     rows = session.sql(
-        f"COPY INTO {log} FROM (SELECT {destination} AS destination, {operation} AS operation, {key} AS key, "
-        f"event AS value, {_lit(name)} AS gateway, _metadata.file_path AS file FROM '{src}'{where}) "
+        f"COPY INTO {log} FROM (SELECT {cols} FROM '{src}') "
         f"FILEFORMAT = JSON PATTERN = '{pattern}' FORMAT_OPTIONS ('singleVariantColumn' = 'event')").collect()
     return _inserted(rows)

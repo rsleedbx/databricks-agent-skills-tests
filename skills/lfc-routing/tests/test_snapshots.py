@@ -34,5 +34,21 @@ class Snapshots(unittest.TestCase):
         self.assertFalse(snapshots.keep_or_take({"status": "failed"}, {"c.s.cdc_log": 10})["keep"])
 
 
+class More(unittest.TestCase):
+    def test_a_gateway_snapshot_and_text_positions(self):
+        gw = {"status": "ok", "position": ""}
+        self.assertTrue(snapshots.keep_or_take(gw, {"c.s.cdc_log": "00000000000000000001"})["keep"])
+        self.assertFalse(snapshots.keep_or_take(gw, {"c.s.cdc_log": None})["keep"])
+        cur = {"status": "ok", "position": "00000000000000000042"}
+        self.assertTrue(snapshots.keep_or_take(cur, {"l": "00000000000000000007"})["keep"])
+        self.assertFalse(snapshots.keep_or_take(cur, {"l": "00000000000000000099"})["keep"])
+
+    def test_logs_of_the_plan(self):
+        plan = {"tables": {"a": {"route": {"log": "shared"}}, "b": {"route": {"log": "own"}},
+                           "c": {"route": {"log": "`x`.`y`.`cdc_log_c`"}}}}
+        self.assertEqual(snapshots.logs_of(plan, "`x`.`y`.`cdc_log`"),
+                         {"`x`.`y`.`cdc_log`": ["a"], "`x`.`y`.`cdc_log_b`": ["b"], "`x`.`y`.`cdc_log_c`": ["c"]})
+
+
 if __name__ == "__main__":
     unittest.main()

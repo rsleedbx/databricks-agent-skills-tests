@@ -43,8 +43,33 @@ def keep_or_take(run: dict | None, logs: dict, changed: set | None = None) -> di
         return {"keep": False, "why": "no snapshot yet: take one"}
     for c in sorted(changed or ()):
         return {"keep": False, "why": f"its {c} changed since the snapshot: take a new one"}
-    p = int(run["position"])
-    held = [log for log, first in logs.items() if first is not None and int(first) <= p]
+    p = run.get("position")
+    if p in (None, ""):   # a gateway's snapshot (SQL Server change tracking): before every change its log holds
+        held = [log for log, first in logs.items() if first is not None]
+        return ({"keep": True, "why": f"its snapshot comes before every change in {held[0]}"} if held else
+                {"keep": False, "why": "no log the table reads has its changes yet: take a new one"})
+    held = [log for log, first in logs.items() if first is not None and _le(first, p)]
     if held:
         return {"keep": True, "why": f"its position {p} is in {held[0]}: the log applies after it"}
     return {"keep": False, "why": f"no log the table reads holds its position {p} (trimmed or started later): take a new one"}
+
+
+def _le(a, b) -> bool:
+    """a <= b for two positions of one kind: numbers as numbers (an LSN, an SCN), else as text (a gateway's cursor,
+    fixed width, ordered as text)."""
+    a, b = str(a), str(b)
+    return int(a) <= int(b) if a.lstrip("-").isdigit() and b.lstrip("-").isdigit() and len(a) < 19 else a <= b
+
+
+def logs_of(plan: dict, shared_log: str) -> dict:
+    """{log: [tables]} the plan sends each table's changes to: the shared log, or a log of its own (a chosen log, or
+    the route's own: <shared>_<table>). The real change capture lands (a gateway) or splits (Debezium) by it."""
+    out: dict = {}
+    for t, p in sorted(plan["tables"].items()):
+        r = p.get("route") or {}
+        log = r.get("log") or "shared"
+        name = shared_log if log == "shared" else (shared_log.rstrip("`") + f"_{t.split('~')[0]}`"
+                                                   if log == "own" and shared_log.endswith("`")
+                                                   else f"{shared_log}_{t}" if log == "own" else log)
+        out.setdefault(name, []).append(t)
+    return out
