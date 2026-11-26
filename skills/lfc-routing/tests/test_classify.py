@@ -60,10 +60,10 @@ class Classify(unittest.TestCase):
 
 
 class Observed(unittest.TestCase):
-    """flowthrough.observed, the document classify reads: two rounds of counts, a table first seen, then the plan."""
+    """rounds.observed, the document classify reads: two rounds of counts, a table first seen, then the plan."""
 
     def test_two_rounds_of_counts_make_the_rates_classify_reads(self):
-        from lfc_log_silver.flowthrough import observed
+        from lfc_routing.rounds import observed
         prev = {"orders": ({}, 1000, 100.0), "customer": ({}, 10, 100.0)}
         doc = observed(prev, {"orders": 501_000, "customer": 10, "audit_log": 5}, 200.0,
                        {"orders": "`c`.`s`.`cdc_log`"}, round_=2)

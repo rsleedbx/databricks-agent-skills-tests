@@ -1,0 +1,20 @@
+resources:
+  jobs:
+    classify_round_job:
+      name: lfc-classify-round-${var.source}
+      trigger:
+        pause_status: UNPAUSED
+        table_update:
+          table_names:
+            - ${var.routing_schema}.routing_iteration
+          condition: ANY_UPDATED
+          min_time_between_triggers_seconds: 60
+      tasks:
+        - task_key: classify_round
+          notebook_task:
+            notebook_path: ../notebooks/classify_round.py
+            base_parameters:
+              routing_schema: ${var.routing_schema}
+              sources: ${var.sources}
+              tests_repo_archive: ${var.tests_repo_archive}
+      max_concurrent_runs: 1

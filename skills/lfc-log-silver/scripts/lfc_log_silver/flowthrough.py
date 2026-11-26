@@ -77,20 +77,6 @@ def _drop(session, schema: str, names: list, kind: str) -> None:
     silver._drop_kind(session, schema, names, view=kind == "VIEW")
 
 
-def observed(prev: dict, got: dict, now: float, logs: dict | None = None, round_: int | None = None) -> dict:
-    """What the change logs showed this round, as routing's classify reads it (lfc_routing.classify, `observed`):
-    {round, at, seconds, tables: {name: {log, events, events_per_s}}}. prev: load()'s last round, got: counts() now;
-    a table first seen has no rate yet (0). Plain data: written as a file, a round replays from it."""
-    seconds = [now - prev[n][2] for n in got if n in prev]
-    tables = {}
-    for n in sorted(set(got) | set(logs or {})):
-        e = got.get(n, 0)
-        rate = max(0, e - prev[n][1]) / max(now - prev[n][2], 1e-9) if n in prev else 0.0
-        tables[n] = {"log": (logs or {}).get(n), "events": e, "events_per_s": rate}
-    return {"round": round_, "at": round(now, 3), "seconds": round(max(seconds), 3) if seconds else None,
-            "tables": tables}
-
-
 def measure(session, schema: str, sources: dict, now: float | None = None) -> tuple:
     """(now, the last round's state, each table's events in its log, each table's events a second since the last
     round): the first round has no rate yet (0). observed() is the same as a document."""
@@ -98,6 +84,7 @@ def measure(session, schema: str, sources: dict, now: float | None = None) -> tu
     now = now or time.time()
     prev = load(session, schema)
     got = counts(session, sources)
+    from lfc_routing.rounds import observed   # routing's input, built from flowthrough's counts
     doc = observed(prev, {n: got.get(n, 0) for n in sources}, now, {n: s.fq for n, s in sources.items()})
     rates = {n: doc["tables"][n]["events_per_s"] if n in prev else 0.0 for n in sources}
     return now, prev, got, rates

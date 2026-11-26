@@ -49,7 +49,7 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 ## lfc-introspection
 
-- `skills/lfc-introspection/scripts/introspect.py` a source database's schema.yaml and stats.yaml (statschema's format), read through a Unity Catalog connection on a SQ...
+- `skills/lfc-introspection/scripts/introspect.py` a source database's schema.yaml and stats.yaml (statschema's format), read through a Unity Catalog connection with re...
 
 ## lfc-kafka-freshness-test
 
