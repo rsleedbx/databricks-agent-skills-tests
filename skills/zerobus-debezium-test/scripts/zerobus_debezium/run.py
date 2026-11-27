@@ -19,14 +19,14 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.join(HERE, "..", "..", "..")
-for dep in ("lfc-rest", "lfc-change-source"):   # a checkout: the sibling skills' packages, when not installed
+for dep in ("lfc-rest", "lfc-change-source", "lfc-source-contract"):   # a checkout: the sibling skills' packages, when not installed
     sys.path.insert(0, os.path.join(SKILLS, dep, "scripts"))
 
 from lfc_change_source.engine import Warehouse
 from lfc_change_source.producer import Spec, WorkspaceDebeziumServer
 from lfc_rest import Rest
 
-from zerobus_debezium import destination, engines
+from zerobus_debezium import destination, engines, snapshot
 from zerobus_debezium.source import Slot
 
 
@@ -73,6 +73,12 @@ def main(argv=None) -> int:
     ap.add_argument("--scope", required=True, help="the secret scope with zb-client-secret; the db password goes there")
     ap.add_argument("--base", type=int, default=100, help="the first id the rounds use")
     ap.add_argument("--skip-setup", action="store_true", help="the source is prepared already")
+    ap.add_argument("--snapshot", choices=["auto", "none"], default="auto",
+                    help="after round 1: a query-based pipeline through a UC connection, or (Db2) Spark's jdbc source "
+                         "through a TYPE JDBC one; none: no snapshot")
+    ap.add_argument("--connection-prefix", default="dbz", help="the UC connection's name: <prefix>-<engine>-<slot>")
+    ap.add_argument("--change-source-package", help="the jdbc snapshot (Db2): what its notebook pip-installs for "
+                                                     "lfc_change_source (its wheel in a Volume, or the repo archive)")
     a = ap.parse_args(argv)
 
     e = engines.get(a.engine)
@@ -132,6 +138,15 @@ def main(argv=None) -> int:
         else:
             claim("resume", new[:1] == first, "the row inserted while stopped (after the offsets) is carried on resume")
         claim("round-1", got == want, f"inserts, update, delete while streaming: {new}")
+        if a.snapshot == "auto":   # Debezium streams and round 1 has landed: the snapshot's turn (qbc, else jdbc)
+            snap = snapshot.take(api, e, conn, f"{a.connection_prefix}-{a.engine}-{a.slot_name}", a.catalog,
+                                 f"{a.schema}_snap_{tag}", pipeline=f"{name}-snapshot", wh=wh,
+                                 notebook_path=f"{os.path.dirname(a.notebook)}/jdbc_snapshot",
+                                 package=a.change_source_package)
+            have = snapshot.rows(wh, snap["table"], ids) if snap["state"] == "COMPLETED" else {}
+            claim("snapshot", snap["state"] == "COMPLETED" and have == e.state_after(1, a.base),
+                  f"{snap['how']} {snap['state']} in {snap['seconds']} s into {snap['table']}: {have} "
+                  f"({snap['link']}){' ' + str(snap['error'])[:300] if snap.get('error') else ''}")
 
         r = p.stop()
         claim("stop", r == "SUCCESS", f"STOP file: run {r}, status {p.status().get('why')}")

@@ -213,9 +213,8 @@ class WorkspaceDebeziumServer:
             return {}
 
     def run(self) -> dict:
-        r = self.api.get("/api/2.1/jobs/runs/get", run_id=self.run_id)
-        return {"life_cycle": r["state"].get("life_cycle_state"), "result": r["state"].get("result_state"),
-                "url": r.get("run_page_url"), "task_run_id": (r.get("tasks") or [{}])[0].get("run_id")}
+        from . import jobs
+        return jobs.state(self.api, self.run_id)
 
     def start(self) -> None:
         """Submit the notebook as a one-time serverless run; return once its status says streaming (or raise)."""
@@ -224,10 +223,9 @@ class WorkspaceDebeziumServer:
             self.api.rm(f"{self.folder}/status.json")
         except Exception:  # noqa: BLE001 -- none yet
             pass
-        body = {"run_name": f"debezium-{self.name}-{int(time.time())}", "tasks": [{
-            "task_key": "debezium", "notebook_task": {"notebook_path": self.notebook, "base_parameters": {
-                **self.params, "name": self.name, "log_table": self.log.replace("`", "").split(".")[-1]}}}]}
-        self.run_id = self.api.post("/api/2.1/jobs/runs/submit", body)["run_id"]
+        from . import jobs
+        self.run_id = jobs.submit(self.api, f"debezium-{self.name}-{int(time.time())}", self.notebook,
+                                  {**self.params, "name": self.name, "log_table": self.log.replace("`", "").split(".")[-1]})
         end = time.time() + self.wait_s
         while time.time() < end:
             st, run = self.status(), self.run()
@@ -238,7 +236,7 @@ class WorkspaceDebeziumServer:
             self.sleep(15)
         raise TimeoutError(f"{self.name}: not streaming after {self.wait_s} s ({self.run()['url']})")
 
-    ENDED = ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
+    from .jobs import ENDED
 
     def active(self) -> bool:
         return bool(self.run_id) and self.run()["life_cycle"] not in self.ENDED

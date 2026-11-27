@@ -124,17 +124,21 @@ def gateway(session, staging, target: str) -> dict:
 POSITION_NOW = {"lsn": "SELECT (pg_current_wal_lsn() - '0/0'::pg_lsn)::BIGINT AS p"}
 
 
-def jdbc(spark, connection: str, source_table: str, target: str, kind: str = "lsn", options: dict | None = None) -> dict:
-    """A source table read through the UC JDBC `connection` into `target` (replaced), with the source's position of
-    `kind` read through it just before (POSITION_NOW). source_table: as the source names it (schema.table);
-    options: more of Spark's jdbc options the connection allows (numPartitions, ...)."""
-    if kind not in POSITION_NOW:
+def jdbc(spark, connection: str, source_table: str, target: str, kind: str | None = "lsn",
+         options: dict | None = None) -> dict:
+    """A source table read through the UC JDBC `connection` (SELECT * of it, Spark's jdbc source) into `target`
+    (replaced), with the source's position of `kind` read through it just before (POSITION_NOW). kind None: no
+    position, for a snapshot taken after the change capture has landed a change (qbc's order: later changes win), and
+    for an engine with no position query here. source_table: as the source names it (schema.table); options: more of
+    Spark's jdbc options the connection allows (numPartitions, ...)."""
+    if kind is not None and kind not in POSITION_NOW:
         raise ValueError(f"intake.jdbc: no position query for {kind!r} yet ({', '.join(POSITION_NOW)})")
     t0, target = time.time(), quoted(target)
     rd = lambda: spark.read.format("jdbc").option("databricks.connection", connection)  # noqa: E731
-    pos = rd().option("query", POSITION_NOW[kind]).load().collect()[0][0]
+    pos = rd().option("query", POSITION_NOW[kind]).load().collect()[0][0] if kind else None
     df = rd().option("dbtable", source_table)
     for k, v in (options or {}).items():
         df = df.option(k, v)
     df.load().write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(target)
-    return {**_done(spark, target, t0, f"jdbc read of {source_table}"), "position": {"kind": kind, "value": str(pos)}}
+    got = _done(spark, target, t0, f"jdbc read of {source_table}")
+    return {**got, "position": {"kind": kind, "value": str(pos)}} if kind else got
