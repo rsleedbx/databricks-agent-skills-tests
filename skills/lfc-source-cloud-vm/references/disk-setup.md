@@ -39,7 +39,7 @@ A data disk's logical sector size decides the smallest direct-I/O write it accep
 
 | Engine | On a 4096-byte-sector disk |
 |---|---|
-| Db2 11.5 | `CREATE DATABASE` fails: `SQL0293N Error accessing a table space container.` `db2diag.log` shows `pwrite` of 512 bytes, `OSERR: EINVAL (22)`, `DIO/CIO Mode = Yes`. Set `db2set DB2_4K_DEVICE_SUPPORT=ON`, restart the instance (`db2stop force; db2start`), then create the database. `slot.sh` and `tpc-master.sh` do this (Db2 starts without `DBNAME`, the setting stays in the instance home, so clones keep it) |
+| Db2 11.5 | `CREATE DATABASE` fails: `SQL0293N Error accessing a table space container.` `db2diag.log` shows `pwrite` of 512 bytes, `OSERR: EINVAL (22)`, `DIO/CIO Mode = Yes`. Set `db2set DB2_4K_DEVICE_SUPPORT=ON`, restart the instance (`db2stop force; db2start`), then create the database. `lfc-slot` and `lfc-vm masters build` do this (Db2 starts without `DBNAME`, the setting stays in the instance home, so clones keep it) |
 | Postgres, MySQL, MariaDB, SQL Server 2022, Oracle 23ai Free, Informix 14.10, CockroachDB, YugabyteDB | no change: each built an SF 1 (Oracle, Informix: SF 0.1) TPC master on a 4096-byte-sector disk |
 
 To get 512 instead (only a new disk; an existing disk's sector size can't change): `az disk create ... --sku PremiumV2_LRS --logical-sector-size 512`. An earlier test VM's Premium SSD v2 data disk was created with 512, and Db2 made its database there without the setting.

@@ -1,7 +1,8 @@
 """lfc-vm <group> [args]: the source VM's commands.
   slot [--owner <owner>] <command> ...   the test databases (lfc-slot; installed as /usr/local/sbin/lfc-slot)
+  masters <build|export|import> ...      the masters a database clones from (lfc-vm: a link to lfc-slot)
   build <file>                           this package as one executable zipapp (python3 -I), to install on a VM
-Installed under the name lfc-slot, the words are slot's."""
+Run under the name lfc-slot, the words are slot's; under any other (lfc-vm), these."""
 from __future__ import annotations
 
 import os
@@ -32,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["slot"]:
         from . import slots
         return slots.main(argv[1:])
+    if argv[:1] == ["masters"]:
+        from . import masters
+        return masters.main(argv[1:])
     if argv[:1] == ["build"] and len(argv) == 2:
         print(build(argv[1]))
         return 0
