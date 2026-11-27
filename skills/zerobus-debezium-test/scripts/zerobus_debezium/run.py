@@ -50,7 +50,7 @@ def settled(wh, log, prefix, key, seq, ids: range, want: int, settle_s: int, tim
 def _ls(api, folder: str) -> list:
     try:
         return list(api.ls(folder + "/"))
-    except Exception:
+    except Exception:  # noqa: BLE001 -- no folder yet: a first start
         return []
 
 
@@ -118,35 +118,42 @@ def main(argv=None) -> int:
     if landed(wh, log, prefix, e.key, e.seq, ids):
         raise SystemExit(f"ids {a.base}..{a.base + 9} are in the log already: pick another --base")
     t0 = time.time()
-    p.start()
-    claim("streaming", True, f"Debezium Server streaming {int(time.time() - t0)} s after submit ({p.run()['url']})")
+    try:
+        p.start()
+        claim("streaming", True, f"Debezium Server streaming {int(time.time() - t0)} s after submit ({p.run()['url']})")
 
-    slot.sql(e.changes(1, a.base))
-    first = [] if fresh else [("create", a.base)]
-    want = first + e.expected(1, a.base)
-    got = settled(wh, log, prefix, e.key, e.seq, ids, len(want), e.lag_s)
-    new = got
-    if fresh:
-        claim("no-snapshot", ("create", a.base) not in new, "the row inserted before the first start isn't in the log")
-    else:
-        claim("resume", new[:1] == first, "the row inserted while stopped (after the offsets) is carried on resume")
-    claim("round-1", got == want, f"inserts, update, delete while streaming: {new}")
+        slot.sql(e.changes(1, a.base))
+        first = [] if fresh else [("create", a.base)]
+        want = first + e.expected(1, a.base)
+        got = settled(wh, log, prefix, e.key, e.seq, ids, len(want), e.lag_s)
+        new = got
+        if fresh:
+            claim("no-snapshot", ("create", a.base) not in new, "the row inserted before the first start isn't in the log")
+        else:
+            claim("resume", new[:1] == first, "the row inserted while stopped (after the offsets) is carried on resume")
+        claim("round-1", got == want, f"inserts, update, delete while streaming: {new}")
 
-    r = p.stop()
-    claim("stop", r == "SUCCESS", f"STOP file: run {r}, status {p.status().get('why')}")
-    slot.sql(e.changes(2, a.base))
-    p.start()
-    slot.sql(e.changes(3, a.base))
-    mark = len(want)
-    want = want + e.expected(2, a.base) + e.expected(3, a.base)
-    got = settled(wh, log, prefix, e.key, e.seq, ids, len(want), e.lag_s)
-    claim("restart", got[:len(want)] == want, f"while stopped, then after the restart: {got[mark:]}")
-    claim("no-duplicates", got == want, f"{len(got)} events for {len(want)} changes")
-    late = [x for x in landed(wh, log, prefix, e.key, e.seq) if x[1] not in ids][len(old):]
-    if late:
-        print(f"OBSERVED {a.engine} late: {late} from an earlier run arrived during this one (not lost)", flush=True)
-    r = p.stop()
-    claim("stop-2", r == "SUCCESS", f"run {r}")
+        r = p.stop()
+        claim("stop", r == "SUCCESS", f"STOP file: run {r}, status {p.status().get('why')}")
+        slot.sql(e.changes(2, a.base))
+        p.start()
+        slot.sql(e.changes(3, a.base))
+        mark = len(want)
+        want = want + e.expected(2, a.base) + e.expected(3, a.base)
+        got = settled(wh, log, prefix, e.key, e.seq, ids, len(want), e.lag_s)
+        claim("restart", got[:len(want)] == want, f"while stopped, then after the restart: {got[mark:]}")
+        claim("no-duplicates", got == want, f"{len(got)} events for {len(want)} changes")
+        late = [x for x in landed(wh, log, prefix, e.key, e.seq) if x[1] not in ids][len(old):]
+        if late:
+            print(f"OBSERVED {a.engine} late: {late} from an earlier run arrived during this one (not lost)", flush=True)
+        r = p.stop()
+        claim("stop-2", r == "SUCCESS", f"run {r}")
+    finally:   # a failed round mustn't leave the workspace run streaming (and holding this producer's offsets)
+        try:
+            if p.run_id and p.run()["life_cycle"] not in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED"):
+                p.stop()
+        except Exception as x:  # noqa: BLE001 -- the round's own error is the one to raise
+            print(f"cleanup: {name}: {x}", file=sys.stderr)
     ok = all(x["ok"] for x in results)
     print(json.dumps({"engine": a.engine, "ok": ok, "producer": name, "log": log,
                       "results": results}, indent=1))

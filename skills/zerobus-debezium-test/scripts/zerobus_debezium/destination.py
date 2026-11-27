@@ -44,7 +44,7 @@ def put_secret(api, scope: str, key: str, value: str) -> str:
     """value into scope/key, the scope made if missing; returns "scope/key", never the value."""
     try:
         api.post("/api/2.0/secrets/scopes/create", {"scope": scope})
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 -- the scope is there already (checked below)
         if "ALREADY_EXISTS" not in str(e).upper().replace(" ", "_"):
             raise
     api.post("/api/2.0/secrets/put", {"scope": scope, "key": key, "string_value": value})
