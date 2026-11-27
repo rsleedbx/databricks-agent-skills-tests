@@ -47,8 +47,11 @@ number's text, so other readers get wrong numbers.
 
 **Which log, which snapshot method, which silver cell** is routing's decision, made in the routing layer's own skill, not here.
 The log carries changes only: each table's snapshot is a Delta table of its
-own (`qbc`, or `intake` for any other arrival, a gateway's staging included: `intake.gateway` copies it by name with
-its position).
+own (`qbc`; `jdbc_job`, Spark's jdbc read in a serverless job of [notebooks/jdbc_snapshot.py](notebooks/jdbc_snapshot.py),
+for an engine with no query-based connector; or `intake` for any other arrival, a gateway's staging included:
+`intake.gateway` copies it by name with its position). `qbc` and `jdbc_job` are `SNAPSHOTS`' methods, each with
+`snapshot()` and `snapshot_table()`; `jobs` runs a notebook once as a serverless job for them and for
+`producer.WorkspaceDebeziumServer`.
 
 A shared adapter matters for cost: one scan filtered by source and table can replace a change-feed plan per source,
 which is what grows with the sources (lfc-medallion's `references/performance-reasoning.md`).

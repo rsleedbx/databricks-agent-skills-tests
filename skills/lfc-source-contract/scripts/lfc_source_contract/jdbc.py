@@ -53,6 +53,11 @@ def url(engine: str, host: str, port: int, database: str, tls: bool = True) -> s
     raise ValueError(f"url: {engine}: postgres, mysql, sqlserver or db2 (the others: their driver's own form)")
 
 
+def table_name(engine: str, schema: str, table: str) -> str:
+    """schema.table as a JDBC read names it: Db2's and Oracle's dictionaries keep unquoted names in upper case."""
+    return f"{schema}.{table}".upper() if engine in ("db2", "oracle") else f"{schema}.{table}"
+
+
 def connection_body(name: str, engine: str, jdbc_url: str, user: str, password: str, comment: str | None = None) -> dict:
     """A TYPE JDBC connection's create request: the Maven driver, the URL and login, the allow-list."""
     if engine not in MAVEN:

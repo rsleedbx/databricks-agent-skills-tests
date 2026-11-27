@@ -41,6 +41,20 @@ def spec(name: str, connection: str, catalog: str, schema: str, source_catalog: 
                                      "objects": [obj(t, k) for t, k in sorted(tables.items())]}}
 
 
+# the engines Lakeflow Connect's query-based ingestion reads (lfc_source_contract.federation's connection types)
+ENGINES = ("sqlserver", "mysql", "oracle", "postgres")
+
+
+def source_names(engine: str, database: str | None, schema: str, table: str) -> dict:
+    """How a query-based pipeline names a source table: {"catalog" (None: MySQL has none), "schema", "table"}.
+    Oracle: the PDB as catalog (its service name), names in upper case as the dictionary keeps them."""
+    if engine not in ENGINES:
+        raise ValueError(f"qbc: {engine}: no query-based connector (one of {', '.join(ENGINES)}; else jdbc_job)")
+    if engine == "oracle":
+        return {"catalog": database, "schema": schema.upper(), "table": table.upper()}
+    return {"catalog": None if engine == "mysql" else database, "schema": schema, "table": table}
+
+
 def snapshot_table(catalog: str, schema: str, table: str) -> str:
     """The snapshot as silver takes it (the contract: a Delta table, lfc_log_silver Table.snapshot_table): the
     streaming table the pipeline wrote, quoted."""

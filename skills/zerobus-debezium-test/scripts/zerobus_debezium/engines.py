@@ -40,14 +40,9 @@ class Engine:
     history: bool = True         # needs schema.history.internal (every connector but PostgreSQL's)
     lag_s: int = 30              # how long a committed change can take to reach the log (Db2: ASN capture's commit)
     notes: list = field(default_factory=list)
-    # the query-based snapshot (Lakeflow Connect, through a UC connection): (conn) -> {"login": user, "service": the
-    # connection's Oracle service, "catalog": the pipeline's source_catalog (None: MySQL), "schema", "table"}; None:
-    # no query-based connector for the engine (Db2)
-    qbc: Callable | None = None
-    # the snapshot through a UC JDBC connection instead (Spark's jdbc source, SELECT *: lfc-change-source's
-    # notebooks/jdbc_snapshot.py), for an engine with no query-based connector: (conn) -> {"login", "database", "table"
-    # as the source names it, "tls": whether the server listens with TLS}
-    jdbc: Callable | None = None
+    # where the test's table is and who reads it for the snapshot: (conn) -> {"database" (Oracle: the PDB), "schema",
+    # "table", "login", "service" (Oracle: the CDB's, for the connection), "tls" (False: the server has no TLS)}
+    source: Callable | None = None
 
     def setup(self, conn: dict) -> list:
         return self.setup_steps(conn)
@@ -135,7 +130,7 @@ SQLSERVER = Engine(
     lambda c: {"database.names": c.get("database", "dbz"), "database.encrypt": "true",
                "database.trustServerCertificate": "true"},
     _mssql_setup, _mssql_dml,
-    qbc=lambda c: {"login": c["user"], "catalog": c.get("database", "dbz"), "schema": "dbo", "table": TABLE})
+    source=lambda c: {"database": c.get("database", "dbz"), "schema": "dbo", "table": TABLE, "login": c["user"]})
 
 
 # --- MySQL: the binlog in ROW format with full images (the slot's container has it); a database of its own ------------
@@ -153,7 +148,8 @@ MYSQL = Engine(
     lambda c: {"database.server.id": str(c.get("server_id", 5401)), "database.include.list": c.get("database", "dbz"),
                "binary.handling.mode": "hex"},
     _mysql_setup, lambda stmts: "".join(f"{s};\n" for s in stmts),
-    qbc=lambda c: {"login": c["user"], "catalog": None, "schema": c.get("database", "dbz"), "table": TABLE})
+    source=lambda c: {"database": c.get("database", "dbz"), "schema": c.get("database", "dbz"), "table": TABLE,
+                      "login": c["user"]})
 
 
 # --- Oracle: LogMiner. ARCHIVELOG and supplemental logging (restarts the instance once), a common user for Debezium
@@ -202,8 +198,8 @@ ORACLE = Engine(
                "schema.include.list": c.get("owner", "LFC_USER"), "log.mining.strategy": "online_catalog"},
     _oracle_setup, _oracle_dml,
     # LogMiner's common user reads for the snapshot too (SELECT ANY TABLE): the CDB's service, the PDB as catalog
-    qbc=lambda c: {"login": "C##DBZUSER", "service": "FREE", "catalog": c.get("service", "FREEPDB1"),
-                   "schema": c.get("owner", "LFC_USER"), "table": TABLE.upper()})
+    source=lambda c: {"database": c.get("service", "FREEPDB1"), "schema": c.get("owner", "LFC_USER"), "table": TABLE,
+                      "login": "C##DBZUSER", "service": "FREE"})
 
 
 # --- Db2: ASN capture (Debezium's management scripts, compiled in the container), archive logging, the capture agent
@@ -249,8 +245,8 @@ DB2 = Engine(
     " 16, 10) AS BIGINT)",
     lambda c: {"database.dbname": c.get("database", "LFCDB")},
     _db2_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), lag_s=90,
-    jdbc=lambda c: {"login": c["user"], "database": c.get("database", "LFCDB"), "table": f"DBZ.{TABLE.upper()}",
-                    "tls": False},
+    source=lambda c: {"database": c.get("database", "LFCDB"), "schema": "DBZ", "table": TABLE, "login": c["user"],
+                      "tls": False},
     notes=["the capture agent asncap must run in the container; a container restart stops it"])
 
 
@@ -271,7 +267,7 @@ POSTGRES = Engine(
                "slot.name": c.get("slot", "dbz_slot"), "publication.name": c.get("publication", "dbz_publication"),
                "publication.autocreate.mode": "disabled"},
     _pg_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), history=False,
-    qbc=lambda c: {"login": c["user"], "catalog": c.get("database", "postgres"), "schema": "dbz", "table": TABLE})
+    source=lambda c: {"database": c.get("database", "postgres"), "schema": "dbz", "table": TABLE, "login": c["user"]})
 
 
 ENGINES = {e.name: e for e in (SQLSERVER, MYSQL, ORACLE, DB2, POSTGRES)}

@@ -19,14 +19,17 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.join(HERE, "..", "..", "..")
-for dep in ("lfc-rest", "lfc-change-source", "lfc-source-contract"):   # a checkout: the sibling skills' packages, when not installed
+for dep in ("lfc-rest", "lfc-change-source", "lfc-source-contract", "lfc-routing"):   # a checkout: the sibling skills' packages, when not installed
     sys.path.insert(0, os.path.join(SKILLS, dep, "scripts"))
 
+from lfc_change_source import SNAPSHOTS
 from lfc_change_source.engine import Warehouse
 from lfc_change_source.producer import Spec, WorkspaceDebeziumServer
 from lfc_rest import Rest
+from lfc_routing.routing import Policy, snapshot_method
+from lfc_source_contract import federation, jdbc
 
-from zerobus_debezium import destination, engines, snapshot
+from zerobus_debezium import destination, engines
 from zerobus_debezium.source import Slot
 
 
@@ -52,6 +55,42 @@ def _ls(api, folder: str) -> list:
         return list(api.ls(folder + "/"))
     except Exception:  # noqa: BLE001 -- no folder yet: a first start
         return []
+
+
+def take_snapshot(api, wh, e, conn: dict, a, snap_schema: str, pipeline: str, log: str) -> dict:
+    """The test table's snapshot by the method routing picks for the engine (lfc_change_source.SNAPSHOTS: qbc, else
+    jdbc), through a UC connection of the kind it reads (federation's type, or TYPE JDBC), into snap_schema."""
+    src = e.source(conn)
+    how = snapshot_method(src["table"], 0, Policy(shared_log=log, engine=e.name))
+    name = f"{a.connection_prefix}-{a.engine}-{a.slot_name}"
+    if how == "qbc":
+        federation.upsert(api, federation.body(name, e.name, conn["host"], conn["port"], src["login"], conn["password"],
+                                               service=src.get("service"), comment="zerobus-debezium-test snapshot"))
+        n = SNAPSHOTS["qbc"].source_names(e.name, src["database"], src["schema"], src["table"])
+        wh.sql(f"CREATE SCHEMA IF NOT EXISTS {destination.q(a.catalog, snap_schema)}")
+        got = SNAPSHOTS["qbc"].snapshot(api, pipeline, name, a.catalog, snap_schema, n["catalog"], n["schema"],
+                                        {n["table"]: [e.key]})
+        return {"how": how, **got, "table": SNAPSHOTS["qbc"].snapshot_table(a.catalog, snap_schema, n["table"]),
+                "link": f"{api.host}/pipelines/{got['pipeline_id']}"}
+    if how == "jdbc":
+        if not a.change_source_package:
+            raise SystemExit(f"{e.name}: the jdbc snapshot needs --change-source-package")
+        url = jdbc.url(e.name, conn["host"], conn["port"], src["database"], tls=src.get("tls", True))
+        federation.upsert(api, jdbc.connection_body(name, e.name, url, src["login"], conn["password"],
+                                                    comment="zerobus-debezium-test snapshot"))
+        t = jdbc.table_name(e.name, src["schema"], src["table"])
+        got = SNAPSHOTS["jdbc"].snapshot(api, name, [t], a.catalog, snap_schema,
+                                         f"{os.path.dirname(a.notebook)}/jdbc_snapshot", a.change_source_package)
+        return {"how": how, **got, "table": SNAPSHOTS["jdbc"].snapshot_table(a.catalog, snap_schema, t),
+                "link": got["url"]}
+    raise ValueError(f"{e.name}: snapshot method {how}: not one this test takes")
+
+
+def rows(wh, table: str, ids: range) -> dict:
+    """{id: (name, balance as text)} of the snapshot's rows with those ids (names fold: Oracle's are upper)."""
+    got = wh.sql(f"SELECT CAST(id AS BIGINT), name, CAST(CAST(balance AS DECIMAL(12,2)) AS STRING) FROM {table} "
+                 f"WHERE id BETWEEN {ids.start} AND {ids.stop - 1}").collect()
+    return {r[0]: (r[1], r[2]) for r in got}
 
 
 def main(argv=None) -> int:
@@ -138,12 +177,9 @@ def main(argv=None) -> int:
         else:
             claim("resume", new[:1] == first, "the row inserted while stopped (after the offsets) is carried on resume")
         claim("round-1", got == want, f"inserts, update, delete while streaming: {new}")
-        if a.snapshot == "auto":   # Debezium streams and round 1 has landed: the snapshot's turn (qbc, else jdbc)
-            snap = snapshot.take(api, e, conn, f"{a.connection_prefix}-{a.engine}-{a.slot_name}", a.catalog,
-                                 f"{a.schema}_snap_{tag}", pipeline=f"{name}-snapshot", wh=wh,
-                                 notebook_path=f"{os.path.dirname(a.notebook)}/jdbc_snapshot",
-                                 package=a.change_source_package)
-            have = snapshot.rows(wh, snap["table"], ids) if snap["state"] == "COMPLETED" else {}
+        if a.snapshot == "auto":   # Debezium streams and round 1 has landed: the snapshot's turn
+            snap = take_snapshot(api, wh, e, conn, a, f"{a.schema}_snap_{tag}", f"{name}-snapshot", log)
+            have = rows(wh, snap["table"], ids) if snap["state"] == "COMPLETED" else {}
             claim("snapshot", snap["state"] == "COMPLETED" and have == e.state_after(1, a.base),
                   f"{snap['how']} {snap['state']} in {snap['seconds']} s into {snap['table']}: {have} "
                   f"({snap['link']}){' ' + str(snap['error'])[:300] if snap.get('error') else ''}")

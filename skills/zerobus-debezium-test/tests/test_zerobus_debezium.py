@@ -9,6 +9,8 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+for dep in ("lfc-change-source", "lfc-source-contract", "lfc-routing", "lfc-rest"):
+    sys.path.insert(0, os.path.join(HERE, "..", "..", dep, "scripts"))
 
 from zerobus_debezium import engines  # noqa: E402
 
@@ -53,6 +55,32 @@ class EngineTest(unittest.TestCase):
     def test_unknown_engine(self):
         with self.assertRaises(ValueError):
             engines.get("sybase")
+
+
+class SnapshotRouteTest(unittest.TestCase):
+    """Which snapshot method each engine's test table gets, and how each method names it."""
+
+    def test_routing_picks_qbc_else_jdbc(self):
+        from lfc_routing.routing import Policy, snapshot_method
+        for name in engines.ENGINES:
+            got = snapshot_method("t", 0, Policy(shared_log="`c`.`s`.`cdc_log`", engine=name))
+            self.assertEqual(got, "jdbc" if name == "db2" else "qbc", name)
+
+    def test_names_per_method(self):
+        from lfc_change_source import SNAPSHOTS
+        from lfc_source_contract import jdbc
+        ora = engines.get("oracle").source(CONN)
+        self.assertEqual(SNAPSHOTS["qbc"].source_names("oracle", ora["database"], ora["schema"], ora["table"]),
+                         {"catalog": "FREEPDB1", "schema": "LFC_USER", "table": "CUSTOMERS"})
+        my = engines.get("mysql").source(CONN)
+        self.assertIsNone(SNAPSHOTS["qbc"].source_names("mysql", my["database"], my["schema"], my["table"])["catalog"])
+        db2 = engines.get("db2").source(CONN)
+        t = jdbc.table_name("db2", db2["schema"], db2["table"])
+        self.assertEqual(t, "DBZ.CUSTOMERS")
+        self.assertEqual(SNAPSHOTS["jdbc"].snapshot_table("c", "s", t), "`c`.`s`.`customers`")
+        self.assertEqual(jdbc.url("db2", "h", 30024, "LFCDB", tls=False), "jdbc:db2://h:30024/LFCDB")
+        with self.assertRaises(ValueError):
+            SNAPSHOTS["qbc"].source_names("db2", "LFCDB", "DBZ", "customers")
 
 
 class PropertiesTest(unittest.TestCase):

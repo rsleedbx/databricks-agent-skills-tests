@@ -43,13 +43,15 @@ import math
 from dataclasses import dataclass, field
 
 from lfc_change_source.cdc_log import SEQUENCES, TEXT
+from lfc_change_source.qbc import ENGINES as QBC_ENGINES
 
 CLASSES = ("small_slow", "small_fast", "big_slow", "big_fast")
 SILVER = {"small_slow": "shared", "small_fast": "shared", "big_slow": "merge_changed", "big_fast": "auto_cdc"}
 OWN = {"small_slow": "view", "small_fast": "merge_round"}   # a small table's method out of its group
 METHODS = ("shared", "view", "merge_round", "merge_changed", "auto_cdc")
 SMALL_MAX_BYTES = 1 << 30   # 1 GiB: a small table costs per statement, a big one per byte
-SNAPSHOT_METHODS = ("qbc", "transport", "files")   # each ends as a Delta table (silver.Table.snapshot_table)
+SNAPSHOT_METHODS = ("qbc", "jdbc", "transport", "files")   # each ends as a Delta table (silver.Table.snapshot_table);
+# qbc and jdbc are lfc_change_source.SNAPSHOTS' methods
 # Zerobus Ingest's documented default per stream (gRPC): 100,000 records a second (benchmarked with 1 KB messages)
 STREAM_RECORDS_PER_S = 100_000
 
@@ -87,6 +89,8 @@ class Policy:
     snapshot_big: str = "qbc"                         # ... e.g. files, when the customer exports such tables
     snapshot_chosen: dict = field(default_factory=dict)   # {table: method}: chosen instead of by its size
     history: object = ()                              # the tables whose every version is kept: "all", or names
+    engine: str = ""                                  # the source's engine: one with no query-based connector gets
+    #                                                   jdbc where qbc would be chosen (lfc_change_source.qbc.ENGINES)
 
     def log_name(self, table: str) -> str:
         shared = self.shared_log.rstrip("`")
@@ -120,9 +124,12 @@ def log_for(table: str, snapshot_bytes: int, events_per_s: float, policy: Policy
 
 
 def snapshot_method(table: str, snapshot_bytes: int, policy: Policy) -> str:
-    """How the table's snapshot is taken: chosen by name, else by its size (module doc)."""
+    """How the table's snapshot is taken: chosen by name, else by its size (module doc); qbc becomes jdbc for an engine
+    with no query-based connector."""
     m = policy.snapshot_chosen.get(table) or (policy.snapshot_big if snapshot_bytes > policy.snapshot_big_bytes
                                               else policy.snapshot_method)
+    if m == "qbc" and policy.engine and policy.engine not in QBC_ENGINES:   # Db2, Informix: Spark's jdbc read
+        m = "jdbc"
     if m not in SNAPSHOT_METHODS:
         raise ValueError(f"{table}: snapshot {m!r}, one of {', '.join(SNAPSHOT_METHODS)}")
     return m
