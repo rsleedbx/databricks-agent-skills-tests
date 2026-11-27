@@ -27,7 +27,7 @@ SEQUENCES = {
     "scn": "value:source:scn::BIGINT",
     # Oracle (LogMiner): one transaction's changes share their SCN (an insert and an update of one key, tested), so
     # the redo record's address, rs_id (0x<log seq>.<block>.<offset>, fixed-width hex), orders them within it: text
-    "scn_rs": "concat(lpad(value:source:scn::STRING, 20, '0'), value:source:rs_id::STRING)",
+    "scn_rs": "concat(lpad(value:source:scn::STRING, 20, '0'), COALESCE(value:source:rs_id::STRING, ''))",
     "ifx_lsn": "value:source:change_lsn::BIGINT",
     "db2_lsn": "CAST(conv(substring(split_part(COALESCE(value:source:change_lsn, value:source:commit_lsn)::STRING, "
                "':', 3), -15), 16, 10) AS BIGINT)",
@@ -40,6 +40,13 @@ SEQUENCES = {
     "hlc": "value:updated::STRING",
 }
 TEXT = {"gateway_cursor", "hlc", "scn_rs"}   # positions compared as text
+
+
+def position_of(kind: str, n) -> str:
+    """A position's value of kind from a number (a snapshot's T, a start of 0), in the form the kind's events compare
+    in: scn_rs's SCN zero-padded to 20 digits (with no rs_id it sorts before that SCN's changes, which carry whole rows
+    and reapply harmlessly); the other kinds as the number's text."""
+    return str(n).zfill(20) if kind == "scn_rs" else str(n)
 # a kind whose transport says how far every change has arrived (CockroachDB's RESOLVED files, landed as rows)
 RESOLVED = {"hlc": "value:resolved::STRING"}
 EVENT = "operation <> 'resolved'"   # a change event, not a landed watermark
