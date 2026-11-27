@@ -70,3 +70,24 @@ Not tested yet: classic compute, volume, schema changes; n:1 and gold (next: lfc
 ## Heartbeats
 
 Without a heartbeat, a quiet source leaves the slot's confirmed position short of the last change, so PostgreSQL keeps that WAL. With `heartbeat.interval.ms`, the position moves, and the Zerobus sink writes each heartbeat into `cdc_log` as destination `__debezium-heartbeat.<prefix>`, operation `change`. Silver reads by `destination`, so they don't reach it. Dropping them before the sink with Kafka's `Filter` transform (`TopicNameMatches`) kept them out of `cdc_log`, but the slot's position stopped moving too, so the notebook keeps them.
+
+## A source's own tables (`zerobus_debezium.stream`)
+
+The rounds above use a test table the test creates. `python -m zerobus_debezium.stream` runs tables that already exist
+the way a customer's would go: change capture on them (`engines.Engine.capture`, optional), Debezium Server streaming them,
+a snapshot of each once its first change has landed (routing's method, through a UC connection that's there already),
+at the table's newest event just before it, then FlowThrough silver rounds. A keyed table's changes during the
+snapshot's read reapply harmlessly (whole rows); a keyless table's insert in that short window counts twice. The source keeps changing, so each silver table is checked against the snapshot and the
+log up to the round's position (`combine.current_sql`), not against the source.
+
+`capture()` only changes what capture needs and never restarts a database unless told it may (`restart=True`): Oracle
+refuses a database that isn't in ARCHIVELOG, Db2's ASN install (archive logging, a backup and a restart) is skipped when
+`ASNCDC` is there already. Informix is an engine too: its CDC database `syscdcv1`, and Debezium Server's `lib/` gets the
+Informix JDBC driver and change-stream client (`Engine.jars`, downloaded by the notebook). On a database other clients
+use, Db2's archive-logging backup can fail on their connections and leave the database in backup pending (SQL1116N),
+refusing connections until an offline backup succeeds.
+
+Each run takes its snapshot from scratch (a QBC full refresh) and builds its silver anew. A temporal column is decoded in Debezium's unit for 6 digits of fraction unless `--precision col=digits` says otherwise (milliseconds for 0-3, nanoseconds for 7-9). PostgreSQL capture gives a keyless table with the default replica identity `REPLICA IDENTITY FULL` before adding it to the publication, as PostgreSQL refuses updates and deletes on a published table without one.
+
+Not run live yet: `stream.py` and the Informix engine. Capture has been set up with it on six long-running databases
+(MySQL, PostgreSQL, SQL Server, Oracle, Db2, Informix).

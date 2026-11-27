@@ -45,6 +45,8 @@ dbutils.widgets.text("secret_key", "<db-password-key>")
 dbutils.widgets.text("zb_client_id", "<service principal application id>")
 dbutils.widgets.text("zb_secret_key", "<oauth-secret-key>")
 dbutils.widgets.text("zb_endpoint", "")   # empty: https://<workspace id>.zerobus.<region>.<cloud domain>
+dbutils.widgets.text("tables", "")   # table.include.list (schema.table, ...); empty: the skill's test table
+dbutils.widgets.text("db_schema", "")   # Oracle: the tables' schema (schema.include.list); empty: the test's
 dbutils.widgets.text("slot_name", "dbz_slot")              # PostgreSQL
 dbutils.widgets.text("publication_name", "dbz_publication")  # PostgreSQL
 dbutils.widgets.text("heartbeat_ms", "10000")   # keeps the source's confirmed position moving while it's quiet
@@ -56,7 +58,8 @@ dbutils.widgets.text("start_timeout_sec", "600")   # not streaming by then: stop
 
 W = {k: dbutils.widgets.get(k) for k in [
     "name", "engine", "package", "catalog", "schema", "volume", "log_table", "db_host", "db_port", "db_name",
-    "db_user", "secret_scope", "secret_key", "zb_client_id", "zb_secret_key", "zb_endpoint", "slot_name",
+    "db_user", "secret_scope", "secret_key", "zb_client_id", "zb_secret_key", "zb_endpoint", "tables", "db_schema",
+    "slot_name",
     "publication_name", "heartbeat_ms", "debezium_version", "java_major", "idle_timeout_sec", "max_runtime_sec",
     "start_timeout_sec"]}
 if not W["catalog"]:
@@ -150,6 +153,17 @@ for fname in SOURCES:
 subprocess.run(["chmod", "-R", "u+rwX", RUN], check=True)   # the archives' own modes can leave folders unreadable
 DBZ_HOME = os.path.join(RUN, "debezium-server")
 JAVA_HOME = next(os.path.join(RUN, d) for d in os.listdir(RUN) if d.startswith("jdk"))
+for coord in ENGINE.jars:   # an engine's driver Debezium Server doesn't ship (Informix): from Maven Central, cached
+    g, art, ver = coord.split(":")
+    jar = f"{art}-{ver}.jar"
+    if not os.path.exists(f"{CACHE}/{jar}"):
+        url = f"https://repo1.maven.org/maven2/{g.replace('.', '/')}/{art}/{ver}/{jar}"
+        req = urllib.request.Request(url, headers={"User-Agent": "debezium-notebook/1.0"})
+        with urllib.request.urlopen(req) as r, open(os.path.join(tempfile.gettempdir(), jar), "wb") as f:
+            shutil.copyfileobj(r, f)
+        shutil.copy(os.path.join(tempfile.gettempdir(), jar), f"{CACHE}/{jar}.{os.getpid()}.part")
+        os.replace(f"{CACHE}/{jar}.{os.getpid()}.part", f"{CACHE}/{jar}")
+    shutil.copy(f"{CACHE}/{jar}", f"{DBZ_HOME}/lib/{jar}")
 zb_jars = [j for j in os.listdir(f"{DBZ_HOME}/lib") if "zerobus" in j]
 assert zb_jars, f"Debezium Server {V} has no Zerobus sink in lib/ (it ships from 3.7)"
 
@@ -174,12 +188,15 @@ conn = {"host": W["db_host"], "port": W["db_port"], "user": W["db_user"],
         "slot": W["slot_name"], "publication": W["publication_name"]}
 if W["db_name"]:
     conn["service" if W["engine"] == "oracle" else "database"] = W["db_name"]
+if W["db_schema"]:
+    conn["owner"] = W["db_schema"]
 # the schema history on local disk (Debezium appends to it, which a Volume refuses: "Illegal seek"), restored from the
 # Volume's copy and copied back whenever it changes (sync_history)
 HIST, HIST_VOL = f"{RUN}/schema-history.dat", f"{FOLDER}/schema-history.dat"
 if os.path.exists(HIST_VOL):
     shutil.copy(HIST_VOL, HIST)
-props = {**ENGINE.source_properties(conn, FOLDER, W["name"], int(W["heartbeat_ms"]), history_folder=RUN),
+props = {**ENGINE.source_properties(conn, FOLDER, W["name"], int(W["heartbeat_ms"]), history_folder=RUN,
+                                    tables=W["tables"] or None),
          **engines.sink_properties(W["zb_endpoint"], HOST, W["zb_client_id"],
                                    dbutils.secrets.get(W["secret_scope"], W["zb_secret_key"]),
                                    f"{W['catalog']}.{W['schema']}.{W['log_table']}")}
