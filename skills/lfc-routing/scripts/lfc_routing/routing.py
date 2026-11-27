@@ -228,7 +228,7 @@ def transitions(old: dict, new: dict) -> list:
     out = []
     if old.get("log") != new.get("log"):
         out.append(("cutover", f"log {old.get('log')} -> {new.get('log')} at a position P: events after P land in the "
-                               f"{new.get('log')} log (land.gateway only=/skip=), readers read the {old.get('log')} log up "
+                               f"{new.get('log')} log (land.gateway only=), readers read the {old.get('log')} log up "
                                "to P and the new one after it (routing.history_fq); no new snapshot"))
     a, b = old.get("silver"), new.get("silver")
     if a and b and a != b:
