@@ -46,7 +46,7 @@ class EngineTest(unittest.TestCase):
     def test_setup_steps_are_known_kinds(self):
         for name, e in engines.ENGINES.items():
             kinds = {k for k, _ in e.setup(CONN)}
-            self.assertLessEqual(kinds, {"sql", "shell", "shell_detached", "sleep"}, name)
+            self.assertLessEqual(kinds, {"sql", "shell", "shell_detached", "shell_default", "sleep"}, name)
         self.assertIn("shell_detached", {k for k, _ in engines.get("db2").setup(CONN)})   # the capture agent
 
     def test_db2_waits_longer(self):
@@ -64,7 +64,7 @@ class SnapshotRouteTest(unittest.TestCase):
         from lfc_routing.routing import Policy, snapshot_method
         for name in engines.ENGINES:
             got = snapshot_method("t", 0, Policy(shared_log="`c`.`s`.`cdc_log`", engine=name))
-            self.assertEqual(got, "jdbc" if name == "db2" else "qbc", name)
+            self.assertEqual(got, "jdbc" if name in ("db2", "informix") else "qbc", name)
 
     def test_names_per_method(self):
         from lfc_change_source import SNAPSHOTS

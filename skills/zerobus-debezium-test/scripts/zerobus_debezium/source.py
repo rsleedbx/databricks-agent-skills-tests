@@ -53,11 +53,13 @@ class Slot:
     def container_name(self, owner: str) -> str:
         return f"lfc-slot-{owner}-{self.name}"
 
-    def container(self, cmd: str, admin_key: str, owner: str, detached: bool = False) -> str:
+    def container(self, cmd: str, admin_key: str, owner: str, detached: bool = False, root: bool = True) -> str:
         """cmd as root in the database's container, through the VM admin login (podman exec). For setup an engine's
-        capture needs beyond SQL (Db2's ASN tools); detached: started and left running (a capture agent)."""
+        capture needs beyond SQL (Db2's ASN tools); detached: started and left running (a capture agent); root False:
+        as the container's own user (Informix's image runs as informix, whose login shell has dbaccess)."""
         c = self.container_name(owner)
-        remote = f"sudo podman exec {'-d ' if detached else ''}-u 0 {shlex.quote(c)} bash -lc {shlex.quote(cmd)}"
+        remote = (f"sudo podman exec {'-d ' if detached else ''}{'-u 0 ' if root else ''}{shlex.quote(c)} "
+                  f"bash -lc {shlex.quote(cmd)}")
         p = subprocess.run(self._ssh(os.path.expanduser(admin_key), self.admin_user) + [remote], text=True,
                            capture_output=True)
         if p.returncode:
@@ -72,10 +74,11 @@ class Slot:
                 out = self.sql(text)
                 if out.strip():
                     log("  " + out.strip().replace("\n", "\n  ")[-800:])
-            elif kind in ("shell", "shell_detached"):
+            elif kind in ("shell", "shell_detached", "shell_default"):
                 if not admin_key or not owner:
                     raise ValueError(f"{self.name}: a shell step needs the VM admin login (admin_key) and the owner")
-                out = self.container(text, admin_key, owner, detached=kind == "shell_detached")
+                out = self.container(text, admin_key, owner, detached=kind == "shell_detached",
+                                     root=kind != "shell_default")
                 if out.strip():
                     log("  " + out.strip()[-800:])
             elif kind == "sleep":
