@@ -254,12 +254,13 @@ JAVA_OPT_VARS = ("JAVA_OPTS", "JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OP
 env = {k: v for k, v in os.environ.items() if k not in JAVA_OPT_VARS}
 env.update(JAVA_HOME=JAVA_HOME, PATH=f"{JAVA_HOME}/bin:{os.environ['PATH']}")
 log = open(LOG, "w")  # noqa: SIM115 -- the child writes to it; closed in finally
-proc = subprocess.Popen(["bash", "run.sh"], cwd=DBZ_HOME, env=env, stdout=log, stderr=subprocess.STDOUT)
-print(f"Debezium Server started, pid {proc.pid}")
-start = last_change = time.time()
-last_rows = start_rows = rows()
+proc = None
 why, streaming = "", False
-try:
+try:   # from here on, finally stops Debezium and removes the settings file (it holds the two secrets)
+    last_rows = start_rows = rows()   # before the start: a failing query leaves nothing running
+    proc = subprocess.Popen(["bash", "run.sh"], cwd=DBZ_HOME, env=env, stdout=log, stderr=subprocess.STDOUT)
+    print(f"Debezium Server started, pid {proc.pid}")
+    start = last_change = time.time()
     while not stop_requested:
         time.sleep(10)
         now = time.time()
@@ -297,7 +298,7 @@ try:
     else:
         why = "SIGTERM (job cancelled)"
 finally:
-    if proc.poll() is None:
+    if proc is not None and proc.poll() is None:
         proc.terminate()   # Debezium flushes its offsets on SIGTERM
         try:
             proc.wait(timeout=60)
