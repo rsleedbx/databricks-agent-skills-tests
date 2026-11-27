@@ -150,8 +150,8 @@ def main(argv=None) -> int:
         claim("stop-2", r == "SUCCESS", f"run {r}")
     finally:   # a failed round mustn't leave the workspace run streaming (and holding this producer's offsets)
         try:
-            if p.run_id and p.run()["life_cycle"] not in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED"):
-                p.stop()
+            if p.active():
+                p.cancel()   # not the STOP file: the notebook clears one written before its loop starts
         except Exception as x:  # noqa: BLE001 -- the round's own error is the one to raise
             print(f"cleanup: {name}: {x}", file=sys.stderr)
     ok = all(x["ok"] for x in results)

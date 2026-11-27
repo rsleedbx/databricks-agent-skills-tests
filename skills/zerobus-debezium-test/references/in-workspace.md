@@ -32,6 +32,7 @@ What each engine needs (all in `engines`): SQL Server CDC on the database and th
 - **The schema history can't live in a Volume.** MySQL writes several records at its first start, and Debezium's `FileSchemaHistory` reopens the file to append: `Unable to create writer for history file /Volumes/...: Illegal seek`, retried without end. One record (SQL Server, Oracle, Db2 here) went through. The notebook keeps the history on local disk, restores it from the Volume before a start, and copies it back whenever it changes. Offsets are rewritten whole, so they stay in the Volume.
 - **Db2 is the slowest to deliver.** ASN capture commits its change tables on an interval (30 s by default), and Debezium polls them. A stop within that window leaves the last change for the next run: in one run, a delete arrived one run late. It was carried, not lost. The rounds wait 90 s for Db2, 30 s for the others.
 - **A producer that ran before isn't a first start.** A row written while it was stopped is a change it must carry, and it does. The rounds check that (`resume`) instead of `no-snapshot` when the producer's folder has offsets.
+- **Cancel is the fallback, the STOP file the stop.** Cancelling the serverless run ended it and Debezium in about 40 s (no binlog connection left on MySQL), but the notebook's cleanup didn't run: `status.json` kept `streaming`, and `application.properties` (with both secrets) stays on that compute's local disk until it's recycled. Offsets are flushed every second, so a restart replays at most that. The rounds cancel only to clean up after a failed round.
 - **A connector that can't start retries without end.** Debezium Server stays up and logs `Failed with retriable exception ... attempt #N out of infinity`. The notebook gives up after `start_timeout_sec` (600 s) and writes Debezium's last errors to `status.json`.
 
 ## PostgreSQL in detail
@@ -48,7 +49,7 @@ Serverless notebook jobs in an Azure workspace that allows only serverless, Post
 | Stop on the idle timeout | ✅ SIGTERM, offsets flushed, run `SUCCESS` | ✅ `engine.close()`, run `SUCCESS` |
 | The slot's confirmed position on a quiet source | ✅ Past the last change with `heartbeat.interval.ms=10000`; short of it without | Not checked |
 
-Not tested yet: a cancelled run (SIGTERM from the job), classic compute, volume, schema changes.
+Not tested yet: classic compute, volume, schema changes.
 
 ## What it took on serverless
 

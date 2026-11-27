@@ -22,7 +22,9 @@
 # MAGIC Each producer (`name`) has its own folder in the Volume: its offsets, schema history, STOP file and `status.json`.
 # MAGIC A new run with the same name resumes where the last one stopped. The job loop stops Debezium (SIGTERM, so it
 # MAGIC flushes its offsets) on the STOP file, after `idle_timeout_sec` with no new rows from it, after
-# MAGIC `max_runtime_sec`, or when the job run is cancelled.
+# MAGIC `max_runtime_sec`, or when the job run is cancelled. Prefer the STOP file: a cancel on serverless ends the run
+# MAGIC and Debezium (tested) without this notebook's cleanup, so `status.json` keeps its last state and the settings
+# MAGIC file stays on that compute's local disk until the compute is recycled.
 
 # COMMAND ----------
 

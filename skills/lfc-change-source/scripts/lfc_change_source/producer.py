@@ -233,22 +233,43 @@ class WorkspaceDebeziumServer:
             st, run = self.status(), self.run()
             if st.get("state") == "streaming":
                 return
-            if st.get("state") == "failed" or run["life_cycle"] in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED"):
+            if st.get("state") == "failed" or run["life_cycle"] in self.ENDED:
                 raise RuntimeError(f"{self.name}: not streaming: {st.get('why') or run['result']} ({run['url']})")
             self.sleep(15)
         raise TimeoutError(f"{self.name}: not streaming after {self.wait_s} s ({self.run()['url']})")
 
-    def stop(self, wait_s: int = 300) -> str:
-        """The STOP file; waits for the run to end (Debezium gets SIGTERM and flushes its offsets). Its result."""
+    ENDED = ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
+
+    def active(self) -> bool:
+        return bool(self.run_id) and self.run()["life_cycle"] not in self.ENDED
+
+    def _wait_end(self, wait_s: int) -> str | None:
         import time
-        self.api.upload(f"{self.folder}/STOP", b"stop")
         end = time.time() + wait_s
         while time.time() < end:
             run = self.run()
-            if run["life_cycle"] in ("TERMINATED", "INTERNAL_ERROR", "SKIPPED"):
+            if run["life_cycle"] in self.ENDED:
                 return run["result"] or run["life_cycle"]
             self.sleep(10)
-        raise TimeoutError(f"{self.name}: still running {wait_s} s after the STOP file ({self.run()['url']})")
+        return None
+
+    def stop(self, wait_s: int = 300) -> str:
+        """The STOP file; waits for the run to end (Debezium gets SIGTERM and flushes its offsets). Its result. A run
+        that doesn't honor it in wait_s is cancelled (the notebook's SIGTERM handler stops Debezium the same way)."""
+        self.api.upload(f"{self.folder}/STOP", b"stop")
+        r = self._wait_end(wait_s)
+        if r is None:
+            self.cancel()
+            raise TimeoutError(f"{self.name}: still running {wait_s} s after the STOP file: cancelled ({self.run()['url']})")
+        return r
+
+    def cancel(self, wait_s: int = 300) -> str | None:
+        """Cancel the run (jobs/runs/cancel): for cleanup, as a STOP file written before the notebook's loop is
+        cleared by it. Its result once ended, None if it hasn't in wait_s."""
+        if not self.run_id:
+            return None
+        self.api.post("/api/2.1/jobs/runs/cancel", {"run_id": self.run_id})
+        return self._wait_end(wait_s)
 
     def position(self) -> str:
         if self.position_fn is None:
