@@ -10,7 +10,8 @@ gateway's live tests do, not against the source.
         --keys intpk=pk --connection <uc connection> --notebook /Users/<me>/debezium-server-zerobus \\
         --package <zerobus_debezium wheel> --zb-client-id <application id> --scope <scope> [--capture] [--restart-ok]
 
-Writes, in <catalog>: <schema>.cdc_log (the shared log), <schema>_snap_dbz_<name>, <schema>_silver_dbz_<name>; the
+Writes, in <catalog>: <schema>.cdc_log (the shared log), <schema>_snap_dbz_<name>, <schema>_silver_dbz_<name> (dropped
+and made again each run: a run's silver starts from its own snapshot); the
 producer's folder in <schema>.<volume>. Prints one line a claim and a JSON summary.
 """
 from __future__ import annotations
@@ -208,7 +209,10 @@ def main(argv=None) -> int:
         snaps = take_snapshots(api, wh, e, a, tables, keys, snap_schema, name)
         claim("snapshot", True, f"{snaps}")
         srcs = sources_for(wh, e, log, prefix, dests, snaps, keys)
-        wh.sql(f"CREATE SCHEMA IF NOT EXISTS {silver_schema}")
+        # a new snapshot, so a new silver: the test's own schema is dropped first (a rerun would otherwise continue
+        # the last run's _flowthrough state and tables, built on the old snapshot)
+        wh.sql(f"DROP SCHEMA IF EXISTS {silver_schema} CASCADE")
+        wh.sql(f"CREATE SCHEMA {silver_schema}")
         for i in range(a.rounds):
             if i:
                 time.sleep(a.round_wait)   # the source's changes go on; the next round picks them up
