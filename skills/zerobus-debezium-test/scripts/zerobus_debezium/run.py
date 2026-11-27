@@ -19,12 +19,14 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.join(HERE, "..", "..", "..")
-for dep in ("lfc-rest", "lfc-change-source", "lfc-source-contract", "lfc-routing"):   # a checkout: the sibling skills' packages, when not installed
+for dep in ("lfc-rest", "lfc-change-source", "lfc-source-contract", "lfc-routing", "lfc-log-silver"):   # a checkout: the sibling skills' packages, when not installed
     sys.path.insert(0, os.path.join(SKILLS, dep, "scripts"))
 
 from lfc_change_source import SNAPSHOTS
+from lfc_change_source.cdc_log import SEQUENCES, CdcLog
 from lfc_change_source.engine import Warehouse
 from lfc_change_source.producer import Spec, WorkspaceDebeziumServer
+from lfc_log_silver import flowthrough
 from lfc_rest import Rest
 from lfc_routing.routing import Policy, snapshot_method
 from lfc_source_contract import federation, jdbc
@@ -34,9 +36,10 @@ from zerobus_debezium.source import Slot
 
 
 def landed(wh, log: str, prefix: str, key: str, seq: str, ids: range | None = None) -> list:
-    """(operation, id) of this producer's change rows in cdc_log, in the source's order; ids: only those."""
+    """(operation, id) of this producer's change rows in cdc_log, in the source's order (seq: a SEQUENCES kind);
+    ids: only those."""
     rows = wh.sql(f"SELECT operation, CAST(key:{key} AS BIGINT) AS id FROM {log} "
-                  f"WHERE startswith(destination, '{prefix}.') ORDER BY {seq}, value:ts_ns::BIGINT").collect()
+                  f"WHERE startswith(destination, '{prefix}.') ORDER BY {SEQUENCES[seq]}, value:ts_ns::BIGINT").collect()
     return [(r[0], r[1]) for r in rows if ids is None or r[1] in ids]
 
 
@@ -84,6 +87,35 @@ def take_snapshot(api, wh, e, conn: dict, a, snap_schema: str, pipeline: str, lo
         return {"how": how, **got, "table": SNAPSHOTS["jdbc"].snapshot_table(a.catalog, snap_schema, t),
                 "link": got["url"]}
     raise ValueError(f"{e.name}: snapshot method {how}: not one this test takes")
+
+
+TABLE_COLUMNS = {"id": "INT", "name": "STRING", "balance": "DECIMAL(12,2)"}   # engines' test table, as silver types it
+
+
+def silver_source(wh, e, log: str, prefix: str) -> CdcLog:
+    """The test table as FlowThrough's CDC layer gives it: a CdcLog over this producer's events (its destination read
+    from the log; Oracle's and Db2's names in upper case, as their events carry them; the engine's order kind)."""
+    d = wh.sql(f"SELECT DISTINCT destination FROM {log} WHERE startswith(destination, '{prefix}.')").collect()
+    if len(d) != 1:
+        raise ValueError(f"{prefix}: {len(d)} destinations in the log, want the test table's one")
+    up = e.key.isupper()
+    cols = {(c.upper() if up else c): t for c, t in TABLE_COLUMNS.items()}
+    return CdcLog(prefix, log, "customers", d[0][0], keys=[e.key], columns=cols, seq=e.seq)
+
+
+def silver_round(wh, schema: str, src: CdcLog, snapshot_table: str, log: str, engine: str) -> dict:
+    """One FlowThrough round (layer 4) for the test table: routing's plan, the snapshot read in place at position
+    None (before every change in the log: each key's later changes win), up to the log's watermark."""
+    wh.sql(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    return flowthrough.step(wh, schema, {"customers": src}, src.watermark(wh), Policy(shared_log=log, engine=engine),
+                            extra={"customers": {"snapshot_table": snapshot_table, "position": None}})
+
+
+def differ(wh, a: str, b: str) -> int:
+    """Rows in one table and not the other, both ways (EXCEPT ALL), on the test table's columns as text."""
+    q = lambda t: f"SELECT CAST(id AS BIGINT), name, CAST(CAST(balance AS DECIMAL(12,2)) AS STRING) FROM {t}"  # noqa: E731
+    return int(wh.sql(f"SELECT (SELECT count(*) FROM ({q(a)} EXCEPT ALL {q(b)})) + "
+                      f"(SELECT count(*) FROM ({q(b)} EXCEPT ALL {q(a)}))").collect()[0][0])
 
 
 def rows(wh, table: str, ids: range) -> dict:
@@ -159,6 +191,8 @@ def main(argv=None) -> int:
     # carry; on a first start (no offsets) it's before the stream begins and must not appear (no snapshot)
     fresh = not any(f["name"] == "offsets.dat" for f in _ls(api, folder))
     ids = range(a.base, a.base + 10)   # this run's rows: the checks look only at them
+    silver_schema = destination.q(a.catalog, f"{a.schema}_silver_{tag}")
+    snap = src = None
     old = landed(wh, log, prefix, e.key, e.seq)
     if landed(wh, log, prefix, e.key, e.seq, ids):
         raise SystemExit(f"ids {a.base}..{a.base + 9} are in the log already: pick another --base")
@@ -185,7 +219,19 @@ def main(argv=None) -> int:
                       f"{snap['how']} {snap['state']} in {snap['seconds']} s into {snap['table']}: {have} "
                       f"({snap['link']}){' ' + str(snap['error'])[:300] if snap.get('error') else ''}")
             except Exception as x:  # noqa: BLE001 -- recorded as the claim's failure, with why
+                snap = None
                 claim("snapshot", False, f"{type(x).__name__}: {str(x)[:400]}")
+            if snap and snap["state"] == "COMPLETED":   # FlowThrough's silver over the snapshot and the log
+                try:
+                    src = silver_source(wh, e, log, prefix)
+                    got_s = silver_round(wh, silver_schema, src, snap["table"], log, a.engine)
+                    have = rows(wh, f"{silver_schema}.`customers`", ids)
+                    claim("silver-1", have == e.state_after(1, a.base),
+                          f"routes {got_s['routes']}: {have} ({api.host}/explore/data/{a.catalog}/"
+                          f"{a.schema}_silver_{tag}/customers)")
+                except Exception as x:  # noqa: BLE001
+                    src = None
+                    claim("silver-1", False, f"{type(x).__name__}: {str(x)[:400]}")
 
         r = p.stop()
         claim("stop", r == "SUCCESS", f"STOP file: run {r}, status {p.status().get('why')}")
@@ -197,6 +243,18 @@ def main(argv=None) -> int:
         got = settled(wh, log, prefix, e.key, e.seq, ids, len(want), e.lag_s)
         claim("restart", got[:len(want)] == want, f"while stopped, then after the restart: {got[mark:]}")
         claim("no-duplicates", got == want, f"{len(got)} events for {len(want)} changes")
+        if src is not None:   # the next round: silver after the restart's changes, then the whole table vs the source
+            try:
+                silver_round(wh, silver_schema, src, snap["table"], log, a.engine)
+                have = rows(wh, f"{silver_schema}.`customers`", ids)
+                claim("silver-3", have == e.state_after(3, a.base), f"after the restart's changes: {have}")
+                ver = take_snapshot(api, wh, e, conn, a, f"{a.schema}_verify_{tag}", f"{name}-verify", log)
+                n = differ(wh, f"{silver_schema}.`customers`", ver["table"]) if ver["state"] == "COMPLETED" else -1
+                total = wh.sql(f"SELECT count(*) FROM {silver_schema}.`customers`").collect()[0][0]
+                claim("silver-equals-source", n == 0, f"{n} rows differ of {total}, against a new {ver['how']} "
+                      f"snapshot of the source ({ver['link']})")
+            except Exception as x:  # noqa: BLE001
+                claim("silver-3", False, f"{type(x).__name__}: {str(x)[:400]}")
         late = [x for x in landed(wh, log, prefix, e.key, e.seq) if x[1] not in ids][len(old):]
         if late:
             print(f"OBSERVED {a.engine} late: {late} from an earlier run arrived during this one (not lost)", flush=True)

@@ -33,7 +33,7 @@ class Engine:
     schema: str                  # the test table's schema, as the connector names it
     table: str                   # the test table, as the connector names it in table.include.list
     key: str                     # the key column's name in the events (Oracle and Db2 fold to upper case)
-    seq: str                     # Databricks SQL on cdc_log: the change's position in the source's log (silver's order)
+    seq: str                     # the log's order for this engine: a kind of lfc_change_source.cdc_log.SEQUENCES
     props: Callable              # (conn, folder) -> engine-specific debezium.source.* (without the prefix)
     setup_steps: Callable        # (conn) -> [(kind, text)]
     dialect_dml: Callable        # (statements) -> one script for the admin client
@@ -124,9 +124,7 @@ def _mssql_dml(stmts):
 
 SQLSERVER = Engine(
     "sqlserver", "io.debezium.connector.sqlserver.SqlServerConnector", "dbo", f"dbo.{TABLE}", "id",
-    "CAST(conv(split_part(value:source:change_lsn::STRING, ':', 1), 16, 10) AS BIGINT) * 281474976710656 + "
-    "CAST(conv(split_part(value:source:change_lsn::STRING, ':', 2), 16, 10) AS BIGINT) * 65536 + "
-    "CAST(conv(split_part(value:source:change_lsn::STRING, ':', 3), 16, 10) AS BIGINT)",
+    "change_lsn",
     lambda c: {"database.names": c.get("database", "dbz"), "database.encrypt": "true",
                "database.trustServerCertificate": "true"},
     _mssql_setup, _mssql_dml,
@@ -143,8 +141,7 @@ def _mysql_setup(conn):
 
 MYSQL = Engine(
     "mysql", "io.debezium.connector.mysql.MySqlConnector", "dbz", f"dbz.{TABLE}", "id",
-    "CAST(regexp_extract(value:source:file::STRING, '([0-9]+)$', 1) AS BIGINT) * 17592186044416 + "
-    "value:source:pos::BIGINT * 4096 + COALESCE(value:source:row::BIGINT, 0)",
+    "binlog",
     lambda c: {"database.server.id": str(c.get("server_id", 5401)), "database.include.list": c.get("database", "dbz"),
                "binary.handling.mode": "hex"},
     _mysql_setup, lambda stmts: "".join(f"{s};\n" for s in stmts),
@@ -193,7 +190,7 @@ def _oracle_dml(stmts, pdb="FREEPDB1"):
 
 ORACLE = Engine(
     "oracle", "io.debezium.connector.oracle.OracleConnector", "LFC_USER", f"LFC_USER.{TABLE.upper()}", "ID",
-    "value:source:scn::BIGINT",
+    "scn_rs",   # SCN, then the redo record: a transaction's changes share an SCN
     lambda c: {"database.dbname": "FREE", "database.pdb.name": c.get("service", "FREEPDB1"),
                "schema.include.list": c.get("owner", "LFC_USER"), "log.mining.strategy": "online_catalog"},
     _oracle_setup, _oracle_dml,
@@ -241,8 +238,7 @@ def _db2_setup(conn):
 
 DB2 = Engine(
     "db2", "io.debezium.connector.db2.Db2Connector", "DBZ", f"DBZ.{TABLE.upper()}", "ID",
-    "CAST(conv(substring(split_part(COALESCE(value:source:change_lsn, value:source:commit_lsn)::STRING, ':', 3), -15),"
-    " 16, 10) AS BIGINT)",
+    "db2_lsn",
     lambda c: {"database.dbname": c.get("database", "LFCDB")},
     _db2_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), lag_s=90,
     source=lambda c: {"database": c.get("database", "LFCDB"), "schema": "DBZ", "table": TABLE, "login": c["user"],
@@ -262,7 +258,7 @@ def _pg_setup(conn):
 
 POSTGRES = Engine(
     "postgres", "io.debezium.connector.postgresql.PostgresConnector", "dbz", f"dbz.{TABLE}", "id",
-    "value:source:lsn::BIGINT",
+    "lsn",
     lambda c: {"database.dbname": c.get("database", "postgres"), "plugin.name": "pgoutput",
                "slot.name": c.get("slot", "dbz_slot"), "publication.name": c.get("publication", "dbz_publication"),
                "publication.autocreate.mode": "disabled"},

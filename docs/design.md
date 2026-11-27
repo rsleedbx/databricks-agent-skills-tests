@@ -21,37 +21,73 @@ another's choices.
 
 ```mermaid
 flowchart LR
-  src[("Source database<br/>schema, statistics,<br/>rows, changes")]
-  plan["1. Plan (routing)<br/>schema + statistics:<br/>each table's CDC log,<br/>snapshot method,<br/>silver cell"]
-  subgraph CDC ["2. CDC: incremental, first"]
-    direction TB
-    gwc["gateway"]
-    dbz["Debezium + Zerobus<br/>in or outside<br/>the workspace"]
+  src[("Source<br/>databases")]
+  subgraph PL ["Plan"]
+    direction LR
+    intro["Workspace: introspection<br/>schema + statistics"]
+    plan[("Plan contract<br/>schema + stats tables,<br/>routing's decisions")]
+    intro --> plan
   end
-  subgraph SNAP ["3. Snapshot: once a table, after CDC"]
-    direction TB
-    gws["gateway"]
-    qbc["QBC"]
-    jdbc["spark.read.jdbc"]
+  subgraph SN ["Snapshot"]
+    direction LR
+    sw["Workspace: gateway,<br/>QBC, spark.read.jdbc"]
+    so["Outside: the customer's<br/>own export (files)"]
+    snap[("Snapshot contract<br/>a Delta or streaming<br/>table per source table")]
+    sw --> snap
+    so --> snap
   end
-  log[("Append-only<br/>change log<br/>(one or more)")]
-  snapt[("Snapshot<br/>one Delta table<br/>per source table")]
-  silver["4. Silver<br/>snapshot + the<br/>log's later changes"]
-  n1["5. n:1<br/>many sources'<br/>tables into one"]
-  gold["6. Gold<br/>marts"]
-  src --> plan
-  src --> CDC --> log --> silver
-  src --> SNAP --> snapt --> silver
+  subgraph LG ["Append-only log"]
+    direction LR
+    lw["Workspace: Lakeflow Connect<br/>gateway, Debezium + Zerobus"]
+    lo["Outside: Debezium + Zerobus"]
+    log[("Log contract<br/>one or more logs,<br/>changes only")]
+    lw --> log
+    lo --> log
+  end
+  silver["Silver<br/>snapshot + the<br/>log's later changes"]
+  n1["n:1<br/>many sources'<br/>tables into one"]
+  gold["Gold<br/>marts"]
+  src --> intro
+  src --> sw
+  src --> so
+  src --> lw
+  src --> lo
+  plan --> silver
+  snap --> silver
+  log --> silver
   silver --> n1 --> gold
-  plan -. chooses .-> CDC
-  plan -. chooses .-> SNAP
-  plan -. chooses .-> silver
 ```
 
-Two contracts hold it together. Every CDC source writes the same append-only change log (`_op`, `_seq`, a watermark),
-and every snapshot method writes the same thing: one Delta table per source table, with the source's columns and types.
-So silver never knows which transport or snapshot method a table came through, and Debezium through Zerobus is the same
-CDC source whether it runs in the workspace or outside it.
+## Three contracts
+
+FlowThrough meets every source at three contracts, staged in Delta, and the process (silver, n:1, gold) reads only them:
+
+| Contract | What it holds | Staged as | Today |
+|---|---|---|---|
+| Plan | the source's schema and statistics, and each table's route | Delta tables | lfc-introspection's `introspection_schema` and `introspection_stats`; lfc-routing's `routing_decisions` |
+| Snapshot | every table's rows once, after its log has started | a Delta or streaming table per source table | lfc-change-source `SNAPSHOTS` (`qbc`, `jdbc`), `intake` |
+| Append-only log | every table's changes, into one log or several | Delta tables, changes only | lfc-change-source's adapters (`cdc_log`, `gateway_log`, ...) |
+
+Snapshots land per table, by any mix of methods; changes land into one or more logs, by any mix of transports. Silver
+never knows which method or transport a table came through.
+
+## n:1 consolidation
+
+The same business data is scattered across an enterprise's databases. Each database can come through a different
+transport, as long as it meets the contracts: MySQL through a Lakeflow Connect gateway and Db2 through Debezium and
+Zerobus, say, consolidated into one silver, n:1 and gold.
+
+## Transport
+
+A transport lands contract data from a source into FlowThrough's staging. The ones tested for FlowThrough:
+
+| Contract | Outside Databricks | In the Databricks workspace |
+|---|---|---|
+| Plan | | introspection: the source's schema and statistics |
+| Snapshot | the customer's own export (files, landed by `intake.files`) | Lakeflow Connect gateway, QBC, `spark.read.jdbc` |
+| Append-only log | Debezium + Zerobus | Lakeflow Connect gateway, Debezium + Zerobus |
+
+## Layers
 
 | Layer | What it does | Detail | Skill |
 |---|---|---|---|

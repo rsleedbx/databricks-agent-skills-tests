@@ -26,7 +26,7 @@ import json
 
 # each source_type's position in its Debezium events (lfc-change-source cdc_log SEQUENCES); MySQL: binary values as
 # hex text. YugabyteDB isn't here: its log comes through Kafka Connect, another layout
-DBZ_SEQ = {"SQLSERVER": "change_lsn", "POSTGRESQL": "lsn", "MYSQL": "binlog", "ORACLE": "scn", "DB2": "db2_lsn",
+DBZ_SEQ = {"SQLSERVER": "change_lsn", "POSTGRESQL": "lsn", "MYSQL": "binlog", "ORACLE": "scn_rs", "DB2": "db2_lsn",
            "INFORMIX": "ifx_lsn", "COCKROACHDB": "ts_ns"}
 DBZ_BINHEX = {"MYSQL"}
 DBZ_FK_ACTIONS = {"MYSQL"}   # a log without its foreign keys' ON DELETE actions: silver derives them (lfc-log-silver fk)
@@ -100,7 +100,7 @@ def dbz_sources(w, p: dict) -> list:
     ordered by the source type's position; foreign key actions where the log lacks them (DBZ_FK_ACTIONS)."""
     import re
 
-    from lfc_change_source.cdc_log import CdcLog
+    from lfc_change_source.cdc_log import CdcLog, position_of
     from lfc_change_source.contract import Position
     from lfc_change_source.debezium import TEMPORAL
     from lfc_medallion.coltypes import ctype, spark_type
@@ -120,7 +120,7 @@ def dbz_sources(w, p: dict) -> list:
                                 defaults={c["name"]: c["default"] for c in cols if c.get("default")})
             if s.get("snapshot_table"):
                 extra[t] = {"snapshot_table": f"{quoted(s['snapshot_table'])}.{_q(t)}",
-                            "position": Position(seq, str(s.get("t_ns", 0)))}
+                            "position": Position(seq, position_of(seq, s.get("t_ns", 0)))}
         edges = {t["name"]: [{"cols": f["columns"], "parent": f["parent_table"], "parent_cols": f["parent_columns"],
                               "on_delete": f["on_delete"]} for f in t.get("fk_constraints") or []
                              if str(f.get("on_delete") or "").upper().replace("_", " ") in ("CASCADE", "SET NULL")]
@@ -152,14 +152,14 @@ def _dbz_land(w, spark, p: dict) -> dict:
     rate (lfc-routing), its silver and its history (every keyed table) built or brought up to the log's newest
     position. One source: in the fan-in's schema. Several: each in <schema>_<source>, then one n:1 view a table in the
     fan-in's schema, with _source (lfc-medallion stack_sql)."""
-    from lfc_change_source.cdc_log import SEQUENCES
+    from lfc_change_source.cdc_log import SEQUENCES, TEXT, position_of
     from lfc_change_source.contract import Position
     from lfc_log_silver import fk, flowthrough, history
     from lfc_medallion.stack import stack_sql
     from lfc_routing import routing
     seq = DBZ_SEQ[p["parts"]["source_type"]]
     newest = spark.sql(f"SELECT max({SEQUENCES[seq]}) FROM {p['log']} WHERE operation <> 'resolved'").collect()[0][0]
-    to = Position(seq, str(newest if newest is not None else 0))
+    to = Position(seq, str(newest) if newest is not None else position_of(seq, 0))
     srcs = dbz_sources(w, p)
     many, out = len(srcs) > 1, {}
     for src in srcs:
@@ -174,7 +174,7 @@ def _dbz_land(w, spark, p: dict) -> dict:
             raise RuntimeError(f"fanin_dbz_zbus: AUTO CDC routes need their pipeline: {sum(map(len, got['auto_cdc']))} tables")
         out[src["label"]] = {k: got[k] for k in ("routes", "moves", "held", "silver")}
     if many:   # n:1: one table a name, every source's rows with its _source
-        kind = "STRING" if seq in ("gateway_cursor", "hlc") else "BIGINT"
+        kind = "STRING" if seq in TEXT else "BIGINT"
         for t, s0 in srcs[0]["sources"].items():
             names = [t] + ([t + history.SUFFIX] if s0.keys else [])
             for n in names:

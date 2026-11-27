@@ -81,8 +81,14 @@ class CdcLog(unittest.TestCase):
             src.changes_sql(Position("ts_ns", "1"), None)   # another source's kind of position
         with self.assertRaises(ValueError):
             Log("x", "t", "t", "d", ["id"], {"id": "INT"}, seq="gtid")
-        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn",
+        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "scn_rs", "ifx_lsn", "db2_lsn", "change_lsn",
                                           "gateway_cursor", "hlc"})
+        from lfc_change_source.cdc_log import TEXT, position_of
+        self.assertIn("scn_rs", TEXT)   # padded SCN + rs_id: compared as text
+        self.assertIn("COALESCE(value:source:rs_id::STRING, '')", SEQUENCES["scn_rs"])   # no rs_id keeps the SCN
+        self.assertEqual(position_of("scn_rs", 2345668), "00000000000002345668")
+        self.assertLess(position_of("scn_rs", 2345668), "00000000000002345668" + "0x000017.00003510.0010")
+        self.assertEqual(position_of("lsn", 5), "5")
 
 
     def test_debezium_dates_and_timestamps_decoded(self):   # days and epoch numbers, by the column's precision
