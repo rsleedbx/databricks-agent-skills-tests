@@ -1,0 +1,32 @@
+{
+  "id": "debezium-oracle-scn-ties",
+  "title": "Oracle changes in one transaction share their SCN",
+  "kind": "connector-behavior",
+  "status": "fixed",
+  "applies": {
+    "source": [
+      "oracle"
+    ],
+    "route": [
+      "debezium-zerobus"
+    ],
+    "layer": [
+      "silver"
+    ],
+    "topology": [
+      "*"
+    ]
+  },
+  "found": {
+    "date": "2026-11-27",
+    "by": "zerobus-debezium-test zerobus_debezium.run --engine oracle (FlowThrough silver)"
+  },
+  "symptom": "Silver kept an inserted row's first image after an update of it in the same transaction",
+  "cause": "Debezium's Oracle connector (LogMiner, 3.7.0.Final) gives every change of a transaction the same source.scn; silver ordered a key's changes by scn alone, a tie",
+  "effect": "An insert and an update of one key committed together can land in silver as the insert",
+  "fix": "Order Oracle's events by the SCN, then the redo record's address source.rs_id (fixed-width hex, as text): the scn_rs kind",
+  "where": [
+    "skills/lfc-change-source/scripts/lfc_change_source/cdc_log.py",
+    "skills/lfc-fanin/scripts/lfc_fanin/fanin.py"
+  ]
+}
