@@ -76,12 +76,14 @@ def keys_from_tsv(path: str) -> dict:
 
 
 def snapshot(w, name: str, connection: str, catalog: str, schema: str, source_catalog: str | None, source_schema: str,
-             tables: dict, timeout: int = 3600) -> dict:
-    """The snapshot pipeline (created, or its spec put when it exists) run once: {pipeline_id, state, seconds}."""
+             tables: dict, timeout: int = 3600, full_refresh: bool = False) -> dict:
+    """The snapshot pipeline (created, or its spec put when it exists) run once: {pipeline_id, state, seconds}.
+    full_refresh: a pipeline that ran before reads every table again from scratch (a plain update would merge into
+    its old tables, keeping rows the source has since deleted)."""
     from .pipeline import run_pipeline, upsert_pipeline
     pid = upsert_pipeline(w, spec(name, connection, catalog, schema, source_catalog, source_schema, tables))
     t0 = time.time()
-    return {"pipeline_id": pid, "state": run_pipeline(w, pid, timeout), "seconds": round(time.time() - t0)}
+    return {"pipeline_id": pid, "state": run_pipeline(w, pid, timeout, full_refresh), "seconds": round(time.time() - t0)}
 
 
 def main(argv=None) -> None:

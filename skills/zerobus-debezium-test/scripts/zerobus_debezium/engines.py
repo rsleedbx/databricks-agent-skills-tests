@@ -316,11 +316,18 @@ def _pg_setup(conn):
 
 def _pg_capture(conn, schema, tables, restart):
     """The publication with the tables (made if missing, a table added if it isn't in it); Debezium makes its own slot
-    (slot.name) at its first start. wal_level must be logical already (a restart to change it isn't done here)."""
+    (slot.name) at its first start. wal_level must be logical already (a restart to change it isn't done here). A
+    keyless table with the default replica identity gets REPLICA IDENTITY FULL first: in a publication that publishes
+    updates and deletes, PostgreSQL refuses them on a table with no replica identity (the application's own too)."""
     pub = conn.get("publication", "dbz_publication")
+    ident = "".join(
+        f"IF NOT EXISTS (SELECT FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = "
+        f"c.relnamespace WHERE i.indisprimary AND n.nspname = '{schema}' AND c.relname = '{t}') AND (SELECT c.relreplident "
+        f"FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relname = '{t}') "
+        f"= 'd' THEN ALTER TABLE {schema}.{t} REPLICA IDENTITY FULL; END IF; " for t in tables)
     adds = "".join(f"IF NOT EXISTS (SELECT FROM pg_publication_tables WHERE pubname = '{pub}' AND schemaname = '{schema}' "
                    f"AND tablename = '{t}') THEN ALTER PUBLICATION {pub} ADD TABLE {schema}.{t}; END IF; " for t in tables)
-    return [("sql", f"DO $$BEGIN IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = '{pub}') THEN "
+    return [("sql", f"DO $$BEGIN {ident}IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = '{pub}') THEN "
                     f"CREATE PUBLICATION {pub} FOR TABLE {', '.join(f'{schema}.{t}' for t in tables)}; END IF; "
                     f"{adds}END$$;\nSHOW wal_level;\n")]
 

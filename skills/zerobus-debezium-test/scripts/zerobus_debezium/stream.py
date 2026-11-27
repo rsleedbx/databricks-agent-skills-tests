@@ -64,7 +64,7 @@ def take_snapshots(api, wh, e, a, tables: list, keys: dict, snap_schema: str, na
         names = {t: q.source_names(e.name, a.database or a.service, a.source_schema, t) for t in tables}
         n0 = next(iter(names.values()))
         got = q.snapshot(api, f"{name}-snapshot", a.connection, a.catalog, snap_schema, n0["catalog"], n0["schema"],
-                         {names[t]["table"]: keys.get(t, []) for t in tables})
+                         {names[t]["table"]: keys.get(t, []) for t in tables}, full_refresh=True)   # a fresh snapshot
         if got["state"] != "COMPLETED":
             raise RuntimeError(f"qbc snapshot {got['state']}: {api.host}/pipelines/{got['pipeline_id']}")
         return {t: q.snapshot_table(a.catalog, snap_schema, names[t]["table"]) for t in tables}
@@ -77,15 +77,16 @@ def take_snapshots(api, wh, e, a, tables: list, keys: dict, snap_schema: str, na
     return {t: j.snapshot_table(a.catalog, snap_schema, s) for t, s in zip(tables, src)}
 
 
-def sources_for(wh, e, log: str, prefix: str, dests: dict, snaps: dict, keys: dict) -> dict:
+def sources_for(wh, e, log: str, prefix: str, dests: dict, snaps: dict, keys: dict, precision: dict) -> dict:
     """FlowThrough's CDC layer for each table: a CdcLog typed like its snapshot (names as the events carry them; a
-    temporal column decoded by its kind, Debezium's unit taken from 6 digits of fraction, every lfcddemo engine's)."""
+    temporal column decoded by its kind, in Debezium's unit for its digits of fraction: precision {column: digits},
+    default 6, as Debezium sends milliseconds for 0-3 digits and nanoseconds for 7-9)."""
     out = {}
     for t, d in dests.items():
         cols = columns_of(wh, snaps[t])
         kinds = {c: debezium.kind_of(ty) for c, ty in cols.items() if debezium.kind_of(ty)}
         out[t] = CdcLog(prefix, log, t, d, keys=keys.get(t, []), columns=cols, seq=e.seq, kinds=kinds,
-                        precision={c: 6 for c in kinds})
+                        precision={c: precision.get(c.lower(), 6) for c in kinds})
     return out
 
 
@@ -122,6 +123,8 @@ def main(argv=None) -> int:
     ap.add_argument("--database", default="", help="SQL Server, MySQL, PostgreSQL, Db2: the tables' database")
     ap.add_argument("--service", default="", help="Oracle: the PDB (the connector's pdb.name, QBC's catalog)")
     ap.add_argument("--keys", default="", help="table=col1+col2,...: each keyed table's key; others are keyless")
+    ap.add_argument("--precision", default="", help="col=digits,...: a temporal column's digits of fraction where "
+                                                     "they aren't 6 (Debezium's unit follows them)")
     ap.add_argument("--volume", default="debezium")
     ap.add_argument("--publication", default="", help="PostgreSQL: the publication with the tables")
     ap.add_argument("--slot-key", default="~/.ssh/lfc_slot_ed25519")
@@ -148,6 +151,7 @@ def main(argv=None) -> int:
                          "before Debezium starts)")
     tables = [t.strip() for t in a.tables.split(",") if t.strip()]
     keys = {k: [c for c in v.split("+") if c] for k, v in (x.split("=", 1) for x in a.keys.split(",") if x)}
+    precision = {k.lower(): int(v) for k, v in (x.split("=", 1) for x in a.precision.split(",") if x)}
     api = Rest.connect(a.profile)
     wh = Warehouse.pick(api)
     slot = Slot(a.slot_host, a.slot_name, key=a.slot_key, owner=a.owner, admin_user=a.admin_user)
@@ -208,7 +212,7 @@ def main(argv=None) -> int:
         at = positions(wh, log, e, dests)   # the snapshot's position: each table's newest event, just before it
         snaps = take_snapshots(api, wh, e, a, tables, keys, snap_schema, name)
         claim("snapshot", True, f"{snaps}")
-        srcs = sources_for(wh, e, log, prefix, dests, snaps, keys)
+        srcs = sources_for(wh, e, log, prefix, dests, snaps, keys, precision)
         # a new snapshot, so a new silver: the test's own schema is dropped first (a rerun would otherwise continue
         # the last run's _flowthrough state and tables, built on the old snapshot)
         wh.sql(f"DROP SCHEMA IF EXISTS {silver_schema} CASCADE")

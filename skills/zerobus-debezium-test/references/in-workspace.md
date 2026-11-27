@@ -87,5 +87,7 @@ Informix JDBC driver and change-stream client (`Engine.jars`, downloaded by the 
 use, Db2's archive-logging backup can fail on their connections and leave the database in backup pending (SQL1116N),
 refusing connections until an offline backup succeeds.
 
+Each run takes its snapshot from scratch (a QBC full refresh) and builds its silver anew. A temporal column is decoded in Debezium's unit for 6 digits of fraction unless `--precision col=digits` says otherwise (milliseconds for 0-3, nanoseconds for 7-9). PostgreSQL capture gives a keyless table with the default replica identity `REPLICA IDENTITY FULL` before adding it to the publication, as PostgreSQL refuses updates and deletes on a published table without one.
+
 Not run live yet: `stream.py` and the Informix engine. Capture has been set up with it on six long-running databases
 (MySQL, PostgreSQL, SQL Server, Oracle, Db2, Informix).
