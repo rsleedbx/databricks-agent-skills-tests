@@ -27,13 +27,13 @@ class Host:
     """Runs the VM's commands. A test replaces run() (or puts fakes on PATH)."""
 
     def run(self, argv: Sequence[str], input: str | None = None, timeout: float | None = None,
-            quiet: bool = False, capture: bool = True) -> subprocess.CompletedProcess:
+            quiet: bool = False, capture: bool = True, merge: bool = False) -> subprocess.CompletedProcess:
         """argv's result: stdout captured (capture), stderr shown unless quiet. A timeout gives rc 124, like timeout(1);
-        a missing command rc 127."""
+        a missing command rc 127. merge: stderr into stdout (podman logs replays the container's stderr there)."""
         try:
             return subprocess.run(list(argv), input=input, text=True, timeout=timeout,
                                   stdout=subprocess.PIPE if capture else None,
-                                  stderr=subprocess.DEVNULL if quiet else None)
+                                  stderr=subprocess.STDOUT if merge else subprocess.DEVNULL if quiet else None)
         except subprocess.TimeoutExpired:
             return subprocess.CompletedProcess(argv, 124, "", "")
         except FileNotFoundError:
@@ -77,7 +77,7 @@ class Host:
             self.remove(container)
 
     def logs(self, container: str) -> str:
-        r = self.run(["podman", "logs", container], quiet=True)
+        r = self.run(["podman", "logs", container], merge=True)
         return r.stdout or ""
 
     # ---- the VM

@@ -50,6 +50,16 @@ class Files(unittest.TestCase):
             child.kill()
 
 
+class Logs(unittest.TestCase):
+    def test_logs_reads_the_containers_stderr_too(self):
+        from lfc_vm.host import Host
+        d = tempfile.mkdtemp()
+        Path(d, "podman").write_text("#!/bin/sh\necho out\necho 'DATABASE IS READY TO USE' >&2\n")
+        os.chmod(os.path.join(d, "podman"), 0o755)
+        with mock.patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ["PATH"]}):
+            self.assertIn("DATABASE IS READY TO USE", Host().logs("c"))
+
+
 class Usage(unittest.TestCase):
     def test_hours_clip_to_since_and_count_an_open_up(self):
         ev = [{"ts": "2026-11-01T00:00:00Z", "owner": "a", "name": "x", "event": "up"},
