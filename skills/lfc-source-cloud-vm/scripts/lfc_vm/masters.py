@@ -3,9 +3,9 @@
   build <engine> <master> [workload ...]   build a master holding TPC workloads (default all six: tpcb tpcc tpch tpcds
                                            tpce tpcdi), filled inside the database by lfc-source-datagen, stopped cleanly,
                                            and copied into OUT (/mnt/jfs/masters) as <master>, with <master>.engine
-  export                                   each master to a Blob container as <master>.tar.zst (tar --numeric-owner,
+  export [master ...]                      each master (or those named; else MASTERS) to a Blob container as <master>.tar.zst (tar --numeric-owner,
                                            zstd), each engine's admin env as <engine>.env, and manifest.json
-  import                                   the manifest's masters into ROOT/masters and its admin envs into SECRETS
+  import [master ...]                      the manifest's masters (or those named; else MASTERS) into ROOT/masters and its admin envs into SECRETS
 
 build: each workload is its own database (MySQL, MariaDB, SQL Server, Informix), schema (Postgres, CockroachDB and
 YugabyteDB in database lfc, Db2 in LFCDB) or user (Oracle, in FREEPDB1). Its DDL is $DDL/<workload>-<dialect>.sql (shape.py
@@ -687,10 +687,10 @@ class Build:
 
 def main(argv: list[str]) -> int:
     try:
-        if argv[:1] == ["export"]:
-            return export()
+        if argv[:1] == ["export"]:          # names on the command line, else MASTERS
+            return export(",".join(argv[1:]))
         if argv[:1] == ["import"]:
-            return import_()
+            return import_(",".join(argv[1:]))
         if argv[:1] == ["build"] and len(argv) >= 3:
             return Build(argv[1], argv[2], argv[3:]).run()
         print(__doc__.strip(), file=sys.stderr)

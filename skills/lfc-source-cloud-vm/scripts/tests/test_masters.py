@@ -120,6 +120,15 @@ class Cli(unittest.TestCase):
             self.assertEqual(cli.main(["masters", "export"]), 1)       # no MASTERS_URL
         self.assertIn("masters: MASTERS_URL=", err.getvalue())
 
+    def test_names_on_the_command_line(self):
+        with mock.patch.object(masters, "export", return_value=0) as ex, \
+                mock.patch.object(masters, "import_", return_value=0) as im:
+            masters.main(["export", "m1", "m2"])
+            masters.main(["import", "m3"])
+            masters.main(["import"])
+        ex.assert_called_once_with("m1,m2")
+        self.assertEqual([c.args for c in im.call_args_list], [("m3",), ("",)])
+
 
 if __name__ == "__main__":
     unittest.main()
