@@ -68,11 +68,12 @@ class Slot:
         return p.stdout
 
     def setup(self, steps: list, admin_key: str | None = None, owner: str | None = None, log=print) -> None:
-        """Run an engine's setup steps (engines.Engine.setup): sql through the slot, shell in the container."""
-        for kind, text in steps:
+        """Run an engine's setup steps (engines.Engine.setup): sql through the slot (a third item: the database it
+        runs in), shell in the container."""
+        for kind, text, *where in steps:
             log(f"setup {self.name}: {kind} {text.splitlines()[0][:100] if text else ''}")
             if kind == "sql":
-                out = self.sql(text)
+                out = self.sql(text, where[0] if where and where[0] else None)
                 if out.strip():
                     log("  " + out.strip().replace("\n", "\n  ")[-800:])
             elif kind in ("shell", "shell_detached", "shell_default"):

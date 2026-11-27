@@ -272,6 +272,8 @@ def _db2_capture(conn, schema, tables, restart):
     Debezium login DBADM, the capture agent started before ADDTABLE, each table added, then a reinit (Debezium's
     documented order). The agent runs in the container: a container restart stops it."""
     u = conn["user"].upper()
+    if conn.get("database", "LFCDB").upper() != "LFCDB":   # the ASN tools below are set up for the slot's one database
+        raise ValueError(f"db2 capture: database {conn['database']}: only LFCDB (the slot's Db2 database)")
     fetch = "mkdir -p /asncdctools/src && cd /asncdctools/src && " + " && ".join(
         f"curl -sfL -o {f} {DB2_INIT}/{f}" for f in DB2_FILES) + " && chmod -R 755 /asncdctools && chown -R db2inst1 /asncdctools"
     have = "db2 connect to LFCDB >/dev/null && db2 -x \"SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA = 'ASNCDC'\""
@@ -327,9 +329,10 @@ def _pg_capture(conn, schema, tables, restart):
         f"= 'd' THEN ALTER TABLE {schema}.{t} REPLICA IDENTITY FULL; END IF; " for t in tables)
     adds = "".join(f"IF NOT EXISTS (SELECT FROM pg_publication_tables WHERE pubname = '{pub}' AND schemaname = '{schema}' "
                    f"AND tablename = '{t}') THEN ALTER PUBLICATION {pub} ADD TABLE {schema}.{t}; END IF; " for t in tables)
+    db = conn.get("database")   # the tables' database: a publication is per database
     return [("sql", f"DO $$BEGIN {ident}IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = '{pub}') THEN "
                     f"CREATE PUBLICATION {pub} FOR TABLE {', '.join(f'{schema}.{t}' for t in tables)}; END IF; "
-                    f"{adds}END$$;\nSHOW wal_level;\n")]
+                    f"{adds}END$$;\nSHOW wal_level;\n", db)]
 
 
 POSTGRES = Engine(

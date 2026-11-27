@@ -45,9 +45,13 @@ class EngineTest(unittest.TestCase):
 
     def test_setup_steps_are_known_kinds(self):
         for name, e in engines.ENGINES.items():
-            kinds = {k for k, _ in e.setup(CONN)}
+            kinds = {st[0] for st in e.setup(CONN)}
             self.assertLessEqual(kinds, {"sql", "shell", "shell_detached", "shell_default", "sleep"}, name)
-        self.assertIn("shell_detached", {k for k, _ in engines.get("db2").setup(CONN)})   # the capture agent
+        self.assertIn("shell_detached", {st[0] for st in engines.get("db2").setup(CONN)})   # the capture agent
+        pg = engines.get("postgres").capture(dict(CONN, database="shop"), "s", ["t"])
+        self.assertEqual(pg[-1][2], "shop")                       # a publication is per database: run there
+        with self.assertRaises(ValueError):
+            engines.get("db2").capture(dict(CONN, database="OTHER"), "S", ["T"])
 
     def test_db2_waits_longer(self):
         self.assertGreater(engines.get("db2").lag_s, engines.get("mysql").lag_s)

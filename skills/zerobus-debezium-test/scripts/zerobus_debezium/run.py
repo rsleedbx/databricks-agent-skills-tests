@@ -193,6 +193,7 @@ def main(argv=None) -> int:
     fresh = not any(f["name"] == "offsets.dat" for f in _ls(api, folder))
     ids = range(a.base, a.base + 10)   # this run's rows: the checks look only at them
     silver_schema = destination.q(a.catalog, f"{a.schema}_silver_{tag}")
+    wh.sql(f"DROP SCHEMA IF EXISTS {silver_schema} CASCADE")   # a run's snapshot is new, so is its silver
     snap = src = None
     old = landed(wh, log, prefix, e.key, e.seq)
     if landed(wh, log, prefix, e.key, e.seq, ids):
