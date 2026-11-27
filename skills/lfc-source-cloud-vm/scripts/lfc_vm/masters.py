@@ -104,11 +104,11 @@ class Blob:
         sent one."""
         size = os.path.getsize(path)
         if size <= put_max_mb << 20:
-            with open(path, "rb") as f:
-                body = f.read()
-            retry(lambda: self.request(blob, "PUT", data=body, length=size,
-                                       headers={"x-ms-blob-type": "BlockBlob", "Content-Type": content_type}).close(),
-                  f"upload of {blob}")
+            def put_whole():     # the open file streams (urllib reads it in blocks); a retry opens it again
+                with open(path, "rb") as f:
+                    self.request(blob, "PUT", data=f, length=size,
+                                 headers={"x-ms-blob-type": "BlockBlob", "Content-Type": content_type}).close()
+            retry(put_whole, f"upload of {blob}")
         else:
             blk, ids = block_mb << 20, []
             with open(path, "rb") as f:
