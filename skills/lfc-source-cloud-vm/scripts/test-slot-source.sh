@@ -30,10 +30,10 @@ check "slot-source with a connection: no password in the file, mode 600, connect
 check "slot-source's contract validates with source-env.sh" "$SE" "$T/slot.json"
 slot_sql_cmd() {   # the sql_cmd names the database and the key, and runs slot-sql.sh
   eval "$(exports_of_path "$T/slot.json")"
-  case $SRC_SQL in *"SLOT_NAME=pg1"*"SLOT_KEY=$T/key"*"/slot-sql.sh") ;; *) return 1 ;; esac
+  case $SRC_SQL in *"SLOT_NAME=pg1"*"SLOT_KEY=$T/key"*"/slot.py sql") ;; *) return 1 ;; esac
 }
 exports_of_path() { "$SE" "$1" 2> /dev/null; }
-check "slot-source: the sql_cmd is slot-sql.sh with the database's name and the key" slot_sql_cmd
+check "slot-source: the sql_cmd is slot.py sql with the database's name and the key" slot_sql_cmd
 slot_without_connection() {   # the password goes to --out's file, and only the file's path is printed
   printf '%s\n' "$UP" | SLOT_HOST=203.0.113.10 "$SLOT/slot-source.sh" --out "$T/slot-pw.json" > "$T/printed" || return 1
   [ "$(cat "$T/printed")" = "$T/slot-pw.json" ] && grep -q Lfc1secretpw "$T/slot-pw.json" && ! grep -q Lfc1secretpw "$T/printed"
