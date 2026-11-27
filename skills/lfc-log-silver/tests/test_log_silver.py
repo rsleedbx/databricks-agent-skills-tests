@@ -410,9 +410,14 @@ class MethodChanged(unittest.TestCase):
     def test_objects_of_another_methods_kind(self):   # the plan moved them: rebuilt, never MERGEd into a view
         class S:
             def sql(self, q):
-                rows = [("a", "VIEW"), ("b", "MANAGED"), ("c", "VIEW"), ("d", "MANAGED")]
+                if "information_schema.views" in q:   # c reads its group (a shared member's view), f the log
+                    rows = [("c", "SELECT ... FROM `c`.`s`.`_shared_0` ..."), ("f", "SELECT ... FROM `c`.`x`.`log`")]
+                else:
+                    rows = [("a", "VIEW"), ("b", "MANAGED"), ("c", "VIEW"), ("d", "MANAGED"), ("f", "VIEW")]
                 return type("R", (), {"collect": lambda self: rows})()
         t = {"a": silver.Table(src("a"), "merge"), "b": silver.Table(src("b"), "shared", group="0"),
              "c": silver.Table(src("c"), "shared", group="0"), "d": silver.Table(src("d"), "merge"),
-             "e": silver.Table(src("e"), "merge")}
-        self.assertEqual(silver.method_changed(S(), t, "`c`.`s`"), {"merge": ["a"], "shared": ["b"]})
+             "e": silver.Table(src("e"), "merge"), "f": silver.Table(src("f"), "shared", group="0")}
+        self.assertEqual(silver.method_changed(S(), t, "`c`.`s`"), {"merge": ["a"], "shared": ["b", "f"]})
+        t["c"] = silver.Table(src("c"), "view")   # a shared member's view, now a plain view
+        self.assertEqual(silver.method_changed(S(), t, "`c`.`s`").get("view"), ["c"])

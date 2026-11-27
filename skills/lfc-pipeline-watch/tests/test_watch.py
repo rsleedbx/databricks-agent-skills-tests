@@ -58,6 +58,8 @@ def test_ready_waiting_failed():
     s.tables["b"]["snapshot"] = "COMPLETED"
     assert s.ready()
     s.errors = [("b", "publication")]
+    assert s.ready() and s.failed() == {}               # b recovered: its old error isn't a failure
+    s.tables["b"]["cdc"] = "FAILED"
     assert not s.ready() and s.failed() == {"b": "publication"} and s.own_error() is None
 
 
@@ -103,3 +105,14 @@ def test_staging_listed_only_while_a_table_waits():
         return {"spec": {"gateway_definition": {"gateway_storage_catalog": "c", "gateway_storage_schema": "s"}}}
     s = W.check(W.Rest(do), "p", tables=["a"])
     assert s.ready() and ready and not any("/fs/" in c for c in calls)
+
+
+def test_a_flow_error_is_not_the_pipelines_and_a_recovered_table_is_not_failed():
+    evs = [ev("2026-11-26T00:00:04Z", "c.s.a_cdc_flow", "RUNNING"),
+           ev("2026-11-26T00:00:03Z", "extractor_c_s_a_snapshot_flow", "COMPLETED"),
+           ev("2026-11-26T00:00:02Z", "c.s.a_cdc_flow", level="ERROR", exc="retried"),
+           ev("2026-11-26T00:00:01Z", "c.s.zz_cdc_flow", level="ERROR", exc="another table")]
+    state, errs = W.flows(evs, ["a"])
+    s = W.Status("RUNNING", state, errs, wanted=("a",))
+    assert s.own_error() is None and s.ready() is False and "a" not in s.failed()
+    assert "c.s.zz_cdc_flow" in s.failed()

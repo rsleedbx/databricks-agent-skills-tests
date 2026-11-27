@@ -62,10 +62,11 @@ def flows(evs: list, tables=None) -> tuple:
         if e.get("level") == "ERROR":
             ex = ((e.get("error") or {}).get("exceptions") or [{}])[0]
             msg = (ex.get("message") or e.get("message") or "").strip().split("\n")[0][:400]
-            if not tk:   # a flow's error named only in the message
-                m = re.search(r"[\w.-]+_(?:cdc|snapshot)_flow", e.get("message") or "")
-                tk = table_of(m.group(0), tables) if m else None
-            errs.append((tk[0] if tk else None, msg))
+            m = None if fl else re.search(r"[\w.-]+_(?:cdc|snapshot)_flow", e.get("message") or "")
+            if not tk and m:   # a flow's error named only in the message
+                tk = table_of(m.group(0), tables)
+            # the pipeline's own only when no flow is named; a flow not of `tables` keeps its flow name
+            errs.append((tk[0] if tk else (fl or (m.group(0) if m else None)), msg))
     return state, errs
 
 
@@ -109,9 +110,14 @@ class Status:
         """The pipeline's own error (no table): its update can't run, so waiting won't help."""
         return next((m for t, m in self.errors if t is None), None)
 
+    def healthy(self, t: str) -> bool:
+        f = self.tables.get(t, {})
+        return f.get("snapshot") in DONE and f.get("cdc") in UP
+
     def failed(self) -> dict:
-        """{table or "_pipeline": error}."""
-        out = {(t or "_pipeline"): m for t, m in reversed(self.errors)}
+        """{table or "_pipeline": error}: a table's errors left out once its flows are healthy again (the gateway
+        retried it)."""
+        out = {(t or "_pipeline"): m for t, m in reversed(self.errors) if t is None or not self.healthy(t)}
         for t, f in self.tables.items():
             if any(s in BAD for s in f.values()):
                 out.setdefault(t, f"flow {f}")
@@ -120,8 +126,7 @@ class Status:
     def waiting(self) -> list:
         """The tables not ready: snapshot not COMPLETED or cdc not RUNNING (of `wanted`, else of those seen)."""
         names = self.wanted or tuple(self.tables)
-        return [t for t in names if not (self.tables.get(t, {}).get("snapshot") in DONE
-                                         and self.tables.get(t, {}).get("cdc") in UP)]
+        return [t for t in names if not self.healthy(t)]
 
     def ready(self) -> bool:
         return bool(self.wanted or self.tables) and not self.waiting() and not self.failed()

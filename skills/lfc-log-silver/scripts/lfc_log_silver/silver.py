@@ -395,16 +395,33 @@ def kinds(session, schema: str, names: list) -> dict:
     return {r[0].lower(): ("VIEW" if r[1] == "VIEW" else "TABLE") for r in rows}
 
 
+def _shared_views(session, schema: str, names: list) -> set:
+    """Those of `names` (lower-case) that are a shared member's view: its definition reads the group's _shared_
+    table (a plain view reads the log)."""
+    if not names:
+        return set()
+    cat, sch = [x.strip("`").replace("``", "`") for x in schema.split("`.`")]
+    rows = session.sql(f"SELECT table_name, view_definition FROM {_q(cat)}.information_schema.views WHERE table_schema = "
+                       f"{_lit(sch)} AND table_name IN ({', '.join(_lit(n.lower()) for n in names)})").collect()
+    return {r[0].lower() for r in rows if "_shared_" in str(r[1] or "")}
+
+
 def method_changed(session, tables: dict, schema: str) -> dict:
-    """{method: [names]} of the tables whose object here is of another method's kind (the plan moved them: a view,
-    or a shared member's view, now merged; a merged table now a view or a shared member): each is rebuilt in its new
-    form, never MERGEd into or replaced as the other kind."""
+    """{method: [names]} of the tables whose object here is another method's (the plan moved them): a view or a
+    shared member's view now merged; a merged table now a view or a shared member; a plain view now a shared member
+    or the other way (both views: told apart by what the view reads). Each is rebuilt in its new form, never MERGEd
+    into or left reading the old source. (merge and append are both tables; a table moves between them only when its
+    key changes, rebuilt as a schema change.)"""
     have = kinds(session, schema, list(tables))
     want = {"shared": "VIEW", "view": "VIEW", "merge": "TABLE", "append": "TABLE"}
+    views = [n for n, t in tables.items() if have.get(n.lower()) == "VIEW" and t.method in ("shared", "view")]
+    shared_now = _shared_views(session, schema, views)
     out: dict = {}
     for n, t in tables.items():
         k = have.get(n.lower())
-        if k and t.method in want and k != want[t.method]:
+        if not k or t.method not in want:
+            continue
+        if k != want[t.method] or (k == "VIEW" and (t.method == "shared") != (n.lower() in shared_now)):
             out.setdefault(t.method, []).append(n)
     return out
 
@@ -606,7 +623,7 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     changed = {} if first else method_changed(session, tables, schema)
     if changed.get("merge") or changed.get("append"):   # were views: dropped, built as tables below
         _drop_kind(session, schema, changed.get("merge", []) + changed.get("append", []), view=True)
-    if changed.get("view") or changed.get("shared"):     # were tables: dropped, made views below
+    if changed.get("view") or changed.get("shared"):     # were tables (dropped) or the other kind of view: made below
         _drop_tables(session, schema, changed.get("view", []) + changed.get("shared", []))
     moved = list(dict.fromkeys(moved + changed.get("view", [])))
     t0 = time.time()

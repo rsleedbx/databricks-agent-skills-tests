@@ -30,7 +30,7 @@ def run_pipeline(w, pid: str, timeout: int = 3600) -> str:
     api = Rest.of(w)
     if api.get(f"/api/2.0/pipelines/{pid}").get("state") == "RUNNING":   # no state: created and never run
         api.post(f"/api/2.0/pipelines/{pid}/stop")
-        api.poll_until(lambda: api.get(f"/api/2.0/pipelines/{pid}"), lambda p: p.get("state") != "RUNNING",
+        api.poll_until(lambda: api.get(f"/api/2.0/pipelines/{pid}"), lambda p: p.get("state") in ("IDLE", "FAILED"),
                        every=10, timeout=900)
     u = api.post(f"/api/2.0/pipelines/{pid}/updates", {})["update_id"]
     t0 = time.time()

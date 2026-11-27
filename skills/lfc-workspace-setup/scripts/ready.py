@@ -179,7 +179,10 @@ def target(r: Ready, cat: str, me: str, my_groups: set, admin: bool) -> str:
     when the user must be asked."""
     ds = (r.j(f"{UC}/external-locations/__databricks_managed_storage_location") or {}).get("url") or ""
     dflt = default_catalog(r.api)
-    cat, sch = cat or dflt or saved("LFC_CATALOG"), "default"   # each workspace has its own default: never assume main
+    keep = saved("LFC_CATALOG")   # the saved one when this workspace has it (saved settings can come from another)
+    if keep and not r.j(f"/api/2.1/unity-catalog/catalogs/{quote(keep)}"):
+        keep = ""
+    cat, sch = cat or keep or dflt, "default"   # then this workspace's own default: never an assumed main
     wsid = str((r.j(f"{UC}/current-metastore-assignment") or {}).get("workspace_id") or "")
 
     def mine(owner: str) -> bool:   # owning gives every privilege, which the effective-privileges API doesn't report
