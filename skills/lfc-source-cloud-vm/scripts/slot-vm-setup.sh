@@ -4,7 +4,7 @@
 #   metadata (127.0.0.1 only, unless META_URL names another store); the volume formatted if it's new, mounted at /mnt/jfs at boot (lfc-jfs.service); slot.sh,
 #   slot-ssh.sh and the login user `slot` (references/shared-vm-slots.md). Safe to rerun.
 # Before it runs: /etc/juicefs/azure.env (mode 600) with AZURE_STORAGE_CONNECTION_STRING for the volume's container
-#   (references/juicefs-branches.md, "Access"). Next to it: disk-setup.sh, slot.sh, slot-ssh.sh.
+#   (references/juicefs-branches.md, "Access"). Next to it: disk-setup.sh, lfc-slot (python3 -m lfc_vm build lfc-slot), slot-ssh.sh.
 # Settings (environment): VOLUME (the JuiceFS volume name), BUCKET (https://<container>.core.windows.net), HOST (the
 #   address slot.sh prints), DISK (default /dev/disk/azure/scsi1/lun0), CACHE_MB (default half the data disk),
 #   SLOT_SETTINGS (more lines for /etc/lfc-slot.env, e.g. MAX_PER_OWNER=0), META_URL (a metadata store JuiceFS
@@ -213,8 +213,11 @@ install -d /mnt/jfs/masters /mnt/jfs/dbs
 [ $PERSONAL = 0 ] || install -d -m 700 /mnt/jfs/.state
 fi
 
-step "slot.sh and the slot user"
-install -m 755 "$here/slot.sh" /usr/local/sbin/lfc-slot
+step "lfc-slot and the slot user"
+# lfc-slot: the lfc_vm package as one zipapp (python3 -m lfc_vm build lfc-slot, beside this script)
+[ -f "$here/lfc-slot" ] || { echo "FAIL: no $here/lfc-slot: build it with python3 -m lfc_vm build lfc-slot (in scripts/)"; exit 1; }
+command -v python3 >/dev/null || { echo "FAIL: lfc-slot needs python3 (3.8 or later)"; exit 1; }
+install -m 755 "$here/lfc-slot" /usr/local/sbin/lfc-slot
 install -m 755 "$here/slot-ssh.sh" /usr/local/sbin/lfc-slot-ssh
 if [ "$STORAGE" = local ]; then D=/var/lib/containers; else D=/mnt/jfs; fi
 { printf 'HOST=%s\n' "$HOST"; [ -z "${SLOT_SETTINGS:-}" ] || printf '%s\n' "$SLOT_SETTINGS"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# slot-ssh.sh <owner>: the forced command of one person's SSH key on a shared VM, so the key can run slot.sh only, and
+# slot-ssh.sh <owner>: the forced command of one person's SSH key on a shared VM, so the key can run lfc-slot only, and
 # only as that owner. In ~slot/.ssh/authorized_keys, one line per person:
 #   command="/usr/local/sbin/lfc-slot-ssh alice",restrict ssh-ed25519 AAAA... alice
 # and in /etc/sudoers.d/lfc-slot: slot ALL=(root) NOPASSWD: /usr/local/sbin/lfc-slot
-# The words of the command the person typed (ssh slot@vm up postgres pg1 --from x) become slot.sh's arguments; nothing
+# The words of the command the person typed (ssh slot@vm up postgres pg1 --from x) become lfc-slot's arguments; nothing
 # reaches a shell.
 # bash32: exempt (runs on the Linux VM)
 set -euo pipefail

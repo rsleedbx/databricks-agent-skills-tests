@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# test-slot-limits.sh: checks slot.sh's per-owner limits against a fake podman and flock (no VM, no containers): the
+# test-slot-limits.sh: checks lfc-slot's (lfc_vm) per-owner limits against a fake podman and flock (no VM, no containers): the
 #   LIMITS lookup (owner line, default line, a key missing from the owner's line, a key that starts like another, no
 #   file), `up` at the limit stopping with exit 3 (a soft limit: the client asks), `up --over-limit` starting it anyway,
 #   and `up --park` parking just enough, the earliest started
 #   first; `masters` on a VM without masters (no lines, exit 0) and with one (its folder, not its .engine file);
 #   SQL Server --edition (the container's MSSQL_PID, kept in the record, the refusals). One
 #   PASS/FAIL line per check; exit 1 on any FAIL.
-# bash32: exempt (slot.sh runs on the Linux VM; this runs it with the bash on PATH)
+# bash32: exempt (runs the lfc_vm zipapp and fakes on PATH)
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fail=0
+# lfc-slot as installed on a VM: the lfc_vm zipapp
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from lfc_vm.cli import build; build(sys.argv[2])' "$S" "$T/lfc-slot" >/dev/null || exit 1
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 mkdir -p "$T/bin" "$T/run" "$T/root" "$T/state"
 # the fake podman: a running container is a file $T/run/<name> holding its start time; stop/rm remove it and are logged
@@ -28,7 +30,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/flock"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/chown"   # a SQL Server data folder is chowned to its uid on the VM
 chmod +x "$T/bin/podman" "$T/bin/flock" "$T/bin/chown"
 slot() { FT=$T PATH="$T/bin:$PATH" ROOT=$T/root STATE=$T/state LOCK=$T/lock LIMITS=$T/limits MAX_RUNNING=99 \
-           HOST=192.0.2.1 bash "$S/slot.sh" --owner "$@"; }
+           HOST=192.0.2.1 python3 "$T/lfc-slot" --owner "$@"; }
 db() {   # db <owner> <name> [<start time>]: a postgres database record, running when a start time is given
   install -d "$T/state/$1"; printf '{"engine": "postgres", "port": 30000}\n' > "$T/state/$1/$2.json"
   [ -z "${3:-}" ] || echo "$3" > "$T/run/lfc-slot-$1-$2"
