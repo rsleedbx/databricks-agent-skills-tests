@@ -168,12 +168,18 @@ db2_db() {
       { db2set DB2_4K_DEVICE_SUPPORT=ON && { db2stop force; db2start; } >/dev/null 2>&1; } || exit 1
     db2 list db directory 2>/dev/null | grep -q "= LFCDB$" || db2 create database LFCDB >/dev/null' 9>&-
 }
+# settled <container>: started more than 30 minutes ago, so long past an image's first-start setup (whose log line may
+# have rotated out of a container running for weeks: an always-on demo VM's Oracle, 2026-11-27)
+settled() {
+  local t; t=$(podman inspect -f '{{.State.StartedAt}}' "$1" 2>/dev/null | cut -d. -f1) || return 1
+  [ -n "$t" ] && [ $(( $(date +%s) - $(date -d "$t" +%s 2>/dev/null || echo 0) )) -gt 1800 ]
+}
 ready() {
   # grep -c reads all of the log: with pipefail, grep -q's early exit would make podman logs fail (SIGPIPE)
   if [ "$2" = oracle ]; then   # the image restarts the database after its first-start setup and then prints this line
-    [ "$(podman logs "$1" 2>&1 | grep -c 'DATABASE IS READY TO USE')" -gt 0 ] || return 1
+    settled "$1" || [ "$(podman logs "$1" 2>&1 | grep -c 'DATABASE IS READY TO USE')" -gt 0 ] || return 1
   elif [ "$2" = db2 ]; then    # Db2's setup (instance, then the database) runs after the start; the image logs its end
-    [ "$(podman logs "$1" 2>&1 | grep -cF '(*) Setup has completed')" -gt 0 ] || return 1
+    settled "$1" || [ "$(podman logs "$1" 2>&1 | grep -cF '(*) Setup has completed')" -gt 0 ] || return 1
     db2_db "$1" >/dev/null 2>&1 || return 1
   fi
   probe "$2" | PROBE_TIMEOUT=30 sql "$1" "$2" >/dev/null 2>&1
