@@ -135,6 +135,10 @@ export SP_CLIENT_ID=<application id> SP_SECRET_FILE=<file with its OAuth secret>
 C=/tmp/dbz-$(date +%s).sh; cp scripts/debezium-zerobus.sh $C && OUT=/tmp/dbz-result.md bash $C
 ```
 
+## Debezium inside a workspace: two notebooks
+
+Debezium Server with its Zerobus sink as a notebook's child process ([notebooks/debezium-server-zerobus.py](notebooks/debezium-server-zerobus.py)), or Debezium's embedded engine through pydbzengine with Spark writing the log ([notebooks/debezium-pydbzengine-append-log.py](notebooks/debezium-pydbzengine-append-log.py)). Both tested as serverless jobs; the comparison, the results and what serverless needed: [references/in-workspace.md](references/in-workspace.md).
+
 ## YugabyteDB (`SOURCE=yb`): Kafka Connect into the Zerobus Kafka endpoint
 
 The YugabyteDB route (`SOURCE=yb`): the logical slot and snapshot, Kafka Connect into the Zerobus Kafka endpoint, and what differs from the Debezium Server route: [references/yugabytedb.md](references/yugabytedb.md).
