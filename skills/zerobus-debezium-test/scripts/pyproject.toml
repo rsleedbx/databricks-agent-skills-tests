@@ -1,0 +1,16 @@
+[project]
+name = "zerobus-debezium"
+version = "0.1.0"
+description = "Debezium Server -> Zerobus tests: each engine's capture settings, the source, the destination, the rounds"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+zerobus-debezium = "zerobus_debezium.run:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["zerobus_debezium"]

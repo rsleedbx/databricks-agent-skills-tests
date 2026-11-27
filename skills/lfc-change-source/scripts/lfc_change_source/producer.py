@@ -190,6 +190,93 @@ class DebeziumServer:
         return self.position_fn(self.slot)
 
 
+class WorkspaceDebeziumServer:
+    """A Debezium Server run by a workspace notebook as its child process (zerobus-debezium-test's
+    notebooks/debezium-server-zerobus.py), as a Producer. The notebook keeps its offsets, schema history, STOP file
+    and status.json in folder (a Volume path, one per producer): a new run under the same folder resumes from its
+    offsets. api: an lfc_rest.Rest; params: the notebook's widgets (no secrets: those are scope/key names)."""
+
+    def __init__(self, spec: Spec, api, notebook: str, folder: str, params: dict, position_fn: Callable | None = None,
+                 wait_s: int = 900, sleep: Callable | None = None):
+        import time
+        self.name, self.log, self.tables = spec.name, spec.log, tuple(spec.tables)
+        self.api, self.notebook, self.folder, self.params = api, notebook, folder.rstrip("/"), dict(params)
+        self.position_fn, self.wait_s, self.sleep = position_fn, wait_s, sleep or time.sleep
+        self.run_id = None
+
+    def status(self) -> dict:
+        """The notebook's status.json ({"state": starting|streaming|stopped|failed, "why", "rows"}), {} before one."""
+        import json
+        try:
+            return json.loads(self.api.download(f"{self.folder}/status.json") or b"{}")
+        except Exception:  # noqa: BLE001 -- not written yet
+            return {}
+
+    def run(self) -> dict:
+        r = self.api.get("/api/2.1/jobs/runs/get", run_id=self.run_id)
+        return {"life_cycle": r["state"].get("life_cycle_state"), "result": r["state"].get("result_state"),
+                "url": r.get("run_page_url"), "task_run_id": (r.get("tasks") or [{}])[0].get("run_id")}
+
+    def start(self) -> None:
+        """Submit the notebook as a one-time serverless run; return once its status says streaming (or raise)."""
+        import time
+        try:
+            self.api.rm(f"{self.folder}/status.json")
+        except Exception:  # noqa: BLE001 -- none yet
+            pass
+        body = {"run_name": f"debezium-{self.name}-{int(time.time())}", "tasks": [{
+            "task_key": "debezium", "notebook_task": {"notebook_path": self.notebook, "base_parameters": {
+                **self.params, "name": self.name, "log_table": self.log.replace("`", "").split(".")[-1]}}}]}
+        self.run_id = self.api.post("/api/2.1/jobs/runs/submit", body)["run_id"]
+        end = time.time() + self.wait_s
+        while time.time() < end:
+            st, run = self.status(), self.run()
+            if st.get("state") == "streaming":
+                return
+            if st.get("state") == "failed" or run["life_cycle"] in self.ENDED:
+                raise RuntimeError(f"{self.name}: not streaming: {st.get('why') or run['result']} ({run['url']})")
+            self.sleep(15)
+        raise TimeoutError(f"{self.name}: not streaming after {self.wait_s} s ({self.run()['url']})")
+
+    ENDED = ("TERMINATED", "INTERNAL_ERROR", "SKIPPED")
+
+    def active(self) -> bool:
+        return bool(self.run_id) and self.run()["life_cycle"] not in self.ENDED
+
+    def _wait_end(self, wait_s: int) -> str | None:
+        import time
+        end = time.time() + wait_s
+        while time.time() < end:
+            run = self.run()
+            if run["life_cycle"] in self.ENDED:
+                return run["result"] or run["life_cycle"]
+            self.sleep(10)
+        return None
+
+    def stop(self, wait_s: int = 300) -> str:
+        """The STOP file; waits for the run to end (Debezium gets SIGTERM and flushes its offsets). Its result. A run
+        that doesn't honor it in wait_s is cancelled (the notebook's SIGTERM handler stops Debezium the same way)."""
+        self.api.upload(f"{self.folder}/STOP", b"stop")
+        r = self._wait_end(wait_s)
+        if r is None:
+            self.cancel()
+            raise TimeoutError(f"{self.name}: still running {wait_s} s after the STOP file: cancelled ({self.run()['url']})")
+        return r
+
+    def cancel(self, wait_s: int = 300) -> str | None:
+        """Cancel the run (jobs/runs/cancel): for cleanup, as a STOP file written before the notebook's loop is
+        cleared by it. Its result once ended, None if it hasn't in wait_s."""
+        if not self.run_id:
+            return None
+        self.api.post("/api/2.1/jobs/runs/cancel", {"run_id": self.run_id})
+        return self._wait_end(wait_s)
+
+    def position(self) -> str:
+        if self.position_fn is None:
+            raise ValueError(f"{self.name}: no position_fn")
+        return self.position_fn(self.name)
+
+
 def zerobus_log_sql(fq: str, principal: str) -> list:
     """A change log Debezium Server's Zerobus sink writes (its envelope mode's columns), and the grants its service
     principal needs, directly on the table (a producer's token is scoped to its tables: inherited grants may not
