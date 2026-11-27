@@ -19,10 +19,10 @@ from urllib.parse import quote
 
 
 class Rest:
-    def __init__(self, do, name: str = ""):
+    def __init__(self, do, name: str = "", host: str = ""):
         """do(method, path, query, body, **kw) -> the JSON answer (dict), raising on an HTTP error; kw (raw, data,
-        headers) only for the Files API's bytes."""
-        self._do, self.name = do, name
+        headers) only for the Files API's bytes. host: the workspace URL, for links (set when signed in)."""
+        self._do, self.name, self.host = do, name, host.rstrip("/")
 
     @classmethod
     def connect(cls, profile: str | None = None, retry_s: int | None = None) -> Rest:
@@ -41,7 +41,8 @@ class Rest:
         """A Rest on a signed-in WorkspaceClient (or a Rest, returned as is)."""
         if isinstance(w, Rest):
             return w
-        return cls(lambda m, p, q, b, **kw: w.api_client.do(m, p, query=q, body=b, **kw), name or w.config.host)
+        return cls(lambda m, p, q, b, **kw: w.api_client.do(m, p, query=q, body=b, **kw), name or w.config.host,
+                   w.config.host or "")
 
     def call(self, method: str, path: str, body=None, **query):
         """The JSON answer. When the SDK gave up retrying, its last answer is raised (the API's own error), not its

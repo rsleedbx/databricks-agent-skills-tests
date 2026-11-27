@@ -39,15 +39,23 @@ ALLOW = "dbtable,query,sessionInitStatement,numPartitions"
 TAG = "$lfc_sql$"                                       # guarded()'s dollar quote
 
 
-def url(engine: str, host: str, port: int, database: str) -> str:
-    """The JDBC URL, with TLS on (lfc-source-setup: trust the server's certificate, never turn TLS off)."""
+def url(engine: str, host: str, port: int, database: str, tls: bool = True) -> str:
+    """The JDBC URL, with TLS on (lfc-source-setup: trust the server's certificate, never turn TLS off). tls: Db2's
+    only, for a server that has no TLS listener (the others always ask for it)."""
     if engine == "postgres":
         return f"jdbc:postgresql://{host}:{port}/{database}?sslmode=require"
     if engine == "mysql":
         return f"jdbc:mysql://{host}:{port}/{database}?sslMode=REQUIRED&allowMultiQueries=true"
     if engine == "sqlserver":
         return f"jdbc:sqlserver://{host}:{port};databaseName={database};encrypt=true;trustServerCertificate=true"
-    raise ValueError(f"url: {engine}: postgres, mysql or sqlserver (the others: their driver's own form)")
+    if engine == "db2":   # sslConnection=true when the server has TLS; the Db2 Community image listens without it
+        return f"jdbc:db2://{host}:{port}/{database}" + (":sslConnection=true;" if tls else "")
+    raise ValueError(f"url: {engine}: postgres, mysql, sqlserver or db2 (the others: their driver's own form)")
+
+
+def table_name(engine: str, schema: str, table: str) -> str:
+    """schema.table as a JDBC read names it: Db2's and Oracle's dictionaries keep unquoted names in upper case."""
+    return f"{schema}.{table}".upper() if engine in ("db2", "oracle") else f"{schema}.{table}"
 
 
 def connection_body(name: str, engine: str, jdbc_url: str, user: str, password: str, comment: str | None = None) -> dict:

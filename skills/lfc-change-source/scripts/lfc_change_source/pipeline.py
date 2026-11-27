@@ -20,7 +20,16 @@ def upsert_pipeline(w, spec: dict) -> str:
     if have:
         api.put(f"/api/2.0/pipelines/{have[0]}", spec)
         return have[0]
-    return api.post("/api/2.0/pipelines", spec)["pipeline_id"]
+    pid = api.post("/api/2.0/pipelines", spec)["pipeline_id"]
+    grant_view(api, pid)
+    return pid
+
+
+def grant_view(api, pipeline_id: str, group: str = "users") -> None:
+    """CAN_VIEW for the workspace's users on a new pipeline, so anyone can follow its runs and events (a PATCH: adds,
+    replaces nothing)."""
+    api.patch(f"/api/2.0/permissions/pipelines/{pipeline_id}",
+              {"access_control_list": [{"group_name": group, "permission_level": "CAN_VIEW"}]})
 
 
 def run_pipeline(w, pid: str, timeout: int = 3600) -> str:

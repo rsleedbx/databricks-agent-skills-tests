@@ -28,16 +28,31 @@ def _q(name: str) -> str:
     return "`" + name.replace("`", "``") + "`"
 
 
-def spec(name: str, connection: str, catalog: str, schema: str, source_catalog: str, source_schema: str,
+def spec(name: str, connection: str, catalog: str, schema: str, source_catalog: str | None, source_schema: str,
          tables: dict) -> dict:
     """The pipeline: every table SCD type 1 on its key, no cursor (each update reads the whole table)."""
     def obj(t, keys):
         cfg = {"scd_type": "SCD_TYPE_1", **({"primary_keys": list(keys)} if keys else {})}
-        return {"table": {"source_catalog": source_catalog, "source_schema": source_schema, "source_table": t,
+        src = {"source_catalog": source_catalog} if source_catalog else {}   # MySQL has no catalog
+        return {"table": {**src, "source_schema": source_schema, "source_table": t,
                           "destination_catalog": catalog, "destination_schema": schema, "table_configuration": cfg}}
     return {"name": name, "catalog": catalog, "schema": schema, "serverless": True, "continuous": False,
             "ingestion_definition": {"connection_name": connection,
                                      "objects": [obj(t, k) for t, k in sorted(tables.items())]}}
+
+
+# the engines Lakeflow Connect's query-based ingestion reads (lfc_source_contract.federation's connection types)
+ENGINES = ("sqlserver", "mysql", "oracle", "postgres")
+
+
+def source_names(engine: str, database: str | None, schema: str, table: str) -> dict:
+    """How a query-based pipeline names a source table: {"catalog" (None: MySQL has none), "schema", "table"}.
+    Oracle: the PDB as catalog (its service name), names in upper case as the dictionary keeps them."""
+    if engine not in ENGINES:
+        raise ValueError(f"qbc: {engine}: no query-based connector (one of {', '.join(ENGINES)}; else jdbc_job)")
+    if engine == "oracle":
+        return {"catalog": database, "schema": schema.upper(), "table": table.upper()}
+    return {"catalog": None if engine == "mysql" else database, "schema": schema, "table": table}
 
 
 def snapshot_table(catalog: str, schema: str, table: str) -> str:
@@ -60,7 +75,7 @@ def keys_from_tsv(path: str) -> dict:
     return {t: [c for _, c in sorted(v)] for t, v in out.items()}
 
 
-def snapshot(w, name: str, connection: str, catalog: str, schema: str, source_catalog: str, source_schema: str,
+def snapshot(w, name: str, connection: str, catalog: str, schema: str, source_catalog: str | None, source_schema: str,
              tables: dict, timeout: int = 3600) -> dict:
     """The snapshot pipeline (created, or its spec put when it exists) run once: {pipeline_id, state, seconds}."""
     from .pipeline import run_pipeline, upsert_pipeline

@@ -25,6 +25,9 @@ Serverless jobs, Debezium Server 3.7.0.Final, one slot database per engine on an
 | Changes while stopped, then a restart | ✅ | ✅ | ✅ | ✅ | ✅ |
 | A rerun of the same producer resumes from its offsets | ✅ | ✅ | ✅ | ✅ | ✅ (the earlier notebook) |
 | Every change once, in order | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Snapshot after round 1, this run's rows as the source holds them | ✅ QBC 46 s | ✅ QBC 47 s | ✅ QBC 62 s | ✅ Spark jdbc 112-122 s | ✅ QBC 46 s |
+
+The snapshot (FlowThrough's layer 3, [docs/design.md](../../../docs/design.md)) is taken by the method lfc-routing's `snapshot_method` picks for the engine, from `lfc_change_source.SNAPSHOTS`: `qbc`, a query-based pipeline through a UC connection of the database's own type, where Lakeflow Connect has a query-based connector; else `jdbc`, Spark's jdbc read (`SELECT *`) in a serverless job through a TYPE JDBC connection. Both run after Debezium has landed round 1, so the log holds every change from before the snapshot on, and nothing leaves Databricks or the source as a file. The Oracle snapshot reads as LogMiner's common user through the CDB's service, with the PDB as `source_catalog`; Db2's server listens without TLS, so its JDBC URL can't ask for it.
 
 What each engine needs (all in `engines`): SQL Server CDC on the database and the table (SQL Server Agent runs its jobs); MySQL's binary log in ROW format with full images; Oracle in ARCHIVELOG with supplemental logging and LogMiner's common user `c##dbzuser` (the setup restarts the instance once); Db2's ASN capture: Debezium's management scripts compiled in the container, the capture agent `asncap` started before `ASNCDC.ADDTABLE`, then a reinit. Db2's shell steps need a login on the database's host; the others are SQL only.
 
@@ -49,7 +52,7 @@ Serverless notebook jobs in an Azure workspace that allows only serverless, Post
 | Stop on the idle timeout | ✅ SIGTERM, offsets flushed, run `SUCCESS` | ✅ `engine.close()`, run `SUCCESS` |
 | The slot's confirmed position on a quiet source | ✅ Past the last change with `heartbeat.interval.ms=10000`; short of it without | Not checked |
 
-Not tested yet: classic compute, volume, schema changes.
+Not tested yet: classic compute, volume, schema changes; silver, n:1 and gold over this log (FlowThrough's lfc-log-silver: the next step).
 
 ## What it took on serverless
 

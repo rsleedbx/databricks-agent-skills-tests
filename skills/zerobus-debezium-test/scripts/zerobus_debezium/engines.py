@@ -40,6 +40,9 @@ class Engine:
     history: bool = True         # needs schema.history.internal (every connector but PostgreSQL's)
     lag_s: int = 30              # how long a committed change can take to reach the log (Db2: ASN capture's commit)
     notes: list = field(default_factory=list)
+    # where the test's table is and who reads it for the snapshot: (conn) -> {"database" (Oracle: the PDB), "schema",
+    # "table", "login", "service" (Oracle: the CDB's, for the connection), "tls" (False: the server has no TLS)}
+    source: Callable | None = None
 
     def setup(self, conn: dict) -> list:
         return self.setup_steps(conn)
@@ -77,6 +80,21 @@ class Engine:
         }
         return self.dialect_dml(by_round[rnd])
 
+    def state_after(self, rnd: int, base: int) -> dict:
+        """{id: (name, balance)}: the test's rows as the source holds them after round rnd."""
+        rows = {}
+        for r in range(rnd + 1):
+            if r == 0:
+                rows[base] = ("pre-start row", "10.00")
+            elif r == 1:
+                rows.update({base + 1: ("updated a", "21.50"), base + 2: ("insert b", "30.00")})
+                rows.pop(base, None)
+            elif r == 2:
+                rows.update({base + 9: ("while stopped", "10.00"), base + 2: ("insert b", "31.00")})
+            elif r == 3:
+                rows.pop(base + 9, None)
+        return rows
+
     def expected(self, rnd: int, base: int) -> list:
         """(operation, id) the change log must hold after round rnd's changes, in source order."""
         return {0: [], 1: [("create", base + 1), ("create", base + 2), ("update", base + 1), ("delete", base)],
@@ -111,7 +129,8 @@ SQLSERVER = Engine(
     "CAST(conv(split_part(value:source:change_lsn::STRING, ':', 3), 16, 10) AS BIGINT)",
     lambda c: {"database.names": c.get("database", "dbz"), "database.encrypt": "true",
                "database.trustServerCertificate": "true"},
-    _mssql_setup, _mssql_dml)
+    _mssql_setup, _mssql_dml,
+    source=lambda c: {"database": c.get("database", "dbz"), "schema": "dbo", "table": TABLE, "login": c["user"]})
 
 
 # --- MySQL: the binlog in ROW format with full images (the slot's container has it); a database of its own ------------
@@ -128,7 +147,9 @@ MYSQL = Engine(
     "value:source:pos::BIGINT * 4096 + COALESCE(value:source:row::BIGINT, 0)",
     lambda c: {"database.server.id": str(c.get("server_id", 5401)), "database.include.list": c.get("database", "dbz"),
                "binary.handling.mode": "hex"},
-    _mysql_setup, lambda stmts: "".join(f"{s};\n" for s in stmts))
+    _mysql_setup, lambda stmts: "".join(f"{s};\n" for s in stmts),
+    source=lambda c: {"database": c.get("database", "dbz"), "schema": c.get("database", "dbz"), "table": TABLE,
+                      "login": c["user"]})
 
 
 # --- Oracle: LogMiner. ARCHIVELOG and supplemental logging (restarts the instance once), a common user for Debezium
@@ -175,7 +196,10 @@ ORACLE = Engine(
     "value:source:scn::BIGINT",
     lambda c: {"database.dbname": "FREE", "database.pdb.name": c.get("service", "FREEPDB1"),
                "schema.include.list": c.get("owner", "LFC_USER"), "log.mining.strategy": "online_catalog"},
-    _oracle_setup, _oracle_dml)
+    _oracle_setup, _oracle_dml,
+    # LogMiner's common user reads for the snapshot too (SELECT ANY TABLE): the CDB's service, the PDB as catalog
+    source=lambda c: {"database": c.get("service", "FREEPDB1"), "schema": c.get("owner", "LFC_USER"), "table": TABLE,
+                      "login": "C##DBZUSER", "service": "FREE"})
 
 
 # --- Db2: ASN capture (Debezium's management scripts, compiled in the container), archive logging, the capture agent
@@ -221,6 +245,8 @@ DB2 = Engine(
     " 16, 10) AS BIGINT)",
     lambda c: {"database.dbname": c.get("database", "LFCDB")},
     _db2_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), lag_s=90,
+    source=lambda c: {"database": c.get("database", "LFCDB"), "schema": "DBZ", "table": TABLE, "login": c["user"],
+                      "tls": False},
     notes=["the capture agent asncap must run in the container; a container restart stops it"])
 
 
@@ -240,7 +266,8 @@ POSTGRES = Engine(
     lambda c: {"database.dbname": c.get("database", "postgres"), "plugin.name": "pgoutput",
                "slot.name": c.get("slot", "dbz_slot"), "publication.name": c.get("publication", "dbz_publication"),
                "publication.autocreate.mode": "disabled"},
-    _pg_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), history=False)
+    _pg_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), history=False,
+    source=lambda c: {"database": c.get("database", "postgres"), "schema": "dbz", "table": TABLE, "login": c["user"]})
 
 
 ENGINES = {e.name: e for e in (SQLSERVER, MYSQL, ORACLE, DB2, POSTGRES)}

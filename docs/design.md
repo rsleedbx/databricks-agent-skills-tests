@@ -19,11 +19,45 @@ all, there is never a full table refresh, by design.
 FlowThrough is a technique, not a package: six layers, each with many sources or ways in, and no layer depends on
 another's choices.
 
+```mermaid
+flowchart LR
+  src[("Source database<br/>schema, statistics,<br/>rows, changes")]
+  plan["1. Plan (routing)<br/>schema + statistics:<br/>each table's CDC log,<br/>snapshot method,<br/>silver cell"]
+  subgraph CDC ["2. CDC: incremental, first"]
+    direction TB
+    gwc["gateway"]
+    dbz["Debezium + Zerobus<br/>in or outside<br/>the workspace"]
+  end
+  subgraph SNAP ["3. Snapshot: once a table, after CDC"]
+    direction TB
+    gws["gateway"]
+    qbc["QBC"]
+    jdbc["spark.read.jdbc"]
+  end
+  log[("Append-only<br/>change log<br/>(one or more)")]
+  snapt[("Snapshot<br/>one Delta table<br/>per source table")]
+  silver["4. Silver<br/>snapshot + the<br/>log's later changes"]
+  n1["5. n:1<br/>many sources'<br/>tables into one"]
+  gold["6. Gold<br/>marts"]
+  src --> plan
+  src --> CDC --> log --> silver
+  src --> SNAP --> snapt --> silver
+  silver --> n1 --> gold
+  plan -. chooses .-> CDC
+  plan -. chooses .-> SNAP
+  plan -. chooses .-> silver
+```
+
+Two contracts hold it together. Every CDC source writes the same append-only change log (`_op`, `_seq`, a watermark),
+and every snapshot method writes the same thing: one Delta table per source table, with the source's columns and types.
+So silver never knows which transport or snapshot method a table came through, and Debezium through Zerobus is the same
+CDC source whether it runs in the workspace or outside it.
+
 | Layer | What it does | Detail | Skill |
 |---|---|---|---|
 | 1. Routing | first, the plan: the schema, the statistics and the tables in scope decide each table's CDC log, snapshot method and first silver cell; then every round, its measured rate moves it | [design-intelligent.md](design-intelligent.md) | lfc-routing `routing`, lfc-log-silver `flowthrough` |
 | 2. CDC | every source's changes (Zerobus, a gateway, a changefeed, ...) into one shape: an append-only change log, changes only | [design-transport.md](design-transport.md) | lfc-change-source |
-| 3. Snapshot | every table's rows once, by the method routing chose (a direct JDBC read, QBC, a gateway's own, the customer's files), into a Delta table of its own, after its CDC has started | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `intake`) |
+| 3. Snapshot | every table's rows once, by the method routing chose (a direct JDBC read, QBC, a gateway's own, the customer's files), into a Delta table of its own, after its CDC has started | [design-no-full-refresh.md](design-no-full-refresh.md) | lfc-change-source (`qbc`, `jdbc_job`, `intake`) |
 | 4. Silver | combines them: the snapshot table and the log's changes after it, kept by the cell routing chose (view, shared group, MERGE, AUTO CDC) | [design-scale.md](design-scale.md) | lfc-log-silver `silver` |
 | 5. n:1 | many sources' tables into one | [design-fanin.md](design-fanin.md) | lfc-medallion |
 | 6. Gold | marts on the n:1 tables | [design-fanin.md](design-fanin.md) | lfc-medallion-pack |
