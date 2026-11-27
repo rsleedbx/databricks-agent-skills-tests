@@ -25,6 +25,9 @@ SEQUENCES = {
               " + value:source:pos::BIGINT * 4096 + COALESCE(value:source:row::BIGINT, 0)",
     "lsn": "value:source:lsn::BIGINT",
     "scn": "value:source:scn::BIGINT",
+    # Oracle (LogMiner): one transaction's changes share their SCN (an insert and an update of one key, tested), so
+    # the redo record's address, rs_id (0x<log seq>.<block>.<offset>, fixed-width hex), orders them within it: text
+    "scn_rs": "concat(lpad(value:source:scn::STRING, 20, '0'), value:source:rs_id::STRING)",
     "ifx_lsn": "value:source:change_lsn::BIGINT",
     "db2_lsn": "CAST(conv(substring(split_part(COALESCE(value:source:change_lsn, value:source:commit_lsn)::STRING, "
                "':', 3), -15), 16, 10) AS BIGINT)",
@@ -36,7 +39,7 @@ SEQUENCES = {
     # a CockroachDB changefeed's events landed by land.changefeed: the HLC, <wall ns>.<logical>, fixed width
     "hlc": "value:updated::STRING",
 }
-TEXT = {"gateway_cursor", "hlc"}   # positions compared as text
+TEXT = {"gateway_cursor", "hlc", "scn_rs"}   # positions compared as text
 # a kind whose transport says how far every change has arrived (CockroachDB's RESOLVED files, landed as rows)
 RESOLVED = {"hlc": "value:resolved::STRING"}
 EVENT = "operation <> 'resolved'"   # a change event, not a landed watermark

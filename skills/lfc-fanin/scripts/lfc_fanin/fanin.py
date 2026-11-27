@@ -26,7 +26,7 @@ import json
 
 # each source_type's position in its Debezium events (lfc-change-source cdc_log SEQUENCES); MySQL: binary values as
 # hex text. YugabyteDB isn't here: its log comes through Kafka Connect, another layout
-DBZ_SEQ = {"SQLSERVER": "change_lsn", "POSTGRESQL": "lsn", "MYSQL": "binlog", "ORACLE": "scn", "DB2": "db2_lsn",
+DBZ_SEQ = {"SQLSERVER": "change_lsn", "POSTGRESQL": "lsn", "MYSQL": "binlog", "ORACLE": "scn_rs", "DB2": "db2_lsn",
            "INFORMIX": "ifx_lsn", "COCKROACHDB": "ts_ns"}
 DBZ_BINHEX = {"MYSQL"}
 DBZ_FK_ACTIONS = {"MYSQL"}   # a log without its foreign keys' ON DELETE actions: silver derives them (lfc-log-silver fk)

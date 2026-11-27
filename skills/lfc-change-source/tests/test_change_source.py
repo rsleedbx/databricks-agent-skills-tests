@@ -81,7 +81,7 @@ class CdcLog(unittest.TestCase):
             src.changes_sql(Position("ts_ns", "1"), None)   # another source's kind of position
         with self.assertRaises(ValueError):
             Log("x", "t", "t", "d", ["id"], {"id": "INT"}, seq="gtid")
-        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "ifx_lsn", "db2_lsn", "change_lsn",
+        self.assertEqual(set(SEQUENCES), {"ts_ns", "binlog", "lsn", "scn", "scn_rs", "ifx_lsn", "db2_lsn", "change_lsn",
                                           "gateway_cursor", "hlc"})
 
 
