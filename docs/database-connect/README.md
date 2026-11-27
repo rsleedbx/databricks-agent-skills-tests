@@ -19,6 +19,7 @@ append-only change log (one Delta table for every source table), then silver tab
 | CockroachDB | [create an ingestion pipeline](cockroachdb/debezium-zerobus.md) | not supported by Lakeflow Connect |
 | Informix | [create an ingestion pipeline](informix/debezium-zerobus.md) | not supported by Lakeflow Connect |
 
+Many engines into one n:1 (SQL Server, MySQL, PostgreSQL and Oracle sources of the same tables): [n1-heterogeneous.md](n1-heterogeneous.md).
 SQL Server on an Always On availability group: [sqlserver/always-on.md](sqlserver/always-on.md). The other
 databases tested through Zerobus are in [lakeflow-connect-zerobus.md](../lakeflow-connect-zerobus.md); through a
 gateway, in [lakeflow-connect-database.md](../lakeflow-connect-database.md).
