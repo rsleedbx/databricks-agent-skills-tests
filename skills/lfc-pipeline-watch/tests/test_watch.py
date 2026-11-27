@@ -59,6 +59,8 @@ def test_ready_waiting_failed():
     assert s.ready()
     s.errors = [("b", "publication")]
     assert s.ready() and s.failed() == {}               # b recovered: its old error isn't a failure
+    s.tables["b"]["cdc"] = "STOPPED"                    # a restart in between: waiting, not failed
+    assert not s.ready() and s.failed() == {} and "b" in s.errors_seen()
     s.tables["b"]["cdc"] = "FAILED"
     assert not s.ready() and s.failed() == {"b": "publication"} and s.own_error() is None
 
@@ -114,5 +116,5 @@ def test_a_flow_error_is_not_the_pipelines_and_a_recovered_table_is_not_failed()
            ev("2026-11-26T00:00:01Z", "c.s.zz_cdc_flow", level="ERROR", exc="another table")]
     state, errs = W.flows(evs, ["a"])
     s = W.Status("RUNNING", state, errs, wanted=("a",))
-    assert s.own_error() is None and s.ready() is False and "a" not in s.failed()
-    assert "c.s.zz_cdc_flow" in s.failed()
+    assert s.own_error() is None and s.ready() and "a" not in s.failed()   # a recovered; zz isn't one of ours
+    assert "c.s.zz_cdc_flow" not in s.failed()

@@ -14,7 +14,7 @@ from lfc_rest import Rest, not_found
 
 DONE = ("COMPLETED",)                       # a snapshot flow is done
 UP = ("RUNNING", "COMPLETED")               # a cdc flow captures; an update runs
-BAD = ("FAILED", "CANCELED", "STOPPED")
+BAD = ("FAILED",)   # STOPPED, CANCELED: a restart in between (a spec put), not a failure
 FLOW = re.compile(r"(?:^|[._])(?P<t>[^._]+(?:_[^._]+)*?)_(?P<k>snapshot|cdc)_flow$")
 
 
@@ -115,13 +115,19 @@ class Status:
         return f.get("snapshot") in DONE and f.get("cdc") in UP
 
     def failed(self) -> dict:
-        """{table or "_pipeline": error}: a table's errors left out once its flows are healthy again (the gateway
-        retried it)."""
-        out = {(t or "_pipeline"): m for t, m in reversed(self.errors) if t is None or not self.healthy(t)}
+        """{table or "_pipeline": why}: the pipeline's own error; a table whose latest flow state is FAILED, with its
+        newest error. A table's error with no FAILED flow (one it may retry, a restart) isn't a failure: errors() shows
+        it."""
+        out = {"_pipeline": m for t, m in reversed(self.errors) if t is None}
+        last = {t: m for t, m in reversed(self.errors) if t is not None}
         for t, f in self.tables.items():
-            if any(s in BAD for s in f.values()):
-                out.setdefault(t, f"flow {f}")
+            if any(v in BAD for v in f.values()):
+                out[t] = last.get(t, f"flow {f}")
         return out
+
+    def errors_seen(self) -> dict:
+        """{table: its newest error} for tables still not healthy: shown in line(), not counted as failed."""
+        return {t: m for t, m in reversed(self.errors) if t is not None and not self.healthy(t)}
 
     def waiting(self) -> list:
         """The tables not ready: snapshot not COMPLETED or cdc not RUNNING (of `wanted`, else of those seen)."""
@@ -136,9 +142,11 @@ class Status:
         stg = f" staging {st['files']} files {st['bytes']:,} B" if st else ""
         names = self.wanted or tuple(self.tables)
         f = self.failed()
+        seen = {k: v for k, v in self.errors_seen().items() if k not in f}
         return (f"update {self.update}; ready {len(names) - len(self.waiting())}/{len(names)}"
                 f"{'; waiting ' + ','.join(self.waiting()) if self.waiting() else ''}"
-                f"{'; failed ' + '; '.join(f'{k}: {v[:120]}' for k, v in f.items()) if f else ''}{stg}")
+                f"{'; failed ' + '; '.join(f'{k}: {v[:120]}' for k, v in f.items()) if f else ''}"
+                f"{'; errors ' + '; '.join(f'{k}: {v[:120]}' for k, v in seen.items()) if seen else ''}{stg}")
 
 
 def check(api, pipeline_id: str, since_ms: float = 0, tables=None, root: str | None = "auto") -> Status:

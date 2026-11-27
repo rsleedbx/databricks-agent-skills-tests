@@ -508,13 +508,16 @@ def apply_shared(session, tables: dict, schema: str, to, threads: int = 16, rejo
             raise ValueError(f"shared group {g}: {n:,} events with no key: land with keys (lfc_change_source "
                              "land.gateway_keys), or fill them in (land.backfill_keys)")
     again = list(dict.fromkeys(renewed(tables, snapshots(session, schema)) + list(rejoin or [])))
-    for n in again:   # a member's new snapshot (or one joining the group):: its rows in the group from before it go, its changes after it come back
+    joining = set(rejoin or [])
+    for n in again:   # a member's new snapshot, or one joining the group: its rows in the group rebuilt
         t = tables[n]
-        if t.method != "shared" or not t.snapshot_table or t.position is None:
+        has_snap = bool(t.snapshot_table) and t.position is not None
+        if t.method != "shared" or (not has_snap and n not in joining):
             continue
         g = _target(schema, SHARED.format(group=t.group or "0"))
         d = _lit(t.src.destination)
-        cur = last_change_sql(shared_changes_sql([t.src], None, to, {t.src.destination: t.position}), ["destination", "k"])
+        floor = {t.src.destination: t.position} if has_snap else None   # no snapshot: every change it has
+        cur = last_change_sql(shared_changes_sql([t.src], None, to, floor), ["destination", "k"])
         session.sql(f"DELETE FROM {g} WHERE destination = {d}").collect()
         session.sql(f"INSERT INTO {g} (destination, k, data, deleted) SELECT destination, k, data, {OP} = '{DELETE}' "
                     f"FROM ({cur})").collect()
