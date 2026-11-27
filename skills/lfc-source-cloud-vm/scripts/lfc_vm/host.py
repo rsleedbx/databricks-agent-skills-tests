@@ -68,6 +68,24 @@ class Host:
         return self.run(["podman", "exec", *(["-i"] if input is not None else []), *opts, container, *words],
                         input=input, timeout=timeout, quiet=quiet, capture=capture)
 
+    def exec_stream(self, container: str, words: Sequence[str], opts: Sequence[str] = (), head: bytes = b"",
+                    tail: bytes = b"") -> int:
+        """`podman exec -i ... <container> <words>` on our own stdin, streamed (a long fill starts at once, any bytes);
+        head and tail go before and after it. Output goes straight to ours. Its exit status."""
+        argv = ["podman", "exec", "-i", *opts, container, *words]
+        if not head and not tail:
+            return subprocess.run(argv, check=False).returncode
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE)
+        try:
+            p.stdin.write(head)
+            for chunk in iter(lambda: sys.stdin.buffer.read(65536), b""):
+                p.stdin.write(chunk)
+            p.stdin.write(tail)
+            p.stdin.close()
+        except BrokenPipeError:
+            pass
+        return p.wait()
+
     def remove(self, container: str) -> None:
         self.run(["podman", "rm", "-f", container], quiet=True)
 

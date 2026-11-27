@@ -630,8 +630,8 @@ class Slots:
             raise Fail(f"{e.name} takes no database argument")
         ip = self.h.ip(c) if e.name == "yugabytedb" else ""
         words, opts = (engines.admin_cmd(e, ip) if not e.takes_database else (engines.table_cmd(e, database, wide, ip), []))
-        text = sys.stdin.read()
-        return self.h.exec(c, words, engines.admin_input(e, text), opts, quiet=False, capture=False).returncode
+        head, tail = (b"whenever sqlerror exit failure\n", b"\nexit\n") if e.name == "oracle" else (b"", b"")
+        return self.h.exec_stream(c, words, opts, head, tail)
 
     def info(self, name: str) -> str:
         self.check_name(name)

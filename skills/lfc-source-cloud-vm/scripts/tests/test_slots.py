@@ -60,6 +60,21 @@ class Logs(unittest.TestCase):
             self.assertIn("DATABASE IS READY TO USE", Host().logs("c"))
 
 
+class Stream(unittest.TestCase):
+    def test_sql_streams_stdin_with_oracles_head_and_tail(self):
+        from lfc_vm.host import Host
+        d = tempfile.mkdtemp()
+        Path(d, "podman").write_text("#!/bin/sh\ncat > \"$FAKE_OUT\"\n")
+        os.chmod(os.path.join(d, "podman"), 0o755)
+        out, src = os.path.join(d, "got"), os.path.join(d, "in")
+        Path(src).write_bytes(b"SELECT 1 FROM dual;\n\xff")
+        env = {"PATH": d + os.pathsep + os.environ["PATH"], "FAKE_OUT": out}
+        with mock.patch.dict(os.environ, env), open(src, "rb") as f, \
+                mock.patch.object(sys, "stdin", mock.Mock(buffer=f)):
+            self.assertEqual(Host().exec_stream("c", ["sqlplus"], head=b"H\n", tail=b"\nT\n"), 0)
+        self.assertEqual(Path(out).read_bytes(), b"H\nSELECT 1 FROM dual;\n\xff\nT\n")
+
+
 class Usage(unittest.TestCase):
     def test_hours_clip_to_since_and_count_an_open_up(self):
         ev = [{"ts": "2026-11-01T00:00:00Z", "owner": "a", "name": "x", "event": "up"},
