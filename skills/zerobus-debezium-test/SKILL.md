@@ -137,7 +137,7 @@ C=/tmp/dbz-$(date +%s).sh; cp scripts/debezium-zerobus.sh $C && OUT=/tmp/dbz-res
 
 ## Debezium inside a workspace: two notebooks
 
-Debezium Server with its Zerobus sink as a notebook's child process ([notebooks/debezium-server-zerobus.py](notebooks/debezium-server-zerobus.py)), or Debezium's embedded engine through pydbzengine with Spark writing the log ([notebooks/debezium-pydbzengine-append-log.py](notebooks/debezium-pydbzengine-append-log.py)). Both tested as serverless jobs; the comparison, the results and what serverless needed: [references/in-workspace.md](references/in-workspace.md).
+Debezium Server with its Zerobus sink as a notebook's child process ([notebooks/debezium-server-zerobus.py](notebooks/debezium-server-zerobus.py)), or Debezium's embedded engine through pydbzengine with Spark writing the log ([notebooks/debezium-pydbzengine-append-log.py](notebooks/debezium-pydbzengine-append-log.py)). Both tested as serverless jobs. The Debezium Server one takes `engine`: PostgreSQL, SQL Server, MySQL, Oracle and Db2 all passed the rounds, run from a laptop by the [zerobus_debezium](scripts/zerobus_debezium) package (`python -m zerobus_debezium.run`: each engine's capture setup on a slot database, the change log and service principal, the producer in the workspace). The comparison, the results and what serverless needed: [references/in-workspace.md](references/in-workspace.md).
 
 ## YugabyteDB (`SOURCE=yb`): Kafka Connect into the Zerobus Kafka endpoint
 

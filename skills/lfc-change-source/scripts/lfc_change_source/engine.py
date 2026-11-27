@@ -78,6 +78,17 @@ class Warehouse:
         self.id, self.w, self.poll_s = warehouse_id, workspace, poll_s
         self.api = Rest.of(workspace) if workspace is not None else Rest.connect()
 
+    @classmethod
+    def pick(cls, workspace=None, poll_s: float = 0.5) -> Warehouse:
+        """A warehouse of the workspace's: a running one first, then a serverless one (no cluster start to wait for)."""
+        from ._rest import Rest
+        api = Rest.of(workspace) if workspace is not None else Rest.connect()
+        whs = api.get("/api/2.0/sql/warehouses").get("warehouses") or []
+        if not whs:
+            raise RuntimeError("no SQL warehouse in this workspace")
+        best = sorted(whs, key=lambda w: (w.get("state") != "RUNNING", not w.get("enable_serverless_compute")))[0]
+        return cls(best["id"], workspace, poll_s)
+
     def state(self) -> str:
         """The warehouse's state (RUNNING, STOPPED, STARTING, ...): a stopped one costs its start first."""
         return self.api.get(f"/api/2.0/sql/warehouses/{self.id}").get("state") or ""
