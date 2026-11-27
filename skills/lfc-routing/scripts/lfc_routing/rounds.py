@@ -64,12 +64,18 @@ def run_round(session, schema: str, sources: dict, n: int | None = None, now: fl
     prev = {f"{r['source']}.{r['tbl']}": ({}, int(r["events"]), float(r["at"])) for r in prev_rows}
     got, logs = {}, {}
     for src, s in sources.items():
-        rows = _dicts(session.sql(f"SELECT destination, count(*) AS n FROM {s['log']} WHERE destination LIKE "
-                                  f"{_lit(s['prefix'] + '%')} GROUP BY destination").collect())
+        # case-insensitive: a log's destinations can spell a table another way than the source's catalog (Oracle's
+        # are upper case); each count goes under the introspected name, which the groups key on
+        rows = _dicts(session.sql(f"SELECT destination, count(*) AS n FROM {s['log']} WHERE lower(destination) LIKE "
+                                  f"{_lit(s['prefix'].lower() + '%')} GROUP BY destination").collect())
+        names = {}
         for t in docs[src][0].get("tables") or []:
             got[f"{src}.{t['name']}"], logs[f"{src}.{t['name']}"] = 0, s["log"]
+            names[t["name"].lower()] = t["name"]
         for r in rows:
-            got[f"{src}.{r['destination'][len(s['prefix']):]}"] = int(r["n"])
+            tbl = r["destination"][len(s["prefix"]):]
+            k = f"{src}.{names.get(tbl.lower(), tbl)}"
+            got[k] = got.get(k, 0) + int(r["n"])
     obs = observed(prev, got, now, logs, round_=n)
     decisions = tables.decisions(_dicts(session.sql(f"SELECT * FROM {schema}.routing_decisions").collect()))
     plan = shapes.classify_many(docs, observed=obs, decisions=decisions)

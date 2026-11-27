@@ -69,5 +69,31 @@ class Rounds(unittest.TestCase):
         self.assertIn("INSERT INTO `c`.`s`.routing_decisions (tbl) VALUES ('orders')", s.seen)
 
 
+class UpperSession(Session):
+    """t2's log spells its destinations in upper case (as Oracle's do): its counts still go to the introspected names."""
+
+    def sql(self, q):
+        if "GROUP BY destination" in q and "t2.app.%" in q:
+            self.seen.append(q)
+            rows = [{"destination": "T2.APP.ORDERS", "n": 100 + 50_000}]
+
+            class R:
+                def collect(self):
+                    return rows
+            return R()
+        return super().sql(q)
+
+
+class CaseInsensitive(unittest.TestCase):
+    def test_a_log_in_another_case_counts_for_its_table(self):
+        s = UpperSession()
+        srcs = {"t1": {"log": "`c`.`s`.cdc_log", "prefix": "t1.app."}, "t2": {"log": "`c`.`s`.cdc_log", "prefix": "T2.APP."}}
+        plan = rounds.run_round(s, "`c`.`s`", srcs, now=1100.0)
+        self.assertEqual(plan["tables"]["orders"]["route"]["class"], "small_fast")   # both tenants' events counted
+        obs = [q for q in s.seen if q.startswith("INSERT INTO `c`.`s`.routing_observed")][0]
+        self.assertIn("(2, 't2', 'orders', '`c`.`s`.cdc_log', 50100, 1100.000)", obs)
+        self.assertNotIn("ORDERS'", obs)
+
+
 if __name__ == "__main__":
     unittest.main()
