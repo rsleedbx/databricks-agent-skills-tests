@@ -103,7 +103,8 @@ check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scr
 check "keep_catalogs.py: connection + its foreign catalogs, never earlier, month out, failures go on (fake REST)" python3 -m pytest -q "$SK/lfc-workspace-setup/tests/test_keep_catalogs.py"
 check "postgres-tpch-cdc.sh verify(): rule counts, a failed or empty verify query is an error (stub client)" sh -c "'$SK/lfc-schema-change-test/scripts/test-tpch-verify.sh' > /dev/null"
 check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
-check "slot.sh limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
+check "lfc-slot (lfc_vm zipapp) limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
+check "lfc_vm: limits and env files, usage hours, the lock's bound (not inherited), the engine table, an env file that can't be replaced" python3 -I "$SK/lfc-source-cloud-vm/scripts/tests/test_slots.py"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
 check "statschema.tools: ddl(), ddl_to_schema() and shape() give the wrappers' text (path, YAML text, dict; stats, scale, keep-small); the wheel ships the models and model() finds them; state restored; canon.py; the rows a spec fixes as rules (TPC-DS calendar, time of day, products in SQLite); composite keys: every column varies, unique, read back; lookups take the parent row's value" \
   sh -c "cd '$SK/lfc-source-statschema/scripts' && uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q test_tools.py 2>&1"

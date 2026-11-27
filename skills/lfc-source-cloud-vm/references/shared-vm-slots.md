@@ -1,10 +1,10 @@
 # Test databases for several people on one VM
 
-`scripts/slot.sh` runs on a VM with a JuiceFS mount ([juicefs-branches.md](juicefs-branches.md)) and gives each person their own Postgres, MySQL or SQL Server container. A database starts empty or as a `juicefs clone -p` of a master ([engine-masters.md](engine-masters.md), `scripts/tpc-master.sh`). Its data lives on JuiceFS. A parked database has no container and no CPU or memory in use, and its data stays in object storage. `scripts/slot-ssh.sh` ties each person's SSH key to their owner name.
+`lfc-slot` (the `scripts/lfc_vm` package, installed as one zipapp) runs on a VM with a JuiceFS mount ([juicefs-branches.md](juicefs-branches.md)) and gives each person their own Postgres, MySQL or SQL Server container. A database starts empty or as a `juicefs clone -p` of a master ([engine-masters.md](engine-masters.md), `scripts/tpc-master.sh`). Its data lives on JuiceFS. A parked database has no container and no CPU or memory in use, and its data stays in object storage. `scripts/slot-ssh.sh` ties each person's SSH key to their owner name.
 
 ## Commands
 
-On the VM as root (`slot.sh [--owner <owner>] <command>`), or from a laptop through the person's key (`ssh slot@<vm> <command>`):
+On the VM as root (`lfc-slot [--owner <owner>] <command>`), or from a laptop through the person's key (`ssh slot@<vm> <command>`):
 
 | Command | Does |
 |---|---|
@@ -50,7 +50,7 @@ Db2, Informix, CockroachDB and YugabyteDB get no CDC settings here: each test se
 | `LOCK` | `$STATE/.lock` | the lock for one command at a time; a personal VM's is on the VM's disk |
 | `LIMITS` | `/etc/lfc-slot.limits` | per-owner limits, below |
 
-**Per-owner limits** (`/etc/lfc-slot.limits`, read on every command, so a change needs no new slot.sh): one line per owner, and a `default` line for everyone not listed. A key missing from both lines falls back to the setting (`max_running` to `MAX_PER_OWNER`; `hours_per_week` to the client's own default).
+**Per-owner limits** (`/etc/lfc-slot.limits`, read on every command, so a change needs no new lfc-slot): one line per owner, and a `default` line for everyone not listed. A key missing from both lines falls back to the setting (`max_running` to `MAX_PER_OWNER`; `hours_per_week` to the client's own default).
 
 ```
 default max_running=1 hours_per_week=29
@@ -60,7 +60,7 @@ alice max_running=4 hours_per_week=60
 - `max_running`: how many of your databases may run at once before `up` asks (0 = no limit). It's a soft limit: at it, `up` exits 3 with your running databases named, `lfc db up` asks whether to start another anyway, and an agent asks you before it adds `--over-limit`. The VM's own limit, `MAX_RUNNING` (one database per `CPUS_PER_DB` vCPUs), stays a hard stop.
 - `hours_per_week`: above it, the client suggests a VM of your own. A suggestion, not enforced.
 
-`slot.sh limits` prints yours: `{"owner": "alice", "max_running": 4, "hours_per_week": 60}`.
+`lfc-slot limits` prints yours: `{"owner": "alice", "max_running": 4, "hours_per_week": 60}`.
 
 A clone of a master uses the master's admin env file (`$SECRETS/<engine>.env`, the one `tpc-master.sh` built it with); an empty database gets a new admin password. Passwords and env files stay in `$STATE/<owner>/` (mode 700, root).
 
@@ -89,7 +89,8 @@ By hand:
 2. The scripts and the user people log in as:
 
 ```bash
-install -m 755 slot.sh /usr/local/sbin/lfc-slot
+python3 -m lfc_vm build lfc-slot     # in scripts/: the lfc_vm package as one zipapp (python3 3.8+ on the VM)
+install -m 755 lfc-slot /usr/local/sbin/lfc-slot
 install -m 755 slot-ssh.sh /usr/local/sbin/lfc-slot-ssh
 printf 'HOST=%s\n' "<public IP>" > /etc/lfc-slot.env
 useradd -m -s /bin/bash slot
@@ -103,7 +104,7 @@ install -d -o slot -g slot -m 700 ~slot/.ssh
 command="/usr/local/sbin/lfc-slot-ssh alice",restrict ssh-ed25519 AAAA... alice
 ```
 
-`slot-ssh.sh` passes the words of the typed command to `slot.sh --owner <owner>`. It refuses `--owner` and any word with characters other than letters, digits, `.`, `_`, `-`; a login without a command runs `ls`.
+`slot-ssh.sh` passes the words of the typed command to `lfc-slot --owner <owner>`. It refuses `--owner` and any word with characters other than letters, digits, `.`, `_`, `-`; a login without a command runs `ls`.
 
 4. The firewall opens SSH and `PORT_MIN`-`PORT_MAX` to the people's addresses and to the workspace's serverless egress.
 

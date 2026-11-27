@@ -8,6 +8,8 @@
 # shellcheck disable=SC2034   # variables are read by the check strings that ok() evals
 set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fail=0
+# lfc-slot as installed on a VM: the lfc_vm zipapp
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from lfc_vm.cli import build; build(sys.argv[2])' "$S" "$T/lfc-slot" >/dev/null || exit 1
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 SAS_SIG=TESTSIG
 mkdir -p "$T/bin" "$T/fp/bin" "$T/fp/run" "$T/fp/db" "$T/fp/envs" "$T/fp/eng" "$T/blob"
@@ -311,13 +313,13 @@ printf 'ACCEPT_EULA=Y\nMSSQL_SA_PASSWORD=Lfc1c3c3c3c3c3c3c3c3c3c3c3\n' > "$T/fp/
 : > "$T/fp/secrets/cockroachdb.env"
 slot() {
   FT=$T/fp PATH="$T/fp/bin:$T/bin:$PATH" ROOT=$T/fp/root STATE=$T/fp/state LOCK=$T/fp/state/.lock LIMITS=$T/fp/no-limits \
-    MAX_RUNNING=99 MAX_PER_OWNER=0 HOST=192.0.2.1 SECRETS=$T/fp/secrets bash "$S/slot.sh" --owner alice "$@"
+    MAX_RUNNING=99 MAX_PER_OWNER=0 HOST=192.0.2.1 SECRETS=$T/fp/secrets python3 "$T/lfc-slot" --owner alice "$@"
 }
 calls() { cat "$T/fp/calls" 2>/dev/null || true; }
 ST=$T/fp/state/alice
 env_of() { sed -n "s/^$2=//p" "$1" | head -1; }
 
-echo "== slot.sh: the admin password of a database cloned from a master"
+echo "== lfc-slot: the admin password of a database cloned from a master"
 : > "$T/fp/calls"
 out=$(slot up postgres pg1 --from pgm 2>"$T/pg1.err"); rc=$?
 ok "postgres clone: up answers with a login (lfc_user) and rc 0" '[ $rc = 0 ] && [ "$(jq -r .user <<<"$out")" = lfc_user ]'
@@ -405,20 +407,7 @@ ok "oracle partial change: the tried value is kept as .pending, and it's the one
 ok "oracle partial change: the next up logs in with the pending value, finishes it, and the env file gets it" \
   '[ $rc = 0 ] && [ ! -e "$ST/ora3.rotate" ] && [ ! -e "$ST/ora3.env.pending" ] && [ "$(env_of "$ST/ora3.env" ORACLE_PASSWORD)" = "$p3" ] && [ "$(cat "$T/fp/db/lfc-slot-alice-ora3")" = "$p3" ]'
 
-# the change worked but the env file can't be replaced: the new password must not be lost
-mkdir -p "$T/mvfail/bin"
-cat > "$T/mvfail/bin/mv" <<'MV'
-#!/bin/sh
-for last; do :; done
-case $last in *.env) exit 1 ;; esac
-exec /bin/mv "$@"
-MV
-chmod +x "$T/mvfail/bin/mv"
-: > "$T/fp/calls"; PATH="$T/mvfail/bin:$PATH" slot up postgres pg5 --from pgm > /dev/null 2>"$T/pg5.err"; rc=$?
-tmp5=$(ls "$ST" | grep '^pg5\.env\.' | grep -v pending | head -1)
-ok "a change whose env file can't be replaced: says where the new password is, keeps it (it's the database's), keeps the marker" \
-  '[[ $(cat "$T/pg5.err") == *"the new admin password is in"* ]] && [ -n "$tmp5" ] && [ "$(env_of "$ST/$tmp5" POSTGRES_PASSWORD)" = "$(cat "$T/fp/db/lfc-slot-alice-pg5")" ] && [ -e "$ST/pg5.rotate" ]'
-slot rm pg5 >/dev/null 2>&1; rm -f "$ST/$tmp5"
+# the change worked but the env file can't be replaced: tests/test_slots.py (Rotate)
 
 : > "$T/fp/calls"; slot clone pg1 pg1c > /dev/null 2>"$T/clone.err"; rc=$?
 ok "clone: the copy gets a marker of its own (a clone of a rotated database changes too)" \
@@ -428,5 +417,5 @@ ok "the clone's first up changes its password: new value, not the source's" \
   '[ $rc = 0 ] && [ "$(grep -c "^auth-ok lfc-slot-alice-pg1c$" "$T/fp/calls")" = 1 ] && [ ! -e "$ST/pg1c.rotate" ] && [ "$(env_of "$ST/pg1c.env" POSTGRES_PASSWORD)" != "$(env_of "$ST/pg1.env" POSTGRES_PASSWORD)" ]'
 
 echo "== bash syntax and the repo's lint"
-ok "masters-export.sh, slot-vm-setup.sh, slot.sh: bash -n" 'bash -n "$S/masters-export.sh" && bash -n "$S/slot-vm-setup.sh" && bash -n "$S/slot.sh"'
+ok "masters-export.sh, slot-vm-setup.sh: bash -n" 'bash -n "$S/masters-export.sh" && bash -n "$S/slot-vm-setup.sh"'
 exit $fail
