@@ -4,6 +4,7 @@ engine's admin) or shell (run in the database's container), and the callers deci
     from zerobus_debezium import engines
     e = engines.get("sqlserver")
     e.setup(conn)            # [("sql", "..."), ...]: the database, the user's rights, CDC, the test table
+    e.capture(conn, "lfcddemo", ["intpk", "dtix"])   # capture on tables that exist already (no restart by default)
     e.source_properties(conn, folder="/Volumes/c/s/v/dbz-ms")   # debezium.source.* for application.properties
     e.changes(1, base=100)   # round 1's statements on the test table
 
@@ -35,7 +36,8 @@ class Engine:
     key: str                     # the key column's name in the events (Oracle and Db2 fold to upper case)
     seq: str                     # the log's order for this engine: a kind of lfc_change_source.cdc_log.SEQUENCES
     props: Callable              # (conn, folder) -> engine-specific debezium.source.* (without the prefix)
-    setup_steps: Callable        # (conn) -> [(kind, text)]
+    setup_steps: Callable        # (conn) -> [(kind, text)]: the test's schema and table, then capture() of it
+    capture_steps: Callable      # (conn, schema, tables, restart) -> [(kind, text)]: change capture on existing tables
     dialect_dml: Callable        # (statements) -> one script for the admin client
     history: bool = True         # needs schema.history.internal (every connector but PostgreSQL's)
     lag_s: int = 30              # how long a committed change can take to reach the log (Db2: ASN capture's commit)
@@ -43,19 +45,34 @@ class Engine:
     # where the test's table is and who reads it for the snapshot: (conn) -> {"database" (Oracle: the PDB), "schema",
     # "table", "login", "service" (Oracle: the CDB's, for the connection), "tls" (False: the server has no TLS)}
     source: Callable | None = None
+    jars: tuple = ()             # Maven coordinates Debezium Server's lib/ needs added (Informix's driver and client)
+    include_db: bool = False     # table.include.list names the database too (Informix: database.owner.table)
 
     def setup(self, conn: dict) -> list:
         return self.setup_steps(conn)
 
+    def capture(self, conn: dict, schema: str, tables: list, restart: bool = False) -> list:
+        """Change capture on tables that exist (schema and tables as the source names them). restart: allowed to
+        restart the database where the engine's capture needs it (Oracle's ARCHIVELOG, Db2's archive logging);
+        without it a step that would restart refuses instead."""
+        return self.capture_steps(conn, schema, list(tables), restart)
+
+    def include(self, schema: str, tables: list, database: str | None = None) -> str:
+        """table.include.list for tables of schema: schema.table, as the connector names them (Informix:
+        database.owner.table)."""
+        pre = f"{database}." if self.include_db and database else ""
+        return ",".join(f"{pre}{schema}.{t}" for t in tables)
+
     def source_properties(self, conn: dict, folder: str, name: str, heartbeat_ms: int = 10000,
-                          history_folder: str | None = None) -> dict:
+                          history_folder: str | None = None, tables: str | None = None) -> dict:
         """debezium.source.* for application.properties; folder: where the offsets live; history_folder: the schema
         history's (default folder). On a UC Volume the history can't be appended to (Debezium reopens it: "Illegal
-        seek"), so the workspace notebook keeps it on local disk and copies it to the Volume."""
+        seek"), so the workspace notebook keeps it on local disk and copies it to the Volume. tables: the
+        table.include.list (default the test table)."""
         p = {"connector.class": self.connector, "name": name, "topic.prefix": name.replace("-", "_"),
              "database.hostname": conn["host"], "database.port": str(conn["port"]),
              "database.user": conn["user"], "database.password": conn["password"],
-             "table.include.list": self.table, **COMMON, **self.props(conn),
+             "table.include.list": tables or self.table, **COMMON, **self.props(conn),
              "heartbeat.interval.ms": str(heartbeat_ms),
              "offset.storage": "org.apache.kafka.connect.storage.FileOffsetBackingStore",
              "offset.storage.file.filename": f"{folder}/offsets.dat", "offset.flush.interval.ms": "1000"}
@@ -111,11 +128,18 @@ def _mssql_setup(conn):
     return [("sql", f"IF DB_ID('{db}') IS NULL CREATE DATABASE [{db}];\nGO\nUSE [{db}];\nGO\n"
                     f"IF USER_ID('{u}') IS NULL CREATE USER [{u}] FOR LOGIN [{u}];\nGO\n"
                     f"ALTER ROLE db_owner ADD MEMBER [{u}];\nGO\n"
-                    f"IF OBJECT_ID('dbo.{TABLE}') IS NULL {_ddl('dbo')};\nGO\n"
+                    f"IF OBJECT_ID('dbo.{TABLE}') IS NULL {_ddl('dbo')};\nGO\n")] + _mssql_capture(conn, "dbo", [TABLE], False)
+
+
+def _mssql_capture(conn, schema, tables, restart):
+    """CDC on the database and each table not in it yet (a table with change tracking keeps it: they're independent).
+    SQL Server Agent runs the capture jobs; no restart."""
+    db = conn.get("database", "dbz")
+    return [("sql", f"USE [{db}];\nGO\n"
                     "IF (SELECT is_cdc_enabled FROM sys.databases WHERE name = DB_NAME()) = 0 EXEC sys.sp_cdc_enable_db;\nGO\n"
-                    f"IF NOT EXISTS (SELECT 1 FROM cdc.change_tables WHERE source_object_id = OBJECT_ID('dbo.{TABLE}'))\n"
-                    f"  EXEC sys.sp_cdc_enable_table @source_schema = N'dbo', @source_name = N'{TABLE}', "
-                    "@role_name = NULL, @supports_net_changes = 0;\nGO\n")]
+                    + "".join(f"IF NOT EXISTS (SELECT 1 FROM cdc.change_tables WHERE source_object_id = OBJECT_ID('{schema}.{t}'))\n"
+                              f"  EXEC sys.sp_cdc_enable_table @source_schema = N'{schema}', @source_name = N'{t}', "
+                              "@role_name = NULL, @supports_net_changes = 0;\nGO\n" for t in tables))]
 
 
 def _mssql_dml(stmts):
@@ -127,7 +151,7 @@ SQLSERVER = Engine(
     "change_lsn",
     lambda c: {"database.names": c.get("database", "dbz"), "database.encrypt": "true",
                "database.trustServerCertificate": "true"},
-    _mssql_setup, _mssql_dml,
+    _mssql_setup, _mssql_capture, _mssql_dml,
     source=lambda c: {"database": c.get("database", "dbz"), "schema": "dbo", "table": TABLE, "login": c["user"]})
 
 
@@ -135,8 +159,12 @@ SQLSERVER = Engine(
 def _mysql_setup(conn):
     db, u = conn.get("database", "dbz"), conn["user"]
     return [("sql", f"CREATE DATABASE IF NOT EXISTS {db};\nGRANT ALL ON {db}.* TO '{u}'@'%';\n"
-                    f"CREATE TABLE IF NOT EXISTS {_ddl(db)[len('CREATE TABLE '):]};\n"
-                    "SELECT @@log_bin, @@binlog_format, @@binlog_row_image;\n")]
+                    f"CREATE TABLE IF NOT EXISTS {_ddl(db)[len('CREATE TABLE '):]};\n")] + _mysql_capture(conn, db, [TABLE], False)
+
+
+def _mysql_capture(conn, schema, tables, restart):
+    """Nothing to turn on per table: the binary log, ROW format with full images, is the server's (checked)."""
+    return [("sql", "SELECT @@log_bin, @@binlog_format, @@binlog_row_image;\n")]
 
 
 MYSQL = Engine(
@@ -144,7 +172,7 @@ MYSQL = Engine(
     "binlog",
     lambda c: {"database.server.id": str(c.get("server_id", 5401)), "database.include.list": c.get("database", "dbz"),
                "binary.handling.mode": "hex"},
-    _mysql_setup, lambda stmts: "".join(f"{s};\n" for s in stmts),
+    _mysql_setup, _mysql_capture, lambda stmts: "".join(f"{s};\n" for s in stmts),
     source=lambda c: {"database": c.get("database", "dbz"), "schema": c.get("database", "dbz"), "table": TABLE,
                       "login": c["user"]})
 
@@ -158,30 +186,45 @@ ORACLE_VIEWS = ("V_$DATABASE", "V_$LOG", "V_$LOG_HISTORY", "V_$LOGMNR_LOGS", "V_
 
 
 def _oracle_setup(conn):
-    pdb, pw, owner = conn.get("service", "FREEPDB1"), conn["password"], conn.get("owner", "LFC_USER")
-    archive = ("WHENEVER SQLERROR CONTINUE\n"   # each step is safe to repeat: an error means it's done already
-               "SHUTDOWN IMMEDIATE\nSTARTUP MOUNT\nALTER DATABASE ARCHIVELOG;\nALTER DATABASE OPEN;\n"
-               "ALTER PLUGGABLE DATABASE ALL OPEN;\nALTER PLUGGABLE DATABASE ALL SAVE STATE;\n"
-               "ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;\n"
-               "CREATE TABLESPACE logminer_tbs DATAFILE '/opt/oracle/oradata/FREE/logminer_tbs.dbf' SIZE 25M REUSE "
-               "AUTOEXTEND ON MAXSIZE UNLIMITED;\n"
-               f"ALTER SESSION SET CONTAINER = {pdb};\n"
-               f"CREATE TABLESPACE logminer_tbs DATAFILE '/opt/oracle/oradata/FREE/{pdb}/logminer_tbs.dbf' SIZE 25M "
-               "REUSE AUTOEXTEND ON MAXSIZE UNLIMITED;\n"
-               "ALTER SESSION SET CONTAINER = CDB$ROOT;\n"
-               f'CREATE USER c##dbzuser IDENTIFIED BY "{pw}" DEFAULT TABLESPACE logminer_tbs QUOTA UNLIMITED ON '
-               "logminer_tbs CONTAINER = ALL;\n"
-               f'ALTER USER c##dbzuser IDENTIFIED BY "{pw}" CONTAINER = ALL;\n'
-               f"GRANT {ORACLE_GRANTS} TO c##dbzuser CONTAINER = ALL;\n"
-               + "".join(f"GRANT SELECT ON {v} TO c##dbzuser CONTAINER = ALL;\n" for v in ORACLE_VIEWS)
-               + "GRANT EXECUTE ON DBMS_LOGMNR TO c##dbzuser CONTAINER = ALL;\n"
-               "GRANT EXECUTE ON DBMS_LOGMNR_D TO c##dbzuser CONTAINER = ALL;\n"
-               f"ALTER SESSION SET CONTAINER = {pdb};\n"
-               f"{_ddl(owner, dec='NUMBER(12,2)', text='VARCHAR2(100)').replace('INT NOT', 'NUMBER(10) NOT')};\n"
-               f"ALTER TABLE {owner}.{TABLE} ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;\n"
-               "WHENEVER SQLERROR EXIT FAILURE\n"
-               "SELECT log_mode, supplemental_log_data_min FROM v$database;\n")
-    return [("sql", archive)]
+    owner = conn.get("owner", "LFC_USER")
+    pdb = conn.get("service", "FREEPDB1")
+    table = ("WHENEVER SQLERROR CONTINUE\n"
+             f"ALTER SESSION SET CONTAINER = {pdb};\n"
+             f"{_ddl(owner, dec='NUMBER(12,2)', text='VARCHAR2(100)').replace('INT NOT', 'NUMBER(10) NOT')};\n")
+    return _oracle_capture(conn, owner, [TABLE.upper()], True) + [("sql", table)] + \
+        _oracle_capture(conn, owner, [TABLE.upper()], False)[-1:]
+
+
+def _oracle_capture(conn, schema, tables, restart):
+    """LogMiner: ARCHIVELOG (restart: turned on, which restarts the instance; else a database without it is refused),
+    minimal supplemental logging, LogMiner's common user c##dbzuser (its password conn["password"]), and every
+    column of each table logged (an update's event then carries the whole row). Each step is safe to repeat."""
+    pdb, pw = conn.get("service", "FREEPDB1"), conn["password"]
+    archive = ("SHUTDOWN IMMEDIATE\nSTARTUP MOUNT\nALTER DATABASE ARCHIVELOG;\nALTER DATABASE OPEN;\n"
+               "ALTER PLUGGABLE DATABASE ALL OPEN;\nALTER PLUGGABLE DATABASE ALL SAVE STATE;\n") if restart else (
+        "WHENEVER SQLERROR EXIT FAILURE\n"
+        "BEGIN FOR r IN (SELECT log_mode FROM v$database WHERE log_mode <> 'ARCHIVELOG') LOOP\n"
+        "  RAISE_APPLICATION_ERROR(-20001, 'NOARCHIVELOG: turning it on restarts the instance (capture restart=True)');\n"
+        "END LOOP; END;\n/\n")
+    user = ("WHENEVER SQLERROR CONTINUE\n"   # an error from here on: done already (a tablespace, the user)
+            "ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;\n"
+            "CREATE TABLESPACE logminer_tbs DATAFILE '/opt/oracle/oradata/FREE/logminer_tbs.dbf' SIZE 25M REUSE "
+            "AUTOEXTEND ON MAXSIZE UNLIMITED;\n"
+            f"ALTER SESSION SET CONTAINER = {pdb};\n"
+            f"CREATE TABLESPACE logminer_tbs DATAFILE '/opt/oracle/oradata/FREE/{pdb}/logminer_tbs.dbf' SIZE 25M "
+            "REUSE AUTOEXTEND ON MAXSIZE UNLIMITED;\n"
+            "ALTER SESSION SET CONTAINER = CDB$ROOT;\n"
+            f'CREATE USER c##dbzuser IDENTIFIED BY "{pw}" DEFAULT TABLESPACE logminer_tbs QUOTA UNLIMITED ON '
+            "logminer_tbs CONTAINER = ALL;\n"
+            f'ALTER USER c##dbzuser IDENTIFIED BY "{pw}" CONTAINER = ALL;\n'
+            f"GRANT {ORACLE_GRANTS} TO c##dbzuser CONTAINER = ALL;\n"
+            + "".join(f"GRANT SELECT ON {v} TO c##dbzuser CONTAINER = ALL;\n" for v in ORACLE_VIEWS)
+            + "GRANT EXECUTE ON DBMS_LOGMNR TO c##dbzuser CONTAINER = ALL;\n"
+            "GRANT EXECUTE ON DBMS_LOGMNR_D TO c##dbzuser CONTAINER = ALL;\n")
+    cols = (f"WHENEVER SQLERROR CONTINUE\nALTER SESSION SET CONTAINER = {pdb};\n"
+            + "".join(f"ALTER TABLE {schema}.{t} ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;\n" for t in tables)
+            + "WHENEVER SQLERROR EXIT FAILURE\nSELECT log_mode, supplemental_log_data_min FROM v$database;\n")
+    return [("sql", archive), ("sql", user), ("sql", cols)]
 
 
 def _oracle_dml(stmts, pdb="FREEPDB1"):
@@ -193,7 +236,7 @@ ORACLE = Engine(
     "scn_rs",   # SCN, then the redo record: a transaction's changes share an SCN
     lambda c: {"database.dbname": "FREE", "database.pdb.name": c.get("service", "FREEPDB1"),
                "schema.include.list": c.get("owner", "LFC_USER"), "log.mining.strategy": "online_catalog"},
-    _oracle_setup, _oracle_dml,
+    _oracle_setup, _oracle_capture, _oracle_dml,
     # LogMiner's common user reads for the snapshot too (SELECT ANY TABLE): the CDB's service, the PDB as catalog
     source=lambda c: {"database": c.get("service", "FREEPDB1"), "schema": c.get("owner", "LFC_USER"), "table": TABLE,
                       "login": "C##DBZUSER", "service": "FREE"})
@@ -217,20 +260,38 @@ def _sq(s: str) -> str:
 
 def _db2_setup(conn):
     u, schema = conn["user"].upper(), "DBZ"
+    steps = _db2_capture(conn, schema, [TABLE.upper()], True)
+    i = next(k for k, (kind, _) in enumerate(steps) if kind == "shell_detached")   # the table before the agent
+    return steps[:i] + [("sql", f"GRANT DBADM ON DATABASE TO USER {u};\nCREATE SCHEMA {schema};\n{_ddl(schema)};\n")] \
+        + steps[i:]
+
+
+def _db2_capture(conn, schema, tables, restart):
+    """ASN capture: Debezium's management scripts fetched and compiled in the container (dbsetup.sh: archive logging, a
+    backup and a restart of the database; restart must allow it, and it's skipped when ASNCDC is there already), the
+    Debezium login DBADM, the capture agent started before ADDTABLE, each table added, then a reinit (Debezium's
+    documented order). The agent runs in the container: a container restart stops it."""
+    u = conn["user"].upper()
+    if conn.get("database", "LFCDB").upper() != "LFCDB":   # the ASN tools below are set up for the slot's one database
+        raise ValueError(f"db2 capture: database {conn['database']}: only LFCDB (the slot's Db2 database)")
     fetch = "mkdir -p /asncdctools/src && cd /asncdctools/src && " + " && ".join(
         f"curl -sfL -o {f} {DB2_INIT}/{f}" for f in DB2_FILES) + " && chmod -R 755 /asncdctools && chown -R db2inst1 /asncdctools"
+    have = "db2 connect to LFCDB >/dev/null && db2 -x \"SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA = 'ASNCDC'\""
+    install = ("mkdir -p ~/archive && db2 update db cfg for LFCDB using LOGARCHMETH1 DISK:$HOME/archive "
+               ">/dev/null && db2 backup db LFCDB to /dev/null >/dev/null; "
+               "db2 update db cfg for LFCDB using PCKCACHESZ 16384 LOGSECOND 200 >/dev/null; "
+               "bash /asncdctools/src/dbsetup.sh LFCDB")
+    guard = (f"n=$({have} | tr -d ' '); if [ \"${{n:-0}}\" -gt 0 ]; then echo 'ASN capture is installed'; "
+             + (f"else {install}; fi" if restart else
+                "else echo 'ASN capture needs dbsetup.sh, which restarts the database: capture restart=True' >&2; exit 1; fi"))
     return [
         ("shell", "command -v curl >/dev/null || (yum install -y -q curl >/dev/null 2>&1 || microdnf install -y curl)"),
         ("shell", fetch),
-        ("shell", _db2_as("mkdir -p ~/archive && db2 update db cfg for LFCDB using LOGARCHMETH1 DISK:$HOME/archive "
-                          ">/dev/null && db2 backup db LFCDB to /dev/null >/dev/null; "
-                          "db2 update db cfg for LFCDB using PCKCACHESZ 16384 LOGSECOND 200 >/dev/null; "
-                          "bash /asncdctools/src/dbsetup.sh LFCDB")),
-        ("sql", f"GRANT DBADM ON DATABASE TO USER {u};\nCREATE SCHEMA {schema};\n"
-                f"{_ddl(schema)};\n"),
-        ("shell_detached", _db2_as(f"sqllib/bin/asncap {DB2_ASN}")),
+        ("shell", _db2_as(guard)),
+        ("sql", f"GRANT DBADM ON DATABASE TO USER {u};\n"),
+        ("shell_detached", _db2_as(f"pgrep -x asncap >/dev/null || sqllib/bin/asncap {DB2_ASN}")),   # by name: -f matched this shell
         ("sleep", "30"),
-        ("sql", f"CALL ASNCDC.ADDTABLE('{schema}', '{TABLE.upper()}');\n"),
+        ("sql", "".join(f"CALL ASNCDC.ADDTABLE('{schema}', '{t}');\n" for t in tables)),
         ("sleep", "10"),
         ("shell", _db2_as(f"sqllib/bin/asnccmd {DB2_ASN} reinit")),
     ]
@@ -240,7 +301,7 @@ DB2 = Engine(
     "db2", "io.debezium.connector.db2.Db2Connector", "DBZ", f"DBZ.{TABLE.upper()}", "ID",
     "db2_lsn",
     lambda c: {"database.dbname": c.get("database", "LFCDB")},
-    _db2_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), lag_s=90,
+    _db2_setup, _db2_capture, lambda stmts: "".join(f"{s};\n" for s in stmts), lag_s=90,
     source=lambda c: {"database": c.get("database", "LFCDB"), "schema": "DBZ", "table": TABLE, "login": c["user"],
                       "tls": False},
     notes=["the capture agent asncap must run in the container; a container restart stops it"])
@@ -248,12 +309,30 @@ DB2 = Engine(
 
 # --- PostgreSQL: pgoutput on a slot of the producer's own (slot.name), a publication for the test table ---------------
 def _pg_setup(conn):
-    pub, u = conn.get("publication", "dbz_publication"), conn["user"]
+    u = conn["user"]
     return [("sql", f"CREATE SCHEMA IF NOT EXISTS dbz;\nCREATE TABLE IF NOT EXISTS {_ddl('dbz')[len('CREATE TABLE '):]};\n"
                     f"ALTER TABLE dbz.{TABLE} REPLICA IDENTITY FULL;\nGRANT USAGE ON SCHEMA dbz TO {u};\n"
                     f"GRANT SELECT ON dbz.{TABLE} TO {u};\n"
-                    f"DO $$BEGIN IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = '{pub}') THEN "
-                    f"CREATE PUBLICATION {pub} FOR TABLE dbz.{TABLE}; END IF; END$$;\nSHOW wal_level;\n")]
+                    )] + _pg_capture(conn, "dbz", [TABLE], False)
+
+
+def _pg_capture(conn, schema, tables, restart):
+    """The publication with the tables (made if missing, a table added if it isn't in it); Debezium makes its own slot
+    (slot.name) at its first start. wal_level must be logical already (a restart to change it isn't done here). A
+    keyless table with the default replica identity gets REPLICA IDENTITY FULL first: in a publication that publishes
+    updates and deletes, PostgreSQL refuses them on a table with no replica identity (the application's own too)."""
+    pub = conn.get("publication", "dbz_publication")
+    ident = "".join(
+        f"IF NOT EXISTS (SELECT FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = "
+        f"c.relnamespace WHERE i.indisprimary AND n.nspname = '{schema}' AND c.relname = '{t}') AND (SELECT c.relreplident "
+        f"FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{schema}' AND c.relname = '{t}') "
+        f"= 'd' THEN ALTER TABLE {schema}.{t} REPLICA IDENTITY FULL; END IF; " for t in tables)
+    adds = "".join(f"IF NOT EXISTS (SELECT FROM pg_publication_tables WHERE pubname = '{pub}' AND schemaname = '{schema}' "
+                   f"AND tablename = '{t}') THEN ALTER PUBLICATION {pub} ADD TABLE {schema}.{t}; END IF; " for t in tables)
+    db = conn.get("database")   # the tables' database: a publication is per database
+    return [("sql", f"DO $$BEGIN {ident}IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = '{pub}') THEN "
+                    f"CREATE PUBLICATION {pub} FOR TABLE {', '.join(f'{schema}.{t}' for t in tables)}; END IF; "
+                    f"{adds}END$$;\nSHOW wal_level;\n", db)]
 
 
 POSTGRES = Engine(
@@ -262,11 +341,39 @@ POSTGRES = Engine(
     lambda c: {"database.dbname": c.get("database", "postgres"), "plugin.name": "pgoutput",
                "slot.name": c.get("slot", "dbz_slot"), "publication.name": c.get("publication", "dbz_publication"),
                "publication.autocreate.mode": "disabled"},
-    _pg_setup, lambda stmts: "".join(f"{s};\n" for s in stmts), history=False,
+    _pg_setup, _pg_capture, lambda stmts: "".join(f"{s};\n" for s in stmts), history=False,
     source=lambda c: {"database": c.get("database", "postgres"), "schema": "dbz", "table": TABLE, "login": c["user"]})
 
 
-ENGINES = {e.name: e for e in (SQLSERVER, MYSQL, ORACLE, DB2, POSTGRES)}
+# --- Informix: its CDC API, through the database syscdcv1 (made by the server's own script; no restart), a logged
+#     database, and the informix login; Debezium Server's lib/ gets the Informix JDBC driver and change-stream client
+IFX_JARS = ("com.ibm.informix:jdbc:15.0.1.4", "com.ibm.informix:ifx-changestream-client:1.1.3",
+            "org.mongodb:bson:3.8.0")
+
+
+def _ifx_capture(conn, schema, tables, restart):
+    db = conn.get("database", "lfcddemo")
+    return [("shell_default", "echo \"SELECT name FROM sysmaster:sysdatabases WHERE name = 'syscdcv1';\" "
+                              "| dbaccess sysmaster - 2>/dev/null | grep -q syscdcv1 && echo 'syscdcv1 is there' "
+                              "|| dbaccess - $INFORMIXDIR/etc/syscdcv1.sql"),
+            ("sql", f"SELECT name, is_logging FROM sysmaster:sysdatabases WHERE name = '{db}';\n")]
+
+
+def _ifx_setup(conn):
+    return _ifx_capture(conn, "informix", [TABLE], False)
+
+
+INFORMIX = Engine(
+    "informix", "io.debezium.connector.informix.InformixConnector", "informix", f"informix.{TABLE}", "id",
+    "ifx_lsn",
+    lambda c: {"database.dbname": c.get("database", "lfcddemo")},
+    _ifx_setup, _ifx_capture, lambda stmts: "".join(f"{s};\n" for s in stmts),
+    source=lambda c: {"database": c.get("database", "lfcddemo"), "schema": "informix", "table": TABLE,
+                      "login": c["user"], "tls": False},
+    jars=IFX_JARS, include_db=True)
+
+
+ENGINES = {e.name: e for e in (SQLSERVER, MYSQL, ORACLE, DB2, POSTGRES, INFORMIX)}
 # Debezium Server's log lines: streaming has started; the engine stopped on an error (lfc_change_source's
 # DebeziumServer waits for the same two)
 READY, FAILED = "Starting streaming", "Engine has failed"

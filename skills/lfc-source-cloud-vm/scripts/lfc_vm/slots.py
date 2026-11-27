@@ -257,9 +257,19 @@ class Slots:
     def db2_db(self, c: str) -> bool:
         return self.h.exec(c, ["su", "-", "db2inst1", "-c", engines.DB2_DB]).returncode == 0
 
+    def settled(self, c: str) -> bool:
+        """Started more than 30 minutes ago: long past an image's first-start setup, whose log line may have rotated
+        out of a container running for weeks (an always-on demo VM's Oracle, 2026-11-27)."""
+        t = self.h.inspect(c, "{{.State.StartedAt}}").split(".")[0].replace("T", " ")[:19]
+        try:
+            started = dt.datetime.strptime(t, "%Y-%m-%d %H:%M:%S").replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            return False
+        return (dt.datetime.now(dt.timezone.utc) - started).total_seconds() > 1800
+
     def ready(self, c: str, e: Engine) -> bool:
         line = engines.READY_LOG.get(e.name)
-        if line and line not in self.h.logs(c):
+        if line and not self.settled(c) and line not in self.h.logs(c):
             return False
         if e.name == "db2" and not self.db2_db(c):
             return False

@@ -45,9 +45,13 @@ class EngineTest(unittest.TestCase):
 
     def test_setup_steps_are_known_kinds(self):
         for name, e in engines.ENGINES.items():
-            kinds = {k for k, _ in e.setup(CONN)}
-            self.assertLessEqual(kinds, {"sql", "shell", "shell_detached", "sleep"}, name)
-        self.assertIn("shell_detached", {k for k, _ in engines.get("db2").setup(CONN)})   # the capture agent
+            kinds = {st[0] for st in e.setup(CONN)}
+            self.assertLessEqual(kinds, {"sql", "shell", "shell_detached", "shell_default", "sleep"}, name)
+        self.assertIn("shell_detached", {st[0] for st in engines.get("db2").setup(CONN)})   # the capture agent
+        pg = engines.get("postgres").capture(dict(CONN, database="shop"), "s", ["t"])
+        self.assertEqual(pg[-1][2], "shop")                       # a publication is per database: run there
+        with self.assertRaises(ValueError):
+            engines.get("db2").capture(dict(CONN, database="OTHER"), "S", ["T"])
 
     def test_db2_waits_longer(self):
         self.assertGreater(engines.get("db2").lag_s, engines.get("mysql").lag_s)
@@ -64,7 +68,7 @@ class SnapshotRouteTest(unittest.TestCase):
         from lfc_routing.routing import Policy, snapshot_method
         for name in engines.ENGINES:
             got = snapshot_method("t", 0, Policy(shared_log="`c`.`s`.`cdc_log`", engine=name))
-            self.assertEqual(got, "jdbc" if name == "db2" else "qbc", name)
+            self.assertEqual(got, "jdbc" if name in ("db2", "informix") else "qbc", name)
 
     def test_names_per_method(self):
         from lfc_change_source import SNAPSHOTS

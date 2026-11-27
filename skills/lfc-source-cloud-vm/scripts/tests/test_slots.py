@@ -75,6 +75,19 @@ class Stream(unittest.TestCase):
         self.assertEqual(Path(out).read_bytes(), b"H\nSELECT 1 FROM dual;\n\xff\nT\n")
 
 
+class Settled(unittest.TestCase):
+    def test_a_container_up_over_30_minutes_needs_no_log_line(self):
+        h = mock.Mock()
+        sl = slots.Slots("alice", mock.Mock(), host=h)
+        old = (slots.dt.datetime.now(slots.dt.timezone.utc) - slots.dt.timedelta(hours=2))
+        h.inspect.return_value = old.strftime("%Y-%m-%d %H:%M:%S.123456789 +0000 UTC")   # podman's StartedAt
+        self.assertTrue(sl.settled("c"))
+        h.inspect.return_value = slots.dt.datetime.now(slots.dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertFalse(sl.settled("c"))
+        h.inspect.return_value = ""
+        self.assertFalse(sl.settled("c"))
+
+
 class Usage(unittest.TestCase):
     def test_hours_clip_to_since_and_count_an_open_up(self):
         ev = [{"ts": "2026-11-01T00:00:00Z", "owner": "a", "name": "x", "event": "up"},

@@ -72,7 +72,7 @@ def take_snapshot(api, wh, e, conn: dict, a, snap_schema: str, pipeline: str, lo
         n = SNAPSHOTS["qbc"].source_names(e.name, src["database"], src["schema"], src["table"])
         wh.sql(f"CREATE SCHEMA IF NOT EXISTS {destination.q(a.catalog, snap_schema)}")
         got = SNAPSHOTS["qbc"].snapshot(api, pipeline, name, a.catalog, snap_schema, n["catalog"], n["schema"],
-                                        {n["table"]: [e.key]})
+                                        {n["table"]: [e.key]}, full_refresh=True)   # each round's snapshot from scratch
         return {"how": how, **got, "table": SNAPSHOTS["qbc"].snapshot_table(a.catalog, snap_schema, n["table"]),
                 "link": f"{api.host}/pipelines/{got['pipeline_id']}"}
     if how == "jdbc":
@@ -131,7 +131,8 @@ def main(argv=None) -> int:
     ap.add_argument("--catalog", required=True)
     ap.add_argument("--schema", required=True)
     ap.add_argument("--volume", default="debezium")
-    ap.add_argument("--engine", required=True, choices=sorted(engines.ENGINES))
+    # Informix has no test table of its own (its setup is capture only): it runs through stream.py on existing tables
+    ap.add_argument("--engine", required=True, choices=sorted(e for e in engines.ENGINES if e != "informix"))
     ap.add_argument("--slot-host", required=True)
     ap.add_argument("--slot-name", required=True)
     ap.add_argument("--slot-key", default="~/.ssh/lfc_slot_ed25519")
@@ -192,6 +193,7 @@ def main(argv=None) -> int:
     fresh = not any(f["name"] == "offsets.dat" for f in _ls(api, folder))
     ids = range(a.base, a.base + 10)   # this run's rows: the checks look only at them
     silver_schema = destination.q(a.catalog, f"{a.schema}_silver_{tag}")
+    wh.sql(f"DROP SCHEMA IF EXISTS {silver_schema} CASCADE")   # a run's snapshot is new, so is its silver
     snap = src = None
     old = landed(wh, log, prefix, e.key, e.seq)
     if landed(wh, log, prefix, e.key, e.seq, ids):
