@@ -27,7 +27,7 @@ How to start each engine in Podman is in **lfc-source-podman**'s `references/eng
 
 ## TPC masters: all six workloads per engine
 
-[`scripts/tpc-master.sh`](../scripts/tpc-master.sh) builds one master per engine holding TPC-B, C, H, DS, E, and DI at a scale factor, ready to clone with `juicefs clone -p`. Each workload is its own database (MySQL, SQL Server), schema (Postgres), or user (Oracle, in `FREEPDB1`). Every row is generated inside the database with `INSERT ... SELECT` over the engine's own row generator: no data crosses the network.
+`lfc-vm masters build` ([`scripts/lfc_vm/masters.py`](../scripts/lfc_vm/masters.py), on a VM as `/usr/local/sbin/lfc-vm`) builds one master per engine holding TPC-B, C, H, DS, E, and DI at a scale factor, ready to clone with `juicefs clone -p`. Each workload is its own database (MySQL, SQL Server), schema (Postgres), or user (Oracle, in `FREEPDB1`). Every row is generated inside the database with `INSERT ... SELECT` over the engine's own row generator: no data crosses the network.
 
 ```bash
 # on a machine with uv: the DDL, from lfc-source-statschema (shape once, then one file per dialect)
@@ -36,7 +36,7 @@ for w in tpcb tpcc tpch tpcds tpce tpcdi; do uv run $S/shape.py $S/../schemas/$w
   for d in postgres mysql tsql oracle; do uv run $S/ddl.py $w.yaml --dialect $d > ddl/$w-$d.sql; done; done
 # on the VM: the DDL in $DDL, lfc-source-datagen's scripts/ in $DG, admin passwords in $SECRETS/<engine>.env
 sudo systemd-run --unit=lfc-master-pg --collect -E SECRETS=/root/lfc-src/masters \
-  bash -c 'bash tpc-master.sh postgres postgres16-tpc-sf1 > master-pg.out 2>&1'
+  bash -c 'lfc-vm masters build postgres postgres16-tpc-sf1 > master-pg.out 2>&1'
 ```
 
 | Engine | Row generator | Load settings (the build only) |
@@ -51,7 +51,7 @@ sudo systemd-run --unit=lfc-master-pg --collect -E SECRETS=/root/lfc-src/masters
 | Db2 11.5 | `fill.py` (two sessions), DDL through `sq.py`; `PCKCACHESZ 16384`, `LOGSECOND 200` | `--privileged`, published on 127.0.0.1 |
 | Informix 14.10 | `fill.py` (one session), one database per workload in a `datadbs` dbspace | the chunk file must exist, owner `informix`, mode 660; the developer image caps the dbspace (see below) |
 
-**Built on the shared VM (2026-10-27), SF 1 unless the row says otherwise.** Each master was built with `tpc-master.sh` and each table checked against its target (`fill.py status`) on a slot cloned from it with `slot.sh up`:
+**Built on the shared VM (2026-10-27), SF 1 unless the row says otherwise.** Each master was built with the shell version of `lfc-vm masters build` (`tpc-master.sh`, since replaced) and each table checked against its target (`fill.py status`) on a slot cloned from it with `slot.sh up`:
 
 | Engine | Master | Built | Rows at target | Build time | Master size | Failure, exact error |
 |---|---|---|---|---|---|---|

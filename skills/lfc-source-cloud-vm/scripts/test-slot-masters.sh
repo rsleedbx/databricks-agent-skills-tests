@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-slot-masters.sh: offline checks of masters-export.sh, slot-vm-setup.sh masters, and the admin password change of a
+# test-slot-masters.sh: offline checks of lfc-vm masters export, slot-vm-setup.sh masters (lfc-vm masters import), and the admin password change of a
 #   database cloned from a master in slot.sh. Stubs only: a local Blob-style HTTP server (Put Blob, Put Block, Put Block List,
 #   Get, Head), a fake podman that keeps each container's password and logs its calls, a curl that logs its argv (the SAS must
 #   not be on it), and fake timeout, ss, findmnt, juicefs and flock. No VM, no containers, no object storage. One PASS/FAIL line
@@ -10,6 +10,8 @@ set -uo pipefail
 S=$(cd "$(dirname "$0")" && pwd); T=$(mktemp -d); trap 'rm -rf "${T:?}"' EXIT; fail=0
 # lfc-slot as installed on a VM: the lfc_vm zipapp
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from lfc_vm.cli import build; build(sys.argv[2])' "$S" "$T/lfc-slot" >/dev/null || exit 1
+ln -s lfc-slot "$T/lfc-vm"                                   # lfc-vm masters ...: the same zipapp
+mkdir -p "$T/setup" && cp "$S/slot-vm-setup.sh" "$S/disk-setup.sh" "$S/slot-ssh.sh" "$T/lfc-slot" "$T/setup/"   # setup as shipped
 ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 SAS_SIG=TESTSIG
 mkdir -p "$T/bin" "$T/fp/bin" "$T/fp/run" "$T/fp/db" "$T/fp/envs" "$T/fp/eng" "$T/blob"
@@ -99,16 +101,16 @@ printf 'sv=2023-11-03&sig=%s\n' "$SAS_SIG" > "$T/sas"; chmod 600 "$T/sas"
 MU="http://127.0.0.1:$PORT/box"
 export_run() {   # the masters of $MASTERS (default all) exported to the box, blocks of 1 MiB past 2 MiB
   env ROOT="$T/root" SECRETS="$T/secrets" EXPORT_TMP="$T/tmp" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas" \
-    MASTERS_BLOCK_MB=1 MASTERS_PUT_BLOB_MAX_MB=2 MASTERS="${MASTERS:-all}" bash "$S/masters-export.sh"
+    MASTERS_BLOCK_MB=1 MASTERS_PUT_BLOB_MAX_MB=2 MASTERS="${MASTERS:-all}" python3 "$T/lfc-vm" masters export
 }
 import_run() {   # import_run <root> <secrets> [masters]: a VM's masters and envs from the box; the SAS is copied (the import deletes it)
   cp "$T/sas" "$T/sas.use"; chmod 600 "$T/sas.use"
   env STORAGE=local ROOT="$1" SECRETS="$2" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.use" MASTERS="${3:-all}" \
-    bash "$S/slot-vm-setup.sh" masters
+    bash "$T/setup/slot-vm-setup.sh" masters
 }
 private600() { [ "$(stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1")" = 600 ]; }
 
-echo "== masters-export.sh and slot-vm-setup.sh masters"
+echo "== lfc-vm masters export and slot-vm-setup.sh masters"
 : > "$T/argv.log"
 out1=$(export_run 2>"$T/exp1.err"); rc1=$?
 ok "export: both masters uploaded, rc 0 ($(tr '\n' ' ' < "$T/exp1.err" | cut -c1-200))" '[ $rc1 = 0 ] && [ "$(grep -c "\"state\":\"uploaded\"" <<<"$out1")" = 2 ]'
@@ -128,10 +130,10 @@ out2=$(export_run 2>/dev/null); rc2=$?
 ok "export again: both skipped (same sha256), rc 0" '[ $rc2 = 0 ] && [ "$(grep -c "\"state\":\"skipped\"" <<<"$out2")" = 2 ]'
 ok "export again: no archive or env uploaded (only the manifest)" \
   '! tail -n +$((mark + 1)) "$T/blob/requests.log" | grep -q "PUT /box/[a-z]*\.\(tar\.zst\|env\)"'
-ok "the SAS never reached a command line (curl's argv has its config, not the URL)" \
-  '! grep -q "$SAS_SIG" "$ARGV_LOG" && grep -q -- "-K" "$ARGV_LOG"'
+ok "the SAS never reached a command line (no curl: lfc_vm makes the Blob calls)" \
+  '! grep -q "$SAS_SIG" "$ARGV_LOG"'
 printf 'sv=2023-11-03&sig=%s\n' "$SAS_SIG" > "$T/sas.open"; chmod 644 "$T/sas.open"
-err=$(env ROOT="$T/root" SECRETS="$T/secrets" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.open" bash "$S/masters-export.sh" 2>&1 >/dev/null); rc=$?
+err=$(env ROOT="$T/root" SECRETS="$T/secrets" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.open" python3 "$T/lfc-vm" masters export 2>&1 >/dev/null); rc=$?
 ok "export refuses a SAS file that others can read" '[ $rc != 0 ] && [[ $err == *"chmod 600"* ]]'
 
 import_run "$T/vm1" "$T/vm1s" > "$T/imp1.out" 2>"$T/imp1.err"; rc=$?
@@ -170,8 +172,8 @@ ok "import: an admin env that doesn't match its sha256 fails and isn't installed
 serve
 
 cp "$T/sas" "$T/sas.u6"; chmod 600 "$T/sas.u6"
-env -u MASTERS STORAGE=local ROOT="$T/vm6" SECRETS="$T/vm6s" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.u6" bash "$S/slot-vm-setup.sh" masters > "$T/imp9.out" 2>"$T/imp9.err"; rc=$?
-ok "import with MASTERS unset: every master of the manifest (as masters-export.sh's default), rc 0" \
+env -u MASTERS STORAGE=local ROOT="$T/vm6" SECRETS="$T/vm6s" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.u6" bash "$T/setup/slot-vm-setup.sh" masters > "$T/imp9.out" 2>"$T/imp9.err"; rc=$?
+ok "import with MASTERS unset: every master of the manifest (as export's default), rc 0" \
   '[ $rc = 0 ] && [ "$(grep -c "\"state\":\"imported\"" "$T/imp9.out")" = 2 ] && diff -r "$T/root/masters/alpha" "$T/vm6/masters/alpha" >/dev/null'
 
 # a checksum process that writes its sum only after the download ends (a slow sha256sum stub): the sum must be complete when it's read
@@ -183,16 +185,16 @@ EOF
 chmod +x "$T/slow/bin/sha256sum"
 cp "$T/sas" "$T/sas.slow"; chmod 600 "$T/sas.slow"
 env PATH="$T/slow/bin:$PATH" STORAGE=local ROOT="$T/vm7" SECRETS="$T/vm7s" MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.slow" MASTERS=beta \
-  bash "$S/slot-vm-setup.sh" masters > "$T/slow.out" 2>"$T/slow.err"; rc=$?
+  bash "$T/setup/slot-vm-setup.sh" masters > "$T/slow.out" 2>"$T/slow.err"; rc=$?
 ok "a slow checksum (its sum written after the download ends) still verifies: beta imported, rc 0 ($(tr '\n' ' ' < "$T/slow.err" | cut -c1-160))" \
   '[ $rc = 0 ] && [ "$(grep -c "\"state\":\"imported\"" "$T/slow.out")" = 1 ] && diff -r "$T/root/masters/beta" "$T/vm7/masters/beta" >/dev/null'
 
 # a full setup with MASTERS_URL: the SAS file is checked before any setup step (nothing printed, nothing run)
-out=$(env -u MASTERS_SAS_FILE STORAGE=local HOST=192.0.2.9 MASTERS_URL="$MU" bash "$S/slot-vm-setup.sh" 2>"$T/early.err"); rc=$?
+out=$(env -u MASTERS_SAS_FILE STORAGE=local HOST=192.0.2.9 MASTERS_URL="$MU" bash "$T/setup/slot-vm-setup.sh" 2>"$T/early.err"); rc=$?
 ok "a full setup with MASTERS_URL and no MASTERS_SAS_FILE: stops before the first step, rc 1, names the setting" \
   '[ $rc != 0 ] && [ -z "$out" ] && [[ $(cat "$T/early.err") == *MASTERS_SAS_FILE* ]]'
 printf 'sv=x\n' > "$T/sas.open2"; chmod 644 "$T/sas.open2"
-out=$(env STORAGE=local HOST=192.0.2.9 MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.open2" bash "$S/slot-vm-setup.sh" 2>"$T/early2.err"); rc=$?
+out=$(env STORAGE=local HOST=192.0.2.9 MASTERS_URL="$MU" MASTERS_SAS_FILE="$T/sas.open2" bash "$T/setup/slot-vm-setup.sh" 2>"$T/early2.err"); rc=$?
 ok "a full setup with a SAS file others can read: stops before the first step, rc 1" \
   '[ $rc != 0 ] && [ -z "$out" ] && [[ $(cat "$T/early2.err") == *"chmod 600"* ]]'
 
@@ -303,7 +305,7 @@ chmod +x "$T/fp/bin/"*
 # a JuiceFS VM with only the masters' settings (no VOLUME): the masters and envs come, the volume is not formatted
 : > "$T/fp/calls"; : > "$T/fp/juicefs.log"; cp "$T/sas" "$T/sas.implicit"; chmod 600 "$T/sas.implicit"
 env FT="$T/fp" PATH="$T/fp/bin:$T/bin:$PATH" STORAGE=juicefs ROOT="$T/vm5" SECRETS="$T/vm5s" MASTERS_URL="$MU" \
-  MASTERS_SAS_FILE="$T/sas.implicit" MASTERS=none bash "$S/slot-vm-setup.sh" > /dev/null 2>"$T/imp8.err"; rc=$?
+  MASTERS_SAS_FILE="$T/sas.implicit" MASTERS=none bash "$T/setup/slot-vm-setup.sh" > /dev/null 2>"$T/imp8.err"; rc=$?
 ok "no VOLUME on a JuiceFS VM: only the envs are fetched, rc 0; no juicefs format, no podman, no redis" \
   '[ $rc = 0 ] && cmp -s "$T/secrets/postgres.env" "$T/vm5s/postgres.env" && [ ! -s "$T/fp/juicefs.log" ] && [ ! -s "$T/fp/calls" ]'
 mkdir -p "$T/fp/secrets" "$T/fp/root/masters/pgm" "$T/fp/root/masters/mym" "$T/fp/root/masters/sqm" "$T/fp/root/masters/crm"
@@ -417,5 +419,5 @@ ok "the clone's first up changes its password: new value, not the source's" \
   '[ $rc = 0 ] && [ "$(grep -c "^auth-ok lfc-slot-alice-pg1c$" "$T/fp/calls")" = 1 ] && [ ! -e "$ST/pg1c.rotate" ] && [ "$(env_of "$ST/pg1c.env" POSTGRES_PASSWORD)" != "$(env_of "$ST/pg1.env" POSTGRES_PASSWORD)" ]'
 
 echo "== bash syntax and the repo's lint"
-ok "masters-export.sh, slot-vm-setup.sh: bash -n" 'bash -n "$S/masters-export.sh" && bash -n "$S/slot-vm-setup.sh"'
+ok "slot-vm-setup.sh: bash -n" 'bash -n "$S/slot-vm-setup.sh"'
 exit $fail

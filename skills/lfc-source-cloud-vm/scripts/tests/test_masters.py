@@ -1,0 +1,134 @@
+"""lfc_vm.masters offline: the SAS file's checks, the engine beside a master, the JuiceFS staging wait, a build's
+refusals before it starts anything, and the masters words through the cli. Export and import against a Blob-style server
+are in test-slot-masters.sh."""
+import io
+import os
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stderr
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from lfc_vm import cli, masters
+from lfc_vm.host import Fail
+
+
+class Sas(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = os.path.join(self.d, "sas")
+
+    def test_private_file_only(self):
+        Path(self.p).write_text("?sv=1&sig=x\n")
+        os.chmod(self.p, 0o644)
+        with self.assertRaises(Fail) as x:
+            masters.Blob("https://a/b", self.p)
+        self.assertIn("chmod 600", x.exception.msg)
+        os.chmod(self.p, 0o600)
+        self.assertEqual(masters.Blob("https://a/b/", self.p).sas, "sv=1&sig=x")
+
+    def test_empty_or_missing(self):
+        with self.assertRaises(Fail):
+            masters.Blob("https://a/b", self.p)
+        Path(self.p).write_text(" \n")
+        os.chmod(self.p, 0o600)
+        with self.assertRaises(Fail) as x:
+            masters.Blob("https://a/b", self.p)
+        self.assertIn("empty", x.exception.msg)
+
+
+class EngineOf(unittest.TestCase):
+    def test_file_then_setting_then_refused(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(f"{d}/masters/m1")
+        Path(d, "masters", "m1.engine").write_text("mysql\n")
+        self.assertEqual(masters.engine_of(d, "m1"), "mysql")
+        with mock.patch.dict(os.environ, {"MASTER_ENGINES": "m2=oracle,m3=db2"}):
+            self.assertEqual(masters.engine_of(d, "m2"), "oracle")
+        with self.assertRaises(Fail):
+            masters.engine_of(d, "m4")
+
+
+class Staging(unittest.TestCase):
+    def test_a_file_in_rawstaging_waits(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(f"{d}/vol/rawstaging/chunks")
+        self.assertFalse(masters.staging(d))
+        Path(d, "vol/rawstaging/chunks/0_1").write_text("x")
+        self.assertTrue(masters.staging(d))
+
+
+class BuildRefusals(unittest.TestCase):
+    def test_unknown_engine_missing_env_existing_master(self):
+        d = tempfile.mkdtemp()
+        with self.assertRaises(Fail) as x:
+            masters.Build("sqlite", "m", [])
+        self.assertEqual(x.exception.rc, 2)
+        env = {"SECRETS": f"{d}/s", "OUT": f"{d}/out", "DATA": f"{d}/data"}
+        with mock.patch.dict(os.environ, env):
+            b = masters.Build("postgres", "m", [])
+            self.assertEqual(b.wl, list(masters.WORKLOADS))
+            with self.assertRaises(Fail) as x:
+                b.run()
+            self.assertIn("missing", x.exception.msg)
+            os.makedirs(f"{d}/s")
+            Path(d, "s", "postgres.env").write_text("POSTGRES_PASSWORD=x\n")
+            os.makedirs(f"{d}/out/m")
+            with self.assertRaises(Fail) as x:
+                b.run()
+            self.assertIn("exists", x.exception.msg)
+
+
+class TruncatedDownload(unittest.TestCase):
+    def test_a_body_cut_short_is_a_failed_verify_and_leaves_no_staging(self):
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):   # says 1000 bytes, sends 10, closes
+                self.send_response(200)
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                self.wfile.write(b"0123456789")
+                self.close_connection = True
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        d = tempfile.mkdtemp()
+        os.makedirs(f"{d}/masters")
+        sas = os.path.join(d, "sas")
+        Path(sas).write_text("sig=x")
+        os.chmod(sas, 0o600)
+        blob = masters.Blob(f"http://127.0.0.1:{srv.server_port}/box", sas)
+        with self.assertRaises(Fail) as x:
+            masters.import_one(blob, {"engine": "postgres", "sha256": "0" * 64}, d, "m")
+        srv.shutdown()
+        self.assertIn("didn't verify", x.exception.msg)
+        self.assertEqual(os.listdir(f"{d}/masters"), [])
+
+
+class Cli(unittest.TestCase):
+    def test_masters_words_and_usage(self):
+        err = io.StringIO()
+        with redirect_stderr(err), mock.patch.object(sys, "argv", ["lfc-vm"]):
+            self.assertEqual(cli.main(["masters"]), 2)
+            self.assertEqual(cli.main(["masters", "export"]), 1)       # no MASTERS_URL
+        self.assertIn("masters: MASTERS_URL=", err.getvalue())
+
+    def test_names_on_the_command_line(self):
+        with mock.patch.object(masters, "export", return_value=0) as ex, \
+                mock.patch.object(masters, "import_", return_value=0) as im:
+            masters.main(["export", "m1", "m2"])
+            masters.main(["import", "m3"])
+            masters.main(["import"])
+        ex.assert_called_once_with("m1,m2")
+        self.assertEqual([c.args for c in im.call_args_list], [("m3",), ("",)])
+
+
+if __name__ == "__main__":
+    unittest.main()

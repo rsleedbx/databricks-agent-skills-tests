@@ -79,6 +79,13 @@ def read_env_file(path: str) -> dict[str, str]:
     return out
 
 
+def setting(key: str, default: str, env=None) -> str:
+    """A setting from /etc/lfc-slot.env (it wins, as slot.sh sourced it over the environment), else the environment,
+    else default."""
+    v = read_env_file(ENV_FILE).get(key) or (os.environ if env is None else env).get(key)
+    return v or default
+
+
 @dataclass
 class Settings:
     root: str

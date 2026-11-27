@@ -22,7 +22,7 @@
 #   azure.env aren't used. A disk from the old layout (lfc-data/masters, lfc-data/secrets) is moved into place. rclone
 #   and zstd are installed for the copy to object storage the admin runs before the VM is deleted.
 #   MASTERS_URL=https://<account>.blob.core.windows.net/<container> with MASTERS (all by default, a comma list, or none for the admin envs
-#   only) and MASTERS_SAS_FILE (a read SAS in a root-only file, mode 600; deleted when this ends): the masters masters-export.sh put
+#   only) and MASTERS_SAS_FILE (a read SAS in a root-only file, mode 600; deleted when this ends): the masters lfc-vm masters export put
 #   there go into ROOT/masters, and every admin env in its manifest into SECRETS (mode 600). `slot-vm-setup.sh masters` with those
 #   settings adds them to a VM set up already; on a JuiceFS VM, the same settings with no VOLUME do that too (the volume isn't touched).
 set -euo pipefail
@@ -32,80 +32,13 @@ case $STORAGE in juicefs|local) ;; *) echo "STORAGE: juicefs or local, not $STOR
 die() { echo "slot-vm-setup: $*" >&2; exit 1; }
 private_file() { local m; m=$(stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"); case $m in *00) return 0 ;; esac; return 1; }   # no group or other bits
 
-# ---- masters from object storage (masters-export.sh writes them) ----
-# a setting from /etc/lfc-slot.env (as slot.sh reads it), else the environment, else the default
-lfc_setting() { local v; v=$(sed -n "s/^$1=//p" /etc/lfc-slot.env 2>/dev/null | tail -1); echo "${v:-${!1:-$2}}"; }
-masters_paths() {   # MROOT (its masters/ holds the masters) and MSECRETS: slot.sh's ROOT and SECRETS for this storage mode
-  if [ "$STORAGE" = local ]; then
-    MROOT=$(lfc_setting ROOT /var/lib/containers); MSECRETS=$(lfc_setting SECRETS /var/lib/containers/.secrets)
-  else
-    MROOT=$(lfc_setting ROOT /mnt/jfs); MSECRETS=$(lfc_setting SECRETS /root/lfc-src)
-    findmnt -t fuse.juicefs "$MROOT" >/dev/null 2>&1 || die "$MROOT isn't mounted (lfc-jfs.service): no masters are taken yet"
-  fi
-  install -d "$MROOT/masters"; install -d -m 700 "$MSECRETS"
-}
-sha_stdin() { if command -v sha256sum >/dev/null; then sha256sum | cut -c1-64; else shasum -a 256 | cut -c1-64; fi; }
-url_cfg() { printf 'url = "%s"\n' "$1"; }   # the URL, with the SAS, reaches curl through -K (a pipe): never on its command line
-bl() { local b=$1 q=$2; shift 2; curl -sS --retry 3 -K <(url_cfg "$MU/$b?${q:+$q&}$MSAS") "$@"; }   # bl <blob> <query> curl args...
+# ---- masters from object storage (lfc-vm masters export writes them; lfc_vm/masters.py) ----
 masters_import() {   # MASTERS, MASTERS_URL, MASTERS_SAS_FILE: the masters and admin envs of the container's manifest
-  local n e want f chosen="" seen="" names rc got sha dir stg h code
-  MASTERS=${MASTERS:-all}; : "${MASTERS_SAS_FILE:?MASTERS_SAS_FILE=<root-only file with the container SAS>}"
-  MU=${MASTERS_URL:?MASTERS_URL=https://<account>.blob.core.windows.net/<container>}; MU=${MU%/}
-  [ -f "$MASTERS_SAS_FILE" ] || die "no $MASTERS_SAS_FILE"
-  trap 'rm -f "$MASTERS_SAS_FILE"; [ -z "${MT:-}" ] || rm -rf "$MT"; [ -z "${T:-}" ] || rm -rf "$T"' EXIT   # the SAS goes when this ends
-  private_file "$MASTERS_SAS_FILE" || die "$MASTERS_SAS_FILE: chmod 600 it (no group or other access)"
-  MSAS=$(tr -d ' \r\n' < "$MASTERS_SAS_FILE"); MSAS=${MSAS#\?}
-  [ -n "$MSAS" ] || die "$MASTERS_SAS_FILE is empty"
-  masters_paths
-  MT=$(mktemp -d)
-  code=$(curl -sS --retry 3 -K <(url_cfg "$MU/manifest.json?$MSAS") -o "$MT/manifest.json" -w '%{http_code}') || die "no connection to $MU"
-  [ "$code" = 200 ] || die "manifest.json: HTTP $code (the SAS needs read)"
-  jq -e '.masters and .envs' "$MT/manifest.json" >/dev/null || die "manifest.json has no masters or envs"
-  if [ "$MASTERS" = none ]; then names=""
-  elif [ "$MASTERS" = all ]; then names=$(jq -r '.masters | keys[]' "$MT/manifest.json")
-  else names=$(printf '%s\n' "$MASTERS" | tr ',' '\n'); fi
-  for n in $names; do
-    [[ $n =~ ^[A-Za-z0-9._-]+$ ]] || die "bad master name: $n"
-    jq -e --arg n "$n" '.masters[$n]' "$MT/manifest.json" >/dev/null || die "$n isn't in the manifest"
-    chosen="$chosen $n"
-  done
-  [ "$MASTERS" = none ] || [ -n "$chosen" ] || die "no masters in the manifest"
-  # the admin envs of every engine in the manifest, with or without masters (a resume or a create without a master needs them).
-  # A different file where one should go would make a clone's password differ from its master's: stop before anything is written
-  seen=$(jq -r '.envs[].engine' "$MT/manifest.json" | sort -u | tr '\n' ' ')
-  for e in $seen; do
-    want=$(jq -r --arg e "$e" '[.envs[] | select(.engine == $e) | .sha256][0] // empty' "$MT/manifest.json")
-    f=$MSECRETS/$e.env
-    if [ -e "$f" ]; then [ "$(sha_stdin < "$f")" = "$want" ] || die "$f exists with other content: move it aside first"; fi
-  done
-  for e in $seen; do
-    f=$MSECRETS/$e.env; [ -e "$f" ] && continue
-    want=$(jq -r --arg e "$e" '[.envs[] | select(.engine == $e) | .sha256][0] // empty' "$MT/manifest.json")
-    bl "$e.env" "" -fsS -o "$MT/$e.env" || die "$e.env: download failed"
-    [ "$(sha_stdin < "$MT/$e.env")" = "$want" ] || die "$e.env: sha256 doesn't match the manifest"
-    install -m 600 "$MT/$e.env" "$f"
-  done
-  [ -z "$chosen" ] || command -v zstd >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd >/dev/null
-  for n in $chosen; do
-    dir=$MROOT/masters/$n; e=$(jq -r --arg n "$n" '.masters[$n].engine' "$MT/manifest.json")
-    if [ -d "$dir" ]; then jq -cn --arg m "$n" --arg e "$e" '{master: $m, engine: $e, state: "exists"}'; continue; fi
-    sha=$(jq -r --arg n "$n" '.masters[$n].sha256' "$MT/manifest.json")
-    # the blob streams through sha256 and zstd into a staging folder: it becomes the master only when the sum matches
-    stg=$MROOT/masters/.incoming-$n; rm -rf "$stg"; install -d "$stg"; h=$MT/$n.sha; fifo=$MT/$n.fifo; mkfifo "$fifo"
-    sha_stdin < "$fifo" > "$h" & shp=$!   # the sum reads the fifo that tee fills; this shell waits for it by PID (a process substitution's isn't ours)
-    set +e
-    bl "$n.tar.zst" "" -fsS | tee "$fifo" | zstd -dc -q | tar -x --numeric-owner -C "$stg"
-    rc=("${PIPESTATUS[@]}")
-    wait "$shp"   # tee has closed the fifo, so the sum is complete when this returns
-    set -e
-    got=$(cut -c1-64 "$h" 2>/dev/null || true)
-    if [ "${rc[0]}" != 0 ] || [ "${rc[1]}" != 0 ] || [ "${rc[2]}" != 0 ] || [ "${rc[3]}" != 0 ] || [ "$got" != "$sha" ] || [ ! -d "$stg/$n" ]; then
-      rm -rf "${stg:?}"; die "$n: the download didn't verify (sha256 ${got:-none}, manifest $sha, statuses ${rc[*]}): the partial master is removed"
-    fi
-    mv "$stg/$n" "$dir"; rm -rf "${stg:?}"
-    echo "$e" > "$MROOT/masters/$n.engine"
-    jq -cn --arg m "$n" --arg e "$e" '{master: $m, engine: $e, state: "imported"}'
-  done
+  local t rc
+  command -v zstd >/dev/null || [ "${MASTERS:-all}" = none ] || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd >/dev/null
+  t=$(mktemp -d); ln -s "$here/lfc-slot" "$t/lfc-vm"   # the zipapp under the name lfc-vm: its masters words
+  STORAGE=$STORAGE python3 -I "$t/lfc-vm" masters import; rc=$?
+  rm -rf "${t:?}"; [ $rc = 0 ] || exit $rc
 }
 # with MASTERS_URL the SAS file is checked before any setup step: a full run must not stop at its masters step with the rest done
 if [ -n "${MASTERS_URL:-}" ]; then
@@ -218,6 +151,7 @@ step "lfc-slot and the slot user"
 [ -f "$here/lfc-slot" ] || { echo "FAIL: no $here/lfc-slot: build it with python3 -m lfc_vm build lfc-slot (in scripts/)"; exit 1; }
 command -v python3 >/dev/null || { echo "FAIL: lfc-slot needs python3 (3.8 or later)"; exit 1; }
 install -m 755 "$here/lfc-slot" /usr/local/sbin/lfc-slot
+ln -sf lfc-slot /usr/local/sbin/lfc-vm   # lfc-vm masters export|import|build
 install -m 755 "$here/slot-ssh.sh" /usr/local/sbin/lfc-slot-ssh
 if [ "$STORAGE" = local ]; then D=/var/lib/containers; else D=/mnt/jfs; fi
 { printf 'HOST=%s\n' "$HOST"; [ -z "${SLOT_SETTINGS:-}" ] || printf '%s\n' "$SLOT_SETTINGS"

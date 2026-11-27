@@ -104,6 +104,7 @@ check "keep_catalogs.py: connection + its foreign catalogs, never earlier, month
 check "postgres-tpch-cdc.sh verify(): rule counts, a failed or empty verify query is an error (stub client)" sh -c "'$SK/lfc-schema-change-test/scripts/test-tpch-verify.sh' > /dev/null"
 check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
 check "lfc-slot (lfc_vm zipapp) limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
+check "lfc_vm masters: the SAS file, the engine beside a master, the staging wait, a build's refusals" python3 -I "$SK/lfc-source-cloud-vm/scripts/tests/test_masters.py"
 check "lfc_vm: limits and env files, usage hours, the lock's bound (not inherited), the engine table, an env file that can't be replaced" python3 -I "$SK/lfc-source-cloud-vm/scripts/tests/test_slots.py"
 check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
 check "statschema.tools: ddl(), ddl_to_schema() and shape() give the wrappers' text (path, YAML text, dict; stats, scale, keep-small); the wheel ships the models and model() finds them; state restored; canon.py; the rows a spec fixes as rules (TPC-DS calendar, time of day, products in SQLite); composite keys: every column varies, unique, read back; lookups take the parent row's value" \
@@ -133,7 +134,7 @@ check "lfc_source_datagen.sources and tpch_sources: parsing, the SQL files, each
 check "tpc_schema.py: TPC-B and TPC-H text as the shell version wrote it (sha-256), tpc-schema.sh runs it, the scale floor" python3 -m unittest -q "$DG/test_tpc_schema.py"
 check "workload.sh: a tpcb workload at SF 0.01 and a postgres spec tpch one (with verify) that workload-env.sh accepts; oracle refused" wl_offline
 check "slot-source.sh: a slot's contract, and its SRC_SQL through slot-sql.sh and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
-check "masters-export, slot-vm-setup masters, and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
+check "lfc-vm masters export, slot-vm-setup masters (lfc-vm masters import), and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
 check "moved-lines.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-moved-lines.sh' > /dev/null"
 check "conventions-check.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-conventions-check.sh' > /dev/null"
 check "eventhubs.sh: never creates, re-tags or deletes the group; only its own namespace; a valid Kafka contract (fake az)" sh -c "'$SK/lfc-source-eventhubs/scripts/test-eventhubs.sh' > /dev/null"
@@ -215,7 +216,7 @@ open(d + '/env.yaml', 'w').write('environment:\n  engine: sqlserver\n  product: 
 PY
   uv run -q '$DM/ddl-matrix.py' collect --events-json '$T/cm/events.json' --tables-json '$T/cm/tables.json' --env '$T/cm/env.yaml' --cases int-to-bigint,bigint-to-int --out '$T/cm/sqlserver-ct-none-2026-10-26.yaml' > '$T/cm/out.txt' && grep -q '^PASS ' '$T/cm/out.txt' && grep -q '^STOP ' '$T/cm/out.txt' && grep -q 'dp_build: dp-20261015-rc0' '$T/cm/sqlserver-ct-none-2026-10-26.yaml'"
 
-seed_my() {   # seed_my <client>: lfc_seed.seed (1 .. 2^20, r a random permutation), by doubling, as tpc-master.sh builds it
+seed_my() {   # seed_my <client>: lfc_seed.seed (1 .. 2^20, r a random permutation), by doubling, as lfc-vm masters build builds it
   { echo "CREATE DATABASE IF NOT EXISTS lfc_seed; CREATE TABLE IF NOT EXISTS lfc_seed.seed_i (i bigint PRIMARY KEY);"
     echo "INSERT IGNORE INTO lfc_seed.seed_i (i) VALUES $(printf '(%s),' $(seq 1 1024) | sed 's/,$//');"
     for k in $(seq 10); do echo "INSERT IGNORE INTO lfc_seed.seed_i (i) SELECT s.i + b.m FROM lfc_seed.seed_i s, (SELECT MAX(i) AS m FROM lfc_seed.seed_i) b;"; done
