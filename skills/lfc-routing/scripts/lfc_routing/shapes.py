@@ -1,6 +1,6 @@
 """shapes: tables that repeat across a source's databases or schemas (per customer, per shard), found by their shape,
 so classify decides 10 shapes instead of 10,000 tables (docs/design-intelligent.md, "Classify finds the n:1 on its
-own"). A shape is a table's name and its columns (name, canonical type, in the primary key or not); the same name
+own"). A shape is a table's name and its columns (name, type family, in the primary key or not); the same name
 with other columns is a variant, its own group, so the dashboard shows where a member deviates. A decision on a group
 applies to every member (a mapping override too; revisit after use).
 
@@ -13,9 +13,25 @@ import hashlib
 import json
 
 
+# type families: the n:1 stacks members whose types differ in width (lfc-medallion stack_sql casts to the widest), so a
+# shape compares families: an Oracle NUMBER key (decimal, no fraction digits) is the others' integer
+WHOLE = ("integer", "long", "short", "byte")
+FAMILY = {"timestamp": "timestamp", "timestamptz": "timestamptz", "string": "string", "char": "string",
+          "date": "date", "boolean": "boolean", "float": "real", "double": "real"}
+
+
+def family(c: dict) -> str:
+    """A column's type family for a shape: whole numbers (an integer of any width, a decimal with no fraction digits)
+    one family; a decimal with a fraction its own; timestamps of any precision one; strings and chars one."""
+    t = c.get("type")
+    if t in WHOLE or (t == "decimal" and not c.get("scale")):
+        return "whole"
+    return FAMILY.get(t, str(t))
+
+
 def shape(table: dict) -> tuple:
-    """A table's shape: its columns in order (lower-case name, canonical type, in the primary key)."""
-    return tuple((c["name"].lower(), c.get("type"), bool(c.get("primary_key"))) for c in table.get("columns") or [])
+    """A table's shape: its columns in order (lower-case name, type family, in the primary key)."""
+    return tuple((c["name"].lower(), family(c), bool(c.get("primary_key"))) for c in table.get("columns") or [])
 
 
 def group(docs: dict) -> dict:

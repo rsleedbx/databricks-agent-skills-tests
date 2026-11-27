@@ -56,7 +56,8 @@ def capture(wh, cat: str, run: str, tables: list, schema: dict) -> list:
 if __name__ == "__main__":
     engine, run, *tables = sys.argv[1:]
     w = WorkspaceClient(profile=os.environ["PROFILE"])
-    cat = os.environ["CATALOG"]
+    from lfc_change_source._rest import Rest, target_catalog  # noqa: E402
+    cat = target_catalog(Rest.connect(os.environ["PROFILE"]), os.environ.get("CATALOG"))
     got = capture(Warehouse(os.environ["WAREHOUSE"], w), cat, run, tables or ["lineitem", "orders"], schema_of(w, cat, run))
     path = os.path.join(HERE, "samples", "debezium", f"{engine}.jsonl")
     os.makedirs(os.path.dirname(path), exist_ok=True)

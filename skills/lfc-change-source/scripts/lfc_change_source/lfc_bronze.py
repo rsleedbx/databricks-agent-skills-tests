@@ -9,7 +9,7 @@ read by version), and a start more than a second after the last commit fails (no
 after the last commit fails too, so a consumer reads to the latest (to=None) and saves the time it took before reading.
 
     from lfc_change_source.lfc_bronze import Bronze
-    src = Bronze("lob001", "`main`.`sales_bronze_lob001`.`account`", "account", keys=["id"], columns=["id", "v"])
+    src = Bronze("lob001", "`<catalog>`.`sales_bronze_lob001`.`account`", "account", keys=["id"], columns=["id", "v"])
     src.changes_sql(Position("delta_version", "12"), Position("delta_version", "15"))
 """
 from __future__ import annotations

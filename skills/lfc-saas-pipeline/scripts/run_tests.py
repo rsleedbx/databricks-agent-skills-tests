@@ -249,11 +249,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", help="comma-separated connector slugs (notebooks/<slug>-pipeline.py)")
     ap.add_argument("--again", action="store_true", help="also test connectors unchanged since they passed")
     ap.add_argument("--ref", default="", help="the branch or tag the notebooks pip-install from (default: this one)")
-    ap.add_argument("--catalog", default="main")
+    ap.add_argument("--catalog", default="", help="default: the workspace's default catalog (never assumed main)")
     ap.add_argument("--prefix", default="lfc_saas_pipeline_test")
     ap.add_argument("--var", action="append", default=[], metavar="KEY=VALUE",
                     help="a value for connectors whose bundle has that variable, e.g. org=<organization> for GitHub")
     a = ap.parse_args(argv)
+    if not a.catalog:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lfc-rest" / "scripts"))
+        from lfc_rest import Rest, default_catalog
+        a.catalog = default_catalog(Rest.connect(a.profile))
+        if not a.catalog:
+            ap.error("this workspace has no default catalog: pass --catalog")
     sys.stdout.reconfigure(line_buffering=True)   # each result shows as it comes, also when redirected to a file
     a.ref = a.ref or current_ref()
     a.ref_sha, a.unpushed = pushed_state(a.ref)

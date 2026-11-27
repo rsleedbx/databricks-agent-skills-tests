@@ -17,7 +17,7 @@ dashboard shows), and recreates a table's view over its snapshot once that is re
 then moves each view to its route.
 
     from lfc_log_silver import flowthrough
-    got = flowthrough.step(session, "`main`.`silver`", sources, to, policy, sizes={"orders": 5 << 40})   # a round
+    got = flowthrough.step(session, "`<catalog>`.`silver`", sources, to, policy, sizes={"orders": 5 << 40})   # a round
 
 Every move rebuilds from the log; nothing reads the source again. A move's description is routing.transitions'.
 """

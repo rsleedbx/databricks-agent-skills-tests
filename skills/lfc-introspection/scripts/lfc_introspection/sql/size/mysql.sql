@@ -18,3 +18,4 @@ SELECT t.table_schema, t.table_name, t.table_rows AS rows_est,
   FROM information_schema.tables t
   LEFT JOIN mysql.innodb_table_stats s ON s.database_name = t.table_schema AND s.table_name = t.table_name
  WHERE t.table_type = 'BASE TABLE' AND t.table_schema NOT IN ('mysql', 'sys', 'information_schema', 'performance_schema')
+   AND ('__SCHEMA__' = '' OR t.table_schema = '__SCHEMA__')

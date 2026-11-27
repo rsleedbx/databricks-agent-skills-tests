@@ -17,7 +17,7 @@ from lfc_saas_pipeline import arg, create_pipeline, start_pipeline  # also edit_
 # Modify this cell with your pipeline specifications. This creates the ingestion pipeline and starts its first update.
 # If destination_table (optional) is not specified, the connector uses the source table name.
 connection = arg("connection", "lfcsaas-metaads")
-catalog = arg("catalog", "main")
+catalog = arg("catalog", "") or spark.sql("SELECT current_catalog()").first()[0]   # the workspace default, never assume main
 schema = arg("schema", "meta_ads")
 account_id = arg("account_id", "")   # act_<id>: the source schema of every table
 assert account_id.startswith("act_"), "set account_id to the ad account id with its act_ prefix"

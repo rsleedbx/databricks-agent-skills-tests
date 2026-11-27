@@ -14,4 +14,4 @@ SELECT CASE con.contype WHEN 'p' THEN 'P' ELSE 'F' END AS kind, cl.relname AS ta
   JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum
   LEFT JOIN pg_class fcl ON fcl.oid = con.confrelid
   LEFT JOIN pg_attribute fa ON fa.attrelid = con.confrelid AND fa.attnum = con.confkey[k.ord]
- WHERE n.nspname = '__SCHEMA__' AND con.contype IN ('p', 'f')
+ WHERE n.nspname = '__SCHEMA__' AND ('__DB__' = '' OR current_database() = '__DB__') AND con.contype IN ('p', 'f')

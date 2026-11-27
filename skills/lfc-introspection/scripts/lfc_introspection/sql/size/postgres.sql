@@ -17,3 +17,4 @@ SELECT n.nspname AS table_schema, c.relname AS table_name,
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   LEFT JOIN pg_stat_user_tables st ON st.relid = c.oid
  WHERE c.relkind IN ('r', 'm') AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+   AND ('__SCHEMA__' = '' OR n.nspname = '__SCHEMA__') AND ('__DB__' = '' OR current_database() = '__DB__')

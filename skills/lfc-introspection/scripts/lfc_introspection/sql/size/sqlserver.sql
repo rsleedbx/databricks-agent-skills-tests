@@ -14,5 +14,5 @@ SELECT s.name AS table_schema, t.name AS table_name,
        (SELECT SUM(CAST(f.size AS bigint)) * 8192 FROM sys.database_files f) AS database_bytes   -- data and log files
   FROM sys.dm_db_partition_stats p
   JOIN sys.tables t ON t.object_id = p.object_id JOIN sys.schemas s ON s.schema_id = t.schema_id
- WHERE t.is_ms_shipped = 0
+ WHERE t.is_ms_shipped = 0 AND ('__SCHEMA__' = '' OR s.name = '__SCHEMA__') AND ('__DB__' = '' OR DB_NAME() = '__DB__')
  GROUP BY s.name, t.name

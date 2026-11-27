@@ -22,3 +22,4 @@ SELECT t.owner AS table_schema, t.table_name, t.num_rows AS rows_est,
   LEFT JOIN (SELECT table_owner, table_name, SUM(inserts) AS inserts, SUM(deletes) AS deletes FROM dba_tab_modifications GROUP BY table_owner, table_name) m
     ON m.table_owner = t.owner AND m.table_name = t.table_name
  WHERE t.owner NOT IN (SELECT username FROM dba_users WHERE oracle_maintained = 'Y') AND t.nested = 'NO' AND t.temporary = 'N'
+   AND ('__SCHEMA__' = '' OR t.owner = '__SCHEMA__')

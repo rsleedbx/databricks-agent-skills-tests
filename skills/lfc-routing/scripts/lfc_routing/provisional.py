@@ -34,12 +34,11 @@ def tables_of(schema_doc: dict, src_schema: str) -> list:
 def run_cdc_requests(session, schema: str, make, running, introspection_schema: str | None = None) -> list:
     """Each pending cdc_request carried out: the source's latest introspection's tables reconciled with what its
     producer carries (running(source) -> producer.Spec or None), then started or restarted (make(Spec) -> Producer).
-    A failure is a run too. The runs' rows."""
+    A failure is a run too. Sources at once, each one's requests in order. The runs' rows."""
     q = lambda s: [r.asDict() if hasattr(r, "asDict") else dict(r) for r in session.sql(s).collect()]  # noqa: E731
     reqs = q(f"SELECT * FROM {schema}.{REQUEST}")
     done = {(r["source"], int(r["run"])) for r in q(f"SELECT run, source FROM {schema}.{RUNS}")}
-    out = []
-    for r in sorted((r for r in reqs if (r["source"], int(r["n"])) not in done), key=lambda r: int(r["n"])):
+    def one(r):
         row = {"run": int(r["n"]), "source": r["source"], "log": r["log"]}
         try:
             got = q(f"SELECT run, src_schema FROM {introspection_schema or schema}.{history.RUNS} r JOIN "
@@ -64,5 +63,7 @@ def run_cdc_requests(session, schema: str, make, running, introspection_schema: 
                     f"{L(row.get('action'))}, {L(row['status'])}, {L(row.get('error'))}, {L(row['log'])}, "
                     f"{L(row.get('tables'))}, {L(json.dumps(row.get('added', [])))}, "
                     f"{L(json.dumps(row.get('dropped', [])))}, {L(row.get('introspection_run'))})").collect()
-        out.append(row)
-    return out
+        return row
+    # sources at once (a gateway's start waits for its update), each source's requests in order
+    return history.per_source(sorted((r for r in reqs if (r["source"], int(r["n"])) not in done),
+                                     key=lambda r: int(r["n"])), one)

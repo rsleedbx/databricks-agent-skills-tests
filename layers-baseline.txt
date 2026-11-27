@@ -23,9 +23,7 @@ lfc-source-gcp-cloudsql -> lfc-source-setup: skills/lfc-source-gcp-cloudsql/SKIL
 lfc-source-statschema -> lfc-source-sizing: skills/lfc-source-statschema/SKILL.md:lfc-source-sizing/references/workload-patterns.md
 lfc-test-results -> bin/test_scripts.sh: skills/lfc-test-results/SKILL.md:bin/test_scripts.sh
 lfc-workspace-setup -> bin/run_batch.sh: skills/lfc-workspace-setup/SKILL.md:bin/run_batch.sh
-lfc-workspace-setup -> bin/run_batch.sh: skills/lfc-workspace-setup/scripts/keep-catalogs.sh:bin/run_batch.sh
 lfc-workspace-setup -> lfc-source-firewall: skills/lfc-workspace-setup/SKILL.md:lfc-source-firewall/SKILL.md
-lfc-workspace-setup -> lfc-source-firewall: skills/lfc-workspace-setup/scripts/ready.sh:lfc-source-firewall/scripts/serverless-egress.sh
 skill-token-budget -> bin/check_links.py: .claude/skills/skill-token-budget/SKILL.md:bin/check_links.py
 skill-token-budget -> bin/lint_scripts.py: .claude/skills/skill-token-budget/SKILL.md:bin/lint_scripts.py
 skill-token-budget -> bin/scripts_index.py: .claude/skills/skill-token-budget/SKILL.md:bin/scripts_index.py

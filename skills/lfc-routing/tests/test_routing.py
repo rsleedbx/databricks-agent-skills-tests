@@ -105,3 +105,15 @@ class Routing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChosenWins(unittest.TestCase):
+    def test_a_chosen_shared_table_stays_in_its_group(self):   # the busy-table rule doesn't overrule a person
+        from lfc_routing import routing
+        p = routing.Policy(shared_log="`m`.`c`.`log`", silver_chosen={"db.s.busy": "shared"})
+        r = routing.plan({"db.s.busy": (4096, 50.0), "db.s.quiet": (4096, 0.1)}, p)
+        self.assertEqual(r["db.s.busy"].silver, "shared")
+        self.assertIn("kept shared as chosen", r["db.s.busy"].why)
+        p2 = routing.Policy(shared_log="`m`.`c`.`log`")
+        self.assertNotEqual(routing.plan({"db.s.busy": (4096, 50.0), "db.s.quiet": (4096, 0.1)}, p2)["db.s.busy"].silver,
+                            "shared")

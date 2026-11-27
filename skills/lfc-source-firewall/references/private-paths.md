@@ -2,7 +2,7 @@
 
 ## Private paths instead of allowlisting (not tested yet)
 
-Two Databricks features let serverless reach a source without the published ranges in its firewall. Both are set up by an **account admin** on an NCC (network connectivity configuration) attached to the workspace, so `ready.sh` can't see them as a workspace admin. Ask the user whether the workspace has either.
+Two Databricks features let serverless reach a source without the published ranges in its firewall. Both are set up by an **account admin** on an NCC (network connectivity configuration) attached to the workspace, so `ready.py` can't see them as a workspace admin. Ask the user whether the workspace has either.
 
 | | Private network gateway | PrivateLink to a load balancer |
 |---|---|---|

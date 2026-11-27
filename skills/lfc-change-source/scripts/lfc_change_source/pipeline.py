@@ -5,26 +5,37 @@ from __future__ import annotations
 import time
 
 
+def find(api, name: str) -> list:
+    """The ids of the pipelines named exactly `name`."""
+    flt = "name LIKE '" + name.replace("'", "''") + "'"
+    return [x["pipeline_id"] for x in api.pages("/api/2.0/pipelines", "statuses", filter=flt) if x.get("name") == name]
+
+
 def upsert_pipeline(w, spec: dict) -> str:
-    """The pipeline named spec["name"]: created, or its spec put when one has that name. Its id."""
-    flt = "name LIKE '" + spec["name"].replace("'", "''") + "'"
-    have = [x.pipeline_id for x in w.pipelines.list_pipelines(filter=flt) if x.name == spec["name"]]
+    """The pipeline named spec["name"]: created, or its spec put when one has that name. Its id. w: an lfc_rest.Rest
+    or a WorkspaceClient."""
+    from ._rest import Rest
+    api = Rest.of(w)
+    have = find(api, spec["name"])
     if have:
-        w.api_client.do("PUT", f"/api/2.0/pipelines/{have[0]}", body=spec)
+        api.put(f"/api/2.0/pipelines/{have[0]}", spec)
         return have[0]
-    return w.api_client.do("POST", "/api/2.0/pipelines", body=spec)["pipeline_id"]
+    return api.post("/api/2.0/pipelines", spec)["pipeline_id"]
 
 
 def run_pipeline(w, pid: str, timeout: int = 3600) -> str:
     """One update of a triggered pipeline, waited for: its final state (an update still running from before, e.g.
     on an older spec, is stopped first)."""
-    state = w.pipelines.get(pid).state   # None: a pipeline created and never run
-    if state is not None and state.value == "RUNNING":
-        w.pipelines.stop_and_wait(pid)
-    u = w.pipelines.start_update(pid).update_id
+    from ._rest import Rest
+    api = Rest.of(w)
+    if api.get(f"/api/2.0/pipelines/{pid}").get("state") == "RUNNING":   # no state: created and never run
+        api.post(f"/api/2.0/pipelines/{pid}/stop")
+        api.poll_until(lambda: api.get(f"/api/2.0/pipelines/{pid}"), lambda p: p.get("state") in ("IDLE", "FAILED"),
+                       every=10, timeout=900)
+    u = api.post(f"/api/2.0/pipelines/{pid}/updates", {})["update_id"]
     t0 = time.time()
     while True:
-        st = w.pipelines.get_update(pid, u).update.state.value
+        st = ((api.get(f"/api/2.0/pipelines/{pid}/updates/{u}").get("update")) or {}).get("state")
         if st in ("COMPLETED", "FAILED", "CANCELED") or time.time() - t0 > timeout:
             return st
         time.sleep(15)
