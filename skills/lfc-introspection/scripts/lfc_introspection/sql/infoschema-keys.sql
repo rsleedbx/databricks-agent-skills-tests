@@ -5,7 +5,7 @@ SELECT 'P' AS kind, k.table_name, k.constraint_name, k.column_name, k.ordinal_po
   FROM information_schema.table_constraints tc
   JOIN information_schema.key_column_usage k ON k.constraint_schema = tc.constraint_schema
    AND k.constraint_name = tc.constraint_name AND k.table_name = tc.table_name
- WHERE tc.table_schema = '__SCHEMA__' AND tc.constraint_type = 'PRIMARY KEY'
+ WHERE tc.table_schema = '__SCHEMA__' AND ('__DB__' = '' OR tc.table_catalog = '__DB__') AND tc.constraint_type = 'PRIMARY KEY'
 UNION ALL
 SELECT 'F', k.table_name, k.constraint_name, k.column_name, k.ordinal_position,
        p.table_name, p.column_name, rc.delete_rule, rc.update_rule
@@ -14,4 +14,4 @@ SELECT 'F', k.table_name, k.constraint_name, k.column_name, k.ordinal_position,
    AND k.constraint_name = rc.constraint_name
   JOIN information_schema.key_column_usage p ON p.constraint_schema = rc.unique_constraint_schema
    AND p.constraint_name = rc.unique_constraint_name AND p.ordinal_position = k.ordinal_position
- WHERE k.table_schema = '__SCHEMA__'
+ WHERE k.table_schema = '__SCHEMA__' AND ('__DB__' = '' OR k.table_catalog = '__DB__')

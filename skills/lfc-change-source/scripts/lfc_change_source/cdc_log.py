@@ -8,7 +8,7 @@ an LSN, a binlog position, an SCN, the event time); its value is that number. A 
 snapshot is a Delta table of its own (intake, qbc), not part of this source: silver combines the two.
 
     from lfc_change_source.cdc_log import CdcLog
-    src = CdcLog("crdb1", "`main`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", keys=["id"],
+    src = CdcLog("crdb1", "`<catalog>`.`zb`.`cdc_log`", "orders", "crdb1.public.orders", keys=["id"],
                  columns={"id": "BIGINT", "total": "DECIMAL(12,2)"}, seq="ts_ns")
 """
 from __future__ import annotations

@@ -107,7 +107,7 @@ LFC_SERVERLESS=unset bin/run_matrix.sh icdc        # take the product's compute 
 bin/run_batch.sh prompts/lfc-matrix/qbc-*.txt      # one batch by hand
 ```
 
-The prompts ask for `serverless: true` by default (`LFC_SERVERLESS`), because the test firewall allows only the serverless ranges; see "Workspace requirements" in MATRIX.md. Check the workspace first with the skills repo's `ready.sh` (databricks-lakeflow-connect `scripts/`): previews, compute, target catalog, grants, egress ranges.
+The prompts ask for `serverless: true` by default (`LFC_SERVERLESS`), because the test firewall allows only the serverless ranges; see "Workspace requirements" in MATRIX.md. Check the workspace first with the `ready.py` check (databricks-lakeflow-connect `scripts/`): previews, compute, target catalog, grants, egress ranges.
 
 Integrated CDC updates can run a long time on an idle source. Stop them after 30 minutes:
 

@@ -37,6 +37,17 @@ class Shapes(unittest.TestCase):
         self.assertEqual(list(g), ["customer"])       # stable whoever is added later
         self.assertEqual(g["customer"]["members"], [("t1", "Customer"), ("t2", "customer")])
 
+    def test_engines_types_by_family(self):
+        ora = {"name": "INTPK", "columns": [{"name": "PK", "type": "decimal", "primary_key": True},
+                                            {"name": "OPS", "type": "string"}]}
+        my = {"name": "intpk", "columns": [{"name": "pk", "type": "integer", "primary_key": True},
+                                           {"name": "ops", "type": "char"}]}
+        frac = {"name": "intpk", "columns": [{"name": "pk", "type": "decimal", "scale": 2, "primary_key": True},
+                                             {"name": "ops", "type": "string"}]}
+        g = shapes.group({"ora": {"tables": [ora]}, "my": {"tables": [my]}, "x": {"tables": [frac]}})
+        self.assertEqual(len(g["intpk"]["members"]), 2)                     # Oracle's NUMBER key with the integers
+        self.assertTrue(any(d["variant"] and d["members"] == [("x", "intpk")] for d in g.values()))   # a fraction: not
+
     def test_a_deviating_tenant_is_a_variant(self):
         g = shapes.group({k: v[0] for k, v in tenants(5, odd={3}).items()})
         var = [k for k, v in g.items() if v["variant"]]

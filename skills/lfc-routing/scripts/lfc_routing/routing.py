@@ -33,7 +33,7 @@ whole files. The thresholds are starting points to measure against, set per depl
 silver) can be chosen by name.
 
     from lfc_routing import routing
-    p = routing.Policy(shared_log="`main`.`ctl`.`cdc_log`")
+    p = routing.Policy(shared_log="`<catalog>`.`ctl`.`cdc_log`")
     routes = routing.plan({"db.s.orders": (5 << 40, 250_000), "db.s.region": (4096, 0.01)}, p)
     routes["db.s.orders"].log, routes["db.s.orders"].shards, routes["db.s.region"].silver   # own log, 3, view
 """
@@ -148,7 +148,9 @@ def plan(tables: dict, policy: Policy, reads_per_day: dict | None = None) -> dic
                    f"{reads[t]:,.0f} reads a day (over {policy.shared_max_reads_per_day:,.0f})"
                    if policy.shared_max_reads_per_day is not None and reads.get(t, 0) > policy.shared_max_reads_per_day
                    else "")
-            if why:
+            if why and t in policy.silver_chosen:   # a person chose its method: theirs stands, the rule only says so
+                routes[t] = replace(routes[t], why=f"kept shared as chosen, though {why}")
+            elif why:
                 routes[t] = replace(routes[t], silver=OWN.get(routes[t].cls, "merge_round"),
                                     why=why)
         kept = [t for t in members if routes[t].silver == "shared"]

@@ -71,8 +71,9 @@ class Routing(unittest.TestCase):
         s = types.SimpleNamespace(sql=lambda q: seen.append(q) or types.SimpleNamespace(collect=lambda: []))
         land.gateway(s, "/V/g", "`m`.`c`.`cdc_log_t`", "gw", only=["db.s.t"])
         land.gateway(s, "/V/g", "`m`.`c`.`cdc_log`", "gw", skip=["db.s.t"])
-        self.assertIn("event:table_id.name::STRING) IN ('db.s.t')) FILEFORMAT", seen[0])
-        self.assertIn("event:table_id.name::STRING) NOT IN ('db.s.t')) FILEFORMAT", seen[1])
+        # the landing's filter (land.gateway: read_files, destinations matched case-insensitively), each file once
+        self.assertIn("event:table_id.name::STRING)) IN ('db.s.t') AND _metadata.file_path NOT IN", seen[0])
+        self.assertIn("event:table_id.name::STRING)) NOT IN ('db.s.t') AND _metadata.file_path NOT IN", seen[1])
 
     def test_transitions_name_what_a_route_change_takes(self):
         from lfc_routing import routing
@@ -98,3 +99,15 @@ class Routing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChosenWins(unittest.TestCase):
+    def test_a_chosen_shared_table_stays_in_its_group(self):   # the busy-table rule doesn't overrule a person
+        from lfc_routing import routing
+        p = routing.Policy(shared_log="`m`.`c`.`log`", silver_chosen={"db.s.busy": "shared"})
+        r = routing.plan({"db.s.busy": (4096, 50.0), "db.s.quiet": (4096, 0.1)}, p)
+        self.assertEqual(r["db.s.busy"].silver, "shared")
+        self.assertIn("kept shared as chosen", r["db.s.busy"].why)
+        p2 = routing.Policy(shared_log="`m`.`c`.`log`")
+        self.assertNotEqual(routing.plan({"db.s.busy": (4096, 50.0), "db.s.quiet": (4096, 0.1)}, p2)["db.s.busy"].silver,
+                            "shared")

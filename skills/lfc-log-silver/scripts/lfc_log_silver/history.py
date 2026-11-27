@@ -6,8 +6,8 @@ and the key's open version and each new one ended at the next point. Only open r
 checkpoint's trim stays. A change replayed at one position (same key, position and operation) counts once.
 
     from lfc_log_silver import history
-    history.build_sql(table, "`main`.`silver`.`orders_history`", to)
-    history.merge_sql(table, "`main`.`silver`.`orders_history`", after, to)
+    history.build_sql(table, "`<catalog>`.`silver`.`orders_history`", to)
+    history.merge_sql(table, "`<catalog>`.`silver`.`orders_history`", after, to)
 """
 from __future__ import annotations
 

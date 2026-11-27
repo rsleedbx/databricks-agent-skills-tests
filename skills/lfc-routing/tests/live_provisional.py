@@ -21,7 +21,8 @@ from lfc_introspection import history  # noqa: E402
 from lfc_routing import provisional  # noqa: E402
 from lfc_source_contract import cdc, psql as psql_cursor  # noqa: E402
 
-E, CAT, CONN = os.environ["RUN"], os.environ["CATALOG"], os.environ["CONNECTION"]
+from lfc_change_source._rest import Rest, target_catalog  # noqa: E402
+E, CAT, CONN = os.environ["RUN"], target_catalog(Rest.connect(os.environ["PROFILE"]), os.environ.get("CATALOG")), os.environ["CONNECTION"]
 RD, SRC, NET = f"/tmp/dbz-pg-{E}", f"robertlee-pg-{E}", f"pg-dbz-{E}"
 S = f"`{CAT}`.`{os.environ['SCHEMA']}`"
 LOG = f"{CAT}.robertlee_pg_tpch_dbz_{E}.cdc_log"   # as Debezium's sink names it

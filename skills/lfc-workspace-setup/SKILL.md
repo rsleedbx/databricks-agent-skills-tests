@@ -8,14 +8,15 @@ parent: lfc-source-setup
 
 A fresh workspace usually needs three things before Lakeflow Connect tests run: the connector previews on, a catalog the pipelines can write to, and access for the other people testing in it. Each is a few API calls; this skill lists them, with what was checked on an Azure serverless-only and an AWS classic workspace.
 
-## The one-command check: `ready.sh`
+## The one-command check: `ready.py`
 
 ```bash
-bash scripts/ready.sh [<PROFILE>] [--catalog <catalog>] [--principal "account users"] [--egress-file <file>] [--no-enable]
+python3 -I scripts/ready.py [<PROFILE>] [--catalog <catalog>] [--principal "account users"] [--egress-file <file>] [--no-enable]
 ```
 
-It checks, in order: login; the metastore's cloud and region (put the sources there); serverless and classic compute; the connector previews (step 1); a target catalog (step 2); access for you and `--principal` through `check.sh` (step 4); the serverless egress ranges for the source's firewall ([lfc-source-firewall](../lfc-source-firewall/SKILL.md)); the connections already here. One line each: `PASS`, `FAIL`, `WARN`, `INFO` or `ASK`, with the next command. Without `<PROFILE>` or `--catalog`, it uses the saved settings (**lfc-test-settings**: `DATABRICKS_PROFILE`, `LFC_CATALOG`). `ASK` means stop and ask the user (no writable target catalog). Exit 1 on any `FAIL` or `ASK`.
+It checks, in order: login; the metastore's cloud and region (put the sources there); serverless and classic compute; the connector previews (step 1); a target catalog (step 2); access for you and `--principal` through `check.py` (step 4); the serverless egress ranges for the source's firewall ([lfc-source-firewall](../lfc-source-firewall/SKILL.md)); the connections already here. One line each: `PASS`, `FAIL`, `WARN`, `INFO` or `ASK`, with the next command. Without `<PROFILE>` or `--catalog`, it uses the saved settings (**lfc-test-settings**: `DATABRICKS_PROFILE`, `LFC_CATALOG`). `ASK` means stop and ask the user (no writable target catalog). Exit 1 on any `FAIL` or `ASK`.
 
+- It calls the REST API through `databricks-sdk`, not the CLI, so it also runs in a notebook: with no profile it uses the notebook's own login (`import ready; ready.main(["--catalog", "<c>"])`). There, the `check.py` and egress steps are skipped and say so.
 - The one change it makes: as a workspace admin, it turns on a connector preview that's off. `--no-enable` makes it read-only.
 - `--egress-file <file>` keeps the egress list; a later run shows the ranges added and removed as a `WARN`. Rerun at least monthly.
 
@@ -38,7 +39,7 @@ The same calls work through `databricks api get|patch /api/2.1/settings-metadata
 - About 65 of 275 settings match on both test workspaces. The ones that matter for database sources: `integrated_cdc_sql_server_connector`, `integrated_cdc_mysql_connector`, `integrated_cdc_oracle_connector` (integrated CDC per engine), `direct_cdc_connector`, `conn_cdc_col_select` (column selection for database sources), and `ds_v2_join_pushdown` (join pushdown for federated queries, off by default).
 - A value is either `boolean_val` (set on this workspace) or `effective_boolean_val` (inherited). Read both; don't use a "first non-null" shortcut, because `false` counts as missing in `yq` and `jq` `//`.
 - Some settings aren't writable through the public API yet ("not enabled for public api"): leave them and say so.
-- **Not a setting:** standard CDC (gateway) per engine. A workspace without it refuses the gateway with `Ingestion source '<ENGINE>' is not supported in your workspace`; only the Databricks account team can enable it. Integrated CDC was enabled through its setting on both test workspaces while the MySQL and PostgreSQL gateways stayed refused.
+- **The gateway route (standard CDC):** a workspace without it refuses the gateway with `Ingestion source '<ENGINE>' is not supported in your workspace`. On the two workspaces compared, the one refusing MySQL, PostgreSQL and Oracle gateways had `direct_cdc_connector` off and the one accepting them had it on (the integrated CDC settings were the same), so `ready.py` turns it on like the others. If a gateway is still refused with it on, ask the Databricks account team.
 
 ## 2. A target catalog
 
@@ -51,10 +52,10 @@ databricks external-locations get __databricks_managed_storage_location --profil
 
 The workspace's default catalog (`databricks settings default-namespace get --profile $P -o json`, `.namespace.value`) can be a candidate, but check it: on one test workspace it was `system`, which pipelines can't write to (nor to `hive_metastore`). Otherwise create one with its own managed location, or use one the workspace's provisioning made for you (check `catalogs list` for catalogs where you have `ALL_PRIVILEGES`).
 
-Some workspaces delete a catalog on the date in its `RemoveAfter` tag, and give an untagged catalog a date a couple of weeks out. [`keep-catalogs.sh`](scripts/keep-catalogs.sh) sets the tag a month out (never earlier than it is) on the catalogs named, and on each `--connection` and its foreign catalogs (connections take tags too, through `entity-tag-assignments ... connections`); `bin/run_batch.sh` runs it on `$LFC_CATALOG` and the env's connections, and `lfc-connection-sync` after each connection:
+Some workspaces delete a catalog on the date in its `RemoveAfter` tag, and give an untagged catalog a date a couple of weeks out. [`keep_catalogs.py`](scripts/keep_catalogs.py) sets the tag a month out (never earlier than it is) on the catalogs named, and on each `--connection` and its foreign catalogs (connections take tags too, through `entity-tag-assignments ... connections`); `bin/run_batch.sh` runs it on `$LFC_CATALOG` and the env's connections, and `lfc-connection-sync` after each connection:
 
 ```bash
-bash scripts/keep-catalogs.sh $P <catalog> --connection <connection>   # KEEP_UNTIL=YYYY-MM-DD for another date
+python3 -I scripts/keep_catalogs.py $P <catalog> --connection <connection>   # KEEP_UNTIL=YYYY-MM-DD for another date
 ```
 
 ## 3. Access for everyone testing in the workspace
@@ -131,14 +132,14 @@ Two scripts, run as a workspace admin:
 
 ```bash
 S=skills/lfc-workspace-setup/scripts
-bash $S/check.sh <PROFILE> "<user-email | group | account users>" --catalog <catalog> --connection <connection> --modes qbc,icdc,fcqbc
-bash $S/grant.sh <PROFILE> "<principal>" --level cdc --catalog <catalog> --connection <connection> [--foreign-catalogs] [--create-connections]   # the plan
-bash $S/grant.sh ... --apply                                                    # make the changes, then run check.sh again
+python3 -I $S/check.py <PROFILE> "<user-email | group | account users>" --catalog <catalog> --connection <connection> --modes qbc,icdc,fcqbc
+python3 -I $S/grant.py <PROFILE> "<principal>" --level cdc --catalog <catalog> --connection <connection> [--foreign-catalogs] [--create-connections]   # the plan
+python3 -I $S/grant.py ... --apply                                                    # make the changes, then run check.py again
 ```
 
-[`check.sh`](scripts/check.sh) is read-only. It prints one line per requirement (`PASS`, `FAIL`, `WARN`) with the command or SQL that fixes each failure, and exits 1 if anything fails. It works on effective privileges, so grants that come through a group count, and it counts ownership: owning a securable gives every privilege on it, but Unity Catalog's effective-privileges API doesn't report it. On both test sandboxes the metastore's owner was `account users`, so everyone in the account could create connections and catalogs, while the target catalog still needed grants. [`grant.sh`](scripts/grant.sh) gives exactly the chosen level: `login` (assignment and entitlements), `qbc` (plus connection and catalog privileges), `cdc` (plus `CREATE VOLUME`). It prints its plan and changes nothing without `--apply`. Grants go through the Unity Catalog REST API, so no SQL warehouse is needed.
+[`check.py`](scripts/check.py) is read-only. It prints one line per requirement (`PASS`, `FAIL`, `WARN`) with the command or SQL that fixes each failure, and exits 1 if anything fails. It works on effective privileges, so grants that come through a group count, and it counts ownership: owning a securable gives every privilege on it, but Unity Catalog's effective-privileges API doesn't report it. On both test sandboxes the metastore's owner was `account users`, so everyone in the account could create connections and catalogs, while the target catalog still needed grants. [`grant.py`](scripts/grant.py) gives exactly the chosen level: `login` (assignment and entitlements), `qbc` (plus connection and catalog privileges), `cdc` (plus `CREATE VOLUME`). It prints its plan and changes nothing without `--apply`. Grants go through the Unity Catalog REST API, so no SQL warehouse is needed.
 
-**Run as a non-admin**, the workspace returns no assignments and the account directory hides other people's groups, so `check.sh` doesn't count "can't read" as "no": checking yourself, being logged in proves the assignment and `workspace-access`, and your groups come from `/api/2.0/preview/scim/v2/Me`; anything it can't see is a `WARN` ("not visible to a non-admin"), never a `FAIL`. Run it as a workspace admin to check other principals.
+**Run as a non-admin**, the workspace returns no assignments and the account directory hides other people's groups, so `check.py` doesn't count "can't read" as "no": checking yourself, being logged in proves the assignment and `workspace-access`, and your groups come from `/api/2.0/preview/scim/v2/Me`; anything it can't see is a `WARN` ("not visible to a non-admin"), never a `FAIL`. Run it as a workspace admin to check other principals.
 
-Tested on an Azure serverless-only and an AWS classic sandbox. A workspace admin who owns the connection and the catalog passed every check. `account users` passed login (after step 3) and the metastore checks (as the metastore's owner), and failed exactly the connection and catalog grants, each with its fix. `grant.sh --apply` for a user went through every call.
+Tested on an Azure serverless-only and an AWS classic sandbox. A workspace admin who owns the connection and the catalog passed every check. `account users` passed login (after step 3) and the metastore checks (as the metastore's owner), and failed exactly the connection and catalog grants, each with its fix. `grant.py --apply` for a user went through every call.
 

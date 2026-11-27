@@ -23,9 +23,9 @@ for merge, whether to skip a round with no change); no class name appears here.
 
     from lfc_log_silver import silver
     tables = {"orders": silver.Table(src, "merge"), "ledger": silver.Table(src2, "merge", only_changed=True,
-              snapshot_table="`main`.`snap`.`ledger`", position=...)}
-    silver.run(session, tables, "`main`.`silver`", to, first=True)    # views created, merged tables built
-    silver.run(session, tables, "`main`.`silver`", to)                # a round
+              snapshot_table="`<catalog>`.`snap`.`ledger`", position=...)}
+    silver.run(session, tables, "`<catalog>`.`silver`", to, first=True)    # views created, merged tables built
+    silver.run(session, tables, "`<catalog>`.`silver`", to)                # a round
 """
 from __future__ import annotations
 
@@ -316,10 +316,13 @@ def apply(session, tables: dict, schema: str, to, threads: int = 16, changed_sch
     return done
 
 
-def shared_changes_sql(members: list, after, to) -> str:
+def shared_changes_sql(members: list, after, to, floors: dict | None = None) -> str:
     """Every member's change events after `after` up to `to` in one scan of the log they share: destination, k (the
     key the landing filled in, as text), data (the event's row, row_sql: the same expression for every table of a
-    transport), _op, _seq. A member's snapshot is its snapshot table, read by its view. No expression a table, so a group's size isn't bound by its SQL."""
+    transport), _op, _seq. A member's snapshot is its snapshot table, read by its view. No expression a table, so a
+    group's size isn't bound by its SQL. floors: {destination: its snapshot's position}: a member's events at or
+    before it are left out (its snapshot holds them; a log can hold older history with gaps, e.g. events of an earlier
+    gateway whose later deletes never landed), as merge does."""
     from lfc_change_source.cdc_log import EVENT, SEQUENCES
     from lfc_change_source.contract import DELETE, OP, SEQ, UPSERT
     one = members[0]
@@ -332,6 +335,12 @@ def shared_changes_sql(members: list, after, to) -> str:
     lo, hi = one.position_sql(after), one.position_sql(to)
     where = [f"destination IN ({', '.join(_lit(m.destination) for m in members)})", EVENT] + \
         ([f"{seq} > {lo}"] if lo is not None else []) + ([f"{seq} <= {hi}"] if hi is not None else [])
+    fl = {d: one.position_sql(p) for d, p in (floors or {}).items() if p is not None}
+    if fl:   # each member from its own snapshot on; a member without one: from the log's start
+        rest = [m.destination for m in members if m.destination not in fl]
+        parts = [f"(destination = {_lit(d)} AND {seq} > {v})" for d, v in fl.items()] + (
+            [f"destination IN ({', '.join(_lit(d) for d in rest)})"] if rest else [])
+        where.append("(" + " OR ".join(parts) + ")")
     return (f"SELECT destination, key::STRING AS k, {one.row_sql()} AS data, "
             f"CASE operation WHEN 'delete' THEN '{DELETE}' ELSE '{UPSERT}' END AS {OP}, "
             f"named_struct('v', {seq}, 'o', CASE operation WHEN 'delete' THEN 0 ELSE 1 END) AS {SEQ} "
@@ -374,6 +383,30 @@ def _groups(tables: dict) -> dict:
         out.setdefault(t.group or "0", {})[n] = t
     return out
 
+
+
+def kinds(session, schema: str, names: list) -> dict:
+    """{name (lower-case): "VIEW" | "TABLE"} for those of `names` that exist in `schema`."""
+    if not names:
+        return {}
+    cat, sch = [x.strip("`").replace("``", "`") for x in schema.split("`.`")]
+    rows = session.sql(f"SELECT table_name, table_type FROM {_q(cat)}.information_schema.tables WHERE table_schema = "
+                       f"{_lit(sch)} AND table_name IN ({', '.join(_lit(n.lower()) for n in names)})").collect()
+    return {r[0].lower(): ("VIEW" if r[1] == "VIEW" else "TABLE") for r in rows}
+
+
+def method_changed(session, tables: dict, schema: str) -> dict:
+    """{method: [names]} of the tables whose object here is of another method's kind (the plan moved them: a view,
+    or a shared member's view, now merged; a merged table now a view or a shared member): each is rebuilt in its new
+    form, never MERGEd into or replaced as the other kind."""
+    have = kinds(session, schema, list(tables))
+    want = {"shared": "VIEW", "view": "VIEW", "merge": "TABLE", "append": "TABLE"}
+    out: dict = {}
+    for n, t in tables.items():
+        k = have.get(n.lower())
+        if k and t.method in want and k != want[t.method]:
+            out.setdefault(t.method, []).append(n)
+    return out
 
 
 def _drop_tables(session, schema: str, names: list) -> None:
@@ -434,7 +467,8 @@ def _build_group(session, schema: str, g: str, members: dict, to) -> tuple:
     hides the key's snapshot row). (members, seconds)."""
     from lfc_change_source.contract import DELETE, OP, last_change_sql
     t0 = time.time()
-    cur = last_change_sql(shared_changes_sql([m.src for m in members.values()], None, to), ["destination", "k"])
+    floors = {m.src.destination: m.position for m in members.values() if m.snapshot_table and m.position is not None}
+    cur = last_change_sql(shared_changes_sql([m.src for m in members.values()], None, to, floors), ["destination", "k"])
     session.sql(f"CREATE OR REPLACE TABLE {_target(schema, SHARED.format(group=g))} CLUSTER BY (destination) AS "
                 f"SELECT destination, k, data, {OP} = '{DELETE}' AS deleted FROM ({cur})").collect()
     return len(members), time.time() - t0
@@ -442,7 +476,7 @@ def _build_group(session, schema: str, g: str, members: dict, to) -> tuple:
 
 
 
-def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> dict:
+def apply_shared(session, tables: dict, schema: str, to, threads: int = 16, rejoin: list | None = None) -> dict:
     """One MERGE a group: each key's last change after the group's kept position up to `to` (a delete: its marker).
     A member whose snapshot table changed gets its view recreated. {group: (rows, s)}."""
     from lfc_change_source.contract import DELETE, OP, Position, last_change_sql
@@ -456,17 +490,28 @@ def apply_shared(session, tables: dict, schema: str, to, threads: int = 16) -> d
         if n:
             raise ValueError(f"shared group {g}: {n:,} events with no key: land with keys (lfc_change_source "
                              "land.gateway_keys), or fill them in (land.backfill_keys)")
+    again = list(dict.fromkeys(renewed(tables, snapshots(session, schema)) + list(rejoin or [])))
+    for n in again:   # a member's new snapshot (or one joining the group):: its rows in the group from before it go, its changes after it come back
+        t = tables[n]
+        if t.method != "shared" or not t.snapshot_table or t.position is None:
+            continue
+        g = _target(schema, SHARED.format(group=t.group or "0"))
+        d = _lit(t.src.destination)
+        cur = last_change_sql(shared_changes_sql([t.src], None, to, {t.src.destination: t.position}), ["destination", "k"])
+        session.sql(f"DELETE FROM {g} WHERE destination = {d}").collect()
+        session.sql(f"INSERT INTO {g} (destination, k, data, deleted) SELECT destination, k, data, {OP} = '{DELETE}' "
+                    f"FROM ({cur})").collect()
     for g, members in groups.items():
         kind, pos = kept.get(SHARED.format(group=g), (to.kind, None))
         after = Position(kind, pos) if pos is not None else None
-        c = last_change_sql(shared_changes_sql([m.src for m in members.values()], after, to), ["destination", "k"])
+        floors = {m.src.destination: m.position for m in members.values() if m.snapshot_table and m.position is not None}
+        c = last_change_sql(shared_changes_sql([m.src for m in members.values()], after, to, floors), ["destination", "k"])
         stmts[g] = (f"MERGE INTO {_target(schema, SHARED.format(group=g))} t USING ({c}) c ON t.destination = "
                     f"c.destination AND t.k = c.k WHEN MATCHED THEN UPDATE SET t.data = c.data, t.deleted = "
                     f"c.{OP} = '{DELETE}' WHEN NOT MATCHED THEN INSERT (destination, k, data, deleted) VALUES "
                     f"(c.destination, c.k, c.data, c.{OP} = '{DELETE}')")
     done = _each(session, stmts, threads)
     _save(session, schema, [(SHARED.format(group=g), to.kind, to.value, r, s) for g, (r, s) in done.items()])
-    again = renewed(tables, snapshots(session, schema))
     if again:
         _member_views(session, {n: tables[n] for n in again}, schema, to, threads)
     return done
@@ -558,8 +603,16 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
     if bad:
         raise ValueError(f"tables with no method here: {bad[:5]} (one of {', '.join(METHODS)})")
     out = {}
+    changed = {} if first else method_changed(session, tables, schema)
+    if changed.get("merge") or changed.get("append"):   # were views: dropped, built as tables below
+        _drop_kind(session, schema, changed.get("merge", []) + changed.get("append", []), view=True)
+    if changed.get("view") or changed.get("shared"):     # were tables: dropped, made views below
+        _drop_tables(session, schema, changed.get("view", []) + changed.get("shared", []))
+    moved = list(dict.fromkeys(moved + changed.get("view", [])))
     t0 = time.time()
-    done = (build_shared if first else apply_shared)(session, by["shared"], schema, to, threads) if by["shared"] else {}
+    rejoin = changed.get("shared", [])
+    done = (build_shared(session, by["shared"], schema, to, threads) if first else
+            apply_shared(session, by["shared"], schema, to, threads, rejoin)) if by["shared"] else {}
     remade = [n for n in moved if n in by["shared"]]   # a member's new columns: its view over the group, again
     if remade:
         _each(session, {n: shared_view_sql(by["shared"][n], schema, _target(schema, n)) for n in remade}, threads)
@@ -572,11 +625,19 @@ def run(session, tables: dict, schema: str, to, threads: int = 16, first: bool =
                  threads, to) if by["view"] else {}
     out["view"] = {"tables": len(by["view"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
-    done = (build(session, by["merge"], schema, to, threads) if first else
-            apply(session, by["merge"], schema, to, threads, [n for n in moved if n in by["merge"]])) if by["merge"] else {}
+    remerge = {n: by["merge"][n] for n in changed.get("merge", [])}
+    if remerge:   # moved here from another method: built from its snapshot and the log, as a first round would
+        build(session, remerge, schema, to, threads)
+    rest = {n: t for n, t in by["merge"].items() if n not in remerge}
+    done = (build(session, rest, schema, to, threads) if first else
+            apply(session, rest, schema, to, threads, [n for n in moved if n in rest])) if rest else {}
     out["merge"] = {"tables": len(by["merge"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     t0 = time.time()
-    done = appended(session, by["append"], schema, to, threads, first) if by["append"] else {}
+    reapp = {n: by["append"][n] for n in changed.get("append", [])}
+    if reapp:   # moved here from another method: built, then appended to from the next round
+        appended(session, reapp, schema, to, threads, True)
+    rest = {n: t for n, t in by["append"].items() if n not in reapp}
+    done = appended(session, rest, schema, to, threads, first) if rest else {}
     out["append"] = {"tables": len(by["append"]), "done": len(done), "seconds": round(time.time() - t0, 1)}
     out["auto_cdc"] = {"tables": len(by["auto_cdc"]), "done": 0, "seconds": 0.0}
     t0 = time.time()

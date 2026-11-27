@@ -31,11 +31,11 @@ defaults:
       - {in: [skills], pattern: "all 0.0.0.0/0 md5"}
   - id: workspace
     area: Workspace
-    value: "The saved profile (DATABRICKS_PROFILE, WORKSPACES); ready.sh checks it and turns on a connector preview that's off when you're a workspace admin (--no-enable: read-only); the target catalog is LFC_CATALOG, else the workspace's default"
+    value: "The saved profile (DATABRICKS_PROFILE, WORKSPACES); ready.py checks it and turns on a connector preview that's off when you're a workspace admin (--no-enable: read-only); the target catalog is LFC_CATALOG, else the workspace's default"
     why: "A test needs the connector previews on and a catalog it can write to"
     in:
-      - {file: skills/lfc-workspace-setup/scripts/ready.sh, has: "DATABRICKS_PROFILE"}
-      - {file: skills/lfc-workspace-setup/scripts/ready.sh, has: "--no-enable makes it read-only"}
+      - {file: skills/lfc-workspace-setup/scripts/ready.py, has: "DATABRICKS_PROFILE"}
+      - {file: skills/lfc-workspace-setup/scripts/ready.py, has: "--no-enable makes it read-only"}
   - id: logins
     area: Logins
     value: "An expired workspace login is covered by your Azure CLI or account login; a login is asked for only when those fail, the account's first"

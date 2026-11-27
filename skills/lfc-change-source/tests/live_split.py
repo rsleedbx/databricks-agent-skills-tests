@@ -17,7 +17,8 @@ from databricks.sdk import WorkspaceClient  # noqa: E402
 from lfc_change_source import producer  # noqa: E402
 from lfc_change_source.engine import Warehouse  # noqa: E402
 
-E, CAT = os.environ["RUN"], os.environ["CATALOG"]
+from lfc_change_source._rest import Rest, target_catalog  # noqa: E402
+E, CAT = os.environ["RUN"], target_catalog(Rest.connect(os.environ["PROFILE"]), os.environ.get("CATALOG"))
 TABLE = os.environ.get("TABLE", "orders")
 RD, SRC, NET = f"/tmp/dbz-pg-{E}", f"robertlee-pg-{E}", f"pg-dbz-{E}"
 SCH = f"robertlee_pg_tpch_dbz_{E}"

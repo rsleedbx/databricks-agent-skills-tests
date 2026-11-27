@@ -182,15 +182,18 @@ def build(session, schema: str, snapshot: list, steps: list, columns: list[str],
 
 
 def _put(w, path: str, text: str) -> None:
-    import io
-    w.files.upload(path, io.BytesIO(text.encode()), overwrite=True)
+    from ._rest import Rest
+    Rest.of(w).upload(path, text.encode())
 
 
 def _clear(w, root: str) -> None:
     """Remove a scratch staging folder's files, so a rerun starts empty."""
-    for e in list(w.files.list_directory_contents(root)):
-        if e.is_directory:
-            _clear(w, e.path)
-            w.files.delete_directory(e.path)
+    from ._rest import Rest
+    api = Rest.of(w)
+    for e in list(api.ls(root)):
+        if e.get("is_directory"):
+            p = e["path"].rstrip("/")
+            _clear(api, p)
+            api.rmdir(p)
         else:
-            w.files.delete(e.path)
+            api.rm(e["path"])

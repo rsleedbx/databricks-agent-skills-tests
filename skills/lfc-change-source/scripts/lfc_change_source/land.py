@@ -13,8 +13,8 @@ log, each event as it is (VARIANT):
   gateway, file where it came from
 
     from lfc_change_source import land
-    land.ensure_log(spark, "`main`.`ctl`.`cdc_log`")
-    land.gateway(spark, "/Volumes/.../<gateway id>", "`main`.`ctl`.`cdc_log`", "sales_gw_1")   # rows added
+    land.ensure_log(spark, "`<catalog>`.`ctl`.`cdc_log`")
+    land.gateway(spark, "/Volumes/.../<gateway id>", "`<catalog>`.`ctl`.`cdc_log`", "sales_gw_1")   # rows added
 
 The log carries changes only: a gateway's snapshot goes to a Delta table of its own (intake.gateway), never into
 the log (docs/design-no-full-refresh.md).

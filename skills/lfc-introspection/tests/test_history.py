@@ -64,7 +64,7 @@ class History(unittest.TestCase):
                     return R(state["runs"])
                 return R([])
 
-        def fake_introspect(session, src, engine, db, sch, via=None):
+        def fake_introspect(session, src, engine, db, sch, service=None, via=None):
             if src == "bad":
                 raise RuntimeError("no route to host")
             return S1, T1
@@ -84,3 +84,17 @@ class History(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_ensure_creates_only_the_missing_tables():
+    ran = []
+
+    class S:
+        def sql(self, q):
+            ran.append(q)
+            rows = [("s", "introspection_runs", False)] if q.startswith("SHOW TABLES") else []
+            return type("R", (), {"collect": lambda self: rows})()
+    made = history.ensure(S(), "`c`.`s`", history.ddl("`c`.`s`"))
+    assert "introspection_runs" not in made and len(made) == len(history.ddl("`c`.`s`")) - 1
+    assert sum(q.startswith("CREATE") for q in ran) == len(made)

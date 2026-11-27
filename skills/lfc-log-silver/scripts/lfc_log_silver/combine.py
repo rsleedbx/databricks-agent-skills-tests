@@ -4,7 +4,7 @@ table's rows (a view, a build, a check) calls this, so every silver cell gives t
 (lfc-change-source) gives only its changes; the snapshot is a Delta table of its own (layer 3).
 
     from lfc_log_silver import combine
-    combine.current_sql(src, "SELECT * FROM `main`.`snap`.`orders`", Position("lsn", "29565568"))
+    combine.current_sql(src, "SELECT * FROM `<catalog>`.`snap`.`orders`", Position("lsn", "29565568"))
 """
 from __future__ import annotations
 

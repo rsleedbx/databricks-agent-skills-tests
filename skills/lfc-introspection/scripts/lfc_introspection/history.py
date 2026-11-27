@@ -2,7 +2,8 @@
 a run from the dashboard by adding a row to introspection_request; a job with a table update trigger on it runs
 run_pending(), which introspects each source asked for and appends the run. Nothing is overwritten:
 
-  introspection_request  a row a request: n, source (its connection), engine, database, src_schema, by, at, note
+  introspection_request  a row a request: n, source (its connection), engine, database, src_schema, by, at, note,
+                         service (Oracle: the PDB)
   introspection_runs     a row a run: run (the request's n), source, at, status, error, tables, changes (what differs
                          from that source's previous run), schema_json and stats_json (the documents classify reads)
   introspection_schema   a row a column a run: run, source, tbl, ordinal, col, type, native_type, not_null, pk
@@ -33,7 +34,8 @@ def _lit(v) -> str:
 def ddl(schema: str) -> list:
     """CREATE TABLE IF NOT EXISTS for the four tables in `schema` (a quoted catalog.schema)."""
     return [f"CREATE TABLE IF NOT EXISTS {schema}.{REQUEST} (n INT, source STRING, engine STRING, database STRING, "
-            "src_schema STRING, `by` STRING, at TIMESTAMP, note STRING) TBLPROPERTIES (delta.enableChangeDataFeed = true) "
+            "src_schema STRING, `by` STRING, at TIMESTAMP, note STRING, service STRING) "
+            "TBLPROPERTIES (delta.enableChangeDataFeed = true) "
             "COMMENT 'lfc_introspection: add a row (n + 1, the source) to run an introspection'",
             f"CREATE TABLE IF NOT EXISTS {schema}.{RUNS} (run INT, source STRING, at TIMESTAMP, status STRING, "
             "error STRING, tables INT, changes STRING, schema_json STRING, stats_json STRING) "
@@ -123,19 +125,56 @@ def record(session, schema: str, req: dict, docs: tuple | None, error: str | Non
     return row
 
 
-def run_pending(session, schema: str, introspect=None, via: str = "jdbc") -> list:
+def ensure(session, schema: str, ddls: list) -> list:
+    """Run only the CREATE TABLE IF NOT EXISTS statements (ddl(), and other boxes' ddl lists) whose table `schema`
+    doesn't have yet: one SHOW TABLES instead of a statement a table each run (about 2 s each through a session). The
+    names created."""
+    import re
+    have = {r[1].lower() for r in session.sql(f"SHOW TABLES IN {schema}").collect()}
+    made = []
+    for d in ddls:
+        m = re.match(r"\s*CREATE TABLE IF NOT EXISTS\s+" + re.escape(schema) + r"\.`?([A-Za-z0-9_]+)`?", d)
+        if m and m.group(1).lower() in have:
+            continue
+        session.sql(d).collect()
+        if m:
+            made.append(m.group(1))
+    return made
+
+
+def per_source(items: list, fn, workers: int = 8) -> list:
+    """fn(item) for each item, the items of one source (item["source"]) in their order, sources at once (a source's
+    work is mostly waiting on it: a JDBC connection's first query, a gateway's start). The results in the items'
+    order."""
+    from concurrent.futures import ThreadPoolExecutor
+    by: dict = {}
+    for i, it in enumerate(items):
+        by.setdefault(it["source"], []).append((i, it))
+    out: list = [None] * len(items)
+
+    def one(group):
+        for i, it in group:
+            out[i] = fn(it)
+    with ThreadPoolExecutor(max(1, min(workers, len(by) or 1))) as pool:
+        list(pool.map(one, by.values()))
+    return out
+
+
+def run_pending(session, schema: str, introspect=None, via: str = "jdbc", connection_for=None) -> list:
     """Every pending request run and recorded (a failure is a run too, with its error). introspect: the function
-    that reads a source (lfc_introspection.introspect.introspect; another for a test). The runs' rows."""
+    that reads a source (lfc_introspection.introspect.introspect; another for a test). connection_for(source) -> the
+    connection to read through (via jdbc: the source's UC JDBC connection; default the source itself), the runs still
+    recorded under the source. The runs' rows."""
     if introspect is None:
         from .introspect import introspect
     reqs = _dicts(session.sql(f"SELECT * FROM {schema}.{REQUEST}").collect())
     runs = _dicts(session.sql(f"SELECT run, source FROM {schema}.{RUNS}").collect())
-    out = []
-    for r in pending(reqs, runs):
+    def one(r):
         try:
-            docs = introspect(session, r["source"], r["engine"], r.get("database"), r.get("src_schema") or "public",
-                              via=via)
-            out.append(record(session, schema, r, docs))
+            conn = connection_for(r["source"]) if connection_for else r["source"]
+            docs = introspect(session, conn, r["engine"], r.get("database"), r.get("src_schema") or "public",
+                              r.get("service"), via=via)   # service: Oracle's PDB
+            return record(session, schema, r, docs)
         except Exception as e:  # noqa: BLE001  the run is recorded as failed, with why
-            out.append(record(session, schema, r, None, f"{type(e).__name__}: {str(e)[:500]}"))
-    return out
+            return record(session, schema, r, None, f"{type(e).__name__}: {str(e)[:500]}")
+    return per_source(list(pending(reqs, runs)), one)

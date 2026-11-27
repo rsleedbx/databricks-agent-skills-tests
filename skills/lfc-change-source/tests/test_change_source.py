@@ -194,15 +194,31 @@ class Conformance(unittest.TestCase):
 
 
 class Engine(unittest.TestCase):
-    def test_phases_from_either_sdk_shape(self):   # an older SDK (a job's environment) returns ListQueriesResponse
+    def test_phases_from_query_history_rest(self):   # the REST answer: res, each with its metrics
+        from lfc_change_source._rest import Rest
         from lfc_change_source.engine import Warehouse
-        m = types.SimpleNamespace(compilation_time_ms=2000, execution_time_ms=5000,
-                                  query_compilation_start_timestamp=3000, read_bytes=10, read_files_count=1)
-        q = types.SimpleNamespace(query_id="s1", is_final=True, query_start_time_ms=1000, metrics=m)
-        for ret in ([q], types.SimpleNamespace(res=[q])):
-            w = types.SimpleNamespace(query_history=types.SimpleNamespace(list=lambda ret=ret, **k: ret))
-            self.assertEqual(Warehouse("x", w).phases(["s1"], wait_s=1)["s1"]["queue_s"], 2.0)
+        q = {"query_id": "s1", "is_final": True, "query_start_time_ms": 1000,
+             "metrics": {"compilation_time_ms": 2000, "execution_time_ms": 5000,
+                         "query_compilation_start_timestamp": 3000, "read_bytes": 10, "read_files_count": 1}}
+        seen = []
+        api = Rest(lambda m, p, qs, b: seen.append((p, qs)) or {"res": [q]})
+        self.assertEqual(Warehouse("x", api).phases(["s1"], wait_s=1)["s1"]["queue_s"], 2.0)
+        self.assertEqual(seen[0][1]["filter_by"], {"statement_ids": ["s1"]})
 
+    def test_sql_polls_reads_chunks_and_raises_the_error(self):
+        from lfc_change_source._rest import Rest
+        from lfc_change_source.engine import Warehouse
+        answers = {"POST": {"statement_id": "a", "status": {"state": "PENDING"}},
+                   "/api/2.0/sql/statements/a": {"statement_id": "a", "status": {"state": "SUCCEEDED"},
+                                                 "manifest": {"schema": {"columns": [{"name": "n", "type_name": "INT"}]}},
+                                                 "result": {"data_array": [["1"]], "next_chunk_index": 1}},
+                   "/api/2.0/sql/statements/a/result/chunks/1": {"data_array": [["2"]]}}
+        api = Rest(lambda m, p, q, b: answers["POST"] if m == "POST" else answers[p])
+        self.assertEqual([r.n for r in Warehouse("x", api, poll_s=0).sql("SELECT 1").collect()], [1, 2])
+        answers["/api/2.0/sql/statements/a"] = {"status": {"state": "FAILED", "error": {"error_code": "SCHEMA_NOT_FOUND",
+                                                                                        "message": "no s"}}}
+        with self.assertRaisesRegex(RuntimeError, "SCHEMA_NOT_FOUND: no s"):
+            Warehouse("x", api, poll_s=0).sql("SELECT 1")
 
 class Samples(unittest.TestCase):
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")

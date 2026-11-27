@@ -5,7 +5,7 @@ transport is read one way.
 
     from lfc_change_source import gateway_staging as gs, gateway_log
     entry = gs.schemas(spark, root)[("db", "lob_001", "account")]
-    src = gateway_log.from_gateway("lob_001", "`main`.`ctl`.`cdc_log`", entry, "db.lob_001.account")
+    src = gateway_log.from_gateway("lob_001", "`<catalog>`.`ctl`.`cdc_log`", entry, "db.lob_001.account")
 """
 from __future__ import annotations
 

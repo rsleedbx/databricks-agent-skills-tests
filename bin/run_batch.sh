@@ -16,7 +16,7 @@ mkdir -p "$OUT"
 [ $# -gt 0 ] || { echo "usage: $0 <prompts-file>..."; exit 1; }
 # keep the target catalog and the foreign catalogs on the env's connections for another month (RemoveAfter tag)
 conns=(); for v in $(compgen -v | grep -E '^LFC_.*_CONNECTION$'); do [ -n "${!v}" ] && conns+=(--connection "${!v}"); done
-bash "$ROOT/skills/lfc-workspace-setup/scripts/keep-catalogs.sh" "${PIPELINE_WS:-DEFAULT}" "${conns[@]}" ${LFC_CATALOG:+"$LFC_CATALOG"}
+python3 -I "$ROOT/skills/lfc-workspace-setup/scripts/keep_catalogs.py" "${PIPELINE_WS:-DEFAULT}" "${conns[@]}" ${LFC_CATALOG:+"$LFC_CATALOG"}
 
 for f in "$@"; do
   f="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"

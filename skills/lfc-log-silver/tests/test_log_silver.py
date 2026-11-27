@@ -79,6 +79,16 @@ class SixCells(unittest.TestCase):
 
 
 class Shared(unittest.TestCase):
+    def test_each_member_from_its_own_snapshot(self):   # a log's older history (gaps: deletes never landed) left out
+        a, b, c = src("a"), src("b"), src("c")
+        q = silver.shared_changes_sql([a, b, c], None, Position("gateway_cursor", "09"),
+                                      {a.destination: Position("gateway_cursor", "03"),
+                                       b.destination: Position("gateway_cursor", "05")})
+        self.assertIn("(destination = 'db.s.a' AND value:cursor.sequence::STRING > '03'", q)
+        self.assertIn("OR (destination = 'db.s.b' AND value:cursor.sequence::STRING > '05')", q)
+        self.assertIn("OR destination IN ('db.s.c'))", q)                    # no snapshot: from the log's start
+        self.assertEqual(silver.shared_changes_sql([a], None, None, {}), silver.shared_changes_sql([a], None, None))
+
     def test_one_scan_one_merge_a_group_and_typed_views(self):
         tables = {n: silver.Table(src(n), "shared", group="0") for n in "ab"}
         q = silver.shared_changes_sql([t.src for t in tables.values()], Position("gateway_cursor", "05"),
@@ -394,3 +404,15 @@ class Round(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MethodChanged(unittest.TestCase):
+    def test_objects_of_another_methods_kind(self):   # the plan moved them: rebuilt, never MERGEd into a view
+        class S:
+            def sql(self, q):
+                rows = [("a", "VIEW"), ("b", "MANAGED"), ("c", "VIEW"), ("d", "MANAGED")]
+                return type("R", (), {"collect": lambda self: rows})()
+        t = {"a": silver.Table(src("a"), "merge"), "b": silver.Table(src("b"), "shared", group="0"),
+             "c": silver.Table(src("c"), "shared", group="0"), "d": silver.Table(src("d"), "merge"),
+             "e": silver.Table(src("e"), "merge")}
+        self.assertEqual(silver.method_changed(S(), t, "`c`.`s`"), {"merge": ["a"], "shared": ["b"]})

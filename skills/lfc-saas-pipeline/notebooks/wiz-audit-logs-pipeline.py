@@ -17,7 +17,7 @@ from lfc_saas_pipeline import arg, create_pipeline, start_pipeline  # also edit_
 # Modify this cell with your pipeline specifications. This creates the ingestion pipeline and starts its first update.
 # If destination_table (optional) is not specified, the connector uses the source table name.
 connection = arg("connection", "lfcsaas-wiz")
-catalog = arg("catalog", "main")
+catalog = arg("catalog", "") or spark.sql("SELECT current_catalog()").first()[0]   # the workspace default, never assume main
 schema = arg("schema", "wiz_audit_logs")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
 # Earliest audit entry to ingest (yyyy-MM-ddTHH:mm:ssZ); without start_datetime the connector starts 365 days back.

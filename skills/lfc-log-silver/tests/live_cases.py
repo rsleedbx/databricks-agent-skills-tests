@@ -173,7 +173,8 @@ if __name__ == "__main__":
     engines = os.environ.get("ENGINES", ",".join(e for e in formats.DEBEZIUM)).split(",")
     allbad = []
     for e in engines:
-        bad = run(wh, os.environ["CATALOG"], os.environ.get("SCHEMA", "lfc_log_silver_cases"), e)
+        from lfc_change_source._rest import Rest, target_catalog  # noqa: E402
+        bad = run(wh, target_catalog(Rest.connect(os.environ["PROFILE"]), os.environ.get("CATALOG")), os.environ.get("SCHEMA", "lfc_log_silver_cases"), e)
         print(e, "ok" if not bad else "\n  ".join(["MISMATCH"] + bad), flush=True)
         allbad += bad
     sys.exit(1 if allbad else 0)

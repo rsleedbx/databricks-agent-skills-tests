@@ -16,7 +16,8 @@ from lfc_change_source.contract import Position  # noqa: E402
 from lfc_change_source.engine import Warehouse  # noqa: E402
 from lfc_log_silver import fk, silver  # noqa: E402
 
-CAT, SCH = os.environ["CATALOG"], os.environ.get("SCHEMA", "lfc_log_silver_live")
+from lfc_change_source._rest import Rest, target_catalog  # noqa: E402
+CAT, SCH = target_catalog(Rest.connect(os.environ["PROFILE"]), os.environ.get("CATALOG")), os.environ.get("SCHEMA", "lfc_log_silver_live")
 S = f"`{CAT}`.`{SCH}`"
 wh = Warehouse(os.environ["WAREHOUSE"], WorkspaceClient(profile=os.environ["PROFILE"]))
 q = lambda s: wh.sql(s).collect()  # noqa: E731

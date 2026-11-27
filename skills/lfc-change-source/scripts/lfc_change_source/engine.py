@@ -73,62 +73,66 @@ class Warehouse:
     CONCURRENT... or SCHEMA_NOT_FOUND work as on Spark)."""
 
     def __init__(self, warehouse_id: str, workspace=None, poll_s: float = 0.5):
-        if workspace is None:
-            from databricks.sdk import WorkspaceClient
-            workspace = WorkspaceClient()
+        """workspace: an lfc_rest.Rest or a WorkspaceClient (none: the environment's login, a notebook's own)."""
+        from ._rest import Rest
         self.id, self.w, self.poll_s = warehouse_id, workspace, poll_s
+        self.api = Rest.of(workspace) if workspace is not None else Rest.connect()
 
     def state(self) -> str:
         """The warehouse's state (RUNNING, STOPPED, STARTING, ...): a stopped one costs its start first."""
-        return str(self.w.warehouses.get(self.id).state).split(".")[-1]
+        return self.api.get(f"/api/2.0/sql/warehouses/{self.id}").get("state") or ""
 
     def phases(self, statement_ids: list[str], wait_s: float = 30.0) -> dict:
         """{statement id: {compile_s, execute_s, queue_s, read_bytes, read_files}} from query history, once each
         statement's entry is final (it lags the statement by seconds); missing ones are left out."""
-        from databricks.sdk.service.sql import QueryFilter
         out, todo, end = {}, list(dict.fromkeys(i for i in statement_ids if i)), time.time() + wait_s
         while todo and time.time() < end:
             for i in range(0, len(todo), 100):
-                got = self.w.query_history.list(filter_by=QueryFilter(statement_ids=todo[i:i + 100]),
-                                                include_metrics=True, max_results=100)
-                # a newer SDK pages for you; an older one (a job's environment) returns ListQueriesResponse
-                for q in (got.res or []) if hasattr(got, "res") else got:
-                    m = q.metrics
-                    if not q.is_final or m is None:
+                for q in self.api.pages("/api/2.0/sql/history/queries", "res", filter_by={"statement_ids": todo[i:i + 100]},
+                                        include_metrics=True, max_results=100):
+                    m = q.get("metrics")
+                    if not q.get("is_final") or m is None:
                         continue
-                    queued = ((m.query_compilation_start_timestamp or 0) - (q.query_start_time_ms or 0)) / 1e3
-                    out[q.query_id] = {"compile_s": (m.compilation_time_ms or 0) / 1e3,
-                                       "execute_s": (m.execution_time_ms or 0) / 1e3,
-                                       "queue_s": max(0.0, queued) if m.query_compilation_start_timestamp else None,
-                                       "read_bytes": m.read_bytes, "read_files": m.read_files_count}
+                    cs = m.get("query_compilation_start_timestamp")
+                    queued = ((cs or 0) - (q.get("query_start_time_ms") or 0)) / 1e3
+                    out[q["query_id"]] = {"compile_s": (m.get("compilation_time_ms") or 0) / 1e3,
+                                          "execute_s": (m.get("execution_time_ms") or 0) / 1e3,
+                                          "queue_s": max(0.0, queued) if cs else None,
+                                          "read_bytes": m.get("read_bytes"), "read_files": m.get("read_files_count")}
             todo = [i for i in todo if i not in out]
             if todo:
                 time.sleep(5)
         return out
 
     def sql(self, query: str, args: dict | None = None) -> _Result:
-        from databricks.sdk.service.sql import (Disposition, ExecuteStatementRequestOnWaitTimeout, Format,
-                                                StatementParameterListItem, StatementState)
-        params = [StatementParameterListItem(name=k, value=None if v is None else str(v))
-                  for k, v in (args or {}).items()] or None
+        params = [{"name": k, "value": None if v is None else str(v)} for k, v in (args or {}).items()] or None
         # wait_timeout 0s: the POST returns at once and the statement is polled; a POST held open longer than the
         # client's read timeout (60 s, a statement with a long plan) was retried, and a retried POST can start it again
-        r = self.w.statement_execution.execute_statement(
-            statement=query, warehouse_id=self.id, parameters=params, wait_timeout="0s",
-            on_wait_timeout=ExecuteStatementRequestOnWaitTimeout.CONTINUE, disposition=Disposition.INLINE,
-            format=Format.JSON_ARRAY)
-        while r.status.state in (StatementState.PENDING, StatementState.RUNNING):
-            time.sleep(self.poll_s)
-            r = self.w.statement_execution.get_statement(r.statement_id)
-        if r.status.state != StatementState.SUCCEEDED:
-            e = r.status.error
-            raise RuntimeError(f"{e.error_code if e else r.status.state}: {e.message if e else ''}")
-        cols = (r.manifest.schema.columns or []) if r.manifest and r.manifest.schema else []
-        names = [c.name for c in cols]
-        types = [str(c.type_name).split(".")[-1] if c.type_name else "STRING" for c in cols]
+        body = {"statement": query, "warehouse_id": self.id, "wait_timeout": "0s", "on_wait_timeout": "CONTINUE",
+                "disposition": "INLINE", "format": "JSON_ARRAY", **({"parameters": params} if params else {})}
+        r = self.api.post("/api/2.0/sql/statements", body)
+        sid = r.get("statement_id")
+        try:
+            while (r.get("status") or {}).get("state") in ("PENDING", "RUNNING"):
+                time.sleep(self.poll_s)
+                r = self.api.get(f"/api/2.0/sql/statements/{sid}")
+        except BaseException:   # interrupted or killed (SIGINT as KeyboardInterrupt): don't leave it running
+            try:
+                self.api.post(f"/api/2.0/sql/statements/{sid}/cancel")
+            except Exception:  # noqa: BLE001  the cancel is best effort; the interruption is what to raise
+                pass
+            raise
+        st = r.get("status") or {}
+        if st.get("state") != "SUCCEEDED":
+            e = st.get("error") or {}
+            raise RuntimeError(f"{e.get('error_code') or st.get('state')}: {e.get('message') or ''}")
+        cols = ((r.get("manifest") or {}).get("schema") or {}).get("columns") or []
+        names = [c.get("name") for c in cols]
+        types = [c.get("type_name") or "STRING" for c in cols]
         make = row_type(names)
-        data, chunk = list((r.result.data_array if r.result else None) or []), r.result
-        while chunk is not None and chunk.next_chunk_index is not None:
-            chunk = self.w.statement_execution.get_statement_result_chunk_n(r.statement_id, chunk.next_chunk_index)
-            data += chunk.data_array or []
-        return _Result([make(value(x, t) for x, t in zip(row, types)) for row in data], r.statement_id)
+        chunk = r.get("result") or {}
+        data = list(chunk.get("data_array") or [])
+        while chunk.get("next_chunk_index") is not None:
+            chunk = self.api.get(f"/api/2.0/sql/statements/{sid}/result/chunks/{chunk['next_chunk_index']}")
+            data += chunk.get("data_array") or []
+        return _Result([make(value(x, t) for x, t in zip(row, types)) for row in data], sid)
