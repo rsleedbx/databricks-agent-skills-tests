@@ -74,7 +74,7 @@ def take_snapshot(api, wh, e, conn: dict, a, snap_schema: str, pipeline: str, lo
                 "link": f"{api.host}/pipelines/{got['pipeline_id']}"}
     if how == "jdbc":
         if not a.change_source_package:
-            raise SystemExit(f"{e.name}: the jdbc snapshot needs --change-source-package")
+            raise ValueError(f"{e.name}: the jdbc snapshot needs --change-source-package")
         url = jdbc.url(e.name, conn["host"], conn["port"], src["database"], tls=src.get("tls", True))
         federation.upsert(api, jdbc.connection_body(name, e.name, url, src["login"], conn["password"],
                                                     comment="zerobus-debezium-test snapshot"))
@@ -178,11 +178,14 @@ def main(argv=None) -> int:
             claim("resume", new[:1] == first, "the row inserted while stopped (after the offsets) is carried on resume")
         claim("round-1", got == want, f"inserts, update, delete while streaming: {new}")
         if a.snapshot == "auto":   # Debezium streams and round 1 has landed: the snapshot's turn
-            snap = take_snapshot(api, wh, e, conn, a, f"{a.schema}_snap_{tag}", f"{name}-snapshot", log)
-            have = rows(wh, snap["table"], ids) if snap["state"] == "COMPLETED" else {}
-            claim("snapshot", snap["state"] == "COMPLETED" and have == e.state_after(1, a.base),
-                  f"{snap['how']} {snap['state']} in {snap['seconds']} s into {snap['table']}: {have} "
-                  f"({snap['link']}){' ' + str(snap['error'])[:300] if snap.get('error') else ''}")
+            try:   # a failed snapshot is a failed claim: the rounds after it still run
+                snap = take_snapshot(api, wh, e, conn, a, f"{a.schema}_snap_{tag}", f"{name}-snapshot", log)
+                have = rows(wh, snap["table"], ids) if snap["state"] == "COMPLETED" else {}
+                claim("snapshot", snap["state"] == "COMPLETED" and have == e.state_after(1, a.base),
+                      f"{snap['how']} {snap['state']} in {snap['seconds']} s into {snap['table']}: {have} "
+                      f"({snap['link']}){' ' + str(snap['error'])[:300] if snap.get('error') else ''}")
+            except Exception as x:  # noqa: BLE001 -- recorded as the claim's failure, with why
+                claim("snapshot", False, f"{type(x).__name__}: {str(x)[:400]}")
 
         r = p.stop()
         claim("stop", r == "SUCCESS", f"STOP file: run {r}, status {p.status().get('why')}")
