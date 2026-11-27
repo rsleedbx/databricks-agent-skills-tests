@@ -27,7 +27,8 @@ for dep in ("lfc-rest", "lfc-change-source", "lfc-source-contract", "lfc-routing
     sys.path.insert(0, os.path.join(SKILLS, dep, "scripts"))
 
 from lfc_change_source import SNAPSHOTS, debezium
-from lfc_change_source.cdc_log import CdcLog
+from lfc_change_source.cdc_log import SEQUENCES, CdcLog
+from lfc_change_source.contract import Position
 from lfc_change_source.engine import Warehouse
 from lfc_change_source.producer import Spec, WorkspaceDebeziumServer
 from lfc_log_silver import combine, flowthrough
@@ -87,11 +88,24 @@ def sources_for(wh, e, log: str, prefix: str, dests: dict, snaps: dict, keys: di
     return out
 
 
-def check(wh, silver_schema: str, srcs: dict, snaps: dict, to) -> dict:
-    """{table: (extra, missing)}: silver against the snapshot and the log up to `to` (combine.current_sql)."""
+def positions(wh, log: str, e, dests: dict) -> dict:
+    """{table: its newest event's position in the log}, read just before the snapshot: the snapshot's position. Changes
+    after it are applied on the snapshot; those before it are in it already. A keyed table's later changes carry whole
+    rows, so one landing during the snapshot's read reapplies harmlessly; a keyless table's insert in that window counts
+    twice (a short window: the snapshot runs right after)."""
+    out = {}
+    for t, d in dests.items():
+        v = wh.sql(f"SELECT max({SEQUENCES[e.seq]}) FROM {log} WHERE destination = '{d}'").collect()[0][0]
+        out[t] = Position(e.seq, str(v)) if v is not None else None
+    return out
+
+
+def check(wh, silver_schema: str, srcs: dict, snaps: dict, to, at: dict) -> dict:
+    """{table: (extra, missing)}: silver against the snapshot at its position and the log up to `to`
+    (combine.current_sql)."""
     out = {}
     for t, s in srcs.items():
-        want = combine.current_sql(s, f"SELECT * FROM {snaps[t]}", None, to)
+        want = combine.current_sql(s, f"SELECT * FROM {snaps[t]}", at.get(t), to)
         cols = ", ".join(f"`{c}`" for c in s.columns)
         have = f"{silver_schema}.`{t}`"
         out[t] = tuple(int(wh.sql(f"SELECT count(*) FROM ((SELECT {cols} FROM {x}) EXCEPT ALL (SELECT {cols} FROM {y}))")
@@ -128,6 +142,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     e = engines.get(a.engine)
+    if snapshot_method("t", 0, Policy(shared_log="", engine=e.name)) == "jdbc" and not a.change_source_package:
+        raise SystemExit(f"{e.name}: its snapshot is the jdbc route, which needs --change-source-package (checked "
+                         "before Debezium starts)")
     tables = [t.strip() for t in a.tables.split(",") if t.strip()]
     keys = {k: [c for c in v.split("+") if c] for k, v in (x.split("=", 1) for x in a.keys.split(",") if x)}
     api = Rest.connect(a.profile)
@@ -187,6 +204,7 @@ def main(argv=None) -> int:
         claim("changes-landed", len(dests) == len(tables), f"destinations {dests}")
         if len(dests) != len(tables):
             return 1
+        at = positions(wh, log, e, dests)   # the snapshot's position: each table's newest event, just before it
         snaps = take_snapshots(api, wh, e, a, tables, keys, snap_schema, name)
         claim("snapshot", True, f"{snaps}")
         srcs = sources_for(wh, e, log, prefix, dests, snaps, keys)
@@ -198,8 +216,8 @@ def main(argv=None) -> int:
             # kinds are fixed-width, so the same key orders them too
             to = max((s.watermark(wh) for s in srcs.values()), key=lambda x: (len(x.value), x.value))
             got = flowthrough.step(wh, silver_schema, srcs, to, Policy(shared_log=log, engine=a.engine),
-                                   extra={t: {"snapshot_table": snaps[t], "position": None} for t in srcs})
-            bad = check(wh, silver_schema, srcs, snaps, to)
+                                   extra={t: {"snapshot_table": snaps[t], "position": at.get(t)} for t in srcs})
+            bad = check(wh, silver_schema, srcs, snaps, to, at)
             n = {t: int(wh.sql(f"SELECT count(*) FROM {silver_schema}.`{t}`").collect()[0][0]) for t in srcs}
             claim(f"silver-{i + 1}", all(b == (0, 0) for b in bad.values()),
                   f"routes {got['routes']} at {to}: rows {n}, (extra, missing) vs snapshot + log {bad}")

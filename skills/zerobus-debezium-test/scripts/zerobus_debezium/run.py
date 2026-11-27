@@ -131,7 +131,8 @@ def main(argv=None) -> int:
     ap.add_argument("--catalog", required=True)
     ap.add_argument("--schema", required=True)
     ap.add_argument("--volume", default="debezium")
-    ap.add_argument("--engine", required=True, choices=sorted(engines.ENGINES))
+    # Informix has no test table of its own (its setup is capture only): it runs through stream.py on existing tables
+    ap.add_argument("--engine", required=True, choices=sorted(e for e in engines.ENGINES if e != "informix"))
     ap.add_argument("--slot-host", required=True)
     ap.add_argument("--slot-name", required=True)
     ap.add_argument("--slot-key", default="~/.ssh/lfc_slot_ed25519")

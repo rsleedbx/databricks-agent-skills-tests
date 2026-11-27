@@ -15,7 +15,8 @@ import shlex
 import subprocess
 import time
 
-SLOT_ENGINES = {"sqlserver": "sqlserver", "mysql": "mysql", "oracle": "oracle", "db2": "db2", "postgres": "postgres"}
+SLOT_ENGINES = {"sqlserver": "sqlserver", "mysql": "mysql", "oracle": "oracle", "db2": "db2", "postgres": "postgres",
+                "informix": "informix"}
 
 
 class Slot:

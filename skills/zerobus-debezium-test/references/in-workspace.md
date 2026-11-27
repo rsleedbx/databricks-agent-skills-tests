@@ -76,7 +76,8 @@ Without a heartbeat, a quiet source leaves the slot's confirmed position short o
 The rounds above use a test table the test creates. `python -m zerobus_debezium.stream` runs tables that already exist
 the way a customer's would go: change capture on them (`engines.Engine.capture`, optional), Debezium Server streaming them,
 a snapshot of each once its first change has landed (routing's method, through a UC connection that's there already),
-then FlowThrough silver rounds. The source keeps changing, so each silver table is checked against the snapshot and the
+at the table's newest event just before it, then FlowThrough silver rounds. A keyed table's changes during the
+snapshot's read reapply harmlessly (whole rows); a keyless table's insert in that short window counts twice. The source keeps changing, so each silver table is checked against the snapshot and the
 log up to the round's position (`combine.current_sql`), not against the source.
 
 `capture()` only changes what capture needs and never restarts a database unless told it may (`restart=True`): Oracle
