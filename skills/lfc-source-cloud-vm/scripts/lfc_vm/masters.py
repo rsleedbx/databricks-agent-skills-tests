@@ -30,6 +30,7 @@ import base64
 import contextlib
 import datetime as dt
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -134,7 +135,7 @@ def retry(fn, what: str, tries: int = 5) -> None:
     for k in range(1, tries + 1):
         try:
             return fn()
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
             if k == tries:
                 raise Fail(f"{what} failed: {e}")
             time.sleep(k * 5)
@@ -321,7 +322,7 @@ def import_one(blob: Blob, rec: dict, root: str, n: str) -> None:
                 h.update(b)
                 unz.stdin.write(b)
         ok = True
-    except (urllib.error.URLError, OSError):
+    except (urllib.error.URLError, OSError, http.client.HTTPException):   # a body cut short: IncompleteRead
         ok = False
     finally:
         with contextlib.suppress(BrokenPipeError):

@@ -81,6 +81,37 @@ class BuildRefusals(unittest.TestCase):
             self.assertIn("exists", x.exception.msg)
 
 
+class TruncatedDownload(unittest.TestCase):
+    def test_a_body_cut_short_is_a_failed_verify_and_leaves_no_staging(self):
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):   # says 1000 bytes, sends 10, closes
+                self.send_response(200)
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                self.wfile.write(b"0123456789")
+                self.close_connection = True
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        d = tempfile.mkdtemp()
+        os.makedirs(f"{d}/masters")
+        sas = os.path.join(d, "sas")
+        Path(sas).write_text("sig=x")
+        os.chmod(sas, 0o600)
+        blob = masters.Blob(f"http://127.0.0.1:{srv.server_port}/box", sas)
+        with self.assertRaises(Fail) as x:
+            masters.import_one(blob, {"engine": "postgres", "sha256": "0" * 64}, d, "m")
+        srv.shutdown()
+        self.assertIn("didn't verify", x.exception.msg)
+        self.assertEqual(os.listdir(f"{d}/masters"), [])
+
+
 class Cli(unittest.TestCase):
     def test_masters_words_and_usage(self):
         err = io.StringIO()
