@@ -24,6 +24,23 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `bin/test_skip/scripts/test_skip.py` Vendored copy of shared unit 'test_skip': edit the master, then run `reuse-first vendor sync` (any other edit shows a...
 - `bin/test_timings.py` [timings.tsv] [--top N]: what bin/test_scripts.sh's checks cost, from the timings it appends (TEST_TIMINGS, default ~...
 
+## account-token-fallback
+
+- `skills/account-token-fallback/scripts/add_account.py` <account-id> <aws|azure|gcp> [--dry-run] [--free-port]: the one standard way to add an account profile to ~/.databric...
+- `skills/account-token-fallback/scripts/profiles_check.py` [--json FILE] [--verify]: for every workspace profile in ~/.databrickscfg, does it log in, and if not, can an account...
+- `skills/account-token-fallback/scripts/ws_token.py` <profile> [--host URL [--account-id ID]] [--cfg FILE] [--force]: keep a workspace profile usable when its OAuth login...
+
+## cli-setup
+
+- `skills/cli-setup/scripts/check_tools.py` [all|base|local|aws|azure|gcp|clients]: which of the lfc-source-* skills' tools are installed, their versions, and th...
+- `skills/cli-setup/scripts/cloud_identity.py` record <subscription> | require <subscription> [tenant_id]: a cloud resource belongs to one identity:
+- `skills/cli-setup/scripts/laptop.py` the laptop's own command-line tools (the cloud CLIs, yq, jq), run with a timeout, no shell, and an answer back as dat...
+
+## lfc-connection-sync
+
+- `skills/lfc-connection-sync/scripts/inventory.py` <profile>...: every UC connection in each workspace, one tab-separated line each:
+- `skills/lfc-connection-sync/scripts/sync.py` <targets.tsv>: create or update one UC connection per row, in each row's workspace. Idempotent: rerun after a fix.
+
 ## lfc-downstream-history
 
 - `skills/lfc-downstream-history/scripts/sqlserver-history-snapshot.sh` SCD type 2 history of an SCD type 1 destination table from periodic snapshots (history-snapshot.py: AUTO CDC FROM SNA...
@@ -68,6 +85,10 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 ## lfc-routing
 
 - `skills/lfc-routing/scripts/dashboard.py` the routing dashboard (../dashboard/routing.lvdash.json) on one schema's routing tables: the latest plan, the overrid...
+
+## lfc-saas-answer
+
+- `skills/lfc-saas-answer/scripts/connector_index.py` [--check]: the Lakeflow Connect connectors on docs.databricks.com, each with its doc pages and, for SaaS connectors, ...
 
 ## lfc-saas-pipeline
 
@@ -201,6 +222,14 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `skills/lfc-test-results/scripts/recall.py` look up recorded test results (results/runs/*.jsonl).
 - `skills/lfc-test-results/scripts/record.py` validate test-result records and append them to results/runs/<run>.jsonl.
 
+## lfc-test-settings
+
+- `skills/lfc-test-settings/scripts/settings.py` setup|show|path|get KEY|set KEY=VALUE...|unset KEY...|require KEY...|checked|defaults|remove-after|env| workspaces|az...
+
+## lfc-ui-capture
+
+- `skills/lfc-ui-capture/scripts/check_chrome_attach.py` before a UI capture, check that the Chrome DevTools tools will attach to your own Chrome.
+
 ## lfc-workload-contract
 
 - `skills/lfc-workload-contract/scripts/test-validate-model.sh` offline checks of validate-model.py (model format 1) on fixtures/model-*.yaml: both indentations (tables at 0 and at ...
@@ -220,6 +249,10 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 - `skills/mautic-source/scripts/setup.sh` <database> <web port>: Mautic in a MySQL database that's already running, as Mautic itself makes it, on the host with...
 - `skills/mautic-source/scripts/traffic.sh` Mautic's own writes, as a user's traffic would make them, so the source changes the way the app changes it (not the w...
 
+## podman-desktop-remove
+
+- `skills/podman-desktop-remove/scripts/remove_podman_desktop.py` [--yes] [--machines]: remove Podman Desktop from a Mac so it stops starting its own podman machine VM (a second VM ne...
+
 ## public-skill-conventions
 
 - `.claude/skills/public-skill-conventions/scripts/conventions-check.py` <skills-dir> <skill> [--base <git-ref>]: does one skill in a checkout of the public skills repo follow what the other...
@@ -229,6 +262,9 @@ line of its usage. Run a script with no arguments for its full usage instead of 
 
 - `skills/secret-handling/scripts/block-secret-prints.py` [--self-test]: Claude Code PreToolUse hook that refuses a Bash command printing a secret file.
 - `skills/secret-handling/scripts/pw.py` test-database passwords in the OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) instead ...
+- `skills/secret-handling/scripts/secret_find.py` <file> <field|-> [dir...]: where a secret's value appears, without printing it. Lists every file under the dirs that ...
+- `skills/secret-handling/scripts/secret_perms.py` [--fix] <path...>: secret files that another local user can read. Each path is a file or a directory (its files, recu...
+- `skills/secret-handling/scripts/secret_run.py` <file> <field|-> <ENV_NAME> -- <command> [args...]: run one command with a secret in an environment variable, without...
 
 ## shell-json-scripting
 
