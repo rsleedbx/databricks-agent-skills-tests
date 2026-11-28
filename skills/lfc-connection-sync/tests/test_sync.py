@@ -45,7 +45,7 @@ class SyncTest(unittest.TestCase):
             fh.write("secret-value\n")
         self.keep = mock.patch.object(sync.subprocess, "run")
         self.run = self.keep.start()
-        self.run.return_value = mock.Mock(stdout="  kept catalog\n")
+        self.run.return_value = mock.Mock(stdout="  kept catalog\n", stderr="", returncode=0)
 
     def tearDown(self):
         self.keep.stop()

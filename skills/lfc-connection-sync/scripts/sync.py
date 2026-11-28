@@ -72,7 +72,10 @@ def sync_row(api: Rest, row: dict) -> str:
     password = read_ref(pw_ref)
     if password is None:
         return f"{row['profile']} {row['name']}: FAILED missing_password: {pw_ref}"
-    body_options = options_for(row, password)
+    try:
+        body_options = options_for(row, password)
+    except json.JSONDecodeError as e:   # one bad row fails alone: the others still sync
+        return f"{row['profile']} {row['name']}: FAILED bad_extra: the extra column isn't JSON ({e.msg})"
     del password
     path = f"{CONNECTIONS}/{row['name']}"
     try:
