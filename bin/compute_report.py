@@ -55,7 +55,7 @@ def tostring(v) -> str:
 
 
 def created_ms_and_iso(created) -> tuple[float, str]:
-    """An update's creation_time as epoch ms and as ISO UTC text: the API's value is either (the shell read it as ms)."""
+    """An update's creation_time as epoch ms and as ISO UTC text: the API's value is either (the shell read ms)."""
     if isinstance(created, (int, float)):
         return float(created), datetime.fromtimestamp(created / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     text = str(created or "")
