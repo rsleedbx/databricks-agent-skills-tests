@@ -53,10 +53,10 @@ Engine-specific database setup (users, grants, change tracking / CDC, replicatio
 
 ## Tools
 
-Check what's installed first: [`check-tools.sh`](../cli-setup/scripts/check-tools.sh) prints each tool's version and the install command for anything missing (`base` by default; `local`, `clients`, `aws`, `azure`, `gcp`, or `all`).
+Check what's installed first: [`check_tools.py`](../cli-setup/scripts/check_tools.py) prints each tool's version and the install command for anything missing (`base` by default; `local`, `clients`, `aws`, `azure`, `gcp`, or `all`).
 
 ```bash
-bash ../cli-setup/scripts/check-tools.sh all
+python3 ../cli-setup/scripts/check_tools.py all
 ```
 
 | Group | Tools | macOS (Homebrew) |
@@ -74,8 +74,8 @@ On Linux, the same tools: `curl -LsSf https://astral.sh/uv/install.sh \| sh` for
 
 ## Rules for every target
 
-0. **Saved settings first** (**lfc-test-settings**): `eval "$(bash ../lfc-test-settings/scripts/settings.sh env)"`; `settings.sh require
-   <keys>` prints only what's missing: ask for that once, in one message, and `set` it. First run: `settings.sh setup`.
+0. **Saved settings first** (**lfc-test-settings**): `eval "$(python3 ../lfc-test-settings/scripts/settings.py env)"`; `settings.py require
+   <keys>` prints only what's missing: ask for that once, in one message, and `set` it. First run: `settings.py setup`.
 1. **Ask before creating anything.** Cloud databases bill by the hour, and some (SQL Managed Instance, large VMs) cost a lot or take hours to create. Collect every input in one message, list every resource you'll create (server or instance, shared network pieces, firewall rules, parameter groups, the UC connection) with the expected cost class, and wait for one "yes".
 2. **Check the cloud login first:** `aws sts get-caller-identity`, `az account show`, or `gcloud config list`. The account, subscription or project is the saved one (`AWS_PROFILE`, `AZ_SUBSCRIPTION`, `GCP_PROJECT`); never the CLI's current default, and never one picked for the user. Unsaved: show what the CLI reaches, recommend one, ask once.
 3. **Passwords:** generate them into a file (`umask 077; echo "Lfc1$(openssl rand -hex 12)" > admin.pw`: 28 characters with uppercase, lowercase and digits, starting with a letter, which meets SQL Server's and Azure SQL's policy of three of four character classes and Oracle's 30-byte limit; bare `openssl rand -hex` output is only lowercase and digits, and SQL Server refuses it), pass them to the CLI from the file, and never print them or paste them into the conversation. Delete the files once the UC connection exists, and tell the user where any remaining copy is. To keep a password in the OS keyring instead of a file (macOS Keychain, Windows Credential Manager, Linux Secret Service): `uv run ../secret-handling/scripts/pw.py new <name>` (or `import <name> <file>` for an existing file, then delete the file), and pass `keyring:<name>` wherever a script takes a password file (`ADMIN_PW_FILE`, `LOGIN_PW_FILE`, sync.sh's `password_file` column). Scripts read either through [`pw.sh`](../secret-handling/scripts/pw.sh); a VM with no keyring keeps the private file.

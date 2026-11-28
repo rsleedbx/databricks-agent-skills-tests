@@ -16,7 +16,7 @@ Script runs save `runs/<name>/png/`, masked in the page before every screenshot 
 ## 1. Attach to your Chrome (check every session)
 
 ```bash
-bash skills/lfc-ui-capture/scripts/check-chrome-attach.sh     # changes nothing; prints the fix when something's off
+python3 skills/lfc-ui-capture/scripts/check_chrome_attach.py     # changes nothing; prints the fix when something's off
 ```
 
 It checks that the `chrome-devtools` entry in `~/.claude.json` has `--autoConnect`, that your Chrome is running, and when the tools' server started. Then call `list_pages`:

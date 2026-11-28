@@ -1,5 +1,5 @@
 # defaults.yaml: the defaults the test skills use unless the user says otherwise (with layers.yaml, repo policy). State them before the first test
-# (settings.sh defaults prints them; setup shows them first). bin/check_defaults.py keeps the code in step:
+# (settings.py defaults prints them; setup shows them first). bin/check_defaults.py keeps the code in step:
 #   in:     each file must still contain the phrase (the place the default is set or stated)
 #   forbid: the pattern must appear in no file under the given folders (a default the rules exclude)
 # A change to a default changes this file and the files it names, in the same pull request.
@@ -41,7 +41,7 @@ defaults:
     value: "An expired workspace login is covered by your Azure CLI or account login; a login is asked for only when those fail, the account's first"
     why: "One account login covers every workspace in the account"
     in:
-      - {file: skills/account-token-fallback/scripts/ws-token.sh, has: "the account login first"}
+      - {file: skills/account-token-fallback/scripts/ws_token.py, has: "the account login first"}
   - id: compute
     area: Compute
     value: "Tests set serverless: true on every pipeline and gateway (LFC_SERVERLESS); the public skills leave it unset and switch on failure"
@@ -71,10 +71,10 @@ defaults:
     value: "Everything created is tagged owner (OWNER), purpose=lfc-test, created, CreatedBy=<skill>, RemoveAfter=today + REMOVE_AFTER_DAYS (7; GCP labels: remove_after); cleanup deletes only what carries its own CreatedBy tag"
     why: "Shared subscriptions and workspaces: never delete someone else's resource"
     in:
-      - {file: skills/lfc-test-settings/scripts/settings.sh, has: "remove-after)"}
-      - {file: skills/lfc-source-azure-sql/scripts/sqldb.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
-      - {file: skills/lfc-source-azure-sql/scripts/mi.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
-      - {file: skills/lfc-source-azure-flexserver/scripts/flex.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
+      - {file: skills/lfc-test-settings/scripts/settings.py, has: "def remove_after"}
+      - {file: skills/lfc-source-azure-sql/scripts/sqldb.sh, has: 'RemoveAfter="$(python3 "$ST" remove-after)"'}
+      - {file: skills/lfc-source-azure-sql/scripts/mi.sh, has: 'RemoveAfter="$(python3 "$ST" remove-after)"'}
+      - {file: skills/lfc-source-azure-flexserver/scripts/flex.sh, has: 'RemoveAfter="$(python3 "$ST" remove-after)"'}
       - {file: skills/lfc-source-eventhubs/scripts/eventhubs.sh, has: "CreatedBy=$MINE"}
     forbid:
       - {in: [skills], pattern: "removal_date"}

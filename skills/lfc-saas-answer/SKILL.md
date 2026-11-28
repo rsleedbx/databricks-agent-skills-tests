@@ -19,8 +19,8 @@ Everything here comes from public pages: the Databricks docs and their sitemap, 
 [references/connectors.md](references/connectors.md) lists every connector with an `ingestion/lakeflow-connect/<connector>-pipeline` page: its release status (the badge under the page title), its other doc pages, and the ready-to-run pipeline notebook the docs publish for it (import it with the page's *Open in Databricks* button). It is generated from the public docs sitemap:
 
 ```bash
-bash skills/lfc-saas-answer/scripts/connector-index.sh            # rewrite references/connectors.md
-bash skills/lfc-saas-answer/scripts/connector-index.sh --check    # what changed since, exit 1 if anything
+python3 skills/lfc-saas-answer/scripts/connector_index.py            # rewrite references/connectors.md
+python3 skills/lfc-saas-answer/scripts/connector_index.py --check    # what changed since, exit 1 if anything
 ```
 
 Rerun it after a docs release.

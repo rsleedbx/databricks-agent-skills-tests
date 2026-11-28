@@ -439,7 +439,7 @@ def cli(*args: str) -> str:
     global _ENV
     if _ENV is None:
         _ENV = dict(os.environ, PATH="/opt/homebrew/bin:" + os.environ.get("PATH", ""))  # the newer CLI first
-        tok = subprocess.run(["bash", str(REPO / "skills/account-token-fallback/scripts/ws-token.sh"), PROFILE],
+        tok = subprocess.run([sys.executable, str(REPO / "skills/account-token-fallback/scripts/ws_token.py"), PROFILE],
                              capture_output=True, text=True, env=_ENV, timeout=120).stdout.strip()
         if tok:
             _ENV["DATABRICKS_CONFIG_FILE"] = tok

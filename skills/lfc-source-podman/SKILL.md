@@ -16,7 +16,7 @@ If you need SQL Server Always On Availability Groups, Db2, Informix, or specific
 
 ### macOS
 
-**Tools:** Podman, Lima, and the SQL clients; see **lfc-source-setup** "Tools" (`bash skills/cli-setup/scripts/check-tools.sh local`, and `clients` for the SQL clients). In short:
+**Tools:** Podman, Lima, and the SQL clients; see **lfc-source-setup** "Tools" (`python3 skills/cli-setup/scripts/check_tools.py local`, and `clients` for the SQL clients). In short:
 
 ```bash
 brew install podman lima libpq mysql-client sqlcmd mongosh

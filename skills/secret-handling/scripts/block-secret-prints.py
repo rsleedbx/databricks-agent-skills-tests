@@ -93,9 +93,9 @@ SAFE = {
     "mkdir",
     "touch",
     "mv",
-    "secret-run.sh",
-    "secret-find.sh",
-    "secret-perms.sh",
+    "secret_run.py",
+    "secret_find.py",
+    "secret_perms.py",
     "block-secret-prints.py",
     "git",
 }
@@ -175,6 +175,8 @@ def verdict(cmd: str) -> str | None:
         if i >= len(toks):
             continue
         word = os.path.basename(toks[i])
+        if word in {"python", "python3"} and i + 1 < len(toks) and os.path.basename(toks[i + 1]) in SAFE:
+            continue  # python3 scripts/secret_run.py ...: judged by the script, as its bare name is
         if word in SAFE or word not in PRINTERS:
             continue
         args, j = toks[i + 1 :], 0
@@ -195,8 +197,8 @@ def verdict(cmd: str) -> str | None:
                 return (
                     f"refused: `{word}` would print the secret file {path.strip(chr(39) + chr(34))}. "
                     "Read only the fields you need into a variable for the one command that uses them "
-                    "(secret-run.sh <file> <field> <ENV> -- <command>), or check a value without printing it "
-                    "(secret-find.sh, a length, a hash). Skill: secret-handling."
+                    "(secret_run.py <file> <field> <ENV> -- <command>), or check a value without printing it "
+                    "(secret_find.py, a length, a hash). Skill: secret-handling."
                 )
             j += 2 if a == "<" else 1
     return None
@@ -220,7 +222,8 @@ def self_test() -> int:
         "chmod 600 db.pw",
         "printf 'x' > new.pw",
         "grep -l password app_credentials.yaml",
-        "secret-run.sh c_credentials.json .dba.password SQLCMDPASSWORD -- sqlcmd -Q 'SELECT 1'",
+        "secret_run.py c_credentials.json .dba.password SQLCMDPASSWORD -- sqlcmd -Q 'SELECT 1'",
+        "python3 scripts/secret_run.py c_credentials.json .dba.password SQLCMDPASSWORD -- sqlcmd -Q 'SELECT 1'",
         "sqlcmd -i script.sql",
         "cat README.md",
         "PGPASSWORD=$(cat ~/.lfc-secrets/pg.pw) psql -c 'SELECT 1'",

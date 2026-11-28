@@ -59,7 +59,7 @@ def test_saved_settings_and_none():
         os.environ["LFC_TESTS_SETTINGS"] = os.path.join(d, "s.env")
         os.environ.pop("DATABRICKS_RUNTIME_VERSION", None)
         assert ready.main([]) == 2                       # nothing saved, no profile, not in a notebook
-        os.system(f"bash '{ready.SETTINGS}' set DATABRICKS_PROFILE=ws-x LFC_CATALOG=cat_x > /dev/null")
+        os.system(f"python3 '{ready.SETTINGS}' set DATABRICKS_PROFILE=ws-x LFC_CATALOG=cat_x > /dev/null")
         do, calls, _ = fake()
         _, out = run([], do)
         assert "== ws-x" in out and any("/catalogs/cat_x" in p for _, p in calls)
