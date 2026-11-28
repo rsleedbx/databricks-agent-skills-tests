@@ -20,7 +20,7 @@ Aurora uses a **cluster + writer instance** structure with auto-scaling storage 
 
 ## Inputs to collect
 
-**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.sh env`; `settings.sh require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. The rest below is per cluster.
+**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.py env`; `settings.py require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. The rest below is per cluster.
 
 | Parameter | Default | Example |
 |-----------|---------|---------|

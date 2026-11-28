@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from check import Report, check
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SETTINGS = os.path.join(HERE, "..", "..", "lfc-test-settings", "scripts", "settings.sh")
+SETTINGS = os.path.join(HERE, "..", "..", "lfc-test-settings", "scripts", "settings.py")
 EGRESS = os.path.join(HERE, "..", "..", "lfc-source-firewall", "scripts", "serverless-egress.py")
 
 # the connector previews: integrated CDC per engine, direct_cdc_connector (the gateway route for MySQL, PostgreSQL and
@@ -296,9 +296,9 @@ def in_workspace() -> bool:
 
 
 def saved(key: str) -> str:
-    if not os.path.exists(SETTINGS) or not shutil.which("bash"):
+    if not os.path.exists(SETTINGS):
         return ""
-    p = subprocess.run(["bash", SETTINGS, "get", key], capture_output=True, text=True, check=False)
+    p = subprocess.run([sys.executable, SETTINGS, "get", key], capture_output=True, text=True, check=False)
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
@@ -313,7 +313,7 @@ def main(argv=None, api=None) -> int:
     a = ap.parse_args(argv)
     prof = a.profile or saved("DATABRICKS_PROFILE")
     if not prof and not in_workspace() and api is None:
-        print(f"ready.py: no <profile>, and no DATABRICKS_PROFILE saved: bash {SETTINGS} setup")
+        print(f"ready.py: no <profile>, and no DATABRICKS_PROFILE saved: python3 {SETTINGS} setup")
         return 2
     cat = a.catalog   # else this workspace's default catalog (target()), then the saved LFC_CATALOG
     api = api or Rest.connect(prof or None, retry_s=20)   # read-only probes: a refusal is an answer, not worth 5 min

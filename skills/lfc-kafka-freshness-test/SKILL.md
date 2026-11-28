@@ -23,10 +23,10 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
 
 ## Workflow
 
-0. **Plan and draw it.** Read the saved answers first (**lfc-test-settings**: `eval "$(bash skills/lfc-test-settings/scripts/settings.sh env)"`,
-   then `settings.sh require DATABRICKS_PROFILE LFC_CATALOG` lists only what to ask). Pass the cloud identity on every call (`--profile` on each Databricks call; the broker's
+0. **Plan and draw it.** Read the saved answers first (**lfc-test-settings**: `eval "$(python3 skills/lfc-test-settings/scripts/settings.py env)"`,
+   then `settings.py require DATABRICKS_PROFILE LFC_CATALOG` lists only what to ask). Pass the cloud identity on every call (`--profile` on each Databricks call; the broker's
    skill does the same for its cloud). An expired workspace login often still works through
-   **account-token-fallback** (`ws-token.sh`). Draw the plan before creating anything: `pipeline.sh` without `--apply`
+   **account-token-fallback** (`ws_token.py`). Draw the plan before creating anything: `pipeline.sh` without `--apply`
    prints the spec; give it to **lfc-pipeline-diagram**'s `pipeline-diagram.py --pipeline-json` with a `KAFKA`
    connection JSON. The probe needs a SQL warehouse: create a Small serverless one if the workspace has none (tagged,
    auto-stop), and delete it at the end.

@@ -50,7 +50,7 @@ Without the customer's database, the TPC workloads give the usual shapes: which 
 
 **Fact or dimension:** every TPC table in `schemas/` carries `role:` (dimension, lookup, bridge, fact, log, queue) from its specification. Dimension and lookup are dimensions; the others carry the events (the model's `kind`). [`describe.py`](scripts/describe.py) `schemas/<model>.yaml` lists the tables by kind and role, with their rows, and the model's `signals:`: patterns a model can learn that the source build writes over the spec's random values (TPC-H's lineitem lateness). A report on data built with a signal names it and its parameters.
 
-Python steps run with `uv run scripts/<script>.py`: each script declares its packages (PyYAML, sqlglot) in its first lines, so uv builds the environment itself; the checks need DuckDB and the MySQL collector jq. **Tools:** see **lfc-source-setup** "Tools" (`check-tools.sh base`).
+Python steps run with `uv run scripts/<script>.py`: each script declares its packages (PyYAML, sqlglot) in its first lines, so uv builds the environment itself; the checks need DuckDB and the MySQL collector jq. **Tools:** see **lfc-source-setup** "Tools" (`check_tools.py base`).
 
 ## Run
 

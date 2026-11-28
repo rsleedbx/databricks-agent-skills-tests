@@ -27,7 +27,7 @@ Not suitable for: local development (use Podman), existing on-premises databases
 
 ## Input parameters to collect
 
-**Saved settings first** (**lfc-test-settings**): `GCP_PROJECT`, `GCP_REGION` and `OWNER` come from `settings.sh env`; `settings.sh require GCP_PROJECT GCP_REGION OWNER` lists only what to ask. The rest below is per instance.
+**Saved settings first** (**lfc-test-settings**): `GCP_PROJECT`, `GCP_REGION` and `OWNER` come from `settings.py env`; `settings.py require GCP_PROJECT GCP_REGION OWNER` lists only what to ask. The rest below is per instance.
 
 | Input | Example | Notes |
 |-------|---------|-------|

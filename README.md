@@ -37,7 +37,7 @@ Each commit is a new version (the plugin has no fixed version number), so an upd
 
 From a terminal, the same with `claude plugin marketplace add rsleedbx/databricks-agent-skills-tests`, `claude plugin install lfc-tests@lfc-tests`, `claude plugin marketplace update lfc-tests` and `claude plugin update lfc-tests@lfc-tests`. The public Lakeflow Connect skill the tests use comes from the Databricks plugin: `/plugin marketplace add databricks/databricks-agent-skills`, then `/plugin install databricks@databricks-agent-skills`.
 
-Then ask in plain words, as above. Each session starts by naming any tool the tests need that isn't installed (Databricks CLI, uv, jq, yq, DuckDB, Podman, and Lima on macOS); ask *"check the tools for local tests"* for the install commands ([check-tools.sh](skills/cli-setup/scripts/check-tools.sh)). Results you record go to `~/.lfc/tests/results/` (or `$LFC_TESTS_RESULTS`), next to the ones shipped with the plugin; to add yours to this repo, open a pull request from a clone ([CONTRIBUTING.md](CONTRIBUTING.md)).
+Then ask in plain words, as above. Each session starts by naming any tool the tests need that isn't installed (Databricks CLI, uv, jq, yq, DuckDB, Podman, and Lima on macOS); ask *"check the tools for local tests"* for the install commands ([check_tools.py](skills/cli-setup/scripts/check_tools.py)). Results you record go to `~/.lfc/tests/results/` (or `$LFC_TESTS_RESULTS`), next to the ones shipped with the plugin; to add yours to this repo, open a pull request from a clone ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## What's tested, by route
 

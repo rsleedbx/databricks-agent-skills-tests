@@ -14,16 +14,16 @@ to plugin users).
   Code calls `main([...])` without a shell.
 - **Ask each setup question once.** Before asking which cloud account, subscription, region, resource group,
   workspace, catalog or source host to use, read the user's saved answers:
-  `eval "$(bash skills/lfc-test-settings/scripts/settings.sh env)"`. `settings.sh require <keys>` prints only the keys
-  still missing: ask for those in one message, each with a recommendation, and `settings.sh set` them. With nothing
-  saved yet, `settings.sh setup` lists what the CLIs already know first ([lfc-test-settings](skills/lfc-test-settings/SKILL.md)).
-- **State the defaults first.** `bash skills/lfc-test-settings/scripts/settings.sh defaults` prints what the skills do
+  `eval "$(python3 skills/lfc-test-settings/scripts/settings.py env)"`. `settings.py require <keys>` prints only the keys
+  still missing: ask for those in one message, each with a recommendation, and `settings.py set` them. With nothing
+  saved yet, `settings.py setup` lists what the CLIs already know first ([lfc-test-settings](skills/lfc-test-settings/SKILL.md)).
+- **State the defaults first.** `python3 skills/lfc-test-settings/scripts/settings.py defaults` prints what the skills do
   unless the user says otherwise (a cloud VM of their own, the workspace's cloud and region, how the firewall is opened,
   serverless in tests, tags and cleanup): tell the user before the first test. Keep code and
   [defaults.yaml](defaults.yaml) in step: `bin/check_defaults.py` checks them.
-- **Tools:** `bash skills/cli-setup/scripts/check-tools.sh local` (or `aws`, `azure`, `gcp`) names what's missing, with
+- **Tools:** `python3 skills/cli-setup/scripts/check_tools.py local` (or `aws`, `azure`, `gcp`) names what's missing, with
   the install command; install nothing without asking.
-- **Logins:** an expired workspace login often still works through **account-token-fallback** (`ws-token.sh`); ask for
+- **Logins:** an expired workspace login often still works through **account-token-fallback** (`ws_token.py`); ask for
   a login only when that fails, and then for the account login first.
 - **No long live run for a change already backed by evidence.** When earlier runs (`recall.py` in
   [lfc-test-results](skills/lfc-test-results/SKILL.md)), the vendor's docs or a skill already show how it behaves, make

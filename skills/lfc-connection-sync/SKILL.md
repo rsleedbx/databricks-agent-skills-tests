@@ -29,10 +29,10 @@ Use the default names (`<firstname><lastname>-<engine>-<target>`, **lfc-source-s
 
 ```bash
 S=skills/lfc-connection-sync/scripts
-bash $S/sync.sh targets.tsv
+python3 $S/sync.py targets.tsv
 ```
 
-[`sync.sh`](scripts/sync.sh) creates a connection that doesn't exist and updates one that does (with every option, so a changed password or host is applied), and prints one line per row: `created`, `updated`, or `FAILED <class>: <error>`. Rerunning is safe. Tested on an Azure serverless-only and an AWS classic workspace: first run `created` / `updated`, rerun `updated` everywhere.
+[`sync.py`](scripts/sync.py) creates a connection that doesn't exist and updates one that does (with every option, so a changed password or host is applied), and prints one line per row: `created`, `updated`, or `FAILED <class>: <error>`. Rerunning is safe. Tested on an Azure serverless-only and an AWS classic workspace: first run `created` / `updated`, rerun `updated` everywhere.
 
 | Class | Meaning | Fix |
 |---|---|---|
@@ -46,11 +46,11 @@ Then check each connection from that workspace's serverless compute: **lfc-sourc
 ## Inventory
 
 ```bash
-bash $S/inventory.sh ws-azure ws-aws > inventory.tsv     # profile, name, type, host, port, owner, created_at
+python3 $S/inventory.py ws-azure ws-aws > inventory.tsv     # profile, name, type, host, port, owner, created_at
 grep janedoe- inventory.tsv | cut -f1-5 | column -t       # yours
 ```
 
-[`inventory.sh`](scripts/inventory.sh) lists every connection in each workspace (the API never returns passwords). Use it before a sync (what exists, what would collide with someone else's name), after one (every workspace has every row), and to find stale connections to delete. Before sharing the output, remember it holds hosts and other people's connection names: keep it out of public repositories.
+[`inventory.py`](scripts/inventory.py) lists every connection in each workspace (the API never returns passwords). Use it before a sync (what exists, what would collide with someone else's name), after one (every workspace has every row), and to find stale connections to delete. Before sharing the output, remember it holds hosts and other people's connection names: keep it out of public repositories.
 
 ## Logging in to many workspaces
 

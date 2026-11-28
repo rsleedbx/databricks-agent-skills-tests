@@ -42,7 +42,7 @@ sudo systemctl start postgresql
 
 # Allow remote connections: only the addresses the firewall opens, over TLS (Ubuntu's package turns ssl on with its own
 # certificate; the UC connection trusts it). allowed-cidrs.txt: the laptop's /32 and the workspace's serverless egress,
-# one CIDR per line (lfc-source-firewall: serverless-egress.sh <cloud> <region> | grep /). tee -a appends: without -a
+# one CIDR per line (lfc-source-firewall: python3 serverless-egress.py <cloud> <region> | grep /). tee -a appends: without -a
 # it would replace postgresql.conf.
 echo "listen_addresses = '*'" | sudo tee -a /etc/postgresql/*/main/postgresql.conf
 while read -r cidr; do echo "hostssl all all $cidr scram-sha-256"; done < allowed-cidrs.txt | sudo tee -a /etc/postgresql/*/main/pg_hba.conf

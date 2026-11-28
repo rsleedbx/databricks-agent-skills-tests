@@ -13,12 +13,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 
 from script_common import Fail
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SETTINGS = os.path.join(HERE, "..", "..", "lfc-test-settings", "scripts", "settings.sh")
+SETTINGS = os.path.join(HERE, "..", "..", "lfc-test-settings", "scripts", "settings.py")
 
 
 def az(*args: str, quiet: bool = False) -> str:
@@ -82,9 +83,9 @@ def owner() -> str:
 
 def remove_after() -> str:
     """The RemoveAfter date for a new resource: today + REMOVE_AFTER_DAYS (lfc-test-settings' remove-after)."""
-    p = subprocess.run(["bash", SETTINGS, "remove-after"], stdout=subprocess.PIPE, text=True, check=False)
+    p = subprocess.run([sys.executable, SETTINGS, "remove-after"], stdout=subprocess.PIPE, text=True, check=False)
     if p.returncode:
-        raise Fail(p.returncode, "settings.sh remove-after failed")
+        raise Fail(p.returncode, "settings.py remove-after failed")
     return p.stdout.strip()
 
 

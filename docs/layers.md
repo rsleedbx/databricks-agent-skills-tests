@@ -37,7 +37,7 @@ One line per skill: what it does, which decides its layer.
 | `options-first` | common | Lists and ranks the ways to do a task; a method, no tooling. |
 | `podman-desktop-remove` | common | Removes Podman Desktop from a Mac so its VM stops filling the disk; host cleanup, no database. |
 | `secret-handling` | common | Reads passwords and keys without printing them; every layer reads credentials. Also holds `pw.sh` and `pw.py` (the password reference used by source and Lakeflow scripts). |
-| `cli-setup` | common | Checks the command-line tools are installed and records a cloud identity (`check-tools.sh`, `cloud-identity.sh`), which sources and Lakeflow scripts both source. Moved here from lfc-source-setup. |
+| `cli-setup` | common | Checks the command-line tools are installed and records a cloud identity (`check_tools.py`, `cloud-identity.sh`), which sources and Lakeflow scripts both source. Moved here from lfc-source-setup. |
 | `lfc-test-settings` | common | Keeps the answers a test would ask on every run (cloud accounts, region, resource group, workspaces, Podman or a VM) in one file per user; every layer reads them. |
 | `shell-json-scripting` | common | How to read CLI JSON in shell (jq, yq, DuckDB); used by every script. |
 | `watch-progress` | common | Waits on a long job with backoff; generic. |
@@ -81,9 +81,9 @@ One line per skill: what it does, which decides its layer.
 | From | To | Why |
 |---|---|---|
 | `lfc-source-setup/scripts/pw.sh`, `pw.py` | `secret-handling/scripts/` | Password reference used by sources, Lakeflow and connection scripts; a secret-handling helper. |
-| `lfc-source-setup/scripts/cloud-identity.sh`, `check-tools.sh` | `cli-setup/scripts/` (new common skill) | Used by sources and by lfc-source-setup alike; neither is about Lakeflow or a particular engine. |
+| `lfc-source-setup/scripts/cloud-identity.sh`, `check_tools.py` | `cli-setup/scripts/` (new common skill) | Used by sources and by lfc-source-setup alike; neither is about Lakeflow or a particular engine. |
 
-Nothing was moved that the internal tool uses. The internal tool uses `skills/account-token-fallback/scripts/ws-token.sh` (common, unchanged) and `skills/lfc-source-cloud-vm/scripts` (sources, unchanged).
+Nothing was moved that the internal tool uses. The internal tool uses `skills/account-token-fallback/scripts/ws_token.py` (common, unchanged) and `skills/lfc-source-cloud-vm/scripts` (sources, unchanged).
 
 ## The baseline
 
@@ -143,7 +143,7 @@ What the internal tool would change, when the split happens (it calls this repo 
 
 | Path it uses today | Layer | After the split |
 |---|---|---|
-| `skills/account-token-fallback/scripts/ws-token.sh` | common | the shared repo |
+| `skills/account-token-fallback/scripts/ws_token.py` | common | the shared repo |
 | `skills/lfc-source-cloud-vm/scripts` (copied to the VM) | sources | the sources repo; its path setting moves to that repo |
 | `skills/lfc-source-log-state/scripts/sqlserver-log-state.py` (in its contributor skill) | lakeflow | the lakeflow repo |
 | `skills/lfc-schema-change-test/scripts/lib.sh` (in its docs) | lakeflow | the lakeflow repo |

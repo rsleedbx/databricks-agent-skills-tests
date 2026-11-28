@@ -9,17 +9,17 @@ Shared by the source and Lakeflow skills (common layer: any skill may use these 
 
 ## Tools
 
-Run [`check-tools.sh`](scripts/check-tools.sh) with a group: `base` (default), `local`, `clients`, `aws`, `azure`, `gcp`, or `all`. It prints each tool's version and the install command for anything missing, and exits 1 if something asked for is missing. It installs nothing.
+Run [`check_tools.py`](scripts/check_tools.py) with a group: `base` (default), `local`, `clients`, `aws`, `azure`, `gcp`, or `all`. It prints each tool's version and the install command for anything missing, and exits 1 if something asked for is missing. It installs nothing.
 
 ```bash
-bash scripts/check-tools.sh local
+python3 scripts/check_tools.py local
 ```
 
 The group table and the install commands per platform are in the "Tools" section of lfc-source-setup.
 
 ## Cloud identity
 
-Source the helper; it doesn't run on its own. [`cloud-identity.sh`](scripts/cloud-identity.sh) defines:
+[`cloud_identity.py`](scripts/cloud_identity.py) does it (`record <subscription>`, `require <subscription> [tenant_id]`). The shell scripts of the lfc-source-* skills source [`cloud-identity.sh`](scripts/cloud-identity.sh), a shim that defines the same two functions:
 
 - `az_record <subscription>`: prints one `IDENTITY azure tenant_id=... subscription_id=... subscription_name=...` line to keep with the resource's settings.
 - `az_require <subscription> [tenant_id]`: stops unless this `az login` reaches that subscription in that tenant.
