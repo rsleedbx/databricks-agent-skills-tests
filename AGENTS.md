@@ -3,6 +3,14 @@
 For coding agents opened in a clone of this repo (the plugin's SessionStart hook, `bin/plugin-session.sh`, says the same
 to plugin users).
 
+- **Python, not shell; REST, not the CLI (migration in progress).** The skills must run both on a laptop (Claude Code,
+  Cursor) and inside a workspace (Genie Code runs Python and SQL on the page's compute, with no shell). So: new and
+  changed scripts are Python; every Databricks call goes through `lfc_rest.Rest` (the SDK only signs in), never a
+  `databricks ...` subprocess. The workspace comes from `--profile` (or `PROFILE`) on the laptop and from the
+  notebook's own login when none is given: `Rest.connect(profile)` does both. The `.sh` scripts are being converted
+  (shell tests and `lib.sh` users until theirs is done): expect both kinds for a while. **Never convert back to `.sh`,
+  and don't add a new `.sh`.** A shell script that stays is a thin entry point that runs Python (a forced SSH command,
+  a file older saved configs name).
 - **Ask each setup question once.** Before asking which cloud account, subscription, region, resource group,
   workspace, catalog or source host to use, read the user's saved answers:
   `eval "$(bash skills/lfc-test-settings/scripts/settings.sh env)"`. `settings.sh require <keys>` prints only the keys
