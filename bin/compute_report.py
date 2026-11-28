@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 R = Path(__file__).resolve().parent.parent
@@ -26,7 +27,7 @@ sys.path.insert(0, str(R / "skills" / "lfc-rest" / "scripts"))
 sys.path.insert(0, str(R / "skills" / "lfc-pipeline-watch" / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lfc_rest import Rest  # noqa: E402
-from lfc_watch.core import events as pipeline_events  # noqa: E402
+from lfc_watch.core import events as pipeline_events, ms as epoch_ms  # noqa: E402
 import pipeline_api  # noqa: E402
 
 HEADER = ["name", "kind", "serverless", "ran_on", "started", "reached_source", "update_state", "error"]
@@ -53,8 +54,17 @@ def tostring(v) -> str:
     return str(v).lower() if isinstance(v, bool) else str(v)
 
 
-def update_facts(api: Rest, pipe: str, upd: str, st: str) -> tuple[str, str, str, str]:
-    """(ran_on, started, reached, error) of one update, from its config and its own events."""
+def created_ms_and_iso(created) -> tuple[float, str]:
+    """An update's creation_time as epoch ms and as ISO UTC text: the API's value is either (the shell read it as ms)."""
+    if isinstance(created, (int, float)):
+        return float(created), datetime.fromtimestamp(created / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    text = str(created or "")
+    return (epoch_ms(text) if text else 0.0), text
+
+
+def update_facts(api: Rest, pipe: str, upd: str, st: str, created_ms: float) -> tuple[str, str, str, str]:
+    """(ran_on, started, reached, error) of one update, from its config and the events since it was created (its
+    own events come after its creation, and the newest 1,000 of the pipeline are read at most)."""
     ran, started, reached, err = "not-started", "unknown", "unknown", ""
     try:
         v = tostring((pipeline_api.get_update(api, pipe, upd).get("update") or {}).get("config", {}).get("serverless"))
@@ -62,7 +72,8 @@ def update_facts(api: Rest, pipe: str, upd: str, st: str) -> tuple[str, str, str
         v = ""
     ran = {"true": "serverless", "false": "classic"}.get(v, ran)
     try:
-        evs = [e for e in pipeline_events(api, pipe, 0, 250) if (e.get("origin") or {}).get("update_id") == upd]
+        evs = [e for e in pipeline_events(api, pipe, since_ms=created_ms, max_events=1000)
+               if (e.get("origin") or {}).get("update_id") == upd]
     except Exception:  # noqa: BLE001
         evs = []
     messages = [str(e.get("message") or "") for e in evs]
@@ -91,14 +102,15 @@ def rows(api: Rest, prefix: str, since: str) -> list[list[str]]:
             continue
         spec = p.get("spec") or {}
         latest = (p.get("latest_updates") or [{}])[0]
-        upd, st, created = latest.get("update_id") or "", latest.get("state") or "", latest.get("creation_time") or ""
+        upd, st = latest.get("update_id") or "", latest.get("state") or ""
+        created_ms, created = created_ms_and_iso(latest.get("creation_time"))
         if since and created < since:           # ISO UTC times compare as strings
             continue
         kind = "gateway" if (spec.get("gateway_definition") or {}).get("connection_name") else "pipeline"
         serverless = tostring(spec.get("serverless")) if spec.get("serverless") is not None else "unset"
         ran, started, reached, err = "not-started", "unknown", "unknown", ""
         if upd:
-            ran, started, reached, err = update_facts(api, pid, upd, st)
+            ran, started, reached, err = update_facts(api, pid, upd, st, created_ms)
         out.append([p.get("name") or "", kind, serverless, ran, started, reached, st, err])
     return out
 

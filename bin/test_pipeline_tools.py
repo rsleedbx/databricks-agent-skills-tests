@@ -178,10 +178,10 @@ class Compute(unittest.TestCase):
             {"message": "x", "origin": {"update_id": "other"}, "level": "ERROR",
              "error": {"exceptions": [{"message": "[NOT_MINE_ERROR]"}]}},
         ]
-        ran, started, reached, err = compute_report.update_facts(self.api(events), PIPE, "u1234567", "FAILED")
+        ran, started, reached, err = compute_report.update_facts(self.api(events), PIPE, "u1234567", "FAILED", 0)
         self.assertEqual((ran, started, reached, err), ("serverless", "yes", "no", "CONNECTION_ERROR.X"))
         events[1]["error"]["exceptions"][0]["message"] = "[FLOW_SCHEMA_CHANGED_ERROR.X] changed"
-        ran, started, reached, err = compute_report.update_facts(self.api(events), PIPE, "u1234567", "FAILED")
+        ran, started, reached, err = compute_report.update_facts(self.api(events), PIPE, "u1234567", "FAILED", 0)
         self.assertEqual((reached, err), ("unknown", "FLOW_SCHEMA_CHANGED_ERROR.X"))
 
     def test_rows_read_each_pipeline_once(self):
@@ -189,6 +189,14 @@ class Compute(unittest.TestCase):
         rows = compute_report.rows(self.api(events, serverless=False), "janedoe-", "")
         self.assertEqual(rows, [["janedoe-x", "pipeline", "true", "classic", "yes", "yes", "FAILED", ""]])
         self.assertEqual(compute_report.rows(self.api(events), "janedoe-", "2026-11-01T00:00:00Z"), [])
+
+    def test_creation_time_as_ms_or_iso(self):
+        ms, iso = compute_report.created_ms_and_iso(1761516300000)
+        self.assertEqual((ms, iso), (1761516300000.0, "2025-10-26T22:05:00Z"))
+        ms, iso = compute_report.created_ms_and_iso("2026-10-26T02:00:00Z")
+        self.assertEqual(iso, "2026-10-26T02:00:00Z")
+        self.assertGreater(ms, 0)
+        self.assertEqual(compute_report.created_ms_and_iso(None), (0.0, ""))
 
     def test_aligned_pads_columns(self):
         self.assertEqual(compute_report.aligned([["a", "bb"], ["ccc", "d"]]), "a    bb\nccc  d")
