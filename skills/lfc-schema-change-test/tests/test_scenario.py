@@ -155,6 +155,13 @@ class Preflight(unittest.TestCase):
         with self.assertRaises(scenario.Setup):
             run_of(Api(), env={"ENGINE": "postgres"})
         self.assertEqual(run_of(Api(), env={"MODE": "integrated"}).wait, 0)
+        env = dict(ENV)
+        del env["PROFILE"]                       # inside a workspace: no profile, the notebook's login
+        clock = Clock()
+        r = scenario.Run("addcol", env=env, api=rest(Api()), warehouse=Wh(), src=Src(), clock=clock,
+                         sleep=clock.sleep, log=lambda *a: None)
+        self.assertIsNone(r.profile)
+        self.assertEqual(r.runtime("ap1", True), "")
 
 
 class Pipelines(unittest.TestCase):

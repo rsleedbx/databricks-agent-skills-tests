@@ -8,7 +8,8 @@
         r.claim("loads", "PASS" if r.q(f"SELECT COUNT(*) FROM {r.t}.t") == "10" else "FAIL", "10 rows")
         r.result_md("my-scenario")                 # the report (OUT), and the run recorded (lfc-test-results)
 
-Settings (environment, as the shell scripts took them): PROFILE, CATALOG, and the source: SOURCE_JSON (a contract,
+Settings (environment, as the shell scripts took them): PROFILE (the laptop's workspace, or --profile; none inside a
+workspace: the notebook's own login), CATALOG, and the source: SOURCE_JSON (a contract,
 lfc-source-contract) or SRC_SQL + CONN_USER + CONNECTION. MODE (standard | integrated), GATEWAY_WAIT (90 s after a source
 change), GATEWAY_COMPUTE (serverless | classic), PIPELINE_CONF (JSON), PIPELINE_CONTINUOUS, EARLY_STOP (1), PREFIX,
 WAREHOUSE, LFC_DEADLINE / LFC_DEADLINE_MIN, KEEP (1: leave everything), KEEP_DAYS (14; 0 deletes at the end),
@@ -64,7 +65,7 @@ class Run:
         except ValueError as x:
             raise Setup(f"{x}: set SOURCE_JSON, or SRC_SQL with CONN_USER and CONNECTION")
         se = self.src.env
-        self.profile = need(e, "PROFILE")
+        self.profile = e.get("PROFILE") or None   # none in a workspace: the notebook's own login
         self.catalog = need(e, "CATALOG")
         self.connection = e.get("CONNECTION") or se.get("CONNECTION") or need(e, "CONNECTION")
         self.conn_user = e.get("CONN_USER") or se.get("CONN_USER") or need(e, "CONN_USER")
@@ -197,7 +198,7 @@ class Run:
         self.log(f"LINK pipeline {self.host}/pipelines/{self.ap}")
         if self.e.get("DIAGRAM", "1") == "1":
             subprocess.run(["bash", str(SKILLS / "lfc-pipeline-diagram/scripts/show-diagram.sh"), self.ap],
-                           env={**os.environ, "PROFILE": self.profile}, check=False)
+                           env={**os.environ, **({"PROFILE": self.profile} if self.profile else {})}, check=False)
         return True
 
     def set_objects(self, objects: list) -> None:
@@ -418,6 +419,8 @@ class Run:
         self.metrics[name] = value
 
     def runtime(self, pid: str, summary: bool) -> str:
+        if not self.profile:   # bin/lfc-runtime.sh is a laptop CLI tool (in a workspace: not run)
+            return ""
         r = subprocess.run([str(REPO / "bin/lfc-runtime.sh"), *(["--summary"] if summary else []), self.profile, pid],
                            capture_output=summary, text=True, check=False)
         return (r.stdout or "").replace("Lakeflow runtime: ", "").splitlines()[0] if summary and r.stdout else ""
