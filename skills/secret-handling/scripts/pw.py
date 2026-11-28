@@ -43,8 +43,11 @@ def read_ref(ref: str) -> str | None:
     """The password a reference names (a file's content, or keyring:<name>'s password) without its trailing newlines;
     None when it can't be read. Nothing is printed."""
     if ref.startswith("keyring:"):
-        if keyring is None:
-            return None
+        if keyring is None:   # plain python3 without the keyring package: run this file under uv, which installs it
+            import subprocess
+            r = subprocess.run(["uv", "run", "-q", "--script", os.path.abspath(__file__), "read", ref],
+                               capture_output=True, text=True, check=False)
+            return r.stdout.rstrip("\n") if r.returncode == 0 else None
         try:
             pw = keyring.get_password(SERVICE, ref[len("keyring:"):])
         except KeyringError:

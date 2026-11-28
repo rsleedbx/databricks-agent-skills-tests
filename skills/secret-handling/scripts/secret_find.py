@@ -9,6 +9,7 @@ git log -S takes the value as an argument, so it shows in the process list while
 from __future__ import annotations
 
 import os
+import stat
 import sys
 import tempfile
 
@@ -35,18 +36,31 @@ def git_checkouts(d: str) -> list[str]:
     return sorted(found)
 
 
+def holds(f: str, value: bytes) -> bool:
+    """Whether the regular file holds the value; read in chunks that overlap by len(value) - 1 bytes."""
+    overlap = max(len(value) - 1, 0)
+    tail = b""
+    with open(f, "rb") as fh:
+        while True:
+            chunk = fh.read(1 << 20)
+            if not chunk:
+                return False
+            if value in tail + chunk:
+                return True
+            tail = (tail + chunk)[-overlap:] if overlap else b""
+
+
 def files_with(value: bytes, d: str, selfpath: str):
-    """Regular files under d (not symlinks, not in node_modules or .venv) whose bytes hold the value."""
+    """Regular files under d (not symlinks, FIFOs or sockets, not in node_modules or .venv) whose bytes hold the value."""
     for root, dirs, files in os.walk(d):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
         for name in files:
             f = os.path.join(root, name)
-            if os.path.islink(f) or os.path.realpath(f) == selfpath:
-                continue
             try:
-                with open(f, "rb") as fh:
-                    if value in fh.read():
-                        yield f
+                if not stat.S_ISREG(os.lstat(f).st_mode) or os.path.realpath(f) == selfpath:
+                    continue
+                if holds(f, value):
+                    yield f
             except OSError:
                 continue
 

@@ -104,11 +104,18 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__.split("\n\n")[0] + "\n\nusage: sync.py <targets.tsv>", file=sys.stderr)
         return 2
-    apis: dict[str, Rest] = {}
+    apis: dict[str, Rest | str] = {}
     for row in parse_rows(argv[0]):
         if row["profile"] not in apis:
-            apis[row["profile"]] = Rest.connect(row["profile"])
-        print(sync_row(apis[row["profile"]], row), flush=True)
+            try:
+                apis[row["profile"]] = Rest.connect(row["profile"])
+            except Exception as e:  # noqa: BLE001  one bad profile fails its rows, not the whole run
+                apis[row["profile"]] = f"{type(e).__name__}: {str(e).splitlines()[0][:200] if str(e) else ''}"
+        api = apis[row["profile"]]
+        if isinstance(api, str):
+            print(f"{row['profile']} {row['name']}: FAILED auth: {api}", flush=True)
+            continue
+        print(sync_row(api, row), flush=True)
     return 0
 
 

@@ -234,7 +234,7 @@ def main(argv: list[str]) -> int:
         return 4
     if host_arg:
         say(f"{profile}: no account profile{f' for account {aid[:8]}...' if aid else ''} could mint a token {host} "
-            "accepts: log in to its account (add-account.sh <account-id> <cloud>), or to the workspace: "
+            "accepts: log in to its account (python3 add_account.py <account-id> <cloud>), or to the workspace: "
             f"databricks auth login --host {host} --profile {profile}")
     elif expired:
         say(f"{profile}: its login has expired, and so has the account login that covers it: log in to the account "
@@ -242,7 +242,7 @@ def main(argv: list[str]) -> int:
             f"only: databricks auth login --profile {profile}")
     elif aid:
         say(f"{profile}: its login has expired and no account profile for account {aid[:8]}... could mint a token: "
-            f"log in to the account (add-account.sh {aid} <cloud>), or to the workspace: "
+            f"log in to the account (python3 add_account.py {aid} <cloud>), or to the workspace: "
             f"databricks auth login --profile {profile}")
     return 1
 
