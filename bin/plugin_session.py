@@ -9,6 +9,7 @@ when they were last checked (the file only, no CLI call), so a test reads them i
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 import re
@@ -34,6 +35,9 @@ def main(argv: list[str]) -> int:
         print(f'lfc-tests plugin: missing for local tests: {gone}. Before the first test, run bash '
               '"$LFC_TESTS/skills/cli-setup/scripts/check-tools.sh" local and give the user its install commands; '
               "install nothing without asking.")
+    if importlib.util.find_spec("databricks.sdk") is None:   # lfc_rest signs in through it, in every converted tool
+        print("lfc-tests plugin: missing for the workspace calls: the Python package databricks-sdk (pip install "
+              "databricks-sdk). The CLI alone doesn't serve the scripts (they call REST through lfc_rest).")
     settings_script = here / "skills/lfc-test-settings/scripts/settings.sh"
     sf = Path(os.environ.get("LFC_TESTS_SETTINGS") or Path.home() / ".lfc/tests/settings.env")
     if sf.is_file() and sf.stat().st_size > 0:
