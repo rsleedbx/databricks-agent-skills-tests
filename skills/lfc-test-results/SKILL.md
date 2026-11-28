@@ -44,7 +44,7 @@ duckdb -c "SELECT test, subject.engine, outcome, count(*) FROM read_json('result
 
 ## Before reading a pipeline result
 
-- **Count rows only once the gateway's snapshot is done.** An ingestion update can report COMPLETED while the gateway is still snapshotting, or while a gateway flow has failed. In the 2026-10-25 round that happened in 7 runs, and a second plain update then completed the rows. So wait until the gateway's events (`bin/lfc-events.sh <profile> <gateway-id>`) show `SNAPSHOT_COMPLETED` for each table before comparing source and destination counts. If you count earlier, say so in `result`.
+- **Count rows only once the gateway's snapshot is done.** An ingestion update can report COMPLETED while the gateway is still snapshotting, or while a gateway flow has failed. In the 2026-10-25 round that happened in 7 runs, and a second plain update then completed the rows. So wait until the gateway's events (`bin/lfc_events.py <profile> <gateway-id>`) show `SNAPSHOT_COMPLETED` for each table before comparing source and destination counts. If you count earlier, say so in `result`.
 - **A gateway snapshots only after its ingestion pipeline's first update starts.** A gateway started on its own finds the tables (Schema Exploration) and then waits; start the ingestion update before waiting for `SNAPSHOT_COMPLETED`.
 - **Count the destination tables only.** The staging schema's tables and the shared `cdc_staging_table` aren't source tables; leave them out of row counts and table counts.
 - **Read every page of events.** The events API returns at most 250 per page, newest first; follow `next_page_token` before concluding an event never came.
@@ -52,7 +52,7 @@ duckdb -c "SELECT test, subject.engine, outcome, count(*) FROM read_json('result
 - **Change tracking keeps one change per key between reads.** Updating the same row again and again shows one staged change per read, not one per update. To measure how often a table is read, or whether changes are lost, write a new key per change.
 - **Give every wait a deadline.** A loop that waits for an update or an event gives up after 20 minutes and records "timed out"; a batch with a hard stop sets `LFC_DEADLINE_MIN` (`skills/lfc-schema-change-test/scripts/lib.sh`), so `update` stops the pipeline at the deadline and reports it.
 - **Read the gateway's events as well as the ingestion pipeline's.** Source-side errors (archive logs gone, slot invalidated, capture instance missing) appear on the gateway; the ingestion update can show none.
-- **Record the build:** `bin/lfc-runtime.sh --summary <profile> <pipeline-id>` for the gateway and the ingestion pipeline goes in `subject` or `setup.runtime`. A result without it can't be compared with the next release.
+- **Record the build:** `bin/lfc_runtime.py --summary <profile> <pipeline-id>` for the gateway and the ingestion pipeline goes in `subject` or `setup.runtime`. A result without it can't be compared with the next release.
 - **Check each setup step took effect before reading the result.** A grant, revoke or source change that failed silently makes the case invalid, not a finding. Read the state back: effective permissions, the capture instance, the slot.
 
 ## After testing: record
@@ -70,7 +70,7 @@ Record every cell you ran, including the ones that stopped (`expected-stop`) or 
 | `host` | | where the source ran: `azure-vm-podman`, `azure-flexserver`, `aws-rds`, `local-podman`, `lakebase` |
 | `workspace` | | `{"cloud": "azure", "region": "centralus", "env": "fevm", "compute": "serverless-only", "catalog": "own managed storage"}`; descriptions, never names or IDs |
 | `setup` | | the rest of the test's setup: `storage`, `network`, `credentials`, `workload` (`{"name": "tpch", "sf": 1}`), `dml` (`{"rate_per_s": 100}`), `tool` (the script that ran it, e.g. `lfc-source-cloud-vm lfc-vm masters build`), `contributor` (a handle). New keys are allowed; `record.py` notes them, and they get documented in [test-matrix.md](references/test-matrix.md) |
-| `compute` | pipeline tests | what compute the test asked for and got, so a classic default, a start that never happened, and a firewall block stay apart: `serverless` (`unset`, `true`, `false`: what the run sent), `ran_on` (`serverless`, `classic`, `not-started`, `unknown`: the latest update's `config.serverless`), `started` (the compute came up: `INITIALIZING` or `Extractor STARTED`), `reached_source` (it then connected), `blocked_by` (`compute-not-allowed`, `firewall`, `feature-gate`, `other`; needed when `started` or `reached_source` is false), and on a rerun `switched_from` + `switch_reason`. `gateway`: the same for a standard CDC gateway. Read them with `bin/compute_report.sh <profile> <name-prefix>`. Example: `{"serverless": "unset", "ran_on": "classic", "started": true, "reached_source": false, "blocked_by": "firewall"}` |
+| `compute` | pipeline tests | what compute the test asked for and got, so a classic default, a start that never happened, and a firewall block stay apart: `serverless` (`unset`, `true`, `false`: what the run sent), `ran_on` (`serverless`, `classic`, `not-started`, `unknown`: the latest update's `config.serverless`), `started` (the compute came up: `INITIALIZING` or `Extractor STARTED`), `reached_source` (it then connected), `blocked_by` (`compute-not-allowed`, `firewall`, `feature-gate`, `other`; needed when `started` or `reached_source` is false), and on a rerun `switched_from` + `switch_reason`. `gateway`: the same for a standard CDC gateway. Read them with `bin/compute_report.py <profile> <name-prefix>`. Example: `{"serverless": "unset", "ran_on": "classic", "started": true, "reached_source": false, "blocked_by": "firewall"}` |
 | `metrics` | | numbers: `{"rows": 5000000, "clone_s": 0.1, "tps": 234}` |
 | `error` | non-pass | the exact error text, with names and IDs replaced (`<connection>`, `<pipeline-id>`) |
 | `skills` | auto | both repos' commits; `record.py` fills it in from the checkouts next to each other |
@@ -84,7 +84,7 @@ cat > /tmp/rec.jsonl <<'EOF'
  "outcome": "pass", "result": "snapshot 10/10; 3 inserts, 2 updates, 2 deletes applied (11/11)"}
 EOF
 uv run $S/record.py < /tmp/rec.jsonl            # validates the batch, appends it to results/runs/<run>.jsonl, or prints what's wrong and appends nothing
-uv run $S/record.py --check                     # re-validate the whole file (bin/test_scripts.sh runs this)
+uv run $S/record.py --check                     # re-validate the whole file (bin/test_scripts.py runs this)
 ```
 
 Write each record on one line in the file you pipe in (or pass a JSON array). Then write or extend `results/<run>.md`: the environment (cloud, region, workspace type, catalog type, VM size), a results table, what broke and how it was fixed, and the skill fixes. Commit both with the skill fixes they led to.
@@ -122,7 +122,7 @@ Each person or agent runs their own setup and records under their own run name, 
 1. `recall.py --coverage` and [test-matrix.md](references/test-matrix.md): pick a gap, or a setup nobody has (a different VM, engine version, network path, workspace).
 2. Run it with the skills, fixing any skill that's wrong along the way.
 3. Record with `record.py` under a new run name (`<date>-<topic>`, add your handle to the topic if two people might pick the same one); write `results/<run>.md`.
-4. One pull request: the run's two files, the skill fixes, and any new dimension values in test-matrix.md. `bin/test_scripts.sh` must pass; it validates every record and scans the write-ups for anything internal.
+4. One pull request: the run's two files, the skill fixes, and any new dimension values in test-matrix.md. `bin/test_scripts.py` must pass; it validates every record and scans the write-ups for anything internal.
 
 Never edit another run's file. If a result turns out wrong, record a new run that says so.
 

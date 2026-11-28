@@ -87,10 +87,12 @@ layers:
       - zerobus-sdk-freshness-test
       - lfc-kafka-freshness-test
     bin:
-      - lfc-events.sh
+      - lfc_events.py
+      - lfc_runtime.py
       - lfc-runtime.sh
-      - compute_report.sh
-      - stop_after.sh
+      - compute_report.py
+      - stop_after.py
+      - pipeline_api.py
 
   repo:
     may_use: [all]
@@ -102,9 +104,9 @@ layers:
       - check_layers.py
       - check_model_counts.py
       - lint_scripts.py
-      - plugin-session.sh
-      - run_batch.sh
-      - run_matrix.sh
+      - plugin_session.py
+      - run_batch.py
+      - run_matrix.py
       - scripts_index.py
       - test_check_layers.py
       - test_gate.py
@@ -113,6 +115,11 @@ layers:
       - test_coverage_page.py
       - test_results_dir.py
       - test_shape_order.py
+      - test_scripts.py
       - test_scripts.sh
       - test_timings.py
-      - genie_skills_sync.sh
+      - test_pipeline_tools.py
+      - test_workspace_tools.py
+      - test_runner_tools.py
+      - genie_skills_sync.py
+      - workspace_files.py

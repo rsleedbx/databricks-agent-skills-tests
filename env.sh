@@ -17,7 +17,7 @@ fi
 
 export LFC_ENV="${LFC_ENV:-default}"
 export SKILLS_REPO="${SKILLS_REPO:-$_ENV_DIR/../databricks-agent-skills}"
-export OMNIGENT_WS="${OMNIGENT_WS:-DEFAULT}"   # profile for the workspace file bridge (sync.sh)
+export OMNIGENT_WS="${OMNIGENT_WS:-DEFAULT}"   # profile for the workspace file bridge (sync.py)
 export PIPELINE_WS="${PIPELINE_WS:-DEFAULT}"   # profile passed to Claude as DATABRICKS_CONFIG_PROFILE
 # What the matrix prompts ask for compute (MATRIX.md, "Workspace requirements"): true (the default: the test firewall
 # allows only the serverless ranges), false, or unset (take the product's default; record what it ran on)

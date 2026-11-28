@@ -1,6 +1,6 @@
 # Layers
 
-This repo is one repository for now, and it stays one while the skills change quickly. Its skills and bin scripts are sorted into layers so that a later split into separate repositories is a mechanical step (paths only, no code changes), and so that the dependencies between layers point one way. [`layers.yaml`](../layers.yaml) says which skill or bin script is in which layer, and which layers each may use. [`bin/check_layers.py`](../bin/check_layers.py) checks every reference in the repo against it, and [`bin/test_scripts.sh`](../bin/test_scripts.sh) runs the check.
+This repo is one repository for now, and it stays one while the skills change quickly. Its skills and bin scripts are sorted into layers so that a later split into separate repositories is a mechanical step (paths only, no code changes), and so that the dependencies between layers point one way. [`layers.yaml`](../layers.yaml) says which skill or bin script is in which layer, and which layers each may use. [`bin/check_layers.py`](../bin/check_layers.py) checks every reference in the repo against it, and [`bin/test_scripts.py`](../bin/test_scripts.py) runs the check.
 
 ## The rule
 
@@ -22,8 +22,8 @@ A skill or bin script may reference another one only if the other one's layer is
 | **shape** | contract, common | Data shaped like a customer's or a benchmark's, engine-agnostic: the schema and statistics, and the data generated inside any database. Its producer writes the workload file | `lfc-source-statschema`, `lfc-source-datagen` |
 | **contract** | common | The contracts between a producer and its consumers: the source contract (what a source provides), and the workload contract (a model's tables and the commands that build them) | `lfc-source-contract`, `lfc-workload-contract` |
 | **sources** | shape, contract, common | Source databases on demand: provisioning, reaching and opening them | `lfc-source-podman`, `lfc-source-cloud-vm`, `lfc-source-azure-sql`, `lfc-source-azure-flexserver`, `lfc-source-gcp-cloudsql`, `lfc-source-aws-rds`, `lfc-source-aws-aurora`, `lfc-source-firewall`, `lfc-source-eventhubs` |
-| **lakeflow** | contract, common | Lakeflow Connect tests and demos, and the prep and checks around them | every other skill, and the `bin/` scripts `lfc-events.sh`, `lfc-runtime.sh`, `compute_report.sh`, `stop_after.sh` |
-| **repo** | all | This repo's own tooling: checks, the test runners, the plugin hook | `public-skill-conventions` (contributor skill), `bin/` checks and runners (`check_links.py`, `check_layers.py`, `lint_scripts.py`, `scripts_index.py`, `run_batch.sh`, `run_matrix.sh`, `plugin-session.sh`, `test_*`) |
+| **lakeflow** | contract, common | Lakeflow Connect tests and demos, and the prep and checks around them | every other skill, and the `bin/` scripts `lfc_events.py`, `lfc_runtime.py`, `compute_report.py`, `stop_after.py` |
+| **repo** | all | This repo's own tooling: checks, the test runners, the plugin hook | `public-skill-conventions` (contributor skill), `bin/` checks and runners (`check_links.py`, `check_layers.py`, `lint_scripts.py`, `scripts_index.py`, `run_batch.py`, `run_matrix.py`, `plugin_session.py`, `test_*`) |
 
 Within a layer any reference is allowed. A reference is a path to another skill or bin script: `skills/<x>/...`, `../<x>/...`, `$SK/<x>`, `<x>/scripts/...` written bare, or `bin/<file>`. A name in plain prose is not a reference.
 
@@ -73,8 +73,8 @@ One line per skill: what it does, which decides its layer.
 | `mautic-source` | lakeflow | A real application's database as a CDC test source (the Lakeflow test side). |
 | `lfc-pipeline-diagram`, `lfc-sqlserver-secondary` | lakeflow | Pending on open branches; listed in `layers.yaml` so they classify when they land. |
 | `public-skill-conventions` | repo | Conventions for the public skills, checked by its own script. |
-| `bin/lfc-events.sh`, `lfc-runtime.sh`, `compute_report.sh`, `stop_after.sh` | lakeflow | Pipeline events, runtime and reports, stopping updates: Lakeflow only. |
-| `bin/check_*.py`, `lint_scripts.py`, `scripts_index.py`, `test_*`, `run_batch.sh`, `run_matrix.sh`, `plugin-session.sh` | repo | The repo's checks, runners and plugin hook. |
+| `bin/lfc_events.py`, `lfc_runtime.py`, `compute_report.py`, `stop_after.py` | lakeflow | Pipeline events, runtime and reports, stopping updates: Lakeflow only. |
+| `bin/check_*.py`, `lint_scripts.py`, `scripts_index.py`, `test_*`, `run_batch.py`, `run_matrix.py`, `plugin_session.py` | repo | The repo's checks, runners and plugin hook. |
 
 ## Moved in this change
 
@@ -95,7 +95,7 @@ Nothing was moved that the internal tool uses. The internal tool uses `skills/ac
 | lakeflow -> shape | 5 | `cdc-table-plan` uses statschema's collection SQL; `zerobus-debezium-test` uses statschema and datagen. (`lfc-schema-change-test` takes a workload file instead.) | Lakeflow tests take a built source (a schema file or a database) from the shape layer's output rather than calling its scripts. |
 | lakeflow -> sources | 8 | `lfc-schema-change-test` calls the cloud VM's container script; `zerobus-debezium-test` runs the VM, Podman and cloud-links scripts (it provisions a CockroachDB source). | Move the provisioning to the caller's configuration, or let the test skill own a source-side wrapper in sources. |
 | common -> repo | 7 | `skill-token-budget` and `account-token-fallback` name the repo's checks and runner in their text. | Keep as contributor guidance, or reword to the repo's CONTRIBUTING; this is the only edge a split must rewrite in a common skill. |
-| lakeflow -> repo | 4 | `lfc-test-results` and `lfc-workspace-setup` name `bin/test_scripts.sh` and `bin/run_batch.sh`. | Same as above: repo tooling is referenced by name, not run by path. |
+| lakeflow -> repo | 4 | `lfc-test-results` and `lfc-workspace-setup` name `bin/test_scripts.py` and `bin/run_batch.py`. | Same as above: repo tooling is referenced by name, not run by path. |
 | shape -> lakeflow | 2 | `lfc-source-statschema` points to `lfc-source-sizing`'s workload patterns; `lfc-source-datagen` points to `lfc-source-setup`'s Postgres page. | Drop the two pointers, or move those pages into shape. |
 
 The lists above are a snapshot; `python3 bin/check_layers.py --baseline` prints the current lines, and `--report` the table by pair.
@@ -103,7 +103,7 @@ The lists above are a snapshot; `python3 bin/check_layers.py --baseline` prints 
 ## The check
 
 ```bash
-python3 bin/check_layers.py                  # the check (test_scripts.sh runs it)
+python3 bin/check_layers.py                  # the check (test_scripts.py runs it)
 python3 bin/check_layers.py --report         # the table by layer pair, and each skill-level edge
 python3 bin/check_layers.py --baseline       # the current disallowed references, as baseline lines
 python3 bin/check_layers.py --paths sources   # the paths of one or more layers, for a split
@@ -137,7 +137,7 @@ python3 bin/check_layers.py --paths shape,contract,common > /tmp/paths-shared.tx
 git filter-repo --paths-from-file /tmp/paths-shared.txt
 ```
 
-Run `git filter-repo --help` on the machine that does it to confirm the `--paths-from-file` form. Then in each repo: drop the other layers from `layers.yaml`, run `python3 bin/check_layers.py`, and the check must pass with the baseline lines that stay in that repo (common-to-repo and lakeflow-to-repo). Each repo then needs its own copy of `bin/check_layers.py` and `bin/test_scripts.sh`, and the repo-level files (README, CONTRIBUTING, SCRIPTS.md, `results/`) are assigned by hand: `SCRIPTS.md` is regenerated per repo by `bin/scripts_index.py`.
+Run `git filter-repo --help` on the machine that does it to confirm the `--paths-from-file` form. Then in each repo: drop the other layers from `layers.yaml`, run `python3 bin/check_layers.py`, and the check must pass with the baseline lines that stay in that repo (common-to-repo and lakeflow-to-repo). Each repo then needs its own copy of `bin/check_layers.py` and `bin/test_scripts.py`, and the repo-level files (README, CONTRIBUTING, SCRIPTS.md, `results/`) are assigned by hand: `SCRIPTS.md` is regenerated per repo by `bin/scripts_index.py`.
 
 What the internal tool would change, when the split happens (it calls this repo by path, through its layout settings and `$LFC_TESTS`):
 
@@ -165,7 +165,7 @@ What was done: `lfc-tests` is unchanged (same name, all skills, same marketplace
 
 What a per-layer plugin would need, in order:
 
-1. Shape B folders, `plugins/<layer>/` each with `.claude-plugin/plugin.json`, the layer's skills moved into `plugins/<layer>/skills/`, and the layer's `bin/` scripts available to it. The `SessionStart` hook (`bin/plugin-session.sh`) would need a copy in each plugin, since its path must stay inside the plugin root. That is the move the change above avoids.
+1. Shape B folders, `plugins/<layer>/` each with `.claude-plugin/plugin.json`, the layer's skills moved into `plugins/<layer>/skills/`, and the layer's `bin/` scripts available to it. The `SessionStart` hook (`bin/plugin_session.py`) would need a copy in each plugin, since its path must stay inside the plugin root. That is the move the change above avoids.
 2. A marketplace entry per plugin with `source: "./plugins/<layer>"`, and an entry name equal to its manifest name.
 3. `claude plugin validate .` for the marketplace, then `claude plugin validate ./plugins/<layer>` for each plugin (the marketplace check doesn't open the plugins' skill files).
 4. An install test in a clean profile: that each plugin lists only its skills, and that `lfc-tests` still lists all of them.

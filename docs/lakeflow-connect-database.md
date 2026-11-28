@@ -147,7 +147,7 @@ The same request works for MySQL 8.4, PostgreSQL 16 or Oracle 23ai Free, and for
 ```bash
 cp env.example.sh env.<name>.local.sh     # once per workspace: profiles, catalog, connections
 LFC_ENV=<name> source env.sh
-bin/run_matrix.sh                         # query-based, foreign catalog, integrated, standard CDC, then DML
+bin/run_matrix.py                         # query-based, foreign catalog, integrated, standard CDC, then DML
 ```
 
 It runs one mode at a time, so tests on the same connection don't race, then reports what compute each pipeline ran on. Details and options: [MATRIX.md](../MATRIX.md#running-it) and [running-tests.md](running-tests.md#deploy-tests-the-lakeflow-connect-matrix). Record each cell with `record.py` ([lfc-test-results](../skills/lfc-test-results/SKILL.md)), and it shows in the coverage the next person checks.

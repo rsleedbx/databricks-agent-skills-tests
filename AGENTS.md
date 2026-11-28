@@ -1,6 +1,6 @@
 # Working in this repository
 
-For coding agents opened in a clone of this repo (the plugin's SessionStart hook, `bin/plugin-session.sh`, says the same
+For coding agents opened in a clone of this repo (the plugin's SessionStart hook, `bin/plugin_session.py`, says the same
 to plugin users).
 
 - **Python and REST, so a skill runs on the laptop and in a workspace (Genie Code, a notebook, a job).** The bash
@@ -26,7 +26,7 @@ to plugin users).
   a login only when that fails, and then for the account login first.
 - **No long live run for a change already backed by evidence.** When earlier runs (`recall.py` in
   [lfc-test-results](skills/lfc-test-results/SKILL.md)), the vendor's docs or a skill already show how it behaves, make
-  the change, run the offline checks (`bash bin/test_scripts.sh`) and say what wasn't run; the next run that needs it
+  the change, run the offline checks (`python3 bin/test_scripts.py`) and say what wasn't run; the next run that needs it
   shows the effect, and it's fixed then. Suggest a live run only when nothing covers the behavior, or the user asks.
 - **A measurement run must be able to change a decision.** Before it, write down what it should show (from the
   model, the docs and the runs before it), which decision changes if it doesn't, and why the docs, the system tables

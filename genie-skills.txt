@@ -1,4 +1,4 @@
-# Skills bin/genie_skills_sync.sh copies into a workspace's Genie Code skills folder.
+# Skills bin/genie_skills_sync.py copies into a workspace's Genie Code skills folder.
 # One skill folder name per line. List only skills whose main path runs in a notebook:
 # Python or SQL. Notebook compute has no jq, uv, psql or sqlcmd (jq, uv and Python
 # packages install at run time), and the Databricks CLI there refuses to run outside the

@@ -5,16 +5,16 @@ Setup, the test kinds, and how results are recorded. Back to the [README](../REA
 ## Layout
 
 ```
-run.sh                 # runner: one headless `claude -p` session per prompt, multi-turn via `tag+|`
+run.py                 # runner: one headless `claude -p` session per prompt, multi-turn via `tag+|`
 summarize.py           # skills loaded, reference files read, answer preview
 env.sh                 # sources env.local.sh, sets SKILLS_REPO / OMNIGENT_WS / PIPELINE_WS
 env.example.sh         # copy to env.local.sh (gitignored) and fill in
-sync.sh                # workspace file bridge for sandboxes without git push
-bin/run_matrix.sh      # the whole Lakeflow Connect matrix, one batch per mode, then a compute readback
-bin/run_batch.sh       # run several prompt files in parallel, each in its own scratch dir
-bin/compute_report.sh  # per pipeline: serverless asked, ran on, started, reached the source
-bin/stop_after.sh      # stop pipeline updates that run past N minutes
-bin/test_scripts.sh    # regression tests for the skills' scripts (offline, or on Postgres and MySQL)
+sync.py                # workspace file bridge for sandboxes without git push
+bin/run_matrix.py      # the whole Lakeflow Connect matrix, one batch per mode, then a compute readback
+bin/run_batch.py       # run several prompt files in parallel, each in its own scratch dir
+bin/compute_report.py  # per pipeline: serverless asked, ran on, started, reached the source
+bin/stop_after.py      # stop pipeline updates that run past N minutes
+bin/test_scripts.py    # regression tests for the skills' scripts (offline, or on Postgres and MySQL)
 bin/check_links.py     # every relative link in every skill
 pr-notes/              # PR descriptions with the test matrix, one per skills-repo branch
 prompts/
@@ -40,9 +40,9 @@ cp env.example.sh env.local.sh    # fill in profiles, catalog, connections (neve
 source env.sh
 ```
 
-When the workspace profile's OAuth login has expired, `run.sh` mints a token from your account login for the same account and keeps going ([account-token-fallback](../skills/account-token-fallback/SKILL.md)); log in to the account once with `databricks auth login --host <accounts-url> --account-id <id> --profile <name>`.
+When the workspace profile's OAuth login has expired, `run.py` mints a token from your account login for the same account and keeps going ([account-token-fallback](../skills/account-token-fallback/SKILL.md)); log in to the account once with `databricks auth login --host <accounts-url> --account-id <id> --profile <name>`.
 
-`run.sh` copies the skills repo's `skills/` into the Claude plugin cache before each run, so
+`run.py` copies the skills repo's `skills/` into the Claude plugin cache before each run, so
 sessions test your local edits. Sessions run in a scratch `WORK_DIR` under `/tmp`, outside both
 repos, so skills load from the plugin cache and generated bundles stay out of git.
 `PIPELINE_WS` is passed to Claude as `DATABRICKS_CONFIG_PROFILE`, so the Databricks skills
@@ -54,8 +54,8 @@ target that workspace. Sessions run with `--verbose --output-format stream-json`
 The skills' scripts (planners, `fill.sh`, the statschema pipeline, the firewall DuckDB queries) have their own regression tests:
 
 ```bash
-bin/test_scripts.sh                    # offline: syntax, links, the six TPC schemas through shape.py and ddl.py, round trips
-PSQL="podman exec -i dg-pg psql -U postgres" MYSQL="podman exec -i dg-my mysql -uroot" bin/test_scripts.sh   # and fill on both engines
+bin/test_scripts.py                    # offline: syntax, links, the six TPC schemas through shape.py and ddl.py, round trips
+PSQL="podman exec -i dg-pg psql -U postgres" MYSQL="podman exec -i dg-my mysql -uroot" bin/test_scripts.py   # and fill on both engines
 bin/check_links.py                     # every relative link in every skill
 ```
 
@@ -65,11 +65,11 @@ fingerprint is its command plus the files it depends on: the repo paths it names
 files its code references, a bin tool to the whole repo. The checks that pass files through the run's temp folder
 run or skip together. A check that names no repo path always runs, as do the `bash -n` loops (milliseconds each).
 Passes are kept outside the repo (one ledger per checkout in `~/.cache/test-skip/`; `TEST_SKIP_DIR` moves it), so CI and a fresh
-checkout run everything. `TEST_SKIP_AGAIN=1 bin/test_scripts.sh` runs every check. On 2026-11-20 a run with nothing
+checkout run everything. `TEST_SKIP_AGAIN=1 bin/test_scripts.py` runs every check. On 2026-11-20 a run with nothing
 changed took 33 s instead of 3 min 15 s.
 
 The live runs skip what didn't change too:
-- `run.sh` (and so `bin/run_batch.sh` and `bin/run_matrix.sh`): a tag and its follow-up turns run only when their
+- `run.py` (and so `bin/run_batch.py` and `bin/run_matrix.py`): a tag and its follow-up turns run only when their
   prompts (as filled), the workspace profile or the skills repo's `skills/` changed since the tag last passed on this
   machine (its session exited 0). A skipped tag leaves no new `<tag>.json` in the results.
 - [lfc-saas-pipeline/scripts/run_tests.py](../skills/lfc-saas-pipeline/scripts/run_tests.py): a connector's bundle and
@@ -87,7 +87,7 @@ Each script answers one schema-evolution question by running it on a fresh sourc
 No resources created:
 
 ```bash
-./run.sh "$SKILLS_REPO" prompts/lakeflow-connect.txt
+./run.py "$SKILLS_REPO" prompts/lakeflow-connect.txt
 ./summarize.py /tmp/lakeflow-connect-results
 ```
 
@@ -97,14 +97,14 @@ No resources created:
 plain request (the skill must ask before creating anything), then the answers and go-ahead.
 `${VAR}` placeholders come from `env.local.sh`.
 
-Run the whole matrix with `bin/run_matrix.sh` ([MATRIX.md](../MATRIX.md) has every cell and its pass criteria). It runs one mode per batch, so tests on the same connection don't race for the same default pipeline name (the skill names pipelines `<firstname><lastname>-<connection>`, then `-2`, `-3`; standard CDC uses `-gw` / `-ap`), and ends by reading back what compute each pipeline ran on:
+Run the whole matrix with `bin/run_matrix.py` ([MATRIX.md](../MATRIX.md) has every cell and its pass criteria). It runs one mode per batch, so tests on the same connection don't race for the same default pipeline name (the skill names pipelines `<firstname><lastname>-<connection>`, then `-2`, `-3`; standard CDC uses `-gw` / `-ap`), and ends by reading back what compute each pipeline ran on:
 
 ```bash
 LFC_ENV=<name> source env.sh
-bin/run_matrix.sh                                  # qbc -> fcqbc -> icdc -> scdc -> dml
-bin/run_matrix.sh icdc scdc                        # only some modes
-LFC_SERVERLESS=unset bin/run_matrix.sh icdc        # take the product's compute default instead of serverless: true
-bin/run_batch.sh prompts/lfc-matrix/qbc-*.txt      # one batch by hand
+bin/run_matrix.py                                  # qbc -> fcqbc -> icdc -> scdc -> dml
+bin/run_matrix.py icdc scdc                        # only some modes
+LFC_SERVERLESS=unset bin/run_matrix.py icdc        # take the product's compute default instead of serverless: true
+bin/run_batch.py prompts/lfc-matrix/qbc-*.txt      # one batch by hand
 ```
 
 The prompts ask for `serverless: true` by default (`LFC_SERVERLESS`), because the test firewall allows only the serverless ranges; see "Workspace requirements" in MATRIX.md. Check the workspace first with the `ready.py` check (databricks-lakeflow-connect `scripts/`): previews, compute, target catalog, grants, egress ranges.
@@ -112,7 +112,7 @@ The prompts ask for `serverless: true` by default (`LFC_SERVERLESS`), because th
 Integrated CDC updates can run a long time on an idle source. Stop them after 30 minutes:
 
 ```bash
-bin/stop_after.sh 30 <pipeline-id> <pipeline-id>
+bin/stop_after.py 30 <pipeline-id> <pipeline-id>
 ```
 
 What to check in each result (`/tmp/<name>-results/p1.json`, or the session's final answer):
@@ -143,7 +143,7 @@ p1+|Use the source tables intpk and dtix ... Yes, create everything, run it once
 
 ## Permissions for headless sessions
 
-Headless sessions can't answer permission prompts. `bin/run_batch.sh` passes a scoped allowlist
+Headless sessions can't answer permission prompts. `bin/run_batch.py` passes a scoped allowlist
 through `CLAUDE_ALLOWED_TOOLS`, as a single `--allowedTools` argument so rules with spaces
 survive. That covers the Databricks CLI, file tools, `jq`, `WebFetch` (skills check current docs),
 and `rm` of `conn.json` by every path a session might use (`/tmp` resolves to `/private/tmp` on
@@ -151,12 +151,12 @@ macOS). Don't put rules with spaces in `CLAUDE_ARGS`: it's split on spaces.
 
 ## Workspace file bridge
 
-When editing in a sandbox (Omnigent, Solution Builder) with no git push access, `sync.sh`
+When editing in a sandbox (Omnigent, Solution Builder) with no git push access, `sync.py`
 uploads and downloads individual files through a Databricks workspace (`push` / `pull` for skill
 files, `push-tests` / `pull-tests` for this repo).
 
 - `workspace import --format SOURCE` stores every file as a notebook with a
-  `# Databricks notebook source` first line; `sync.sh pull` strips it (`tail -n +2`).
+  `# Databricks notebook source` first line; `sync.py pull` strips it (`tail -n +2`).
 - Don't send a `git format-patch` through the bridge: the notebook round-trip shifts context lines
   and `git apply` fails. Send the changed files.
 - Keep shell scripts sent this way ASCII (`--`, not an em-dash): the round-trip can mangle

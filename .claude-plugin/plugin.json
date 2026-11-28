@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/plugin-session.sh"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/bin/plugin_session.py\""
           }
         ]
       }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bin/test_gate.py: should a check of bin/test_scripts.sh run, given what changed since it last passed?
+"""bin/test_gate.py: should a check of bin/test_scripts.py run, given what changed since it last passed?
 
   bin/test_gate.py decide <name> [--value V] [--cache F] -- <the check's command>...
         prints "skip <when>" (exit 0) when the check last passed with these inputs unchanged, else "run <fp>" (exit 1)

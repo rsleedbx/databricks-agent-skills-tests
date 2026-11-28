@@ -3,7 +3,7 @@
 match the code. For each default, every "in" file must exist and contain its phrase (where the default is set or
 stated); every "forbid" pattern must appear in no file under its folders (the defaults file itself aside). One line per
 problem; "defaults: N defaults, M places, K forbidden patterns: ok" when there is none; exit 1 on any problem.
-Run by bin/test_scripts.sh. Python 3 standard library, and yq to read the YAML.
+Run by bin/test_scripts.py. Python 3 standard library, and yq to read the YAML.
 """
 import argparse
 import json

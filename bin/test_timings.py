@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bin/test_timings.py [timings.tsv] [--top N]: what bin/test_scripts.sh's checks cost, from the timings it appends
+"""bin/test_timings.py [timings.tsv] [--top N]: what bin/test_scripts.py's checks cost, from the timings it appends
 (TEST_TIMINGS, default ~/.cache/test_scripts/timings.tsv: run time, seconds, result, name). Prints the latest run (checks
 run and skipped, total seconds, the slowest, the many quick ones together) and each check's median over every run.
 """
@@ -21,13 +21,13 @@ def load(path: str) -> list:
 
 
 def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(description="What test_scripts.sh's checks cost")
+    ap = argparse.ArgumentParser(description="What test_scripts.py's checks cost")
     ap.add_argument("path", nargs="?", default=os.environ.get("TEST_TIMINGS", os.path.expanduser(
         "~/.cache/test_scripts/timings.tsv")))
     ap.add_argument("--top", type=int, default=15)
     a = ap.parse_args(argv)
     if not os.path.exists(a.path):
-        sys.exit(f"no timings at {a.path}: run bin/test_scripts.sh first")
+        sys.exit(f"no timings at {a.path}: run bin/test_scripts.py first")
     rows = load(a.path)
     last = max(r[0] for r in rows)
     run = [r for r in rows if r[0] == last]

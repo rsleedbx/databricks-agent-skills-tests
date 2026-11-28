@@ -21,7 +21,7 @@
   Both were tested on an AWS classic workspace and gave the same IP; with it allowed, the gateway connected.
 - **Can't determine it:** add the laptop and serverless IPs anyway, and **warn the user** that any part of the pipeline that runs on classic compute (for example a standard CDC gateway) may not be able to reach the database until its egress IP is added. Serverless parts will still work.
 
-**When a pipeline on classic can't reach the source.** In the event log it shows as `Extractor STARTED`, then about a minute later `Extractor FAILED` with `INGESTION_GATEWAY_CONNECTION_ERROR.INCORRECT_SOURCE_HOSTNAME_OR_PORT_SPECIFIED_FAILURE`. `bin/compute_report.sh` reads it as `ran_on classic`, `started yes`, `reached_source no`. There are two fixes, and the records keep them apart (lfc-test-results, `compute`):
+**When a pipeline on classic can't reach the source.** In the event log it shows as `Extractor STARTED`, then about a minute later `Extractor FAILED` with `INGESTION_GATEWAY_CONNECTION_ERROR.INCORRECT_SOURCE_HOSTNAME_OR_PORT_SPECIFIED_FAILURE`. `bin/compute_report.py` reads it as `ran_on classic`, `started yes`, `reached_source no`. There are two fixes, and the records keep them apart (lfc-test-results, `compute`):
 
 1. **Allow the classic egress IP**, found with one of the ways above, then rerun with the same setting (`serverless` unset). If the rerun reaches the source, record it as such: no `switched_from`, plus `notes` saying the classic IP was added.
 2. **Switch to serverless**, which the test matrix does by default (`LFC_SERVERLESS=true`): record `switched_from: unset`, `switch_reason: firewall`.

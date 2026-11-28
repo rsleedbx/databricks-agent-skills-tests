@@ -62,7 +62,7 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
    with its own skill (**lfc-source-eventhubs**: `eventhubs.sh down`, which checks the `CreatedBy` tag), and the
    password file.
 7. **Record** with **lfc-test-results** `record.py`: `test: load`, `setup.route: lfc-kafka`, `compute` as for any
-   pipeline test, and the runtime from `bin/lfc-runtime.sh --summary <PROFILE> <pipeline-id>`.
+   pipeline test, and the runtime from `bin/lfc_runtime.py --summary <PROFILE> <pipeline-id>`.
 
 ## Reading the results
 

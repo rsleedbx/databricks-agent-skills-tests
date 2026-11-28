@@ -26,7 +26,7 @@ def tables_in(path: Path) -> int:
     return len(re.findall(rf"^{indent}- name:", body, re.M))
 
 
-if sys.argv[1:2] == ["--count"]:   # one model's table count, for the checks that need it (bin/test_scripts.sh)
+if sys.argv[1:2] == ["--count"]:   # one model's table count, for the checks that need it (bin/test_scripts.py)
     print(tables_in(SCHEMAS / f"{sys.argv[2]}.yaml"))
     sys.exit(0)
 problems = []
