@@ -20,7 +20,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 for rel in ("../../lfc-rest/scripts", "../../secret-handling/scripts"):
     sys.path.insert(0, os.path.join(HERE, rel))
-from lfc_rest import Rest
+from lfc_rest import Rest, not_found
 from pw import read_ref
 
 KEEP_CATALOGS = os.path.join(HERE, "..", "..", "lfc-workspace-setup", "scripts", "keep_catalogs.py")
@@ -81,7 +81,10 @@ def sync_row(api: Rest, row: dict) -> str:
     try:
         api.get(path)
         exists = True
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        if not not_found(e):   # auth, network, server: the real error, not a create of an existing connection
+            first = (str(e).splitlines() or [""])[0][:200]
+            return f"{row['profile']} {row['name']}: FAILED {failure_class(first)}: {first}"
         exists = False
     try:
         if exists:
