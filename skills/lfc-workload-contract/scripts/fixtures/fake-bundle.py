@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""a stand-in for the bundle command of a workload: the contract checks that it is a file; no test runs it"""
+"""fake-bundle.py: a stand-in for the bundle command of a workload: the contract checks that it is a file; no test runs it"""
 
 from __future__ import annotations
 
