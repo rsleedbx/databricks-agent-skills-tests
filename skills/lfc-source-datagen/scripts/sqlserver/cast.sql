@@ -4,7 +4,7 @@
 -- (each table's key probe). Run after the parameters, in the same batch:
 --   DECLARE @schema sysname = N'dbo', @rows bigint = 1000000, @mode varchar(10) = 'fill', @order varchar(10) = 'random',
 --           @data varchar(10) = 'scramble', @plain_every int = 4, @block int = 1000, @lob_len int = 100;
--- (fill.sh writes them). Non-key identity, computed, and rowversion columns are left to the database.
+-- (fill.py's client mode writes them). Non-key identity, computed, and rowversion columns are left to the database.
 SET NOCOUNT ON;
 -- Tags, in braces: a column's lfc:v={integer expression in x.n} replaces n in its cast; lfc:e={SQL} is its value as is;
 -- lfc:len={L} its string length; a table's lfc:rows=N is its target, lfc:n={expression of its columns} gives n back from a

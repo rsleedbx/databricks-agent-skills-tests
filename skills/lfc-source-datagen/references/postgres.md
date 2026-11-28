@@ -63,7 +63,7 @@ $SQL -v schema=$S < $D/skipped.sql                                              
 echo "CREATE SCHEMA IF NOT EXISTS lfc_seed; DROP TABLE IF EXISTS lfc_seed.seed;
 CREATE TABLE lfc_seed.seed (i bigint PRIMARY KEY, r bigint NOT NULL);           -- r: a random permutation of i, for shuffled keys
 INSERT INTO lfc_seed.seed SELECT i, r FROM (SELECT i, row_number() OVER (ORDER BY random()) AS r FROM generate_series(1, 1000000) i) q ORDER BY i;" | $SQL
-PSQL="$PG" DIR=$D SESSIONS=4 bash $D/../fill.sh pg $S          # fill until done, level by level (see the skill's "Fill level by level")
+PSQL="$PG" DIR=$D SESSIONS=4 python3 $D/../python/fill.py pg $S          # fill until done, level by level (see the skill's "Fill level by level")
 $SQL -v schema=$S < $D/plan-status.sql > status.sql && $SQL < status.sql > status.out    # table|min|max|rows|target
 awk -F'|' '{ t += $4 } END { print NR " tables, " t " rows" }' status.out
 cat $D/cast.sql $D/plan-audit.sql | $SQL -v schema=$S -v plain_every=4 -v block=1000 -v lob_len=100 > audit.sql && $SQL < audit.sql   # same lob_len; bad must be 0

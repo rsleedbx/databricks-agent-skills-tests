@@ -5,14 +5,14 @@ description: "Provision an Azure Event Hubs namespace as a Kafka source for a te
 
 # Azure Event Hubs as a Kafka source
 
-[`scripts/eventhubs.sh`](scripts/eventhubs.sh) makes the broker and hands it to a test through the source contract
+[`scripts/eventhubs.py`](scripts/eventhubs.py) makes the broker and hands it to a test through the source contract
 (**lfc-source-contract**, engine `kafka`). Run it with no arguments for its usage.
 
 | Command | Does | Changes anything |
 |---|---|---|
-| `eventhubs.sh up <resource group> <namespace> <region> --password-file F [--topic T] [--partitions 32] [--tu 2] [--max-tu 20] [--tags "..."] [--source-json F] [--apply]` | A Standard namespace with the Kafka endpoint on and auto-inflate from `--tu` to `--max-tu`, tagged `CreatedBy=lfc-source-eventhubs` (plus `--tags`); one event hub as the topic (24 h retention); a Listen+Send rule `kafka-test`. Its connection string goes into the 0600 password file; the contract (bootstrap `<namespace>.servicebus.windows.net:9093`, user `$ConnectionString`, the topic, the password file's path, no secret) into `--source-json`, default `<namespace>.source.json` beside the password file | Only with `--apply` |
-| `eventhubs.sh down <resource group> <namespace> [--apply]` | Deletes the namespace, its hubs and rules, only when its `CreatedBy` tag says this script made it; never the group | Only with `--apply` |
-| [`scripts/test-eventhubs.sh`](scripts/test-eventhubs.sh) | Both against a fake `az`: the group is never created, re-tagged or deleted; only its own namespace is; the contract is valid and holds no secret | No |
+| `eventhubs.py up <resource group> <namespace> <region> --password-file F [--topic T] [--partitions 32] [--tu 2] [--max-tu 20] [--tags "..."] [--source-json F] [--apply]` | A Standard namespace with the Kafka endpoint on and auto-inflate from `--tu` to `--max-tu`, tagged `CreatedBy=lfc-source-eventhubs` (plus `--tags`); one event hub as the topic (24 h retention); a Listen+Send rule `kafka-test`. Its connection string goes into the 0600 password file; the contract (bootstrap `<namespace>.servicebus.windows.net:9093`, user `$ConnectionString`, the topic, the password file's path, no secret) into `--source-json`, default `<namespace>.source.json` beside the password file | Only with `--apply` |
+| `eventhubs.py down <resource group> <namespace> [--apply]` | Deletes the namespace, its hubs and rules, only when its `CreatedBy` tag says this script made it; never the group | Only with `--apply` |
+| [`scripts/test_eventhubs.py`](scripts/test_eventhubs.py) | Both against a fake `az`: the group is never created, re-tagged or deleted; only its own namespace is; the contract is valid and holds no secret | No |
 
 ## Rules it keeps
 
@@ -38,10 +38,10 @@ The subscription, region, resource group and owner come from the saved settings 
 eval "$(python3 skills/lfc-test-settings/scripts/settings.py env)"   # AZ_SUBSCRIPTION (on every az call), AZ_REGION, AZ_RESOURCE_GROUP, OWNER
 python3 skills/lfc-test-settings/scripts/settings.py require AZ_SUBSCRIPTION AZ_REGION AZ_RESOURCE_GROUP OWNER   # what to ask, if anything
 S=skills/lfc-source-eventhubs/scripts
-bash $S/eventhubs.sh up "$AZ_RESOURCE_GROUP" <namespace> "$AZ_REGION" --password-file ~/.lfc/kafka/<namespace>.pw \
+python3 $S/eventhubs.py up "$AZ_RESOURCE_GROUP" <namespace> "$AZ_REGION" --password-file ~/.lfc/kafka/<namespace>.pw \
   --tu 4 --max-tu 40 --tags "Owner=$OWNER RemoveAfter=<date>" --apply
 export SOURCE_JSON=~/.lfc/kafka/<namespace>.source.json        # what a Kafka test reads
-bash $S/eventhubs.sh down "$AZ_RESOURCE_GROUP" <namespace> --apply  # when done
+python3 $S/eventhubs.py down "$AZ_RESOURCE_GROUP" <namespace> --apply  # when done
 ```
 
 From the laptop, check the endpoint first: `nc -z -w 5 <namespace>.servicebus.windows.net 9093`.
@@ -51,4 +51,4 @@ From the laptop, check the endpoint first: `nc -z -w 5 <namespace>.servicebus.wi
 2026-11-03 on Azure (centralus), with **lfc-kafka-freshness-test**: `up` into an existing group (its tags unchanged),
 a 15-minute run at 3,000 events/s with a 30,000/s burst, then `down`. Then again with the contract: `up` wrote
 `<namespace>.source.json`, and the connection, the pipeline and the producer took the broker from it (`SOURCE_JSON`);
-`down` deleted the namespace by its `CreatedBy=lfc-source-eventhubs` tag. `test-eventhubs.sh` checks the contract offline.
+`down` deleted the namespace by its `CreatedBy=lfc-source-eventhubs` tag. `test_eventhubs.py` checks the contract offline.

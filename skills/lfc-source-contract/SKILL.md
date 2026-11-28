@@ -53,19 +53,19 @@ Other fields are ignored. Adding an optional field keeps the version at 1; a cha
 
 ## What a consumer may assume
 
-- The fields above hold, once `source-env.sh` has accepted the file.
+- The fields above hold, once `source_env.py` has accepted the file.
 - With `SOURCE_JSON`, the contract sets the variables it gives. Variables it doesn't give stay as they were in the environment.
 - A consumer doesn't write the contract or change the database beyond what its test does.
 
 ## Version rule
 
-Consumers read contract 1 only. `source-env.sh` exits 2 with one line on any other `contract` value, and on a missing or wrong field, so nothing runs against a source it can't read. A producer that writes a new version updates its consumers first.
+Consumers read contract 1 only. `source_env.py` exits 2 with one line on any other `contract` value, and on a missing or wrong field, so nothing runs against a source it can't read. A producer that writes a new version updates its consumers first.
 
 ## The admin command (`sql_cmd`)
 
 A command line: words separated by spaces, with no quoting inside (consumers expand it unquoted, as they always have). A consumer calls it as `$SRC_SQL <database>`, with the SQL on stdin. It prints rows tab-separated without headers, and its exit status is the SQL's. Server-level work passes `master` (SQL Server) or `postgres` (PostgreSQL) as the database. Oracle and Db2 ignore the database argument.
 
-Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` with `password`, and the password reaches the client only through its environment (or the SQL, for sqlplus). It is an administrator only when `user` is one, so a test that creates databases needs `sql_cmd`.
+Without `sql_cmd`, `sql_client.py` is the default client. It connects as `user` with `password`, and the password reaches the client only through its environment (or the SQL, for sqlplus). It is an administrator only when `user` is one, so a test that creates databases needs `sql_cmd`.
 
 | Engine | Default client | Password through |
 |---|---|---|
@@ -77,12 +77,12 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 
 ## Scripts
 
-- [scripts/source-env.sh](scripts/source-env.sh) `<source.json>`: validates the file and prints the exports. Use `eval "$(scripts/source-env.sh source.json)"`.
-- [scripts/sql-client.sh](scripts/sql-client.sh) `[database]`: the default client; `source-env.sh` sets `SRC_SQL` to it. It reads `SRC_CONTRACT`.
-- [scripts/test-source-env.sh](scripts/test-source-env.sh): offline checks on [scripts/fixtures/](scripts/fixtures/) (each engine, the refusals, the default clients on fake clients).
-- **lfc-source-eventhubs** `eventhubs.sh up --source-json <file>`: writes the contract for an Event Hubs namespace's Kafka endpoint.
+- [scripts/lfc_source_contract/source_env.py](scripts/lfc_source_contract/source_env.py) `<source.json>`: validates the file and prints the exports. Use `eval "$(python3 -I scripts/lfc_source_contract/source_env.py source.json)"`.
+- [scripts/lfc_source_contract/sql_client.py](scripts/lfc_source_contract/sql_client.py) `[database]`: the default client; `source_env.py` sets `SRC_SQL` to it. It reads `SRC_CONTRACT`.
+- [scripts/test_source_env.py](scripts/test_source_env.py): offline checks on [scripts/fixtures/](scripts/fixtures/) (each engine, the refusals, the default clients on fake clients).
+- **lfc-source-eventhubs** `eventhubs.py up --source-json <file>`: writes the contract for an Event Hubs namespace's Kafka endpoint.
 - **lfc-source-cloud-vm**'s slot databases: [scripts/lfc_source_contract/slot.py](scripts/lfc_source_contract/slot.py) `source` writes the contract for one from `lfc-slot up`'s JSON (`slot-source.sh` runs it). Its `sql_cmd` is `slot.py sql` for that database and key (older contracts name `slot-sql.sh`, which runs the same); `Slot` is the database from Python (up, sql, info, a shell in its container); that skill's `test-slot-source.sh` checks it end to end through a fake ssh.
-- [scripts/lakebase-sql.sh](scripts/lakebase-sql.sh) `[database]`: the `sql_cmd` for a Lakebase project (below).
+- [scripts/lfc_source_contract/lakebase_sql.py](scripts/lfc_source_contract/lakebase_sql.py) `[database]`: the `sql_cmd` for a Lakebase project (below).
 - [scripts/lfc_source_contract/jdbc.py](scripts/lfc_source_contract/jdbc.py): SQL on a source through a TYPE JDBC connection from a notebook or job, no password in the code: `JdbcSql(spark, connection).execute()` (writes, as `sessionInitStatement`) and `.query()`, `guarded()` for a statement safe to rerun, `connection_body()` with the Maven driver.
 - [scripts/lfc_source_contract/cdc.py](scripts/lfc_source_contract/cdc.py): a PostgreSQL source's change capture on any DB-API cursor, safe to rerun: `publication(cur, name, schemas)` (FOR TABLE, created, tables added, or kept) and `slot(cur, name, drop=False)`. In a notebook the cursor is `jdbc.dbapi(spark, <JDBC connection>, read_connection=<the POSTGRESQL one>, database=...)`: writes through the JDBC connection, reads through `remote_query`.
 - [scripts/pg-cdc-slot.py](scripts/pg-cdc-slot.py) and [scripts/pg-cdc-slot-drop.py](scripts/pg-cdc-slot-drop.py): notebooks that create, then drop, a pipeline's replication slot `lfc_<uuid>` (named by `cdc.names()`) on an existing publication through UC JDBC, with `cdc.pipeline_slot()`; the first prints the pipeline's `slot_config` ([PostgreSQL pipeline](https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/postgresql-pipeline)). Not the gateway's own form, `dbx_<database OID>_<pipeline ID>`: a custom name in that form is refused (`POSTGRES_SLOT_NAME_CONFLICTS_WITH_CONNECTOR_FORMAT`).
@@ -107,10 +107,10 @@ A project `lakebase-source.py --create-project` makes suspends its compute after
 ```json
 {"contract": 1, "name": "lakebase", "engine": "postgres", "host": "<endpoint host>", "port": 5432,
  "user": "<replication role>", "database": "databricks_postgres", "connection": "<UC connection>",
- "sql_cmd": "env LB_PROJECT=<project> LB_PROFILE=<profile> /abs/path/lakebase-sql.sh"}
+ "sql_cmd": "env LB_PROJECT=<project> LB_PROFILE=<profile> /abs/path/lakebase_sql.py"}
 ```
 
-`lakebase-sql.sh` runs as the project owner through `databricks psql` (no password, an OAuth token per call, renewed from the account login when the workspace's has expired); `postgres` as the database means `databricks_postgres`. Before a run, [`scripts/lakebase-source.py`](scripts/lakebase-source.py) `--project P --role R --connection C --profile X --contract source.json` does the setup in one step: it turns on the project's password logins (`enable_pg_native_login`), creates or rotates the connection's login (`LOGIN REPLICATION`, a random password), creates or updates the UC `POSTGRESQL` connection from it, and writes this contract. The password goes only into the login and the connection. `--create-project` makes a missing project. From a notebook: `from lfc_source_contract.lakebase import setup`, then `setup(project, role=..., connection=...)`; with `database=`, `writer=` and `jdbc_connection=` it also makes a writer login and the TYPE JDBC connection holding it, for writes through `JdbcSql` (tested 2026-11-15: database, both logins, both connections). The same code runs as a serverless job, without `--profile` or `--contract`: a `python_wheel_task` with `package_name` `lfc-source-contract`, `entry_point` `lfc-lakebase-source`, and the package from the repo's archive URL in the environment's dependencies (`https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-contract/scripts`), which needs no Git credentials (a Git-source task does). Tested 2026-11-15 on an existing project and a new one: the connection read through the login, and still read after a rerun rotated the password. Tested on 2026-11-14 (PostgreSQL 17.12): as the owner, `CREATE DATABASE` and `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` work, which **lfc-schema-change-test**'s `lib.sh` uses.
+`lakebase_sql.py` runs as the project owner through psql, with the owner's OAuth database credential from `lakebase.owner_login` (no password on the command line, a new credential per call, renewed from the account login when the workspace's has expired); `postgres` as the database means `databricks_postgres`. Before a run, [`scripts/lakebase-source.py`](scripts/lakebase-source.py) `--project P --role R --connection C --profile X --contract source.json` does the setup in one step: it turns on the project's password logins (`enable_pg_native_login`), creates or rotates the connection's login (`LOGIN REPLICATION`, a random password), creates or updates the UC `POSTGRESQL` connection from it, and writes this contract. The password goes only into the login and the connection. `--create-project` makes a missing project. From a notebook: `from lfc_source_contract.lakebase import setup`, then `setup(project, role=..., connection=...)`; with `database=`, `writer=` and `jdbc_connection=` it also makes a writer login and the TYPE JDBC connection holding it, for writes through `JdbcSql` (tested 2026-11-15: database, both logins, both connections). The same code runs as a serverless job, without `--profile` or `--contract`: a `python_wheel_task` with `package_name` `lfc-source-contract`, `entry_point` `lfc-lakebase-source`, and the package from the repo's archive URL in the environment's dependencies (`https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-contract/scripts`), which needs no Git credentials (a Git-source task does). Tested 2026-11-15 on an existing project and a new one: the connection read through the login, and still read after a rerun rotated the password. Tested on 2026-11-14 (PostgreSQL 17.12): as the owner, `CREATE DATABASE` and `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` work, which **lfc-schema-change-test**'s `lib.sh` uses.
 
 ## Use
 
@@ -125,7 +125,7 @@ SOURCE_JSON="$PWD/source.json" PROFILE=<cli-profile> CATALOG=<catalog> <a scenar
 Check a file before a run, and what it exports, without printing a password:
 
 ```bash
-eval "$(skills/lfc-source-contract/scripts/source-env.sh source.json)" && echo "$SRC_SQL" && echo 'SELECT 1' | $SRC_SQL master
+eval "$(python3 -I skills/lfc-source-contract/scripts/lfc_source_contract/source_env.py source.json)" && echo "$SRC_SQL" && echo 'SELECT 1' | $SRC_SQL master
 ```
 
 ## Errors
@@ -133,7 +133,7 @@ eval "$(skills/lfc-source-contract/scripts/source-env.sh source.json)" && echo "
 | Message | Cause | Fix |
 |---|---|---|
 | `missing <field>` | the file lacks a required field | add it (table above) |
-| `contract <n> ... reads contract 1 only` | another version | use a `source-env.sh` that reads `<n>`, or a producer that writes 1 |
+| `contract <n> ... reads contract 1 only` | another version | use a `source_env.py` that reads `<n>`, or a producer that writes 1 |
 | `no default SQL client for <engine>` | db2 or informix without `sql_cmd` | add `sql_cmd` |
 | `no sql_cmd and no password` | the default client needs the password | add `password` or `sql_cmd` |
 | `slot-source: ... holds the password: give --out` | `slot.py source` (`slot-source.sh`) without `--connection` or `--out` | pass one of them |

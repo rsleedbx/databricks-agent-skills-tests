@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # bin/test_scripts.sh: regression tests for the skills' scripts.
 #   Offline (always): shell syntax (also under bash 3.2 when /bin/bash is 3.2, or BASH32=<path>), every markdown link, the script rules (bin/lint_scripts.py), SCRIPTS.md, the layers (bin/check_layers.py: layers.yaml and layers-baseline.txt), the six TPC schemas through shape.py and ddl.py for seven
-#   dialects, every TPC workload from tpc-schema.sh through ddl-to-schema.py and ddl.py for seven dialects, a DDL import
+#   dialects, every TPC workload from tpc/tpc-schema.py through ddl-to-schema.py and ddl.py for seven dialects, a DDL import
 #   round trip, the Python fill planner compiles, the shared DuckDB runners, and the workload contract (model format 1 on
-#   every schema, workload-env.sh on its fixtures, one workload.sh run).
+#   every schema, workload_env.py on its fixtures, one workload.py run).
 #   With databases (PSQL and/or MYSQL set, e.g. PSQL="podman exec -i dg-pg psql -U postgres",
-#   MYSQL="podman exec -i dg-my mysql -uroot"): fill each of the six workloads from tpc-schema.sh at a small scale (TPC-C 1
+#   MYSQL="podman exec -i dg-my mysql -uroot"): fill each of the six workloads from tpc/tpc-schema.py at a small scale (TPC-C 1
 #   warehouse, TPC-H SF 0.1, TPC-B SF 1 (its smallest), TPC-DS, TPC-E, TPC-DI SF 0.01) on each, and check every table is at its
 #   target, TPC-H's spec rules, and the audit (0 bad rows). Schemas test_* are dropped first.
 #   The planner files must be readable by the client: with podman exec, copy them in and set DIR_PG / DIR_MY to that path.
@@ -80,17 +80,17 @@ for w in tpcb tpcc tpch tpcdi tpcds tpce; do
   check "validate.py $w" uv run -q "$SS/validate.py" "$T/$w.yaml"
 done
 tpc_dialects() {                              # tpc_dialects <workload>: its DDL, read back, then written for seven dialects
-  bash "$DG/tpc/tpc-schema.sh" "$1" 1 | uv run -q "$SS/ddl-to-schema.py" --dialect mysql > "$T/t-$1.yaml" 2>/dev/null || return 1
+  python3 "$DG/tpc/tpc-schema.py" "$1" 1 | uv run -q "$SS/ddl-to-schema.py" --dialect mysql > "$T/t-$1.yaml" 2>/dev/null || return 1
   for d in postgres mysql tsql oracle db2 informix databricks; do uv run -q "$SS/ddl.py" "$T/t-$1.yaml" --dialect $d > "$T/t-$1.$d.sql" && grep -q 'CREATE TABLE' "$T/t-$1.$d.sql" || return 1; done
   uv run -q "$SS/validate.py" "$T/t-$1.yaml"
 }
 for w in tpcb tpcc tpch tpcds tpce tpcdi; do
   # the spec's DDL for tpcb and tpch; the others are statschema's schemas, so their count is the schema file's
   n=$(case $w in (tpcb) echo 4;; (tpch) echo 8;; (*) python3 "$R/bin/check_model_counts.py" --count "$w";; esac)
-  check "tpc-schema.sh $w (SF 1): $n tables, through ddl-to-schema and ddl.py to seven dialects" tpc_dialects $w
-  check "tpc-schema.sh $w (SF 1): $n tables in the schema" test "$(grep -c '^- name:' "$T/t-$w.yaml")" -eq $n
+  check "tpc-schema.py $w (SF 1): $n tables, through ddl-to-schema and ddl.py to seven dialects" tpc_dialects $w
+  check "tpc-schema.py $w (SF 1): $n tables in the schema" test "$(grep -c '^- name:' "$T/t-$w.yaml")" -eq $n
 done
-check "ddl-to-schema.py round trip (TPC-H spec)" bash -c "bash '$DG/tpc/tpc-schema.sh' tpch 0.1 | uv run -q '$SS/ddl-to-schema.py' --dialect mysql > '$T/spec.yaml' \
+check "ddl-to-schema.py round trip (TPC-H spec)" bash -c "python3 '$DG/tpc/tpc-schema.py' tpch 0.1 | uv run -q '$SS/ddl-to-schema.py' --dialect mysql > '$T/spec.yaml' \
   && uv run -q '$SS/ddl.py' '$T/spec.yaml' --dialect mysql | uv run -q '$SS/ddl-to-schema.py' --dialect mysql > '$T/spec2.yaml' \
   && python3 -c \"import sys, yaml; f = lambda p: [{k: ([{c: v for c, v in x.items() if c != 'native_type'} for x in v] if k == 'columns' else v) for k, v in t.items()} for t in yaml.safe_load(open(p))['tables']]; sys.exit(f('$T/spec.yaml') != f('$T/spec2.yaml'))\""
 check "python fill planner compiles" python3 -m py_compile "$DG/python/fill.py" "$DG/python/planner.py" "$DG/python/drivers.py" "$DG"/python/engines/*.py
@@ -107,7 +107,10 @@ check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-sche
 check "lfc-slot (lfc_vm zipapp) limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "lfc_vm masters: the SAS file, the engine beside a master, the staging wait, a build's refusals" python3 -I "$SK/lfc-source-cloud-vm/scripts/tests/test_masters.py"
 check "lfc_vm: limits and env files, usage hours, the lock's bound (not inherited), the engine table, an env file that can't be replaced" python3 -I "$SK/lfc-source-cloud-vm/scripts/tests/test_slots.py"
-check "source contract: source-env.sh on the fixtures and the default clients" sh -c "'$SK/lfc-source-contract/scripts/test-source-env.sh' > /dev/null"
+check "source contract: source_env.py on the fixtures and the default clients (sql_client.py)" python3 -I "$SK/lfc-source-contract/scripts/test_source_env.py"
+check "lfc-source-podman: host helpers, AG names and env, ag-down refusals, ag-sql calls (fake podman), ag-up checks, Lima and ssh config parsing" python3 -I "$SK/lfc-source-podman/scripts/test_podman.py"
+check "lfc-sqlserver-secondary secondary.py: capture-instance waits, switch keeps options, refresh refusals, log delivery, events (fake workspace)" python3 -I "$SK/lfc-sqlserver-secondary/scripts/test_secondary.py"
+check "lfc-source-log-state sqlserver-log-state.py: compact JSON, PER_TABLE, no-JSON and failing batch (fake sqlcmd)" python3 -I "$SK/lfc-source-log-state/scripts/test_sqlserver_log_state.py"
 check "statschema.tools: ddl(), ddl_to_schema() and shape() give the wrappers' text (path, YAML text, dict; stats, scale, keep-small); the wheel ships the models and model() finds them; state restored; canon.py; the rows a spec fixes as rules (TPC-DS calendar, time of day, products in SQLite); composite keys: every column varies, unique, read back; lookups take the parent row's value" \
   sh -c "cd '$SK/lfc-source-statschema/scripts' && uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q test_tools.py 2>&1"
 check "lfc_source_contract.jdbc: Maven driver and allow-list, TLS URLs, guarded() DO block, JdbcSql, dbapi reads through remote_query and writes through JDBC (fake spark)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_jdbc.py"
@@ -117,32 +120,33 @@ check "lfc-saas-pipeline: package calls (fake API), each notebook and its bundle
 check "lfc_saas_pipeline: the package's pipeline specs, runs and checks (fakes)" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
 check "lakebase-source.py on a mocked workspace: new and existing login and connection, password logins, a missing or new project, no password printed" \
   sh -c "cd '$SK/lfc-source-contract/scripts' && uv run -q --no-project --with databricks-sdk --with 'psycopg[binary]' python -m unittest -q test_lakebase_source.py 2>&1"
-check "size_query.py: the sizing statement size.sh and a notebook run (each engine's arguments, MariaDB on the MySQL query, missing --database / --service)" python3 -m unittest -q "$SK/lfc-source-sizing/scripts/test_size_query.py"
+check "lfc-source-sizing size.py: arguments, tables.csv, MySQL PROCESS fallback, the DuckDB call (fake warehouse)" python3 -I "$SK/lfc-source-sizing/scripts/test_size.py"
+check "size_query.py: the sizing statement size.py and a notebook run (each engine's arguments, MariaDB on the MySQL query, missing --database / --service)" python3 -m unittest -q "$SK/lfc-source-sizing/scripts/test_size_query.py"
 WC=$SK/lfc-workload-contract/scripts
 check "workload contract: every statschema schema is model format 1 (validate-model.py)" python3 "$WC/validate-model.py" "$SK"/lfc-source-statschema/schemas/*.yaml
-check "workload contract: workload-env.sh and validate-model.py on their fixtures" sh -c "'$WC/test-workload-env.sh' > /dev/null"
-wl_offline() {   # workload.sh writes a tpcb workload that workload-env.sh accepts (4 tables); a postgres spec tpch one with
+check "workload contract: workload_env.py and validate-model.py on their fixtures" python3 -I "$WC/test_workload_env.py"
+wl_offline() {   # workload.py writes a tpcb workload that workload_env.py accepts (4 tables); a postgres spec tpch one with
                  # its verify file (8 tables); a dialect without a fill command (oracle) is refused
-  bash "$DG/workload.sh" --model tpcb --sf 0.01 --dialect tsql --out "$T/wl" > /dev/null 2>&1 || return 1
-  ( eval "$(bash "$WC/workload-env.sh" "$T/wl/workload.json")" && [ "$WL_NTABLES" = 4 ] && [ "$WL_MODEL" = tpcb ] && [ -f "$WL_DDL" ] && [ -z "${WL_VERIFY:-}" ] ) || return 1
-  bash "$DG/workload.sh" --model tpch --sf 0.1 --dialect postgres --spec --out "$T/wl3" > /dev/null 2>&1 || return 1
-  ( eval "$(bash "$WC/workload-env.sh" "$T/wl3/workload.json")" && [ "$WL_NTABLES" = 8 ] && [ "$WL_DIALECT" = postgres ] && grep -q "'bad: ship" "$WL_VERIFY" ) || return 1
-  bash "$DG/workload.sh" --model tpcb --sf 1 --dialect oracle --out "$T/wl2" > /dev/null 2>&1 && return 1
+  uv run -q --with pyyaml --with sqlglot "$DG/workload.py" --model tpcb --sf 0.01 --dialect tsql --out "$T/wl" > /dev/null 2>&1 || return 1
+  ( eval "$(python3 -I "$WC/workload_env.py" "$T/wl/workload.json")" && [ "$WL_NTABLES" = 4 ] && [ "$WL_MODEL" = tpcb ] && [ -f "$WL_DDL" ] && [ -z "${WL_VERIFY:-}" ] ) || return 1
+  uv run -q --with pyyaml --with sqlglot "$DG/workload.py" --model tpch --sf 0.1 --dialect postgres --spec --out "$T/wl3" > /dev/null 2>&1 || return 1
+  ( eval "$(python3 -I "$WC/workload_env.py" "$T/wl3/workload.json")" && [ "$WL_NTABLES" = 8 ] && [ "$WL_DIALECT" = postgres ] && grep -q "'bad: ship" "$WL_VERIFY" ) || return 1
+  uv run -q --with pyyaml --with sqlglot "$DG/workload.py" --model tpcb --sf 1 --dialect oracle --out "$T/wl2" > /dev/null 2>&1 && return 1
   return 0
 }
-check "copies.sh pg on a fake psql: table names, the DDL order, an existing copy, a failed DDL" sh -c "'$DG/test-copies.sh' > /dev/null"
+check "copies.py pg on a fake psql: table names, the DDL order, an existing copy, a failed DDL" python3 -I "$DG/test_copies.py"
 check "lfc_source_datagen.sources and tpch_sources: parsing, the SQL files, each model's DDL, a new source's steps in order, resume, kept, broken rules (fake connection)" \
   sh -c "cd '$DG' && uv run -q --no-project --with 'psycopg[binary]' --with pyyaml --with sqlglot python -m unittest -q test_sources.py 2>&1"
-check "tpc_schema.py: TPC-B and TPC-H text as the shell version wrote it (sha-256), tpc-schema.sh runs it, the scale floor" python3 -m unittest -q "$DG/test_tpc_schema.py"
-check "workload.sh: a tpcb workload at SF 0.01 and a postgres spec tpch one (with verify) that workload-env.sh accepts; oracle refused" wl_offline
+check "tpc_schema.py: TPC-B and TPC-H text as the shell version wrote it (sha-256), tpc/tpc-schema.py runs it, the scale floor" python3 -m unittest -q "$DG/test_tpc_schema.py"
+check "workload.py: a tpcb workload at SF 0.01 and a postgres spec tpch one (with verify) that workload_env.py accepts; oracle refused" wl_offline
 check "slot.py source (slot-source.sh): a slot's contract, and its SRC_SQL through slot.py sql and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
 check "lfc-vm masters export, slot-vm-setup masters (lfc-vm masters import), and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
 check "moved-lines.py on a throwaway repo" sh -c "cd '$R/.claude/skills/public-skill-conventions/tests' && python3 -m unittest -q test_moved_lines.py"
 check "conventions-check.py on a throwaway repo" sh -c "cd '$R/.claude/skills/public-skill-conventions/tests' && python3 -m unittest -q test_conventions_check.py"
-check "eventhubs.sh: never creates, re-tags or deletes the group; only its own namespace; a valid Kafka contract (fake az)" sh -c "'$SK/lfc-source-eventhubs/scripts/test-eventhubs.sh' > /dev/null"
+check "eventhubs.py: never creates, re-tags or deletes the group; only its own namespace; a valid Kafka contract (fake az)" python3 -I "$SK/lfc-source-eventhubs/scripts/test_eventhubs.py"
 check "lfc-kafka-freshness-test connection.sh, pipeline.sh: from a Kafka source contract (fake databricks)" sh -c "'$SK/lfc-kafka-freshness-test/scripts/test-scripts.sh' > /dev/null"
-check "sqldb.sh, mi.sh: delete only what lfc-source-azure-sql tagged; not found 3, failed lookup 1 (fake az)" sh -c "bash '$SK/lfc-source-azure-sql/scripts/test-delete.sh' > /dev/null"
-check "flex.sh: delete only what lfc-source-azure-flexserver tagged; not found 3, failed lookup 1 (fake az)" sh -c "bash '$SK/lfc-source-azure-flexserver/scripts/test-delete.sh' > /dev/null"
+check "sqldb.py, mi.py: delete only what lfc-source-azure-sql tagged; not found 3, failed lookup 1 (fake az)" python3 -I "$SK/lfc-source-azure-sql/scripts/test_delete.py"
+check "flex.py: delete only what lfc-source-azure-flexserver tagged; not found 3, failed lookup 1 (fake az)" python3 -I "$SK/lfc-source-azure-flexserver/scripts/test_delete.py"
 check "lfc_rest: paging, Files API path, poll_until, the API's own error after retries (fake REST)" python3 -m pytest -q "$SK/lfc-rest/tests/test_rest.py"
 check "lfc_watch: flow names, ready/waiting/failed, fail fast, stall, staging (fake REST)" python3 -m pytest -q "$SK/lfc-pipeline-watch/tests/test_watch.py"
 check "check.py: principal not found, missing grants with their GRANT, a group-owned catalog (fake REST)" python3 -m pytest -q "$SK/lfc-workspace-setup/tests/test_check.py"
@@ -236,14 +240,14 @@ db() {   # db <pg|my|py> <dialect> <client> <planner dir>: fill and check each w
   [ "$kind" = my ] && { $cli -N -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'lfc_seed' AND table_name = 'seed' AND column_name = 'r'" 2>/dev/null | grep -qx 1 || seed_my "$cli"; }
   for w in tpcb tpcc tpch tpcds tpce tpcdi; do db=test_$w
     case $w in tpcb|tpcc) sf=1 ;; tpch) sf=0.1 ;; *) sf=0.01 ;; esac
-    y=$T/$w.live.yaml; bash "$DG/tpc/tpc-schema.sh" $w $sf | uv run -q "$SS/ddl-to-schema.py" --dialect mysql > "$y" 2>/dev/null
+    y=$T/$w.live.yaml; python3 "$DG/tpc/tpc-schema.py" $w $sf | uv run -q "$SS/ddl-to-schema.py" --dialect mysql > "$y" 2>/dev/null
     uv run -q "$SS/ddl.py" "$y" --dialect $dial > "$T/$db.sql"
     S=$(echo $db | tr a-z A-Z)
     case $kind in
     pg) { echo "DROP SCHEMA IF EXISTS $db CASCADE; CREATE SCHEMA $db; SET search_path = $db;"; cat "$T/$db.sql"; } | $cli -q -v ON_ERROR_STOP=1 > /dev/null 2>&1
-        out=$(PSQL="$cli" DIR=$dir bash "$DG/fill.sh" pg $db 2>&1) ;;
+        out=$(PSQL="$cli" DIR=$dir python3 "$DG/python/fill.py" pg $db 2>&1) ;;
     my) { echo "DROP DATABASE IF EXISTS $db; CREATE DATABASE $db; USE $db;"; cat "$T/$db.sql"; } | $cli > /dev/null 2>&1
-        out=$(MYSQL="$cli" DIR=$dir bash "$DG/fill.sh" my $db 2>&1) ;;
+        out=$(MYSQL="$cli" DIR=$dir python3 "$DG/python/fill.py" my $db 2>&1) ;;
     py)  # the engine's own DDL path: Db2 a schema per workload; Informix a database per workload; the rest a schema
         case $cli in
         db2)      { echo "CREATE SCHEMA $S;"; cat "$T/$db.sql"; } | $PY "$DG/python/sq.py" db2 --schema $S $LIVE_PY > "$T/ddl.out" 2>&1 ;;

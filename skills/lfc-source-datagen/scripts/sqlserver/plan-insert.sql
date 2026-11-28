@@ -1,6 +1,6 @@
 -- { echo "DECLARE @schema sysname = N'dbo', @rows bigint = 1000000, @mode varchar(10) = 'fill', ...;"; cat cast.sql plan-insert.sql; } | sqlcmd -h -1 -y 0 | sed 's/$/\nGO/' > inserts.sql
 -- Emits one INSERT per table in @schema that has a usable one-column primary key or an lfc:n tag (cast.sql), one per line.
--- Run each as its own batch (fill.sh adds GO after every line), so one that fails to compile doesn't stop the rest:
+-- Run each as its own batch (fill.py's client mode adds GO after every line), so one that fails to compile doesn't stop the rest:
 --   @mode = 'append': add @rows rows above the current max key.
 --   @mode = 'fill': top the table up to its target (lfc:rows), at most @rows per statement; rerun until status shows
 --     every table at its target.

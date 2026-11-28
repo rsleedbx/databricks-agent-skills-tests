@@ -6,14 +6,14 @@ Most people don't know what schema to test with. The TPC benchmarks define well-
 |---|---|---|---|
 | TPC-B (also TPC-A: the same 4 tables) | 2.0.0 | branch, teller, account, history | ✓ Postgres 16 and MySQL 8.4 |
 | TPC-H (also TPC-D 2.1.0 and TPC-R 2.1.0: the same 8 tables) | 3.0.1 | region, nation, supplier, part, partsupp, customer, orders, lineitem | ✓ Postgres 16 and MySQL 8.4 |
-| TPC-C | 5.11.0 | 9 tables, composite keys per warehouse | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.sh tpcc`, below) |
-| TPC-DS | 4.0.0 | 7 fact and 17 dimension tables | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.sh tpcds`, below) |
-| TPC-E | 1.14.0 | 32 tables in statschema's schema | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.sh tpce`, below) |
-| TPC-DI | 1.1.0 | warehouse Dim and Fact tables | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.sh tpcdi`, below) |
+| TPC-C | 5.11.0 | 9 tables, composite keys per warehouse | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.py tpcc`, below) |
+| TPC-DS | 4.0.0 | 7 fact and 17 dimension tables | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.py tpcds`, below) |
+| TPC-E | 1.14.0 | 32 tables in statschema's schema | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.py tpce`, below) |
+| TPC-DI | 1.1.0 | warehouse Dim and Fact tables | ✓ Postgres 16 and MySQL 8.4 (`tpc-schema.py tpcdi`, below) |
 | TPC-W / TPC-APP | 2.0.0 / 1.3.0 | 8-table online bookstore | Planned |
 | TPC-VMS, TPCx-* | | No schema of their own (VMS runs C, E, H, DS; HS is a sort, IoT key-value, AI files; BB is DS plus logs; V is based on E) | Not applicable |
 
-**All six (TPC-B, C, H, DS, E, DI) are also in statschema's canonical format** in **lfc-source-statschema** (`schemas/`), with each column's generation rule: build any of them at any scale with its `shape.py --sf N`, `ddl.py` (Postgres, MySQL, SQL Server, Oracle, Databricks), and `fill.sh`; that skill lists the measured fills. The TPC-B and TPC-H here follow the spec's own key formulas more closely (TPC-H's sparse order keys, the `partsupp` supplier formula, the date and price relationships in `lineitem`), so `tpch-verify.sql` checks them.
+**All six (TPC-B, C, H, DS, E, DI) are also in statschema's canonical format** in **lfc-source-statschema** (`schemas/`), with each column's generation rule: build any of them at any scale with its `shape.py --sf N`, `ddl.py` (Postgres, MySQL, SQL Server, Oracle, Databricks), and `fill.py`; that skill lists the measured fills. The TPC-B and TPC-H here follow the spec's own key formulas more closely (TPC-H's sparse order keys, the `partsupp` supplier formula, the date and price relationships in `lineitem`), so `tpch-verify.sql` checks them.
 
 The specs are free PDFs at `https://www.tpc.org/TPC_Documents_Current_Versions/pdf/<name>.pdf` (for example `TPC-H_v3.0.1.pdf`); only the tools need TPC's download form, and these schemas don't use them.
 
@@ -27,12 +27,12 @@ The planners need each row to come from one integer `n`. Three comment tags let 
 | `lfc:n={formula}` | a table | `n` back from a row, for a composite key, a key from a formula, or a table without a primary key | `lineitem`: `(((l_orderkey - 1) DIV 32) * 8 + (l_orderkey - 1) % 32) * 4 + l_linenumber` |
 | `lfc:by={column}` | a table | The column `n` rises with, for the min and max probes (default: the first key column); the probes read the rows with the highest (lowest) value of it and take the max (min) of `lfc:n` | `history` (no key): `h_time` |
 
-`n` must rise with the `lfc:by` column (rows sharing a value can come in any order: a `partsupp` part's 4 suppliers). Formulas use only integer arithmetic, `DIV`, `%`, and `CASE`, so they mean the same on every engine; `h(e, a)` in `tpc-schema.sh` is the non-linear scramble `(e mod p)((e mod p + a) mod p) mod p`, `p = 2³¹ − 1`, for the spec's "random value" columns, the same on every run.
+`n` must rise with the `lfc:by` column (rows sharing a value can come in any order: a `partsupp` part's 4 suppliers). Formulas use only integer arithmetic, `DIV`, `%`, and `CASE`, so they mean the same on every engine; `h(e, a)` in `tpc-schema.py` is the non-linear scramble `(e mod p)((e mod p + a) mod p) mod p`, `p = 2³¹ − 1`, for the spec's "random value" columns, the same on every run.
 
 Rules that follow from the spec:
 
 - **Tables the spec gives no primary key keep none** (TPC-B's `history`; TPC-C's `history` too). On Postgres they get `REPLICA IDENTITY FULL`, which CDC needs for such tables, as customers' keyless tables do. Their min and max probes scan the table unless the `lfc:by` column has an index; add a plain index for large ones (an index, not a key).
-- **Parents first, completely.** A formula like `l_partkey = 1 + h(n) % 200000` assumes `part` is full, so `fill.sh` (in the skill's "Fill level by level") fills one level at a time and moves on only when every table of the level is at its target.
+- **Parents first, completely.** A formula like `l_partkey = 1 + h(n) % 200000` assumes `part` is full, so `fill.py` (in the skill's "Fill level by level") fills one level at a time and moves on only when every table of the level is at its target.
 - **Not yet:** deletes. The delete planners skip tables with `lfc:n` and parents whose children's foreign key is part of the child's key or has a formula (re-pointing those would change a key). TPC-H's refresh functions (RF1, RF2) would delete an order with its lines; that's the next step.
 
 Where it differs from the spec:
@@ -48,9 +48,9 @@ Where it differs from the spec:
 
 ## Files
 
-- [`scripts/tpc/tpc-schema.sh`](../scripts/tpc/tpc-schema.sh): The six workloads as MySQL DDL with the tags; `bash tpc-schema.sh tpch 10` for scale factor 10, `bash tpc-schema.sh tpcds 1` for TPC-DS.
+- [`scripts/tpc/tpc-schema.py`](../scripts/tpc/tpc-schema.py): The six workloads as MySQL DDL with the tags; `python3 tpc-schema.py tpch 10` for scale factor 10, `python3 tpc-schema.py tpcds 1` for TPC-DS.
 
-- [`scripts/lfc_source_datagen/tpc_schema.py`](../scripts/lfc_source_datagen/tpc_schema.py): TPC-B and TPC-H from the spec, the code `tpc-schema.sh` runs for those two. From a notebook: `%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-datagen/scripts"`, then `from lfc_source_datagen.tpc_schema import tpc_schema` and `tpc_schema("tpch", 0.1)`; statschema's `ddl_to_schema()` and `ddl()` (package `lfc-statschema`) turn it into any engine's DDL.
+- [`scripts/lfc_source_datagen/tpc_schema.py`](../scripts/lfc_source_datagen/tpc_schema.py): TPC-B and TPC-H from the spec, the code `tpc-schema.py` runs for those two. From a notebook: `%pip install "https://github.com/rsleedbx/databricks-agent-skills-tests/archive/refs/heads/main.zip#subdirectory=skills/lfc-source-datagen/scripts"`, then `from lfc_source_datagen.tpc_schema import tpc_schema` and `tpc_schema("tpch", 0.1)`; statschema's `ddl_to_schema()` and `ddl()` (package `lfc-statschema`) turn it into any engine's DDL.
 
 
 - [`scripts/tpc/tpcb-verify.sql`](../scripts/tpc/tpcb-verify.sql): TPC-B checks.
@@ -61,19 +61,19 @@ Where it differs from the spec:
 
 ## Run
 
-`tpc-schema.sh` writes a workload's tables as MySQL DDL, with the tags in the column and table comments: all six workloads, one entry point (`tpc-schema.sh <tpcb|tpcc|tpch|tpcds|tpce|tpcdi> [SF]`). TPC-C, TPC-DS, TPC-E and TPC-DI are shaped from statschema's schemas (`shape.py --sf`, then `ddl.py --dialect mysql`). **lfc-source-statschema**'s `ddl-to-schema.py` turns that into its canonical `schema.yaml` (keeping the tags and the checks), and its `ddl.py` writes the DDL for any engine, transpiling the formulas with [sqlglot](https://github.com/tobymao/sqlglot) (`DIV` stays integer division). Then `fill.sh` (in the skill's "Fill level by level") fills it with the engine's planners, one level at a time, and the verify file checks the spec's rules on the data.
+`tpc-schema.py` writes a workload's tables as MySQL DDL, with the tags in the column and table comments: all six workloads, one entry point (`tpc-schema.py <tpcb|tpcc|tpch|tpcds|tpce|tpcdi> [SF]`). TPC-C, TPC-DS, TPC-E and TPC-DI are shaped from statschema's schemas (`shape.py --sf`, then `ddl.py --dialect mysql`). **lfc-source-statschema**'s `ddl-to-schema.py` turns that into its canonical `schema.yaml` (keeping the tags and the checks), and its `ddl.py` writes the DDL for any engine, transpiling the formulas with [sqlglot](https://github.com/tobymao/sqlglot) (`DIV` stays integer division). Then `fill.py` (in the skill's "Fill level by level") fills it with the engine's planners, one level at a time, and the verify file checks the spec's rules on the data.
 
 ```bash
 SS=../lfc-source-statschema/scripts                                      # from this skill's directory
-bash scripts/tpc/tpc-schema.sh tpch 1 | uv run $SS/ddl-to-schema.py --dialect mysql > tpch.yaml   # scale factor 1: 8.66M rows
+python3 scripts/tpc/tpc-schema.py tpch 1 | uv run $SS/ddl-to-schema.py --dialect mysql > tpch.yaml   # scale factor 1: 8.66M rows
 # Postgres: schema tpch
 { echo "CREATE SCHEMA tpch; SET search_path = tpch;"; uv run $SS/ddl.py tpch.yaml --dialect postgres; } | psql -v ON_ERROR_STOP=1
-DIR=scripts/postgres bash scripts/fill.sh pg tpch
+PSQL=psql python3 scripts/python/fill.py pg tpch
 { echo "SET search_path = tpch;"; sed -E 's/DATEDIFF\(([^,]+), ([^)]+)\)/(\1 - \2)/g' scripts/tpc/tpch-verify.sql; } | psql -At
 # MySQL: database tpch
 { echo "CREATE DATABASE tpch; USE tpch;"; uv run $SS/ddl.py tpch.yaml --dialect mysql; } | mysql
 # Any other engine's DDL: uv run $SS/ddl.py tpch.yaml --dialect tsql (or oracle, databricks)
-DIR=scripts/mysql bash scripts/fill.sh my tpch
+MYSQL=mysql python3 scripts/python/fill.py my tpch
 mysql -N tpch < scripts/tpc/tpch-verify.sql
 ```
 

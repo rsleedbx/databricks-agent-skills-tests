@@ -83,7 +83,7 @@ class LakebaseSource(unittest.TestCase):
         self.assertEqual(contract["user"], "lfc_cdc"); self.assertEqual(contract["database"], "orders")
         self.assertEqual(contract["connection"], "c1"); self.assertEqual(contract["host"], "ep-1.example.com")
         self.assertTrue(contract["sql_cmd"].startswith("env LB_PROJECT=p LB_PROFILE=prof "))
-        self.assertTrue(contract["sql_cmd"].endswith("lakebase-sql.sh"))
+        self.assertTrue(contract["sql_cmd"].endswith("lakebase_sql.py"))
         self.assertNotIn("SECRET-PW", text); self.assertNotIn("SECRET-PW", out); self.assertNotIn("oauth-token", out)
 
     def test_existing_login_and_connection_native_off(self):

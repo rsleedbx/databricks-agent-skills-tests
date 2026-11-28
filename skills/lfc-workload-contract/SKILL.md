@@ -5,7 +5,7 @@ description: "The workload contract for Lakeflow Connect tests: a statschema mod
 
 # Workload contract (contract 1)
 
-A Lakeflow Connect test that needs many tables of a model (a TPC schema, or a customer's shape) takes them through a workload file: `WORKLOAD_JSON=<file>` on the script. The file is written by the shape layer's producer (the `workload.sh` in lfc-source-datagen). The test runs its commands from the file and never names the statschema or datagen scripts, so either side can move its files without touching the other.
+A Lakeflow Connect test that needs many tables of a model (a TPC schema, or a customer's shape) takes them through a workload file: `WORKLOAD_JSON=<file>` on the script. The file is written by the shape layer's producer (the `workload.py` in lfc-source-datagen). The test runs its commands from the file and never names the statschema or datagen scripts, so either side can move its files without touching the other.
 
 This is the same pattern as the source contract ([lfc-source-contract](../lfc-source-contract/SKILL.md)): a versioned JSON file, a validator that prints exports, and a producer that writes the paths so consumers don't.
 
@@ -33,8 +33,8 @@ Other keys are ignored. Tables may sit at indent 0 or 2, and columns in block or
 {"contract": 1, "model": "tpcc", "scale": 0.01, "dialect": "tsql",
  "tables": ["district", "customer", "warehouse", "item", "stock", "order_line", "new_order", "orders", "history"],
  "ddl": "/abs/work/tpcc-sf0.01/model.sql",
- "fill_cmd": "bash /abs/datagen/copies.sh ms",
- "bundle_cmd": "bash /abs/datagen/bundle.sh"}
+ "fill_cmd": "python3 /abs/datagen/copies.py ms",
+ "bundle_cmd": "python3 /abs/datagen/bundle.py"}
 ```
 
 | Field | Required | Meaning | Export |
@@ -67,7 +67,7 @@ Its output: one line per copy, `done <schema> <seconds>s` or `failed <schema> <r
 { echo "SET search_path = <model>_NNNN;"; cat "$WL_VERIFY"; } | <client>
 ```
 
-SQL for the dialect with unqualified table names, run in one copy's schema. Each row that starts with `bad` is a check: its label, then counts, which must all be 0. Other rows (row counts, key ranges) are for a reader. `workload.sh --spec` writes it for TPC-H on `postgres` (the spec's keys, prices, lines per order, and the dates across tables).
+SQL for the dialect with unqualified table names, run in one copy's schema. Each row that starts with `bad` is a check: its label, then counts, which must all be 0. Other rows (row counts, key ranges) are for a reader. `workload.py --spec` writes it for TPC-H on `postgres` (the spec's keys, prices, lines per order, and the dates across tables).
 
 ### The bundle command
 
@@ -77,40 +77,40 @@ $WL_BUNDLE /path/out.tgz
 
 It writes one portable archive. Unpacked into a folder, every file named in `fill_cmd` is at the top of that folder under its base name, so the fill runs there as `$WL_FILL_IN_BUNDLE`. The DDL file is not in the bundle: copy it beside the bundle and pass its base name. The consumer supplies the client (for `tsql`, an executable that reads SQL on stdin, named as the bundle's `MSSQL` client).
 
-`WL_FILL_IN_BUNDLE` is `fill_cmd` with each absolute word reduced to its base name. `workload-env.sh` computes it.
+`WL_FILL_IN_BUNDLE` is `fill_cmd` with each absolute word reduced to its base name. `workload_env.py` computes it.
 
 ## Producers and consumers
 
-- **Producer**: the shape layer's `workload.sh` in lfc-source-datagen. It runs statschema's `shape.py` and `ddl.py`, checks the model file with `validate-model.py`, and writes `model.yaml`, `model.sql` and `workload.json` for one model at one scale. It checks its own workload file with `workload-env.sh` before it returns. The fill and bundle commands it writes are datagen's `copies.sh` and `bundle.sh`.
+- **Producer**: the shape layer's `workload.py` in lfc-source-datagen. It runs statschema's `shape.py` and `ddl.py`, checks the model file with `validate-model.py`, and writes `model.yaml`, `model.sql` and `workload.json` for one model at one scale. It checks its own workload file with `workload_env.py` before it returns. The fill and bundle commands it writes are datagen's `copies.py` and `bundle.py`.
 - **Consumers**: the Lakeflow tests that need many tables. The first is lfc-schema-change-test's `sqlserver-scale.sh` (`WORKLOAD_JSON`); it runs the fill locally with `BUILD_HERE=1`, or bundles it and runs it on the source VM. `postgres-tpch-cdc.sh` fills one copy of the spec TPC-H on a PostgreSQL source and runs `verify` before and after its change rounds.
 - A consumer may use only the exports above. It doesn't read the model file, the DDL's contents, or the fill's options.
 
 ## What a producer guarantees
 
 - The model file holds format 1, and the DDL creates exactly the `tables` named.
-- The workload file passes `workload-env.sh`: the paths exist when it is written, and the fill command runs as the output rules above say.
+- The workload file passes `workload_env.py`: the paths exist when it is written, and the fill command runs as the output rules above say.
 - No password, token or connection string is in it.
 
 ## What stays internal
 
-Not part of the contract, and free to change within contract 1: the DDL's statements and types for the dialect, the planner's options (`ROWS`, `ORDER`, `DATA`, `PLAIN_EVERY`, `BLOCK`, `LOB_LEN`, `SESSIONS` in lfc-source-datagen's `fill.sh`), the planner files, how `shape.py` chooses each column's rule, and the capped-DML flags.
+Not part of the contract, and free to change within contract 1: the DDL's statements and types for the dialect, the planner's options (`ROWS`, `ORDER`, `DATA`, `PLAIN_EVERY`, `BLOCK`, `LOB_LEN`, `SESSIONS` in lfc-source-datagen's `fill.py`, read from the environment), the planner files, how `shape.py` chooses each column's rule, and the capped-DML flags.
 
 ## Version rule
 
-Consumers read contract 1 only. `workload-env.sh` exits 2 with one line on any other `contract` value, and on a missing, wrong or unsafe field, or a file that isn't there. A producer that writes a new version updates its consumers first. A change a reader can't ignore is a new version; an optional field is not.
+Consumers read contract 1 only. `workload_env.py` exits 2 with one line on any other `contract` value, and on a missing, wrong or unsafe field, or a file that isn't there. A producer that writes a new version updates its consumers first. A change a reader can't ignore is a new version; an optional field is not.
 
 ## Scripts
 
-- [scripts/workload-env.sh](scripts/workload-env.sh) `<workload.json>`: validates the file and prints the exports. Use `eval "$(scripts/workload-env.sh workload.json)"`.
+- [scripts/workload_env.py](scripts/workload_env.py) `<workload.json>`: validates the file and prints the exports. Use `eval "$(python3 scripts/workload_env.py workload.json)"`.
 - [scripts/validate-model.py](scripts/validate-model.py) `<model.yaml>...`: the model format 1 check.
-- [scripts/test-workload-env.sh](scripts/test-workload-env.sh): offline checks on [scripts/fixtures/](scripts/fixtures/) (the valid file, each refusal, the exports, no secret printed), and it runs [scripts/test-validate-model.sh](scripts/test-validate-model.sh) (the model fixtures: both indentations, each refusal).
+- [scripts/test_workload_env.py](scripts/test_workload_env.py): offline checks on [scripts/fixtures/](scripts/fixtures/) (the valid file, each refusal, the exports, no secret printed), and it runs [scripts/test_validate_model.py](scripts/test_validate_model.py) (the model fixtures: both indentations, each refusal).
 
 ## Example
 
 ```bash
-WORK=$(mktemp -d)   # a producer's output folder: the shape layer's workload.sh writes it
-bash <datagen>/workload.sh --model tpcb --sf 0.01 --dialect tsql --out "$WORK"  # the producer; prints $WORK/workload.json
-eval "$(skills/lfc-workload-contract/scripts/workload-env.sh "$WORK/workload.json")"
+WORK=$(mktemp -d)   # a producer's output folder: the shape layer's workload.py writes it
+python3 <datagen>/workload.py --model tpcb --sf 0.01 --dialect tsql --out "$WORK"  # the producer; prints $WORK/workload.json
+eval "$(python3 skills/lfc-workload-contract/scripts/workload_env.py "$WORK/workload.json")"
 echo "$WL_NTABLES tables: $WL_TABLES"
 MSSQL="$SRC_SQL $DB" $WL_FILL "$WL_DDL" "$WL_MODEL" 1 10 4   # copies tpcb_0001 .. tpcb_0010 in $DB
 ```

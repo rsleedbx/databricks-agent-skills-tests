@@ -2,9 +2,9 @@
 
 > **Warning:** MI provisioning takes 4–6 hours for the first MI in a new subnet, then 30–60 minutes for additional ones. Do not proceed unless you can wait.
 
-## 1-3. Subnet, NSG, route table, instance: `mi.sh create`
+## 1-3. Subnet, NSG, route table, instance: `mi.py create`
 
-[`../scripts/mi.sh`](../scripts/mi.sh) `create` runs these, in this order (Azure refuses the instance if the subnet lacks any of them):
+[`../scripts/mi.py`](../scripts/mi.py) `create` runs these, in this order (Azure refuses the instance if the subnet lacks any of them):
 
 1. `az network nsg create -n <subnet>-nsg`: the subnet's own NSG, with no rules of ours. MI adds its management rules to it (`Microsoft.Sql-managedInstances_UseOnly_*`); leave those alone.
 2. `az network route-table create -n <subnet>-rt` with the route `0.0.0.0/0` to `Internet`.
@@ -15,14 +15,14 @@
 
 **Port 3342 stays closed** until the NSG has an allow rule for it: the NSG's default rules deny inbound traffic from the internet. **lfc-source-firewall** adds the rules (target: `<subnet>-nsg`, port 3342), from the same IP list as every other source.
 
-**Monitor progress** in the background (**watch-progress**): `mi.sh wait` polls often at first and then less often, for about 6.5 hours, printing the state and the operation's percent complete, so a stalled create shows up early. Exit 0 Succeeded, 1 Failed or Canceled, 2 still provisioning (check the operation in the portal; don't delete and retry). Expected states: `Created` → `Accepted` → `Running` → `Succeeded`.
+**Monitor progress** in the background (**watch-progress**): `mi.py wait` polls often at first and then less often, for about 6.5 hours, printing the state and the operation's percent complete, so a stalled create shows up early. Exit 0 Succeeded, 1 Failed or Canceled, 2 still provisioning (check the operation in the portal; don't delete and retry). Expected states: `Created` → `Accepted` → `Running` → `Succeeded`.
 
-**The public endpoint:** `mi.sh endpoint` prints `<name>.public.<dns zone>.database.windows.net,3342` (the private FQDN with `.public` after the instance name).
+**The public endpoint:** `mi.py endpoint` prints `<name>.public.<dns zone>.database.windows.net,3342` (the private FQDN with `.public` after the instance name).
 
 ## 4. Verify connectivity
 
 ```bash
-SQLCMDPASSWORD="$(cat admin.pw)" sqlcmd -S "$(bash ../scripts/mi.sh endpoint)" \
+SQLCMDPASSWORD="$(cat admin.pw)" sqlcmd -S "$(python3 ../scripts/mi.py endpoint)" \
   -U sqladmin -Q "SELECT 1;"
 ```
 

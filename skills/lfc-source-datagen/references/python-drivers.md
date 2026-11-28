@@ -1,11 +1,11 @@
 # Run the planners from Python (no database CLI)
 
-The SQL planners (`scripts/postgres`, `mysql`, `sqlserver`, `oracle`) run with each engine's own client (`psql`, `mysql`, `sqlcmd`, `sqlplus`), and `fill.sh` sends their output back through the same client. That works where we run the database ourselves (a container in Lima or on a cloud VM). It doesn't work where there's no client to run:
+The SQL planners (`scripts/postgres`, `mysql`, `sqlserver`, `oracle`) run with each engine's own client (`psql`, `mysql`, `sqlcmd`, `sqlplus`), and `fill.py`'s client mode sends their output back through the same client. That works where we run the database ourselves (a container in Lima or on a cloud VM). It doesn't work where there's no client to run:
 
 - **Managed services:** RDS, Aurora, Azure SQL Database, Azure Database for PostgreSQL and MySQL, and Cloud SQL give no shell on the database host. A client can still run elsewhere, but not on the host, and not always on the machine the skill runs on.
 - **Databricks serverless:** a notebook or job has Python and pip, not `psql`, `sqlcmd`, `sqlplus`, `db2` or `dbaccess`.
 
-[`scripts/python/fill.py`](../scripts/python/fill.py) is the same fill in Python, through a driver, for **PostgreSQL, MySQL, SQL Server, Oracle, Db2 and Informix**. The SQL planners and `fill.sh` stay as they are.
+[`scripts/python/fill.py`](../scripts/python/fill.py) is the same fill in Python, through a driver, for **PostgreSQL, MySQL, SQL Server, Oracle, Db2 and Informix**. The SQL planners stay as they are: `fill.py`'s client mode runs them through the engine's client, and the driver runs the Python planner.
 
 ## Usage
 
@@ -20,8 +20,8 @@ uv run --with informix-driver $P/fill.py ifx tpch --host ... --user informix --p
 ```
 
 - `fill` (the default) tops every table up to its target (`lfc:rows`), one level at a time, `--sessions` statements at once, each on its own connection. It stops if a round adds no rows.
-- `plan` prints the statements; `status` prints `table|min|max|rows|target`, as `fill.sh` does.
-- The options are `fill.sh`'s: `--rows` (per statement), `--mode fill | append`, `--order`, `--data`, `--plain-every`, `--block`, `--lob-len`. `--seed` changes the scramble's constants.
+- `plan` prints the statements; `status` prints `table|min|max|rows|target`, as the shell fill did.
+- The options are the shell fill's (and its environment variables are their defaults): `--rows` (per statement), `--mode fill | append`, `--order`, `--data`, `--plain-every`, `--block`, `--lob-len`. `--seed` changes the scramble's constants.
 - The password file's first line is the password. Use `--trust-server-certificate` for a SQL Server with a self-signed certificate.
 - The schemas come from **lfc-source-statschema**'s `ddl.py`, which also writes `--dialect db2` and `--dialect informix`.
 
@@ -31,7 +31,7 @@ Only the fill planner is ported: insert, status, and the report of skipped table
 
 - **The rows are still generated inside the database.** Python sends one `INSERT ... SELECT` per table; only SQL text crosses the network.
 - **Each statement still checks its own keys.** It reads the table's current max key, and the parent's key range, when it runs. So a rerun never duplicates rows, and Python holds no state about the database.
-- **The plan is made once per run.** `fill.sh` re-plans every round. The scramble's constants come from a hash of table and column, so every plan of a schema writes the same rows.
+- **The plan is made once per run.** The shell fill re-planned every round. The scramble's constants come from a hash of table and column, so every plan of a schema writes the same rows.
 - [`planner.py`](../scripts/python/planner.py) has the rules every engine shares: levels, `lfc:e` / `lfc:v` / `lfc:n` / `lfc:by`, foreign keys, scramble and plain blocks.
 - [`engines/<engine>.py`](../scripts/python/engines/) has what's specific to one engine:
   - the catalog query;
@@ -61,7 +61,7 @@ All tests ran on the laptop (Lima VZ VM, 4 vCPU, 10 GiB), with the six engines i
 - **Every table at its target.** All six TPC workloads (B, C, H, DS, E, DI) at SF 0.1 reached every target on all six engines: 13.0M rows in 95 tables per engine.
 - **The driver path is as fast as the CLI.** Timings for TPC-H SF 1 (8,660,030 rows):
 
-| Engine | `fill.py` | `fill.sh` (laptop baseline) |
+| Engine | `fill.py` driver | `fill.py` client (laptop baseline) |
 |---|---|---|
 | PostgreSQL 16 (4 sessions) | 118 s | 119 s |
 | MySQL 8.4 (2 sessions) | 151 s | 174 s |
@@ -145,7 +145,7 @@ Gotchas:
 
 | Where the skill runs | Database | Use |
 |---|---|---|
-| Laptop or VM, database in a container we run | Postgres, MySQL, SQL Server, Oracle | `fill.sh` or `fill.py` |
+| Laptop or VM, database in a container we run | Postgres, MySQL, SQL Server, Oracle | `fill.py` (client or driver) |
 | Laptop or VM | Db2, Informix | `fill.py` |
 | Laptop or VM | Managed service (RDS, Aurora, Azure SQL, Cloud SQL) | `fill.py` |
 | Databricks serverless | Any reachable from serverless | `fill.py`, with the driver in the job's environment (`dependencies`) |

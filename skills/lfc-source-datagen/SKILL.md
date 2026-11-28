@@ -8,7 +8,7 @@ parent: lfc-source-setup
 
 Loading 100 GB from a laptop or a notebook means pushing 100 GB over the network. This skill sends **only SQL text**: the database generates every row itself, from an integer.
 
-**Tools:** the engine's SQL client (psql or mysql), and uv for the TPC scripts; see **lfc-source-setup** "Tools".
+**Tools:** the engine's SQL client (psql or mysql) or a Python driver; Python 3 (the TPC scripts also need pyyaml and sqlglot); see **lfc-source-setup** "Tools".
 
 **Without a database CLI** (RDS, Aurora, Azure SQL and other managed services, or Databricks serverless), and for **Db2 and Informix**, use [`scripts/python/fill.py`](scripts/python/fill.py): the same fill through a pip-installable driver, for Postgres, MySQL, SQL Server, Oracle, Db2 and Informix. It writes the same SQL as the SQL planners and is as fast; see [references/python-drivers.md](references/python-drivers.md).
 
@@ -23,7 +23,7 @@ How the planner works (every row from one integer, resuming, keys only at the en
 
 ## A workload for a model
 
-[`scripts/workload.sh`](scripts/workload.sh) `--model <model> --sf <scale> --dialect <tsql|postgres> --out <dir> [--spec]` shapes one of statschema's models (its `schemas/` folder) at a scale, and writes `<dir>/workload.json` (the workload contract, lfc-workload-contract) with the model's DDL, its tables, and this folder's `copies.sh` (fill) and `bundle.sh` (bundle) as the commands. A test takes that file as `WORKLOAD_JSON`. `tsql` (SQL Server) and `postgres` have a fill command so far. `--spec` takes TPC-H or TPC-B as `tpc/tpc-schema.sh` writes them from the spec in place of statschema's model, and for TPC-H on `postgres` adds `verify` (the spec's checks). It needs uv.
+[`scripts/workload.py`](scripts/workload.py) `--model <model> --sf <scale> --dialect <tsql|postgres> --out <dir> [--spec]` shapes one of statschema's models (its `schemas/` folder) at a scale, and writes `<dir>/workload.json` (the workload contract, lfc-workload-contract) with the model's DDL, its tables, and this folder's `copies.py` (fill) and `bundle.py` (bundle) as the commands. A test takes that file as `WORKLOAD_JSON`. `tsql` (SQL Server) and `postgres` have a fill command so far. `--spec` takes TPC-H or TPC-B as `tpc/tpc-schema.py` writes them from the spec in place of statschema's model, and for TPC-H on `postgres` adds `verify` (the spec's checks). It runs statschema's `shape.py` and `ddl.py` with this Python (pyyaml and sqlglot).
 
 ### TPC-H as several business sources
 
@@ -33,7 +33,7 @@ How the planner works (every row from one integer, resuming, keys only at the en
 
 A typical request: *"Create 100 tables, rows uniformly distributed up to 1 million, with a variety of data types."*
 
-**If the user doesn't know what schema they want, offer a standard one**: TPC-B (4 tables, the banking schema pgbench uses, including a table with no primary key) or TPC-H (8 tables, composite keys and foreign keys, 8.66M rows at scale factor 1), with the spec's sizes, keys, foreign keys, and constraints. See [references/tpc.md](references/tpc.md); `tpc-schema.sh` writes all six (TPC-C, TPC-DS, TPC-E, and TPC-DI shaped from **lfc-source-statschema**'s schemas). **If they have a database of their own but can't share its data**, build a copy with its shape from its statistics: **lfc-source-statschema**. Otherwise:
+**If the user doesn't know what schema they want, offer a standard one**: TPC-B (4 tables, the banking schema pgbench uses, including a table with no primary key) or TPC-H (8 tables, composite keys and foreign keys, 8.66M rows at scale factor 1), with the spec's sizes, keys, foreign keys, and constraints. See [references/tpc.md](references/tpc.md); `tpc-schema.py` writes all six (TPC-C, TPC-DS, TPC-E, and TPC-DI shaped from **lfc-source-statschema**'s schemas). **If they have a database of their own but can't share its data**, build a copy with its shape from its statistics: **lfc-source-statschema**. Otherwise:
 
 | Choice | Default | Options |
 |---|---|---|
@@ -56,30 +56,31 @@ A typical request: *"Create 100 tables, rows uniformly distributed up to 1 milli
 
 ### Portable: build many copies where the database is
 
-To build many copies of a model (100 copies of TPC-C, each in its own schema `<model>_NNNN`), run the generator next to the database rather than over a network that can drop. [`scripts/bundle.sh`](scripts/bundle.sh) packs [`scripts/copies.sh`](scripts/copies.sh), `fill.sh` and every engine's planner files into one file. It needs only bash and the engine's SQL client on the target; no Python, nothing to install. The model's DDL comes from **lfc-source-statschema** (`shape.py`, `ddl.py`) on any machine with uv.
+To build many copies of a model (100 copies of TPC-C, each in its own schema `<model>_NNNN`), run the generator next to the database rather than over a network that can drop. [`scripts/bundle.py`](scripts/bundle.py) packs [`scripts/copies.py`](scripts/copies.py), `python/fill.py` and every engine's planner files into one file. It needs Python 3 and the engine's SQL client on the target (the copies fill through the client); nothing to pip-install. The model's DDL comes from **lfc-source-statschema** (`shape.py`, `ddl.py`) on any machine with uv.
 
 ```bash
 uv run ../lfc-source-statschema/scripts/shape.py ../lfc-source-statschema/schemas/tpcc.yaml --sf 0.01 > tpcc.yaml
 uv run ../lfc-source-statschema/scripts/ddl.py tpcc.yaml --dialect tsql > model.sql
-bash scripts/bundle.sh /tmp/datagen.tgz
+python3 scripts/bundle.py /tmp/datagen.tgz
 scp /tmp/datagen.tgz model.sql sq vm:run/     # sq: SQL on stdin, connected to the target database, sqlcmd -y 0
-ssh vm 'cd run && tar xzf datagen.tgz && MSSQL=$PWD/sq nohup bash copies.sh ms model.sql tpcc 1 100 4 > build.log 2>&1 &'
+ssh vm 'cd run && tar xzf datagen.tgz && MSSQL=$PWD/sq nohup python3 copies.py ms model.sql tpcc 1 100 4 > build.log 2>&1 &'
 ssh vm 'tail -1 run/build.log'                # "all done", or "finished with failures"
 ```
 
-`copies.sh` prints `done <schema> <seconds>s` per copy, reuses a schema that already has its tables and resumes a fill, so a rerun continues. SQL Server only for now. lfc-schema-change-test `sqlserver-scale.sh` uses it.
+`copies.py` prints `done <schema> <seconds>s` per copy, and reuses a schema that has its tables, so a rerun continues. SQL Server only for now; lfc-schema-change-test `sqlserver-scale.sh` uses it.
 
 ### Fill level by level
 
-When columns have formulas that point at a parent (`lfc:v`), the parent must be complete before its children start. `fill.sh` fills one level at a time and moves on only when every table of the level is at its target; it re-plans every round, so a rerun resumes. It reads the planner files from `DIR` (`scripts/postgres`, `scripts/mysql`, `scripts/sqlserver`, or `scripts/oracle`), and stops if a round adds no rows.
+When columns have formulas that point at a parent (`lfc:v`), the parent must be complete before its children start. `fill.py` fills one level at a time, moves on only when every table of the level is at its target, and stops if a round adds no rows; a rerun resumes. A driver runs the Python planner. A client (`--client`, or `PSQL`, `MYSQL`, `MSSQL` or `ORACLE` in the environment) runs the SQL planner files of the engine's folder (`DIR` overrides it).
 
-[`scripts/fill.sh`](scripts/fill.sh):
+[`scripts/python/fill.py`](scripts/python/fill.py):
 
 ```bash
-DIR=scripts/postgres bash scripts/fill.sh pg tpch                                    # Postgres: psql, connection from PGHOST, PGUSER, ...
-DIR=scripts/mysql MYSQL="mysql -h db.example.com -u lfc" bash scripts/fill.sh my tpch   # MySQL: password from MYSQL_PWD
-MSSQL=./sq DIR=scripts/sqlserver bash scripts/fill.sh ms dbo                         # SQL Server: a client script (references/sqlserver.md)
-ORACLE=./sq DIR=scripts/oracle bash scripts/fill.sh ora tpch                         # Oracle: a client script (references/oracle.md)
+PSQL=psql python3 scripts/python/fill.py pg tpch                                     # Postgres: through psql (connection from PGHOST, PGUSER, ...)
+MYSQL="mysql -h db.example.com -u lfc" python3 scripts/python/fill.py my tpch           # MySQL: through mysql (password from MYSQL_PWD)
+MSSQL=./sq python3 scripts/python/fill.py ms dbo                                     # SQL Server: a client script (references/sqlserver.md)
+ORACLE=./sq python3 scripts/python/fill.py ora tpch                                  # Oracle: a client script (references/oracle.md)
+python3 scripts/python/fill.py pg tpch --host db.example.com --user lfc --password-file pg.pw   # any engine: through its driver
 ```
 
 ## Random values per row

@@ -1,18 +1,15 @@
-#!/usr/bin/env python3
-"""tpc_schema.py <tpcb|tpch> [SF]: TPC-B and TPC-H as MySQL DDL with the lfc tags, written from the spec (keys, foreign
-keys, checks; the population formulas as lfc:v / lfc:n tags). The same text as tpc/tpc-schema.sh, which runs this for
-tpcb and tpch; statschema's ddl_to_schema() and ddl() turn it into any engine's DDL.
+"""TPC-B and TPC-H as MySQL DDL with the lfc tags, written from the spec (keys, foreign keys, checks; the population
+formulas as lfc:v / lfc:n tags). The CLI is tpc/tpc-schema.py, which runs this for tpcb and tpch; statschema's ddl_to_schema()
+and ddl() turn it into any engine's DDL.
 From Python: from lfc_source_datagen.tpc_schema import tpc_schema; tpc_schema("tpch", 0.1).
 TPC-B: per branch, 10 tellers and 100,000 accounts (clause 4.2), records padded to the minimum lengths (clause 3.2);
-history rows default to the accounts' (HISTORY on the command line, history= here).
+history rows default to the accounts' (the CLI reads HISTORY from the environment; history= here).
 TPC-H: clause 1.4 layouts, 1.4.2 constraints, 4.2.3 population; LINEITEM has 4 lines per order (the spec: 1 to 7,
 random); scale factor 0.03 or more (partsupp's key is read back from the spec's supplier formula, which needs
 3 * (S/4 + 19) < S: at least 230 suppliers).
 """
 from __future__ import annotations
 
-import os
-import sys
 from string import Template
 
 
@@ -49,18 +46,3 @@ def tpc_schema(model: str, sf: float = 1, history: int | None = None) -> str:
         return TPCH.substitute(S=s, P=p, C=c, O=o, P4=p * 4, O4=o * 4, C23=c * 2 // 3, ok=ok, odate=odate, lpk=lpk,
                                ship=ship, **hs)
     raise ValueError(f"tpc_schema: {model}: tpcb or tpch (the other TPC models come from statschema's schemas)")
-
-
-def main(argv: list[str] | None = None) -> int:
-    a = sys.argv[1:] if argv is None else argv
-    if not a:
-        print(__doc__.split("\n")[0], file=sys.stderr); return 2
-    try:
-        sys.stdout.write(tpc_schema(a[0], a[1] if len(a) > 1 else 1, os.environ.get("HISTORY")))
-    except ValueError as e:
-        print(f"tpc-schema.sh: {e}" if "scale factor" in str(e) else str(e), file=sys.stderr); return 1
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

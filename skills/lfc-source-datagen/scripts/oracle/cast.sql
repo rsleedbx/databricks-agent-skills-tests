@@ -1,7 +1,7 @@
 -- The declarations every Oracle planner starts with (cat cast.sql plan-insert.sql | sqlplus -s ...): the parameters, the
 -- schema's lfc tags (from lfc_tags in the schema, which statschema's ddl.py fills), keys, unique columns, foreign keys
 -- and levels, read from the dictionary once, and the cast that turns x.n (any NUMBER n >= 1) into a valid value of each
--- type. Parameters are SQL*Plus substitution variables (fill.sh defines them):
+-- type. Parameters are SQL*Plus substitution variables (fill.py's client mode defines them):
 --   DEFINE schema = 'TPCH'  DEFINE rows = 1000000  DEFINE mode = fill  DEFINE order = random  DEFINE data = scramble
 --   DEFINE plain_every = 4  DEFINE block = 1000  DEFINE lob_len = 100
 -- and SET SERVEROUTPUT ON SIZE UNLIMITED FORMAT WRAPPED, FEEDBACK OFF, VERIFY OFF. The planners print with DBMS_OUTPUT,

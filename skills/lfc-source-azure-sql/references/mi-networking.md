@@ -13,7 +13,7 @@ This document covers the NSG (Network Security Group), route tables, and public 
 
 ## Network Security Group (NSG) rules
 
-The MI subnet needs an NSG attached before the instance is created (`mi.sh create` makes `<subnet>-nsg`). MI then adds the inbound and outbound rules it needs for management to that NSG (`Microsoft.Sql-managedInstances_UseOnly_*`).
+The MI subnet needs an NSG attached before the instance is created (`mi.py create` makes `<subnet>-nsg`). MI then adds the inbound and outbound rules it needs for management to that NSG (`Microsoft.Sql-managedInstances_UseOnly_*`).
 
 **Never delete or change MI's own rules**; MI will malfunction. Our allow rules for port 3342 sit next to them and come from **lfc-source-firewall**.
 

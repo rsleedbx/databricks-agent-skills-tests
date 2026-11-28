@@ -71,7 +71,7 @@ want=1000000
   echo "CREATE TABLE lfc_seed.seed_r (i bigint PRIMARY KEY, r bigint NOT NULL);"
   echo "INSERT INTO lfc_seed.seed_r SELECT i, ROW_NUMBER() OVER (ORDER BY RAND()) FROM lfc_seed.seed;"
   echo "DROP TABLE lfc_seed.seed; RENAME TABLE lfc_seed.seed_r TO lfc_seed.seed;"; } | $SQL
-MYSQL="$MY" DIR=$P SESSIONS=2 bash $P/../fill.sh my $D          # fill until done, level by level (see the skill's "Fill level by level")
+MYSQL="$MY" DIR=$P SESSIONS=2 python3 $P/../python/fill.py my $D          # fill until done, level by level (see the skill's "Fill level by level")
 { echo "SET @db='$D';"; cat $P/plan-status.sql; } | $SQL > status.sql && $SQL < status.sql > status.out   # table, min, max, rows, target
 awk '{ t += $4 } END { print NR " tables, " t " rows" }' status.out
 { echo "SET @db='$D', @plain_every=4, @block=1000, @lob_len=100;"; cat $P/cast.sql $P/plan-audit.sql; } | $SQL > audit.sql && $SQL < audit.sql   # same @lob_len; bad must be 0

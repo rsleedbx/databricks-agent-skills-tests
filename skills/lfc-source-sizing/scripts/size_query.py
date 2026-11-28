@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """size_query.py: the sizing query for one engine, as one statement: the engine's catalog SQL (<engine>.sql beside
-this file) run through the Unity Catalog connection with remote_query. size.sh runs it with the Databricks CLI; in a
-notebook or Genie Code, run it with spark.sql (the CLI doesn't run there):
+this file) run through the Unity Catalog connection with remote_query. size.py runs it on a SQL warehouse (lfc_rest);
+in a notebook or Genie Code, run it with spark.sql:
 
     import sys; sys.path.insert(0, "<skills folder>/lfc-source-sizing/scripts")
     from size_query import remote_query
