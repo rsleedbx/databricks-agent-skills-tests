@@ -161,6 +161,8 @@ class Preflight(unittest.TestCase):
         r = scenario.Run("addcol", env=env, api=rest(Api()), warehouse=Wh(), src=Src(), clock=clock,
                          sleep=clock.sleep, log=lambda *a: None)
         self.assertIsNone(r.profile)
+        self.assertEqual(scenario.prefix_of("robert.lee@x.com"), "robertlee")
+        self.assertEqual(scenario.prefix_of("8f1e2c3a-1234-4abc-9def-001122334455"), "sp_8f1e2c3a12344abc9def001122334455")
         self.assertEqual(r.runtime("ap1", True), "")
 
 

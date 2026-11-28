@@ -91,7 +91,7 @@ class Run:
     # ---- set-up
     def preflight(self, short: str, warehouse) -> None:
         me = self.api.get("/api/2.0/preview/scim/v2/Me").get("userName", "")
-        self.prefix = self.e.get("PREFIX") or re.sub(r"[.-]", "", me.split("@")[0]).lower()
+        self.prefix = self.e.get("PREFIX") or prefix_of(me)
         root = self.api.get(f"/api/2.1/unity-catalog/catalogs/{self.catalog}").get("storage_root") or ""
         try:
             default = self.api.get("/api/2.1/unity-catalog/external-locations/__databricks_managed_storage_location"
@@ -502,6 +502,13 @@ class Run:
         except Exception as e:  # noqa: BLE001  said; the run's own outcome stands
             self.log(f"cleanup failed: {e}")
         return False
+
+
+def prefix_of(user: str) -> str:
+    """firstnamelastname from the login, as lib.sh made it; a service principal's application id (a job's identity)
+    starts with a digit, which a database name can't: sp_ in front."""
+    p = re.sub(r"[^a-z0-9_]", "", user.split("@")[0].lower())
+    return p if p[:1].isalpha() else f"sp_{p}"
 
 
 def need(env: dict, key: str) -> str:
