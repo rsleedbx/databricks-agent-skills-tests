@@ -255,7 +255,13 @@ class Run:
             self._follow(u, None, polls, every)    # not this step's update: then the requested one, once
             if not _again:
                 return self.state
-            return self.update(refresh, fp_tables, polls, every, _again=False)
+            first = (self.last_events, self.errs, self.chain)
+            self.update(refresh, fp_tables, polls, every, _again=False)
+            # the followed update is often the one that carries the step's errors (a SCHEMA_CHANGE retry): keep them
+            self.last_events = first[0] + self.last_events
+            self.errs = sorted(set(first[1]) | set(self.errs))
+            self.chain = f"{first[2]} -> {self.chain}" if first[2] else self.chain
+            return self.state
         return self._follow(u, refresh, polls, every)
 
     def _follow(self, u: str, refresh, polls: int, every: float) -> str:

@@ -59,6 +59,8 @@ def run(r) -> None:
         r.observe("keyless-cdc-integrated-snapshot", "dtix (no primary key, CDC) has 0 rows after the first load; the "
                   "keyed tables have 10. No error. Its later claims are skipped")
         skip_dtix = True
+        dt = "intpk"                              # and intpk stands in for it in the shared queries from here
+        fp[1] = dt
     elif got != TAB.join(["10"] * 4):
         r.claim("baseline", "FAIL", f"row counts (intpk dtix cdcpk afrpk): {got}")
         return
