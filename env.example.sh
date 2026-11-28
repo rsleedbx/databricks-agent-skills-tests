@@ -26,7 +26,7 @@ export LFC_NAME_PREFIX=<firstname><lastname>                 # pipeline name pre
 export LFC_SHAPES_CONNECTION=lfc_shapes_pg_conn        # created by fixtures/lakebase-shapes
 export LFC_LAKEBASE_PIPELINE=<firstname><lastname>-lfc_demo_pg_conn
 
-# Oracle (optional; run_matrix.sh adds the Oracle tests when LFC_ORACLE_CONNECTION is set): the CDB connection
+# Oracle (optional; run_matrix.py adds the Oracle tests when LFC_ORACLE_CONNECTION is set): the CDB connection
 # (service_name FREE) for CDC, a PDB connection (service_name FREEPDB1) for query-based ingestion, and the schema
 export LFC_ORACLE_CONNECTION=<firstname><lastname>-ora-<target>
 export LFC_ORACLE_PDB_CONNECTION=<firstname><lastname>-ora-<target>-pdb

@@ -9,7 +9,7 @@ A database source can be stood up, filled and tested ([lfc-source-setup](../lfc-
 
 1. **The Databricks docs** for the connector: concepts, connection, pipeline, limits, FAQ, troubleshoot, reference. [references/connectors.md](references/connectors.md) lists them for every connector.
 2. **The vendor's public docs**, for what the Databricks docs assume: API allocations, how deletes and modification timestamps work, permissions. These facts live in `references/vendor/<connector>.yaml`, one row per fact with the page and an exact quote, and every row is checked against its page (below).
-3. **What the customer can check in their own org**: the vendor's usage pages and response headers, the pipeline's event log ([bin/lfc-events.sh](../../bin/lfc-events.sh)), the destination table.
+3. **What the customer can check in their own org**: the vendor's usage pages and response headers, the pipeline's event log ([bin/lfc_events.py](../../bin/lfc_events.py)), the destination table.
 4. **A test**, where the vendor offers a free developer org or sandbox (Salesforce Developer Edition, ServiceNow Personal Developer Instance, HubSpot developer test accounts). Start the pipeline from the notebook the docs publish for the connector.
 
 Everything here comes from public pages: the Databricks docs and their sitemap, the vendors' docs, and what a pipeline and the vendor's org show.

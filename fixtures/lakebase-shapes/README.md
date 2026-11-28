@@ -4,7 +4,7 @@ Source tables covering every **source shape** the query-based connector has to h
 a Lakebase project (the only source in these tests where we can create tables). Used for two
 things:
 
-1. **Product test (no agent):** `run.sh` creates pipelines from `pipelines/*.json`, runs them,
+1. **Product test (no agent):** `run.py` creates pipelines from `pipelines/*.json`, runs them,
    applies `mutate.sql`, runs again, and prints `verify.sql`. This shows what the product
    actually does, including what it doesn't check.
 2. **Skill test:** `prompts/lfc-matrix/preflight-lakebase.txt` checks that the agent reports
@@ -36,7 +36,7 @@ databricks psql --project $LFC_LAKEBASE_PROJECT --profile $PIPELINE_WS -- -X -q 
 databricks psql --project $LFC_LAKEBASE_PROJECT --profile $PIPELINE_WS -- -X -At -v ON_ERROR_STOP=1 -v host=<endpoint-host> -f $F/role.sql
 databricks psql --project $LFC_LAKEBASE_PROJECT --profile $PIPELINE_WS -- -X -q -v ON_ERROR_STOP=1 -f $F/grants.sql
 databricks connections create --json @conn.json --profile $PIPELINE_WS && rm conn.json
-$F/run.sh
+$F/run.py
 ```
 
 Query-based pipelines work on a Default Storage catalog, so any `LFC_CATALOG` will do.

@@ -52,7 +52,7 @@ databricks external-locations get __databricks_managed_storage_location --profil
 
 The workspace's default catalog (`databricks settings default-namespace get --profile $P -o json`, `.namespace.value`) can be a candidate, but check it: on one test workspace it was `system`, which pipelines can't write to (nor to `hive_metastore`). Otherwise create one with its own managed location, or use one the workspace's provisioning made for you (check `catalogs list` for catalogs where you have `ALL_PRIVILEGES`).
 
-Some workspaces delete a catalog on the date in its `RemoveAfter` tag, and give an untagged catalog a date a couple of weeks out. [`keep_catalogs.py`](scripts/keep_catalogs.py) sets the tag a month out (never earlier than it is) on the catalogs named, and on each `--connection` and its foreign catalogs (connections take tags too, through `entity-tag-assignments ... connections`); `bin/run_batch.sh` runs it on `$LFC_CATALOG` and the env's connections, and `lfc-connection-sync` after each connection:
+Some workspaces delete a catalog on the date in its `RemoveAfter` tag, and give an untagged catalog a date a couple of weeks out. [`keep_catalogs.py`](scripts/keep_catalogs.py) sets the tag a month out (never earlier than it is) on the catalogs named, and on each `--connection` and its foreign catalogs (connections take tags too, through `entity-tag-assignments ... connections`); `bin/run_batch.py` runs it on `$LFC_CATALOG` and the env's connections, and `lfc-connection-sync` after each connection:
 
 ```bash
 python3 -I scripts/keep_catalogs.py $P <catalog> --connection <connection>   # KEEP_UNTIL=YYYY-MM-DD for another date

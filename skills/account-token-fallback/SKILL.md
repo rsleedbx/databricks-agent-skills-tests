@@ -35,7 +35,7 @@ One `databricks auth profiles -o json` (it validates every profile, a few second
 - **Nothing works:** exits 1 and says which login to run.
 - **A workspace you have no profile for yet** (one just created in an account you're logged in to): `ws-token.sh <name> --host <workspace URL> [--account-id <id>]` mints the same way and writes the config file with `<name>` as its profile. Without `--account-id` it tries each account profile on the workspace's cloud until the workspace accepts a token.
 
-`run.sh` calls it before the first session, and `bin/run_matrix.sh` again before the compute readback, so a matrix run doesn't stop at an expired workspace login.
+`run.py` calls it before the first session, and `bin/run_matrix.py` again before the compute readback, so a matrix run doesn't stop at an expired workspace login.
 
 ## Add an account profile: `add-account.sh`
 

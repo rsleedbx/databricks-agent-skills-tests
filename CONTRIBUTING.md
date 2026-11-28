@@ -5,7 +5,7 @@ Results, fixes and new tests are welcome. The repo works like a shared notebook 
 ## How a change gets in
 
 1. Fork the repo, and make one topic branch per change from `main` ([git-topic-branches](.claude/skills/git-topic-branches/SKILL.md)).
-2. Run the checks your change touches: `bash bin/test_scripts.sh`, `uv run bin/check_links.py`, and `uv run bin/scripts_index.py` when you add or change a script ([docs/running-tests.md](docs/running-tests.md)).
+2. Run the checks your change touches: `python3 bin/test_scripts.py`, `uv run bin/check_links.py`, and `uv run bin/scripts_index.py` when you add or change a script ([docs/running-tests.md](docs/running-tests.md)).
 3. Open a pull request to `main`. The maintainer reviews and merges it; while there's one maintainer, the maintainer's own changes are merged after the checks above pass, and a second reviewer is added when there is one.
 
 ## The reuse hook
@@ -18,7 +18,7 @@ Record each result with `record.py` ([lfc-test-results](skills/lfc-test-results/
 
 ## Layers
 
-Every skill and bin script is in a layer ([docs/layers.md](docs/layers.md)). A new one goes into [layers.yaml](layers.yaml) under the layer it belongs to, and a reference may only point to a layer that layer may use: `bin/check_layers.py` (run by `bin/test_scripts.sh`) fails otherwise. A fix that removes a reference from [layers-baseline.txt](layers-baseline.txt) is welcome; adding a line to it needs a reason in the pull request.
+Every skill and bin script is in a layer ([docs/layers.md](docs/layers.md)). A new one goes into [layers.yaml](layers.yaml) under the layer it belongs to, and a reference may only point to a layer that layer may use: `bin/check_layers.py` (run by `bin/test_scripts.py`) fails otherwise. A fix that removes a reference from [layers-baseline.txt](layers-baseline.txt) is welcome; adding a line to it needs a reason in the pull request.
 
 ## What can't go in
 

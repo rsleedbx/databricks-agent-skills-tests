@@ -21,7 +21,7 @@
   It goes when the pipeline is deleted, so read it first. yq on a `.json` file prints quoted strings: use `-r`.
 - **Wait for the change, don't sleep.** A fixed wait let updates run before the gateway had the DDL, and two cases looked inline. `settle` runs updates until one errors or the new column shows.
 - **Errors are read per table** (`errs_for`): one update can carry several tables' errors.
-- **Each result records the runtime** each pipeline ran on (`LFC_RUNTIME`, `bin/lfc-runtime.sh`): the version, the channel and even the CPU architecture (x86 or aarch64) can change between updates. Settings snapshots are kept per pipeline kind, so a run is compared only with the same kind.
+- **Each result records the runtime** each pipeline ran on (`LFC_RUNTIME`, `bin/lfc_runtime.py`): the version, the channel and even the CPU architecture (x86 or aarch64) can change between updates. Settings snapshots are kept per pipeline kind, so a run is compared only with the same kind.
 - **Run a uniquely named copy:** bash reads a script as it runs, and overwriting the copy a run is using breaks that run.
 - **A schema lock on one source table stalls more than that table.** While a session held `BEGIN TRAN; ALTER TABLE ...` open, a different pipeline's integrated CDC "Schema Exploration" waited on it (`lakeflow-connect-infer-schemas:fetch-metadata`, `LCK_M_S`) until the lock ended, and so did the test's own `OBJECT_ID()` on that table. Resolve ids before taking a lock, and don't run other tests on the same server during a lock test.
 - **A run from a copy of the scripts needs `LFC_RECORD`** (the path of lfc-test-results `record.py`), `LFC_RUNTIME` and `SCENARIO` (the script's own name), or `record_run` can't find them, or records the copy's file name as the scenario.

@@ -58,7 +58,7 @@ SQL planners for Postgres, MySQL, SQL Server and Oracle, and a Python planner (t
 
 ## Answers tested as claims, tied to the runtime they ran on
 
-**What it does.** A question such as "does adding a column need a full refresh?" becomes a set of claims, one per case. A script runs each claim on a fresh source database and prints PASS or FAIL, then deletes everything. Each result records the exact runtime every pipeline update ran on (DBR version, channel, release build, CPU architecture) and the settings it ran with. It also shows what changed since the last run of the same pipeline kind on that workspace. [lfc-schema-change-test](../skills/lfc-schema-change-test/SKILL.md), [bin/lfc-runtime.sh](../bin/lfc-runtime.sh).
+**What it does.** A question such as "does adding a column need a full refresh?" becomes a set of claims, one per case. A script runs each claim on a fresh source database and prints PASS or FAIL, then deletes everything. Each result records the exact runtime every pipeline update ran on (DBR version, channel, release build, CPU architecture) and the settings it ran with. It also shows what changed since the last run of the same pipeline kind on that workspace. [lfc-schema-change-test](../skills/lfc-schema-change-test/SKILL.md), [bin/lfc_runtime.py](../bin/lfc_runtime.py).
 
 | | Rerunnable | Tied to the runtime | Covers |
 |---|---|---|---|

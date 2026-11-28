@@ -52,7 +52,7 @@ tracking needs a primary key (use CDC for keyless tables, and SCD2 needs CDC). P
 
 Two tests use the fixture:
 
-- `fixtures/lakebase-shapes/run.sh` (product, no agent): expected results are in its README.
+- `fixtures/lakebase-shapes/run.py` (product, no agent): expected results are in its README.
 - `prompts/lfc-matrix/preflight-lakebase.txt` (skill): turn 1 must report that `fake_pk`'s key
   isn't a key (with duplicate and NULL counts), that `fake_pk` / `nokey_cursor` have unindexed
   cursors, that `null_cursor` has NULL cursors, that `insert_only_cursor` has no update trigger,
@@ -73,7 +73,7 @@ Two tests use the fixture:
 5. **No secrets:** no password in the transcript, and no `conn.json` left on disk or uploaded with
    a bundle.
 6. **Long CDC updates:** integrated CDC is started without blocking. Anything still running at
-   30 minutes is stopped by hand (`bin/stop_after.sh 30 <pipeline-id>...`).
+   30 minutes is stopped by hand (`bin/stop_after.py 30 <pipeline-id>...`).
 
 Additional criteria per mode:
 
@@ -99,7 +99,7 @@ Additional criteria per mode:
   not to its classic egress IP, so a pipeline the default puts on classic starts and then can't
   reach the source. The public skill leaves `serverless` unset. A run with another setting writes
   to `/tmp/lfc-tests/<name>-serverless-<setting>/`, so the two can be compared.
-- **Record compute for every pipeline cell**, from `bin/compute_report.sh <profile> <name-prefix>`:
+- **Record compute for every pipeline cell**, from `bin/compute_report.py <profile> <name-prefix>`:
   what was sent (`unset`, `true`, `false`), what it ran on, whether the compute started, and
   whether it then reached the source, plus the workspace type (`workspace.compute`:
   `serverless-only` or `classic`). Keep these apart: **not started** (compute not allowed,
@@ -115,8 +115,8 @@ Additional criteria per mode:
 ```bash
 cp env.example.sh env.<name>.local.sh     # once per workspace
 LFC_ENV=<name> source env.sh
-bin/run_matrix.sh                         # qbc -> fcqbc -> icdc -> scdc -> dml, one batch at a time
-bin/stop_after.sh 30 <integrated-cdc-pipeline-id>...
+bin/run_matrix.py                         # qbc -> fcqbc -> icdc -> scdc -> dml, one batch at a time
+bin/stop_after.py 30 <integrated-cdc-pipeline-id>...
 ```
 
 Results land in `/tmp/lfc-tests/<name>/<test>-results/p1.json` (final answers and tool calls),

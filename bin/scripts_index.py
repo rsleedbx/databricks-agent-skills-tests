@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """bin/scripts_index.py [--check]: write SCRIPTS.md, one line per runnable script (a #! line): its path and the first
-line of its usage header. --check exits 1 if SCRIPTS.md isn't what this would write (bin/test_scripts.sh runs it).
+line of its usage header. --check exits 1 if SCRIPTS.md isn't what this would write (bin/test_scripts.py runs it).
 
 An agent reads SCRIPTS.md to find a script instead of searching the repo, then runs the script with no arguments for
 its full usage instead of reading it.

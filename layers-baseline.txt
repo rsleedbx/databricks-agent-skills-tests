@@ -2,7 +2,7 @@
 #   <from> -> <to>: <file>:<pattern>
 # bin/check_layers.py fails on any disallowed reference that has no line here, and on a line here that matches no
 # reference (delete it when the reference goes). The baseline only shrinks; docs/layers.md lists the main ones and why.
-account-token-fallback -> bin/run_matrix.sh: skills/account-token-fallback/SKILL.md:bin/run_matrix.sh
+account-token-fallback -> bin/run_matrix.py: skills/account-token-fallback/SKILL.md:bin/run_matrix.py
 lfc-schema-change-test -> lfc-source-cloud-vm: skills/lfc-schema-change-test/SKILL.md:lfc-source-cloud-vm/scripts/add-mssql-container.sh
 lfc-source-aws-aurora -> lfc-source-setup: skills/lfc-source-aws-aurora/SKILL.md:lfc-source-setup/references/engine-mysql.md
 lfc-source-aws-aurora -> lfc-source-setup: skills/lfc-source-aws-aurora/SKILL.md:lfc-source-setup/references/engine-postgres.md
@@ -17,12 +17,12 @@ lfc-source-cloud-vm -> lfc-source-setup: skills/lfc-source-cloud-vm/SKILL.md:lfc
 lfc-source-cloud-vm -> lfc-source-setup: skills/lfc-source-cloud-vm/references/shared-vm-slots.md:lfc-source-setup/references/engine-db2.md
 lfc-source-cloud-vm -> lfc-source-setup: skills/lfc-source-cloud-vm/references/shared-vm-slots.md:lfc-source-setup/references/engine-oracle.md
 lfc-source-datagen -> lfc-source-setup: skills/lfc-source-datagen/references/append-through-connection.md:lfc-source-setup/references/engine-postgres.md
-lfc-source-firewall -> bin/compute_report.sh: skills/lfc-source-firewall/references/classic-egress.md:bin/compute_report.sh
+lfc-source-firewall -> bin/compute_report.py: skills/lfc-source-firewall/references/classic-egress.md:bin/compute_report.py
 lfc-source-firewall -> lfc-test-results: skills/lfc-source-firewall/references/private-paths.md:lfc-test-results/references/test-matrix.md
 lfc-source-gcp-cloudsql -> lfc-source-setup: skills/lfc-source-gcp-cloudsql/SKILL.md:lfc-source-setup/SKILL.md
 lfc-source-statschema -> lfc-source-sizing: skills/lfc-source-statschema/SKILL.md:lfc-source-sizing/references/workload-patterns.md
-lfc-test-results -> bin/test_scripts.sh: skills/lfc-test-results/SKILL.md:bin/test_scripts.sh
-lfc-workspace-setup -> bin/run_batch.sh: skills/lfc-workspace-setup/SKILL.md:bin/run_batch.sh
+lfc-test-results -> bin/test_scripts.py: skills/lfc-test-results/SKILL.md:bin/test_scripts.py
+lfc-workspace-setup -> bin/run_batch.py: skills/lfc-workspace-setup/SKILL.md:bin/run_batch.py
 lfc-workspace-setup -> lfc-source-firewall: skills/lfc-workspace-setup/SKILL.md:lfc-source-firewall/SKILL.md
 skill-token-budget -> bin/check_links.py: .claude/skills/skill-token-budget/SKILL.md:bin/check_links.py
 skill-token-budget -> bin/lint_scripts.py: .claude/skills/skill-token-budget/SKILL.md:bin/lint_scripts.py
