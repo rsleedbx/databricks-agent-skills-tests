@@ -110,6 +110,7 @@ check "source contract: source-env.sh on the fixtures and the default clients" s
 check "statschema.tools: ddl(), ddl_to_schema() and shape() give the wrappers' text (path, YAML text, dict; stats, scale, keep-small); the wheel ships the models and model() finds them; state restored; canon.py; the rows a spec fixes as rules (TPC-DS calendar, time of day, products in SQLite); composite keys: every column varies, unique, read back; lookups take the parent row's value" \
   sh -c "cd '$SK/lfc-source-statschema/scripts' && uv run -q --no-project --with pyyaml --with sqlglot python -m unittest -q test_tools.py 2>&1"
 check "lfc_source_contract.jdbc: Maven driver and allow-list, TLS URLs, guarded() DO block, JdbcSql, dbapi reads through remote_query and writes through JDBC (fake spark)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_jdbc.py"
+check "lfc_source_contract.slot: ssh words (own key, admin as owner), ssh failures retried, a refused key not, words checked first, the contract" python3 -I "$SK/lfc-source-contract/scripts/test_slot.py"
 check "lfc_source_contract.cdc: publication FOR TABLE created, kept, tables added, a failed add explained; the slot (fake cursor)" python3 -m unittest -q "$SK/lfc-source-contract/scripts/test_cdc.py"
 check "lfc-saas-pipeline: package calls (fake API), each notebook and its bundle read the same tables through the same connection" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
 check "lfc_saas_pipeline: the package's pipeline specs, runs and checks (fakes)" python3 -m unittest -q "$SK/lfc-saas-pipeline/tests/test_lfc_saas_pipeline.py"
@@ -133,7 +134,7 @@ check "lfc_source_datagen.sources and tpch_sources: parsing, the SQL files, each
   sh -c "cd '$DG' && uv run -q --no-project --with 'psycopg[binary]' --with pyyaml --with sqlglot python -m unittest -q test_sources.py 2>&1"
 check "tpc_schema.py: TPC-B and TPC-H text as the shell version wrote it (sha-256), tpc-schema.sh runs it, the scale floor" python3 -m unittest -q "$DG/test_tpc_schema.py"
 check "workload.sh: a tpcb workload at SF 0.01 and a postgres spec tpch one (with verify) that workload-env.sh accepts; oracle refused" wl_offline
-check "slot-source.sh: a slot's contract, and its SRC_SQL through slot-sql.sh and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
+check "slot.py source (slot-source.sh): a slot's contract, and its SRC_SQL through slot.py sql and a fake ssh" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-source.sh' > /dev/null"
 check "lfc-vm masters export, slot-vm-setup masters (lfc-vm masters import), and the clone admin password change (fake podman, local Blob server)" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-masters.sh' > /dev/null"
 check "moved-lines.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-moved-lines.sh' > /dev/null"
 check "conventions-check.py on a throwaway repo" sh -c "'$R/.claude/skills/public-skill-conventions/scripts/test-conventions-check.sh' > /dev/null"

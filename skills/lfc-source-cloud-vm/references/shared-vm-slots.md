@@ -19,7 +19,7 @@ On the VM as root (`lfc-slot [--owner <owner>] <command>`), or from a laptop thr
 | `ls [--all]` | your databases (`--all`: everyone's): engine, state, port, created, from |
 | `usage [--days n] [--all]` | hours running per owner and database in the last n days (default 7) |
 | `sql <name> [database] [--wide]` | runs SQL from stdin as the engine's admin in your running database (CDC, change tracking, test tables): tab-separated rows, no headers, the SQL's exit status; `--wide`: SQL Server long values whole. The harness's `SRC_SQL` is [scripts/slot-sql.sh](../scripts/slot-sql.sh) |
-| `info <name>` | the host OS, Podman, the image and digest, and the VM (`slot-sql.sh --env`, the harness's `SRC_ENV`) |
+| `info <name>` | the host OS, Podman, the image and digest, and the VM (`slot.py sql --env`, the harness's `SRC_ENV`) |
 
 Engines: `postgres` (16), `mysql` (8.4), `sqlserver` (2022), `oracle` (`gvenzl/oracle-free:23-slim`: CDB `FREE`, PDB `FREEPDB1`), `mariadb` (11.4), `db2` (Community 11.5.9: database `LFCDB`), `informix` (Developer 14.10: `lfcdb`), `cockroachdb` (v25.4, insecure: `lfc`), `yugabytedb` (2026.1, insecure: `lfc`). Masters exist for the first three; a master works with its own engine only.
 
@@ -29,7 +29,7 @@ Engines: `postgres` (16), `mysql` (8.4), `sqlserver` (2022), `oracle` (`gvenzl/o
 {"contract":1,"name":"pg1","engine":"postgres","host":"203.0.113.10","port":30000,"user":"lfc_user","password":"...","container":"lfc-slot-alice-pg1","state":"running"}
 ```
 
-`contract` is the source contract's version ([lfc-source-contract](../../lfc-source-contract/SKILL.md)). [scripts/slot-source.sh](../scripts/slot-source.sh) writes that contract for the database: `SLOT_HOST=<vm address> slot-source.sh --connection <uc connection> --out <file> < up.json`, with `sql_cmd` set to `slot-sql.sh` for the database. [scripts/test-slot-source.sh](../scripts/test-slot-source.sh) checks it offline.
+`contract` is the source contract's version ([lfc-source-contract](../../lfc-source-contract/SKILL.md)). lfc-source-contract's [slot.py](../../lfc-source-contract/scripts/lfc_source_contract/slot.py) writes that contract for the database: `SLOT_HOST=<vm address> python3 -I slot.py source --connection <uc connection> --out <file> < up.json` (or [scripts/slot-source.sh](../scripts/slot-source.sh), which runs it), with `sql_cmd` set to `slot.py sql` for the database. [scripts/test-slot-source.sh](../scripts/test-slot-source.sh) checks it offline.
 
 `service` is added for Oracle only: `FREEPDB1`, the PDB `lfc_user` lives in (the UC connection's `service_name`). `database` is added where a test uses one: `LFCDB`, `lfcdb`, `lfc`, `lfc`.
 

@@ -14,7 +14,7 @@ Scripts that accept it: **lfc-schema-change-test** (`lib.sh` and the scripts tha
 ```json
 {"contract": 1, "name": "pg1", "engine": "postgres", "host": "203.0.113.10", "port": 30000,
  "user": "lfc_user", "database": "postgres", "connection": "me_pg1",
- "sql_cmd": "env SLOT_HOST=203.0.113.10 SLOT_NAME=pg1 /abs/path/slot-sql.sh"}
+ "sql_cmd": "env SLOT_HOST=203.0.113.10 SLOT_NAME=pg1 python3 -I /abs/path/slot.py sql"}
 ```
 
 | Field | Required | Meaning | Variable |
@@ -81,7 +81,7 @@ Without `sql_cmd`, `sql-client.sh` is the default client. It connects as `user` 
 - [scripts/sql-client.sh](scripts/sql-client.sh) `[database]`: the default client; `source-env.sh` sets `SRC_SQL` to it. It reads `SRC_CONTRACT`.
 - [scripts/test-source-env.sh](scripts/test-source-env.sh): offline checks on [scripts/fixtures/](scripts/fixtures/) (each engine, the refusals, the default clients on fake clients).
 - **lfc-source-eventhubs** `eventhubs.sh up --source-json <file>`: writes the contract for an Event Hubs namespace's Kafka endpoint.
-- **lfc-source-cloud-vm** `scripts/slot-source.sh`: writes the contract for a slot database from `slot.sh up`'s JSON. Its `sql_cmd` runs `slot-sql.sh` for that database and key; that skill's `test-slot-source.sh` checks it end to end through a fake ssh.
+- **lfc-source-cloud-vm**'s slot databases: [scripts/lfc_source_contract/slot.py](scripts/lfc_source_contract/slot.py) `source` writes the contract for one from `lfc-slot up`'s JSON (`slot-source.sh` runs it). Its `sql_cmd` is `slot.py sql` for that database and key (older contracts name `slot-sql.sh`, which runs the same); `Slot` is the database from Python (up, sql, info, a shell in its container); that skill's `test-slot-source.sh` checks it end to end through a fake ssh.
 - [scripts/lakebase-sql.sh](scripts/lakebase-sql.sh) `[database]`: the `sql_cmd` for a Lakebase project (below).
 - [scripts/lfc_source_contract/jdbc.py](scripts/lfc_source_contract/jdbc.py): SQL on a source through a TYPE JDBC connection from a notebook or job, no password in the code: `JdbcSql(spark, connection).execute()` (writes, as `sessionInitStatement`) and `.query()`, `guarded()` for a statement safe to rerun, `connection_body()` with the Maven driver.
 - [scripts/lfc_source_contract/cdc.py](scripts/lfc_source_contract/cdc.py): a PostgreSQL source's change capture on any DB-API cursor, safe to rerun: `publication(cur, name, schemas)` (FOR TABLE, created, tables added, or kept) and `slot(cur, name, drop=False)`. In a notebook the cursor is `jdbc.dbapi(spark, <JDBC connection>, read_connection=<the POSTGRESQL one>, database=...)`: writes through the JDBC connection, reads through `remote_query`.
@@ -117,7 +117,7 @@ A project `lakebase-source.py --create-project` makes suspends its compute after
 ```bash
 cat > source.json <<'EOF'
 {"contract": 1, "engine": "sqlserver", "host": "203.0.113.10", "port": 1433, "user": "lfc_user",
- "sql_cmd": "env SLOT_HOST=203.0.113.10 SLOT_NAME=ss1 /abs/path/slot-sql.sh"}
+ "sql_cmd": "env SLOT_HOST=203.0.113.10 SLOT_NAME=ss1 python3 -I /abs/path/slot.py sql"}
 EOF
 SOURCE_JSON="$PWD/source.json" PROFILE=<cli-profile> CATALOG=<catalog> bash sqlserver-add-column.sh   # a test script of lfc-schema-change-test
 ```
@@ -136,4 +136,4 @@ eval "$(skills/lfc-source-contract/scripts/source-env.sh source.json)" && echo "
 | `contract <n> ... reads contract 1 only` | another version | use a `source-env.sh` that reads `<n>`, or a producer that writes 1 |
 | `no default SQL client for <engine>` | db2 or informix without `sql_cmd` | add `sql_cmd` |
 | `no sql_cmd and no password` | the default client needs the password | add `password` or `sql_cmd` |
-| `slot-source: ... holds the password: give --out` | `slot-source.sh` without `--connection` or `--out` | pass one of them |
+| `slot-source: ... holds the password: give --out` | `slot.py source` (`slot-source.sh`) without `--connection` or `--out` | pass one of them |

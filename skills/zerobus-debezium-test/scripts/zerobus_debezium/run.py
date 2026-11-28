@@ -30,9 +30,9 @@ from lfc_log_silver import flowthrough
 from lfc_rest import Rest
 from lfc_routing.routing import Policy, snapshot_method
 from lfc_source_contract import federation, jdbc
+from lfc_source_contract.slot import Slot
 
 from zerobus_debezium import destination, engines
-from zerobus_debezium.source import Slot
 
 
 def landed(wh, log: str, prefix: str, key: str, seq: str, ids: range | None = None) -> list:
