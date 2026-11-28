@@ -61,6 +61,7 @@ cat > jobs <<'EOF2'
 ct22   sqlserver-ct-net-changes.sh
 ct200  sqlserver-ct-net-changes.sh TABLES_N=200 BURST_N=30
 ct20pc sqlserver-ct-net-changes.sh TABLES_N=200 BURST_N=30 BUSY_PCT=20
+addcol sqlserver-add-column MODE=integrated              # a Python scenario: its name, without .sh
 EOF2
 RUNS=/tmp/ct-runs scripts/parallel.sh slots jobs     # PROFILE, CATALOG, CONN_USER, VM_IP exported as above
 ```
