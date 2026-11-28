@@ -175,6 +175,8 @@ def verdict(cmd: str) -> str | None:
         if i >= len(toks):
             continue
         word = os.path.basename(toks[i])
+        if word in {"python", "python3"} and i + 1 < len(toks) and os.path.basename(toks[i + 1]) in SAFE:
+            continue  # python3 scripts/secret_run.py ...: judged by the script, as its bare name is
         if word in SAFE or word not in PRINTERS:
             continue
         args, j = toks[i + 1 :], 0
@@ -221,6 +223,7 @@ def self_test() -> int:
         "printf 'x' > new.pw",
         "grep -l password app_credentials.yaml",
         "secret_run.py c_credentials.json .dba.password SQLCMDPASSWORD -- sqlcmd -Q 'SELECT 1'",
+        "python3 scripts/secret_run.py c_credentials.json .dba.password SQLCMDPASSWORD -- sqlcmd -Q 'SELECT 1'",
         "sqlcmd -i script.sql",
         "cat README.md",
         "PGPASSWORD=$(cat ~/.lfc-secrets/pg.pw) psql -c 'SELECT 1'",
