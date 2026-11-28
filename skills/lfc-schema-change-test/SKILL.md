@@ -14,7 +14,7 @@ Never point these at a shared source: the DDL forces a full refresh on everyone'
 
 | Script | Question | Time |
 |---|---|---|
-| [scripts/sqlserver-add-column.sh](scripts/sqlserver-add-column.sh) | When does adding a column to a SQL Server table need a full refresh? Covers tables with and without a primary key, change tracking and CDC, columns with and without defaults, identity and computed columns, and `auto_full_refresh_policy`. `MODE=integrated` runs it on integrated CDC (one pipeline) instead of standard CDC | About 40 minutes standard, 1–2 hours integrated |
+| [sqlserver-add-column](scripts/lfc_schema_change/scenarios/sqlserver_add_column.py) (Python: `python3 -I lfc_schema_change sqlserver-add-column`) | When does adding a column to a SQL Server table need a full refresh? Covers tables with and without a primary key, change tracking and CDC, columns with and without defaults, identity and computed columns, and `auto_full_refresh_policy`. `MODE=integrated` runs it on integrated CDC (one pipeline) instead of standard CDC | About 40 minutes standard, 1–2 hours integrated |
 | [scripts/sqlserver-add-column-staged.sh](scripts/sqlserver-add-column-staged.sh) | Can a column with a default be added without a full refresh by staging it: ADD the column nullable, fill it with `UPDATE`s, then ADD the default as a constraint? On CDC and change tracking, with `ADD ... NOT NULL DEFAULT` as the control and `ALTER COLUMN ... NOT NULL` afterwards observed. `GATEWAY_COMPUTE=classic` puts the gateway on a classic cluster | About 50 minutes |
 | [scripts/integrated-scd2-ct.sh](scripts/integrated-scd2-ct.sh) | What does integrated CDC do with `SCD_TYPE_2` on a change-tracking table? Plain inserts, more inserts, then an added column, against SCD type 1 and CDC controls. `SERVER_STATE=1` grants the login `VIEW SERVER STATE` for the run, to show its effect | About 30 minutes |
 | [scripts/sqlserver-table-lifecycle.sh](scripts/sqlserver-table-lifecycle.sh) | A table's lifecycle on change tracking and CDC: change data feed on the destination, DELETE every row + INSERT, adding a table to the pipeline, TRUNCATE, DROP and recreate, and the recovery of each | About 1 hour standard, 40 minutes integrated |
@@ -43,8 +43,9 @@ Never point these at a shared source: the DDL forces a full refresh on everyone'
 cd skills/lfc-schema-change-test
 export PROFILE=<cli-profile> CONNECTION=<uc-connection> CATALOG=<catalog> CONN_USER=<connection-login>
 export SRC_SQL="$PWD/scripts/vm-mssql.sh" SRC_ENV="$PWD/scripts/vm-mssql.sh --env" VM_IP=<vm-ip> MSSQL_CONTAINER=<container-name>
-OUT=/tmp/addcol-result.md scripts/sqlserver-add-column.sh
-MODE=integrated OUT=/tmp/addcol-result-integrated.md scripts/sqlserver-add-column.sh   # the same on integrated CDC
+cd scripts   # the Python scenarios (lfc_schema_change): the same settings; SOURCE_JSON=<contract> instead of SRC_SQL works too
+OUT=/tmp/addcol-result.md python3 -I -u lfc_schema_change sqlserver-add-column
+MODE=integrated OUT=/tmp/addcol-result-integrated.md python3 -I -u lfc_schema_change sqlserver-add-column   # integrated CDC
 ```
 
 ### Several runs at once
@@ -60,6 +61,7 @@ cat > jobs <<'EOF2'
 ct22   sqlserver-ct-net-changes.sh
 ct200  sqlserver-ct-net-changes.sh TABLES_N=200 BURST_N=30
 ct20pc sqlserver-ct-net-changes.sh TABLES_N=200 BURST_N=30 BUSY_PCT=20
+addcol sqlserver-add-column MODE=integrated              # a Python scenario: its name, without .sh
 EOF2
 RUNS=/tmp/ct-runs scripts/parallel.sh slots jobs     # PROFILE, CATALOG, CONN_USER, VM_IP exported as above
 ```

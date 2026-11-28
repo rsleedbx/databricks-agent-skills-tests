@@ -5,7 +5,8 @@ to plugin users).
 
 - **Python and REST, so a skill runs on the laptop and in a workspace (Genie Code, a notebook, a job).** The bash
   scripts are being converted to Python: write new code in Python, change the `.py` when a `.sh` has one next to it,
-  and never turn a converted `.py` back into `.sh`. While the conversion runs, some pages still name a `.sh`: point
+  and never turn a converted `.py` back into `.sh` or add a new `.sh` (a shell file that stays is a thin entry point
+  that runs Python: a forced SSH command, a path older saved configs name). While the conversion runs, some pages still name a `.sh`: point
   them at the `.py`, don't fall back. Databricks calls go through `lfc_rest.Rest` ([lfc-rest](skills/lfc-rest/SKILL.md));
   the SDK only signs in, and there are no `databricks ...` subprocesses (the CLI doesn't run on notebook compute).
   `--profile <name>` picks the workspace on the laptop and is never chosen for the user; in a workspace leave it out,

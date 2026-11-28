@@ -4,7 +4,7 @@
 # 2 more, B adds a nullable column and inserts 2. After each, it prints destination rows, s2ct's ids and the changes in
 # the CDC staging table per table. Seen 2026-10-20: s2ct got none of A's or A2's rows until B's ADD COLUMN released
 # them, and then held B's; no error. SCD_TYPE_2 needs CDC on SQL Server.
-# Needs PROFILE, CONNECTION, CATALOG, CONN_USER, SRC_SQL (as sqlserver-add-column.sh), or SOURCE_JSON (a source contract,
+# Needs PROFILE, CONNECTION, CATALOG, CONN_USER, SRC_SQL (as lib.sh), or SOURCE_JSON (a source contract,
 # lfc-source-contract) for the last three.
 # PIPELINE_CONF (a JSON object) sets pipeline settings, e.g. a knob under test.
 # SERVER_STATE=1 grants the connection's login VIEW SERVER STATE for the run (revoked at the end): on change tracking,

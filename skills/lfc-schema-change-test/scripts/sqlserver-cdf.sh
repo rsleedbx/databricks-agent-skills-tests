@@ -3,7 +3,7 @@
 # insert, an update and a delete? Answers a field question (the Databricks side). An SCD type 1 table (change tracking) and
 # an SCD type 2 table (CDC), 5 rows each; then one insert, one update and one delete on each.
 #
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 lfc_init cdf

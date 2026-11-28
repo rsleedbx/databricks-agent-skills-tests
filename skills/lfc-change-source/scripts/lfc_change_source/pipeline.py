@@ -48,3 +48,41 @@ def run_pipeline(w, pid: str, timeout: int = 3600, full_refresh: bool = False) -
         if st in ("COMPLETED", "FAILED", "CANCELED") or time.time() - t0 > timeout:
             return st
         time.sleep(15)
+
+
+# one pipeline's lifecycle, as REST calls (api: an lfc_rest.Rest); the callers above and the scenario harnesses use these
+def create(api, spec: dict, view_group: str | None = "users") -> str:
+    """A new pipeline (spec: a /api/2.0/pipelines body); its id. view_group gets CAN_VIEW (None: no grant)."""
+    pid = api.post("/api/2.0/pipelines", spec)["pipeline_id"]
+    if view_group:
+        try:
+            grant_view(api, pid, view_group)
+        except Exception as e:  # noqa: BLE001  the pipeline exists: its id must reach the caller (to clean it up)
+            import sys
+            print(f"pipeline {pid}: CAN_VIEW for {view_group} not granted: {str(e)[:200]}", file=sys.stderr)
+    return pid
+
+
+def start_update(api, pid: str, refresh: list | None = None, full_refresh: bool = False) -> str:
+    """An update started (refresh: the tables to fully refresh); its id."""
+    body = {"full_refresh_selection": list(refresh)} if refresh else ({"full_refresh": True} if full_refresh else {})
+    return api.post(f"/api/2.0/pipelines/{pid}/updates", body)["update_id"]
+
+
+def get_update(api, pid: str, update_id: str) -> dict:
+    """The update's state, cause, ... ({} when it has none yet)."""
+    return api.get(f"/api/2.0/pipelines/{pid}/updates/{update_id}").get("update") or {}
+
+
+def newest_update(api, pid: str) -> str:
+    """The id of the pipeline's latest update ("" when it has none)."""
+    ups = api.get(f"/api/2.0/pipelines/{pid}/updates", max_results=1).get("updates") or []
+    return ups[0].get("update_id", "") if ups else ""
+
+
+def stop(api, pid: str) -> None:
+    api.post(f"/api/2.0/pipelines/{pid}/stop")
+
+
+def delete(api, pid: str) -> None:
+    api.delete(f"/api/2.0/pipelines/{pid}")

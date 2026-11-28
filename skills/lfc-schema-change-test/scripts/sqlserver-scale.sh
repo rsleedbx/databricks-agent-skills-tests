@@ -15,7 +15,7 @@
 #   <prefix>_scale_<model>_x<copies>_sf<sf>. A run reuses it when every table is there and tracked, else restores it from
 #   the backup the first build wrote (/var/opt/mssql/backup/<db>.bak in the container), else builds it.
 #   DISK_MBPS  the source disk limit the run is under, in MiB/s (vm-throttle.sh <MiB/s> --cold before, off after): recorded only
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT),
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT),
 #   and a workload file. BUILD_HERE=1 builds from this machine; else the bundle goes to the VM (VM_IP, MSSQL_CONTAINER).
 #
 # Records: pipeline create accepted or refused; time from the first update's start until every table has its source row

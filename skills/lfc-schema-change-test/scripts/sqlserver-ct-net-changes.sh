@@ -14,7 +14,7 @@
 #
 #   TABLES_N (20) change-tracking SCD type 2 tables; BURST_N (60) rounds, BURST_GAP (2) seconds apart.
 #   The connection's login gets VIEW SERVER STATE for the run (SCD type 2 on change tracking needs it).
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, KEEP, OUT)
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, KEEP, OUT)
 set -uo pipefail
 MODE=standard
 . "$(dirname "$0")/lib.sh"

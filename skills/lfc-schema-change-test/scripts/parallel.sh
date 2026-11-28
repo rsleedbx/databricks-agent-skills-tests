@@ -4,7 +4,8 @@
 #          connection and SRC_SQL come from the file; a database of yours on a source VM: the file lfc-source-cloud-vm
 #          slot-source.sh writes) or "CONNECTION MSSQL_CONTAINER" (a SQL Server container on the test VM, through
 #          vm-mssql.sh and the VM admin login). At most half as many as the VM's vCPUs.
-#   jobs:  one line per run, "<name> <script> [VAR=value ...]", e.g. "ct200 sqlserver-ct-net-changes.sh TABLES_N=200".
+#   jobs:  one line per run, "<name> <script> [VAR=value ...]", e.g. "ct200 sqlserver-ct-net-changes.sh TABLES_N=200";
+#          a Python scenario by its name, without .sh (e.g. "addcol sqlserver-add-column MODE=integrated").
 #   Each job runs from its own copy of the scripts in $RUNS/<name>/ (bash reads a script while it runs), with the slot's
 #   CONNECTION, MSSQL_CONTAINER and SRC_SQL, OUT=$RUNS/<name>/result.md, SCENARIO, LFC_RECORD and LFC_RUNTIME set; the
 #   rest of the environment (PROFILE, CATALOG, CONN_USER, VM_IP, LFC_PERF_DIR, ...) is passed through. Log: run.log.
@@ -30,7 +31,9 @@ reap() {   # free the slots whose job ended; report each
 }
 for job in ${JOBS[@]+"${JOBS[@]}"}; do
   read -r name script vars <<< "$job"
-  [ -f "$HERE/$script" ] || { echo "$name: no script $script"; FAILED=1; continue; }
+  # a Python scenario (lfc_schema_change/scenarios/<name with _>.py) by its name, without .sh: run through the package
+  py=0; [ -f "$HERE/lfc_schema_change/scenarios/${script//-/_}.py" ] && py=1
+  [ $py = 1 ] || [ -f "$HERE/$script" ] || { echo "$name: no script or scenario $script"; FAILED=1; continue; }
   while :; do
     reap; slot=""
     for i in "${!SLOTS[@]}"; do [ -z "${PID[$i]:-}" ] && { slot=$i; break; }; done
@@ -39,13 +42,14 @@ for job in ${JOBS[@]+"${JOBS[@]}"}; do
   read -r conn container <<< "${SLOTS[$slot]}"
   [ "$conn" = - ] && conn=""   # a contract's connection comes from the file
   if [[ $container == json:* ]]; then f=${container#json:}; case $f in /*) ;; *) f=$PWD/$f ;; esac; container=json:$f; fi   # the runs cd
-  d=$RUNS/$name; mkdir -p "$d"; cp "$HERE"/lib.sh "$HERE"/vm-*.sh "$HERE/$script" "$d/"
+  d=$RUNS/$name; mkdir -p "$d"; cp "$HERE"/lib.sh "$HERE"/vm-*.sh "$d/"; [ $py = 1 ] || cp "$HERE/$script" "$d/"
+  if [ $py = 1 ]; then run=(python3 -I -u "$HERE/lfc_schema_change" "$script"); else run=(bash "./$script"); fi
   if [[ $container == json:* ]]; then src=(SOURCE_JSON="${container#json:}" LFC_SOURCE_ENV="$REPO/skills/lfc-source-contract/scripts/source-env.sh")
   else src=(MSSQL_CONTAINER="$container" SRC_SQL="$d/vm-mssql.sh" SRC_ENV="$d/vm-mssql.sh --env"); fi
   # shellcheck disable=SC2086
   ( cd "$d" && env CONNECTION="$conn" "${src[@]}" \
       OUT="$d/result.md" SCENARIO="${script%.sh}" LFC_RECORD="${LFC_RECORD:-$REPO/skills/lfc-test-results/scripts/record.py}" \
-      LFC_RUNTIME="${LFC_RUNTIME:-$REPO/bin/lfc-runtime.sh}" $vars bash "./$script" > "$d/run.log" 2>&1 ) &
+      LFC_RUNTIME="${LFC_RUNTIME:-$REPO/bin/lfc-runtime.sh}" $vars "${run[@]}" > "$d/run.log" 2>&1 ) &
   PID[$slot]=$!; NAMEOF[$slot]=$name
   echo "$(date +%T) START $name ($script ${vars:-}) on $conn / $container"
 done
