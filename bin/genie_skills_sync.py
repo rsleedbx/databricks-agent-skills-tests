@@ -121,6 +121,7 @@ def main(argv: list[str]) -> int:
                 print(f"skip {s}: {dest}/{s} exists and was not copied by this script")
                 continue
             src = R / "skills" / s
+            (stage / s).mkdir(parents=True, exist_ok=True)   # a skill whose only tracked file is SKILL.md
             for rel in tracked_files(src):
                 if rel != "SKILL.md":
                     (stage / s / rel).parent.mkdir(parents=True, exist_ok=True)

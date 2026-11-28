@@ -89,8 +89,10 @@ class GenieSync(unittest.TestCase):
         (skill / "scripts" / "x.py").write_text("print('x')\n")
         (self.root / "skills" / "b").mkdir()
         (self.root / "skills" / "b" / "SKILL.md").write_text("---\nname: b\n---\n")
+        (self.root / "skills" / "only").mkdir()   # a listed skill whose only tracked file is its SKILL.md
+        (self.root / "skills" / "only" / "SKILL.md").write_text("---\nname: only\n---\n# Only\n")
         (self.root / "genie-skill-note.md").write_text("In Genie Code or a notebook: run the Python here.\n")
-        (self.root / "genie-skills.txt").write_text("# listed\na\n")
+        (self.root / "genie-skills.txt").write_text("# listed\na\nonly\n")
         for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"]):
             subprocess.run(["git", "-C", str(self.root), *cmd], check=True, capture_output=True)
         self.old_root, self.old_connect = genie_skills_sync.R, Rest.connect
@@ -101,7 +103,7 @@ class GenieSync(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def test_listed_skills_and_unlisted_links(self):
-        self.assertEqual(genie_skills_sync.listed_skills(self.root), ["a"])
+        self.assertEqual(genie_skills_sync.listed_skills(self.root), ["a", "only"])
         (self.root / "genie-skills.txt").write_text("missing\n")
         with self.assertRaises(SystemExit):
             genie_skills_sync.listed_skills(self.root)
@@ -116,6 +118,7 @@ class GenieSync(unittest.TestCase):
         self.assertIn("In Genie Code or a notebook", skill)
         self.assertEqual(paths["/Workspace/s/a/SKILL.md"]["format"], "RAW")
         self.assertIn("/Workspace/s/a/scripts/x.py", paths)
+        self.assertIn("/Workspace/s/only/.synced-from", paths)   # the folder with only SKILL.md still gets its marker
         self.assertTrue(base64.b64decode(paths["/Workspace/s/a/.synced-from"]["content"]).startswith(
             b"databricks-agent-skills-tests "))
 
@@ -125,7 +128,8 @@ class GenieSync(unittest.TestCase):
         genie_skills_sync.R = self.root
         Rest.connect = staticmethod(lambda profile: ws.api)
         self.assertEqual(genie_skills_sync.main(["p", "--dest", "/Workspace/s"]), 0)
-        self.assertEqual(ws.imports, [])
+        self.assertFalse([i for i in ws.imports if i["path"].startswith("/Workspace/s/a/")])   # not ours: left alone
+        self.assertTrue([i for i in ws.imports if i["path"].startswith("/Workspace/s/only/")])
 
 
 class SyncHelpers(unittest.TestCase):
