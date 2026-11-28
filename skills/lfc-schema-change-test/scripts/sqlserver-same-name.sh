@@ -19,7 +19,7 @@
 #                   the create is accepted, then every update fails with FLOW_DEFINED_IN_MULTIPLE_DATASETS and the
 #                   pipeline retries on its own (2026-10-23), so the run stops the pipeline after the first update
 #   TRACK (ct): ct (change tracking) or cdc, on both tables
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 CASE=${CASE:-two-schemas}; TRACK=${TRACK:-ct}

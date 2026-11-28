@@ -10,7 +10,7 @@
 #                3. ALTER TABLE ADD CONSTRAINT DEFAULT 7 FOR c, one new row without c
 #                4. ALTER TABLE ALTER COLUMN c INT NOT NULL, one new row without c            (observed)
 #
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER, or SOURCE_JSON; MODE,
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER, or SOURCE_JSON; MODE,
 #   KEEP, KEEP_DAYS, OUT). About 40 minutes on standard CDC.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"

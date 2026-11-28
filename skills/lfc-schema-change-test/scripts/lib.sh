@@ -1,5 +1,5 @@
 # lib.sh: shared steps of the SQL Server Lakeflow Connect scenario tests. Source it from a test script after setting
-# PROFILE, CONNECTION, CATALOG, SRC_SQL, CONN_USER (see sqlserver-add-column.sh for what each is), or SOURCE_JSON=<contract
+# PROFILE, CONNECTION, CATALOG, SRC_SQL, CONN_USER (what each is: lfc_schema_change/scenario.py, the same settings), or SOURCE_JSON=<contract
 # file> for the source (lfc-source-contract), then:
 # (ENGINE=postgres for a PostgreSQL source: SRC_SQL is then scripts/vm-psql.sh or alike, src_util and track are not
 # used, and each pipeline gets its own publication and slot, both named $SLOT)

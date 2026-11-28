@@ -11,7 +11,7 @@
 #   dropcol  DROP COLUMN x
 #   pk       primary key (id) -> (id, k), with CDC turned off and on around it (SQL Server refuses it otherwise)
 #
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 lfc_init ddlafr

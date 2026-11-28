@@ -6,7 +6,7 @@
 # (old/new capture instance, committedCursor: what the gateway writes when it moves to the new capture instance).
 #
 #   CII_DENY=1 (default) denies the login UPDATE on lakeflowCaptureInstanceInfo after setup; CII_DENY=0 is the control.
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 lfc_init cii
