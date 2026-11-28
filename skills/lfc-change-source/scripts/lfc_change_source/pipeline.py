@@ -55,7 +55,11 @@ def create(api, spec: dict, view_group: str | None = "users") -> str:
     """A new pipeline (spec: a /api/2.0/pipelines body); its id. view_group gets CAN_VIEW (None: no grant)."""
     pid = api.post("/api/2.0/pipelines", spec)["pipeline_id"]
     if view_group:
-        grant_view(api, pid, view_group)
+        try:
+            grant_view(api, pid, view_group)
+        except Exception as e:  # noqa: BLE001  the pipeline exists: its id must reach the caller (to clean it up)
+            import sys
+            print(f"pipeline {pid}: CAN_VIEW for {view_group} not granted: {str(e)[:200]}", file=sys.stderr)
     return pid
 
 

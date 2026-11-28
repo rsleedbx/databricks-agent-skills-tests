@@ -239,11 +239,19 @@ class Run:
         one's state; self.errs: the error classes of every update in the chain; self.chain: each one's cause and
         state. Integrated CDC (EARLY_STOP=1): an update that ran 3 minutes is stopped once fp(fp_tables) is
         unchanged for 3 polls (self.early). LFC_DEADLINE: the running update is stopped and reported timed out."""
+        self.fp_tables = fp_tables if fp_tables is not None else getattr(self, "fp_tables", None)
         try:
             u = pipeline.start_update(self.api, self.ap, refresh)
         except Exception as e:  # noqa: BLE001  one still running (a retry the pipeline started): follow it
+            why = str(e).splitlines()[0][:200] if str(e) else e.__class__.__name__
             u = pipeline.newest_update(self.api, self.ap)
-            self.log(f"start-update refused ({str(e).splitlines()[0][:120]}); following {u}")
+            running = u and pipeline.get_update(self.api, self.ap, u).get("state") not in DONE
+            if not running:   # nothing to follow: the refusal is this step's result
+                self.state, self.chain, self.early, self.last_events = "REFUSED", f"start refused: {why}", False, []
+                self.errs = ["START_UPDATE_REFUSED"]
+                self.log(f"update refused: {why}")
+                return self.state
+            self.log(f"start-update refused ({why}); following {u}")
         ids, chain, self.early = [], [], False
         early_stop = self.mode == "integrated" and self.e.get("EARLY_STOP", "1") == "1"
         while True:
@@ -258,7 +266,7 @@ class Run:
                     note = " (timed out: deadline)"
                     break
                 if early_stop and state == "RUNNING":
-                    f = self.fp(fp_tables or [])
+                    f = self.fp(self.fp_tables or [])
                     stable = stable + 1 if f and f == prev else 0
                     prev = f
                     if refresh and not self.snaps_done(u, refresh):
@@ -321,11 +329,11 @@ class Run:
         events are kept, so errs_for still reads the step's)."""
         r = self.q_or(sql)
         if r != want and self.early:
-            keep = self.last_events
+            keep = (self.last_events, self.errs, self.state, self.chain, self.early)   # the step's, read after this
             self.log(f"after an early stop got '{r.replace(chr(9), ' ')}': one more update")
-            self.update()
+            self.update()             # the step's fingerprint tables (update keeps the last ones)
             r = self.q_or(sql)
-            self.last_events = keep
+            self.last_events, self.errs, self.state, self.chain, self.early = keep
         return r
 
     def settle(self, table: str, column: str, tries: int = 4, fp_tables=None) -> None:
@@ -478,8 +486,18 @@ def main(scenario) -> int:
     """Run a scenario function f(run) -> None in a Run; the exit status: 0, 1 (a claim failed), 2 (set-up)."""
     try:
         with Run(scenario.SHORT) as r:
-            scenario.run(r)
+            try:
+                scenario.run(r)
+            except Setup:
+                raise
+            except Exception as e:
+                if r.results:
+                    raise
+                raise Setup(f"set-up failed: {e.__class__.__name__}: {str(e)[:400]}") from e
             return 1 if r.failed else 0
     except Setup as e:
         print(e, file=sys.stderr)
+        return 2
+    except Exception as e:  # noqa: BLE001  pre-flight (a REST error before anything was made)
+        print(f"set-up failed: {e.__class__.__name__}: {str(e)[:400]}", file=sys.stderr)
         return 2

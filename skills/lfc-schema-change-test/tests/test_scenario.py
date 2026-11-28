@@ -196,7 +196,7 @@ class Updates(unittest.TestCase):
         self.assertFalse(r.needs_refresh("t1"))
 
     def test_refused_start_follows_the_running_one(self):
-        api = Api(updates={"u1": ["COMPLETED"]}, refuse_start=True)
+        api = Api(updates={"u1": ["RUNNING", "COMPLETED"]}, refuse_start=True)
         api.current = "u1"
         r = run_of(api)
         r.ap = "ap1"
@@ -221,12 +221,46 @@ class Updates(unittest.TestCase):
         self.assertTrue(r.ok_state())
         self.assertIn("stopped early after", r.chain)
 
-    def test_expect_after_an_early_stop_runs_one_more_update(self):
+    def test_expect_after_an_early_stop_keeps_the_steps_errors_and_state(self):
         api = Api(updates={"u1": ["COMPLETED"]})
         r = run_of(api, wh=Wh([[("1",)], [("2",)]]))
-        r.ap, r.early, r.last_events = "ap1", True, ["kept"]
+        r.ap, r.early, r.last_events, r.errs, r.state = "ap1", True, ["kept"], ["X.PRIMARY_KEY_CHANGE"], "RUNNING"
         self.assertEqual(r.expect("2", "SELECT x"), "2")
-        self.assertEqual(r.last_events, ["kept"])
+        self.assertEqual((r.last_events, r.errs, r.state, r.early), (["kept"], ["X.PRIMARY_KEY_CHANGE"], "RUNNING", True))
+
+    def test_refused_start_with_nothing_running_is_the_result(self):
+        api = Api(updates={"u1": ["COMPLETED"]}, refuse_start=True)
+        api.current = "u1"                       # the newest is finished: not this step's update
+        r = run_of(api)
+        r.ap = "ap1"
+        self.assertEqual(r.update(), "REFUSED")
+        self.assertEqual(r.errs, ["START_UPDATE_REFUSED"])
+
+
+class Exits(unittest.TestCase):
+    def test_a_set_up_error_before_any_claim_exits_2(self):
+        class Bad:
+            SHORT = "bad"
+
+            @staticmethod
+            def run(r):
+                raise RuntimeError("could not set up cdc on lfcddemo: t1")
+        with mock.patch.object(scenario, "Run", lambda short: run_of(Api(), env={"KEEP": "1"})), \
+                mock.patch("sys.stderr"):
+            self.assertEqual(scenario.main(Bad), 2)
+
+    def test_a_grant_failure_still_returns_the_pipeline(self):
+        from lfc_change_source import pipeline
+        api = Api()
+        orig = api.call
+
+        def call(m, p, b=None, **q):
+            if p.startswith("/api/2.0/permissions/"):
+                raise RuntimeError("PERMISSION_DENIED")
+            return orig(m, p, b, **q)
+        api.call = call
+        with mock.patch("sys.stderr"):
+            self.assertEqual(pipeline.create(rest(api), {"name": "x", "ingestion_definition": {}}), "ap1")
 
 
 class Kept(unittest.TestCase):
