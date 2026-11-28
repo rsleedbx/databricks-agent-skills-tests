@@ -26,7 +26,7 @@ POLL_S = 60
 
 
 def age_and_state(api: Rest, pipe: str) -> tuple[str, int]:
-    """The latest update's state and its age in whole minutes (0 when it has none)."""
+    """The latest update's state and its age in whole minutes ("", 0 when it has none)."""
     latest = pipeline_api.latest_updates(api, pipe, 1)
     if not latest:
         return "", 0
@@ -35,8 +35,28 @@ def age_and_state(api: Rest, pipe: str) -> tuple[str, int]:
     return u.get("state") or "", int(age_ms // 60000)
 
 
+def step(api: Rest, pipe: str, limit: int, hhmm: str) -> tuple[bool, str]:
+    """One look at a pipeline: (still pending, the line to print or ""). A failed lookup keeps it pending (as the shell
+    did); one with no update has nothing to stop, so it is done; a stop that fails is dropped without a line."""
+    try:
+        st, age = age_and_state(api, pipe)
+    except Exception:  # noqa: BLE001  a failed lookup (the network, a pipeline gone): try again next round
+        return True, ""
+    if not st:
+        return False, f"{hhmm} {pipe} no update"
+    if st in DONE:
+        return False, f"{hhmm} {pipe} {st} after {age}m"
+    if age >= limit:
+        try:
+            pipeline_api.stop(api, pipe)
+        except Exception:  # noqa: BLE001  as before: a stop that failed prints nothing and is not kept
+            return False, ""
+        return False, f"{hhmm} {pipe} STOPPED at {age}m (was {st})"
+    return True, ""
+
+
 def main(argv: list[str]) -> int:
-    if not argv:
+    if len(argv) < 2:
         print("usage: stop_after.py <minutes> <pipeline-id>...")
         return 1
     try:
@@ -45,24 +65,14 @@ def main(argv: list[str]) -> int:
         print(f"minutes must be a whole number: {argv[0]}")
         return 1
     pending = argv[1:]
-    if not pending:
-        print("usage: stop_after.py <minutes> <pipeline-id>...")
-        return 1
     api = Rest.connect(os.environ.get("PIPELINE_WS") or "DEFAULT")
     while pending:
         still = []
         for p in pending:
-            st, age = age_and_state(api, p)
-            hhmm = time.strftime("%H:%M", time.gmtime())
-            if st in DONE:
-                print(f"{hhmm} {p} {st} after {age}m")
-            elif age >= limit:
-                try:
-                    pipeline_api.stop(api, p)
-                    print(f"{hhmm} {p} STOPPED at {age}m (was {st})")
-                except Exception:  # noqa: BLE001  as before: a stop that failed prints nothing and isn't kept
-                    pass
-            else:
+            wait, line = step(api, p, limit, time.strftime("%H:%M", time.gmtime()))
+            if line:
+                print(line)
+            if wait:
                 still.append(p)
         pending = still
         if pending:

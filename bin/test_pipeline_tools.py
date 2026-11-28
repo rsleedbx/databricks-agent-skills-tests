@@ -95,6 +95,16 @@ class Events(unittest.TestCase):
         self.assertEqual(len(rows[0]["message"]), 500)
         self.assertEqual(len(rows[0]["details"]), 20)
 
+    def test_levels_are_sent_to_the_api(self):
+        seen = []
+
+        def answers(m, p, q, b):
+            seen.append(q)
+            return {"events": [{"timestamp": "2026-10-26T22:05:00.000Z", "event_type": "a", "level": "WARN"}]}
+        got = lfc_events.Source(fake_rest(answers), PIPE, 0, "").from_api("", "WARN,ERROR", 0)
+        self.assertEqual([e["level"] for e in got], ["WARN"])
+        self.assertEqual(seen[0]["filter"], "level in ('WARN', 'ERROR')")
+
     def test_api_source_filters_update_and_window(self):
         now = datetime.now(timezone.utc)
         recent = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -191,6 +201,28 @@ class Stop(unittest.TestCase):
         state, age = stop_after.age_and_state(api, PIPE)
         self.assertEqual((state, age), ("RUNNING", 5))
         self.assertEqual(stop_after.age_and_state(fake_rest(lambda m, p, q, b: {"updates": []}), PIPE), ("", 0))
+
+    def test_step_keeps_a_failed_lookup_pending(self):
+        def boom(m, p, q, b):
+            raise RuntimeError("network")
+        self.assertEqual(stop_after.step(fake_rest(boom), PIPE, 30, "12:00"), (True, ""))
+
+    def test_step_done_no_update_and_stop(self):
+        def answers(created, state):
+            def f(m, p, q, b):
+                if m == "POST":
+                    return {}
+                return {"updates": [{"state": state, "creation_time": created}]}
+            return f
+        now_ms = time.time() * 1000
+        self.assertEqual(stop_after.step(fake_rest(answers(now_ms, "COMPLETED")), PIPE, 30, "12:00"),
+                         (False, f"12:00 {PIPE} COMPLETED after 0m"))
+        self.assertEqual(stop_after.step(fake_rest(lambda m, p, q, b: {"updates": []}), PIPE, 30, "12:00"),
+                         (False, f"12:00 {PIPE} no update"))
+        old = now_ms - 40 * 60000
+        self.assertEqual(stop_after.step(fake_rest(answers(old, "RUNNING")), PIPE, 30, "12:00"),
+                         (False, f"12:00 {PIPE} STOPPED at 40m (was RUNNING)"))
+        self.assertEqual(stop_after.step(fake_rest(answers(now_ms, "RUNNING")), PIPE, 30, "12:00"), (True, ""))
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ sys.path.insert(0, str(R / "skills" / "lfc-rest" / "scripts"))
 sys.path.insert(0, str(R / "skills" / "lfc-pipeline-watch" / "scripts"))
 sys.path.insert(0, str(R / "skills" / "lfc-change-source" / "scripts"))
 from lfc_rest import Rest  # noqa: E402
-from lfc_watch.core import events as pipeline_events  # noqa: E402
+from lfc_watch.core import events as pipeline_events, ms as epoch_ms  # noqa: E402
 from lfc_change_source.engine import Warehouse  # noqa: E402
 
 TABLE_DEFAULT = "system.lakeflow_pipeline_events_preview.pipeline_events"
@@ -112,12 +112,20 @@ class Source:
         return (datetime.now(timezone.utc) - timedelta(hours=self.since_h)).timestamp() * 1000
 
     def from_api(self, update: str, levels: str, max_n: int) -> list[dict]:
-        """The API's events in the window (newest first from the API, cut at max_n when that is safe), then the
-        update's and the levels'. Oldest first."""
-        cap = max_n if max_n and not update and not levels else API_CAP
-        raw = pipeline_events(self.api, self.pipe, since_ms=self.cutoff_ms(), max_events=cap)
-        evs = [event_from_api(e) for e in raw]
-        return _shape(evs, update, levels)
+        """The API's events in the window, the update's and the levels', oldest first. With levels the API gets the
+        level filter (so fewer pages are read); otherwise lfc_watch's events(), cut at max_n when that is safe."""
+        if levels:
+            flt = "level in (" + ", ".join(f"'{x}'" for x in levels.split(",")) + ")"
+            floor, raw = self.cutoff_ms(), []
+            path = f"/api/2.0/pipelines/{self.pipe}/events"
+            for e in self.api.pages(path, "events", API_CAP, max_results=250, filter=flt):
+                if floor and e.get("timestamp") and epoch_ms(e["timestamp"]) < floor:
+                    break   # newest first: past the window
+                raw.append(e)
+        else:
+            cap = max_n if max_n and not update else API_CAP
+            raw = pipeline_events(self.api, self.pipe, since_ms=self.cutoff_ms(), max_events=cap)
+        return _shape([event_from_api(e) for e in raw], update, levels)
 
     def newest_api(self) -> str:
         raw = pipeline_events(self.api, self.pipe, max_events=1)
@@ -364,7 +372,7 @@ def _note(s: str) -> None:
     print(s, file=sys.stderr)
 
 
-def run(argv: list[str]) -> int:
+def main(argv: list[str]) -> int:
     o = parse(argv)
     if o is None:
         print(__doc__)
@@ -397,4 +405,4 @@ def run(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(run(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:]))

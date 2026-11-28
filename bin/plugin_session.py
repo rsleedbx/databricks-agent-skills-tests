@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
     here = Path(__file__).resolve().parent.parent
     env_file = os.environ.get("CLAUDE_ENV_FILE")
     if env_file:
@@ -54,4 +54,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

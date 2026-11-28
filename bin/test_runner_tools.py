@@ -121,7 +121,7 @@ class Hook(Env):
         os.environ["LFC_TESTS_SETTINGS"] = str(self.tmp / "missing.env")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            self.assertEqual(plugin_session.main(), 0)
+            self.assertEqual(plugin_session.main([]), 0)
         exports = env_file.read_text()
         self.assertIn("export LFC_TESTS=", exports)
         self.assertIn('export PATH=', exports)
@@ -135,11 +135,24 @@ class Hook(Env):
         os.environ["LFC_TESTS_SETTINGS"] = str(settings)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            plugin_session.main()
+            plugin_session.main([])
         self.assertIn("(REGION; checked", out.getvalue())
 
 
-class SuiteHelpers(unittest.TestCase):
+class SuiteHelpers(Env):
+    def test_a_missing_program_or_a_raising_function_fails_the_check(self):
+        os.environ["TEST_TIMINGS"] = str(self.tmp / "timings.tsv")
+        s = test_scripts.Suite()
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertFalse(s.run_check("no such program", ["lfc-no-such-program-xyz"]))
+                self.assertFalse(s.run_check("raises", lambda: 1 / 0))
+            self.assertEqual(s.fails, 2)
+            self.assertIn("FAIL  no such program", out.getvalue())
+        finally:
+            shutil.rmtree(s.T, ignore_errors=True)
+
     def test_awk_sum_and_zero_test(self):
         self.assertEqual(test_scripts._awk_sum(["a|x|2.5", "b|y|1", "short"], "|"), "3.5")
         self.assertEqual(test_scripts._awk_sum(["a\tb\t4"], "\t"), "4")

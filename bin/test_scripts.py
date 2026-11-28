@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # ruff: noqa: E501  (the check names are the suite's names, long as they were in test_scripts.sh)
 #!/usr/bin/env python3
 """bin/test_scripts.py: regression tests for the skills' scripts.
@@ -120,12 +121,17 @@ class Suite:
                 with redirect_stdout(buf):
                     passed = bool(cmd())
             except Exception as e:  # noqa: BLE001  a check that raises is a failed check
-                passed, buf.write(f"{e}\n")
+                passed = False
+                buf.write(f"{e}\n")
             text = buf.getvalue()
         else:
             out = self.T / "out"
             with out.open("w") as f:
-                passed = subprocess.run([str(x) for x in cmd], stdout=f, stderr=subprocess.STDOUT).returncode == 0
+                try:
+                    passed = subprocess.run([str(x) for x in cmd], stdout=f, stderr=subprocess.STDOUT).returncode == 0
+                except OSError as e:   # not on PATH (as the shell's exit 127): the check fails, the suite goes on
+                    f.write(f"{e}\n")
+                    passed = False
             text = out.read_text(errors="replace")
         dur = int(time.monotonic() - t0)
         if passed:
@@ -415,7 +421,7 @@ open(d + '/env.yaml', 'w').write('environment:\\n  engine: sqlserver\\n  product
     return ("mkdir -p '@T@/cm' && python3 - '@T@/cm' <<'PY'\n" + py + "PY\n" + tail)
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
     s = Suite()
     print("== offline")
     for f in sorted(SK.rglob("*.sh")):
@@ -694,4 +700,4 @@ def _count_names(path: Path) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
