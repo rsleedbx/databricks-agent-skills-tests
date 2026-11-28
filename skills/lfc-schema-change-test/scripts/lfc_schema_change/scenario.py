@@ -147,8 +147,8 @@ class Run:
 
     def rq(self, sql: str) -> str:
         """sql on the source through the UC connection (what serverless sees)."""
-        return self.q(f"SELECT * FROM remote_query('{self.connection}', database => '{self.db.name}', query => "
-                      f"'{sql.replace(chr(39), chr(39) * 2)}')")
+        lit = sql.replace("\\", "\\\\").replace("'", "\\'")   # a Spark SQL literal: '' would join two literals
+        return self.q(f"SELECT * FROM remote_query('{self.connection}', database => '{self.db.name}', query => '{lit}')")
 
     # ---- pipelines
     def obj(self, table: str, scd: str = "SCD_TYPE_1", auto_full_refresh: bool = False, **config) -> dict:
@@ -233,7 +233,7 @@ class Run:
         return True
 
     def update(self, refresh: list | None = None, fp_tables: list | None = None, polls: int = 90,
-               every: float = 20) -> str:
+               every: float = 20, _again: bool = True) -> str:
         """Start an update (refresh: the tables to fully refresh) and wait until the pipeline is idle, following the
         updates the pipeline starts itself after a failure (RETRY_ON_FAILURE, SCHEMA_CHANGE). self.state: the last
         one's state; self.errs: the error classes of every update in the chain; self.chain: each one's cause and
@@ -252,6 +252,14 @@ class Run:
                 self.log(f"update refused: {why}")
                 return self.state
             self.log(f"start-update refused ({why}); following {u}")
+            self._follow(u, None, polls, every)    # not this step's update: then the requested one, once
+            if not _again:
+                return self.state
+            return self.update(refresh, fp_tables, polls, every, _again=False)
+        return self._follow(u, refresh, polls, every)
+
+    def _follow(self, u: str, refresh, polls: int, every: float) -> str:
+        """Wait for update u and the updates the pipeline starts after it (see update)."""
         ids, chain, self.early = [], [], False
         early_stop = self.mode == "integrated" and self.e.get("EARLY_STOP", "1") == "1"
         while True:
@@ -264,6 +272,7 @@ class Run:
                 if self.past_deadline():
                     pipeline.stop(self.api, self.ap)
                     note = " (timed out: deadline)"
+                    self.stopped(u, every)
                     break
                 if early_stop and state == "RUNNING":
                     f = self.fp(self.fp_tables or [])
@@ -275,7 +284,7 @@ class Run:
                         pipeline.stop(self.api, self.ap)
                         self.early = True
                         note = f" (stopped early after {int(self.clock() - t0)}s)"
-                        state = pipeline.get_update(self.api, self.ap, u).get("state", "")
+                        state = self.stopped(u, every)
                         break
                 self.sleep(every)
             chain.append(f"{pipeline.get_update(self.api, self.ap, u).get('cause', '')} {state}{note}")
@@ -303,6 +312,16 @@ class Run:
         """An error of the last update (with table: of that table's flows) whose class contains name: classes come
         qualified (CDC_INCOMPATIBLE_SCHEMA_CHANGES.PRIMARY_KEY_CHANGE), as lib.sh's substring match took them."""
         return any(name in c for c in (self.errs_for(table) if table else self.errs))
+
+    def stopped(self, u: str, every: float, polls: int = 30) -> str:
+        """After a stop, the update's state once it has ended (a stopping update refuses the next start)."""
+        state = ""
+        for _ in range(polls):
+            state = pipeline.get_update(self.api, self.ap, u).get("state", "")
+            if state in DONE:
+                break
+            self.sleep(min(every, 10))
+        return state
 
     def ok_state(self) -> bool:
         return self.state == "COMPLETED" or self.early
@@ -491,9 +510,12 @@ def main(scenario) -> int:
             except Setup:
                 raise
             except Exception as e:
-                if r.results:
-                    raise
-                raise Setup(f"set-up failed: {e.__class__.__name__}: {str(e)[:400]}") from e
+                if not r.results:   # before the first claim: a set-up step failed (exit 2, as the shell)
+                    raise Setup(f"set-up failed: {e.__class__.__name__}: {str(e)[:400]}") from e
+                # after claims: they are kept; the crash is one more FAIL, and the report is written
+                r.claim("run-completed", "FAIL", f"the scenario stopped: {e.__class__.__name__}: {str(e)[:300]}")
+                with contextlib.suppress(Exception):
+                    r.result_md(f"{scenario.SHORT} (stopped)")
             return 1 if r.failed else 0
     except Setup as e:
         print(e, file=sys.stderr)

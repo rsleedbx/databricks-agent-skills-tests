@@ -56,6 +56,7 @@ class Api:
             return {"pipeline_id": "gw1" if "gateway_definition" in body else "ap1"}
         if m == "POST" and path.endswith("/updates"):
             if self.refuse:
+                self.refuse -= 1 if self.refuse is not True else 0
                 raise RuntimeError("An update is already running")
             self.started.append(body)
             self.current = next(iter(self.updates))
@@ -195,12 +196,13 @@ class Updates(unittest.TestCase):
         self.assertTrue(r.has("PRIMARY_KEY_CHANGE") and r.has("PRIMARY_KEY_CHANGE", "t2") and not r.has("X", "t2"))
         self.assertFalse(r.needs_refresh("t1"))
 
-    def test_refused_start_follows_the_running_one(self):
-        api = Api(updates={"u1": ["RUNNING", "COMPLETED"]}, refuse_start=True)
+    def test_refused_start_follows_the_running_one_then_starts_the_refresh(self):
+        api = Api(updates={"u1": ["RUNNING", "COMPLETED"]}, refuse_start=1)
         api.current = "u1"
         r = run_of(api)
         r.ap = "ap1"
-        self.assertEqual(r.update(), "COMPLETED")
+        self.assertEqual(r.update(["t1"]), "COMPLETED")
+        self.assertEqual(api.started, [{"full_refresh_selection": ["t1"]}])   # the refresh ran after the one followed
 
     def test_deadline_stops_and_reports(self):
         clock = Clock()
