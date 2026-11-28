@@ -185,7 +185,7 @@ def slot_sql(argv: list[str]) -> int:
         return s.run(["info", s.name], capture=False).returncode
     # the database is the first word; a client's own flags after it (a harness's "$SRC_SQL $DB -F |") are ignored,
     # as slot-sql.sh did
-    db = argv[:1] if argv and not argv[0].startswith("-") else []
+    db = argv[:1] if argv and argv[0] and not argv[0].startswith("-") else []   # "" (an unset $DB): the default
     wide = "-y" in (os.environ.get("SQLCMD_FLAGS") or "")
     words = ["sql", s.name, *db, *(["--wide"] if wide else [])]
     return s.run(words, sys.stdin.read(), capture=False).returncode

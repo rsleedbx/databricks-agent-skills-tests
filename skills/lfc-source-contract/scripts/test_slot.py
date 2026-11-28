@@ -62,9 +62,11 @@ class SqlArgs(unittest.TestCase):
             slot.slot_sql(["tpch", "-F", "|"])
             slot.slot_sql([])
             slot.slot_sql(["tpch", "--env"])
+            slot.slot_sql(["", "-F", "|"])
         self.assertEqual(run.call_args_list[0].args[0], ["sql", "pg1", "tpch"])
         self.assertEqual(run.call_args_list[1].args[0], ["sql", "pg1"])
         self.assertEqual(run.call_args_list[2].args[0], ["info", "pg1"])
+        self.assertEqual(run.call_args_list[3].args[0], ["sql", "pg1"])
 
 
 class Contract(unittest.TestCase):
