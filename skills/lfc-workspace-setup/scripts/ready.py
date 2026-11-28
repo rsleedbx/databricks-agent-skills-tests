@@ -14,8 +14,8 @@ The one change it makes: a connector preview that's off is turned on (as a works
 --no-enable makes it read-only. Turn one off again with the same patch and "value": false.
 Without <profile> or --catalog, the saved test settings give them (lfc-test-settings: DATABRICKS_PROFILE, LFC_CATALOG).
 Needs databricks-sdk (REST through lfc-rest's Rest, no CLI), so it runs on a laptop (a profile) and in a notebook (no profile: the
-notebook's own login): `from ready import main; main(["--catalog", "c"])`, or %run it. The egress list is a shell script: in a
-notebook that step says it was skipped.
+notebook's own login): `from ready import main; main(["--catalog", "c"])`, or %run it. The egress list is
+serverless-egress.py (lfc-source-firewall), run in a subprocess here and in a notebook alike.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from check import Report, check
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS = os.path.join(HERE, "..", "..", "lfc-test-settings", "scripts", "settings.sh")
-EGRESS = os.path.join(HERE, "..", "..", "lfc-source-firewall", "scripts", "serverless-egress.sh")
+EGRESS = os.path.join(HERE, "..", "..", "lfc-source-firewall", "scripts", "serverless-egress.py")
 
 # the connector previews: integrated CDC per engine, direct_cdc_connector (the gateway route for MySQL, PostgreSQL and
 # Oracle: off, a gateway is refused with "Ingestion source '<ENGINE>' is not supported"), column selection
@@ -265,11 +265,8 @@ def access(r: Ready, who: list, cat: str) -> None:
 
 
 def egress(r: Ready, cloud: str, region: str, state: str) -> None:
-    """Step 7: the serverless egress ranges (lfc-source-firewall's serverless-egress.sh)."""
-    if not shutil.which("bash") or not shutil.which("curl"):
-        r.row("INFO", "7 serverless egress ranges", "serverless-egress.sh needs bash and curl: skipped here")
-        return
-    p = subprocess.run(["bash", EGRESS, cloud, region] + (["--state", state] if state else []),
+    """Step 7: the serverless egress ranges (lfc-source-firewall's serverless-egress.py)."""
+    p = subprocess.run([sys.executable, EGRESS, cloud, region] + (["--state", state] if state else []),
                        capture_output=True, text=True, check=False)
     lines = p.stdout.splitlines()
     n = sum(1 for x in lines if x and x[0] not in "#+-")

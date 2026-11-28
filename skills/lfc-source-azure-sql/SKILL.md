@@ -28,7 +28,7 @@ Both support Change Tracking (CT) and CDC. Both incur data transfer costs if Dat
 | Subscription ID | `AZ_SUBSCRIPTION` (saved), on every `az` call | `<subscription id>` |
 | Owner tag | `OWNER` (saved) | `jane-doe` |
 | Replication mode | Query-based only / CT / CDC / BOTH | See parent [engine-sqlserver.md](../lfc-source-setup/references/engine-sqlserver.md) |
-| **SQL Database:** Service Objective (SKU) | Default | `GP_S_Gen5_1` for testing (sqldb.sh's `VCORES=1`) |
+| **SQL Database:** Service Objective (SKU) | Default | `GP_S_Gen5_1` for testing (sqldb.py's `VCORES=1`) |
 | **SQL Database:** Storage (GB) | Minimum 32 | `32`, `64` |
 | **SQL MI:** vCore count | Must be 4, 8, 16, 24, 32, 40, 64, or 80 | `4` (minimum) |
 | **SQL MI:** Storage (GB) | Minimum 32 | `32`, `128` |
@@ -59,41 +59,41 @@ az group exists --subscription "$AZ_SUBSCRIPTION" --name "$AZ_RESOURCE_GROUP"
 
 ### Option A: SQL Database (recommended for testing)
 
-[`scripts/sqldb.sh`](scripts/sqldb.sh) makes a logical server with public access and no firewall rules, then a serverless General Purpose database (Gen5, 1 vCore, minimum 0.5) that **auto-pauses** after `AUTO_PAUSE` minutes idle (default 60). Then [`scripts/lfc-setup.sh`](scripts/lfc-setup.sh) adds the test login, the seed tables and change tracking + CDC, and **lfc-source-firewall**'s `server-fw.py` opens it to the same sources as every other source, scoped to fit the server's 128-rule cap.
+[`scripts/sqldb.py`](scripts/sqldb.py) makes a logical server with public access and no firewall rules, then a serverless General Purpose database (Gen5, 1 vCore, minimum 0.5) that **auto-pauses** after `AUTO_PAUSE` minutes idle (default 60). Then [`scripts/lfc-setup.py`](scripts/lfc-setup.py) adds the test login, the seed tables and change tracking + CDC, and **lfc-source-firewall**'s `server-fw.py` opens it to the same sources as every other source, scoped to fit the server's 128-rule cap.
 
 ```bash
 export RG=<resource-group> LOCATION=<location> SERVER=<pfx>-mssql-<loc>-<epoch> DB=<database>
 S=skills/lfc-source-azure-sql/scripts
-bash $S/sqldb.sh plan
-ADMIN_PW_FILE=admin.pw bash $S/sqldb.sh create
+python3 $S/sqldb.py plan
+ADMIN_PW_FILE=admin.pw python3 $S/sqldb.py create
 python3 skills/lfc-source-firewall/scripts/server-fw.py sql $SERVER --nsg <shared-nsg> --regions <cloud>:<region>,... --apply
-HOST=$SERVER.database.windows.net ADMIN_PW_FILE=admin.pw LOGIN_PW_FILE=lfc_user.pw bash $S/lfc-setup.sh
-bash $S/sqldb.sh status            # Online, Paused or Resuming
+HOST=$SERVER.database.windows.net ADMIN_PW_FILE=admin.pw LOGIN_PW_FILE=lfc_user.pw python3 $S/lfc-setup.py
+python3 $S/sqldb.py status            # Online, Paused or Resuming
 ```
 
-- **Auto-pause:** an idle database pauses itself; there's nothing to stop by hand. The next login resumes it, and that first login fails with error 40613 ("Database ... is not currently available") until it's online, about a minute: `sqldb.sh wake` logs in until it answers. Run it before a test that starts with a paused database.
+- **Auto-pause:** an idle database pauses itself; there's nothing to stop by hand. The next login resumes it, and that first login fails with error 40613 ("Database ... is not currently available") until it's online, about a minute: `sqldb.py wake` logs in until it answers. Run it before a test that starts with a paused database.
 - **The free offer** (`FREE=1`: `--use-free-limit --free-limit-exhaustion-behavior AutoPause`) failed with `InternalServerError` on every try in the test subscription; the same database without it was created at once. Leave `FREE` unset unless the subscription is known to have the offer.
 - **The test login's password can't contain part of its name:** `lfc_user` splits at `_`, so a password starting `Lfc` fails with error 40632 ("not complex enough") although it has upper, lower and digits.
-- `lfc-setup.sh` creates the login and its user in `master` over a separate connection (SQL Database has no `USE master`), and passes every batch as a file: go-sqlcmd doesn't read a batch from standard input.
+- `lfc-setup.py` creates the login and its user in `master` over a separate connection (SQL Database has no `USE master`), and passes every batch as a file: go-sqlcmd doesn't read a batch from standard input.
 
 ### Option B: SQL Managed Instance (production-like)
 
 **Warning:** First MI in a new subnet can take **4–6 hours** to provision (one General Purpose 4-vCore instance took 2 hours on 2026-10-26); later ones 30–60 minutes.
 
-[`scripts/mi.sh`](scripts/mi.sh) does every step. It puts the instance in its own `/27` subnet in an existing VNet, delegated to `Microsoft.Sql/managedInstances`, with the subnet's own NSG (`<subnet>-nsg`) and route table (`0.0.0.0/0` to Internet), which MI needs before it's created. MI adds its own management rules to that NSG; don't attach the shared VM NSG to the subnet. The NSG starts with no rule for the public data endpoint (port 3342), so the instance is closed to everything outside the VNet until **lfc-source-firewall** syncs the laptop and Databricks egress ranges into `<subnet>-nsg`: the same list as every other source.
+[`scripts/mi.py`](scripts/mi.py) does every step. It puts the instance in its own `/27` subnet in an existing VNet, delegated to `Microsoft.Sql/managedInstances`, with the subnet's own NSG (`<subnet>-nsg`) and route table (`0.0.0.0/0` to Internet), which MI needs before it's created. MI adds its own management rules to that NSG; don't attach the shared VM NSG to the subnet. The NSG starts with no rule for the public data endpoint (port 3342), so the instance is closed to everything outside the VNet until **lfc-source-firewall** syncs the laptop and Databricks egress ranges into `<subnet>-nsg`: the same list as every other source.
 
 ```bash
 export RG=<resource-group> VNET=<vnet> MI_NAME=<pfx>-mssql-mi-<location>-<epoch>   # SUBSCRIPTION, SUBNET_CIDR, VCORES, STORAGE_GB, PRICING: see the script
 S=skills/lfc-source-azure-sql/scripts
-bash $S/mi.sh plan                                    # read-only: what create makes
+python3 $S/mi.py plan                                    # read-only: what create makes
 umask 077; echo "Lfc1$(openssl rand -hex 12)" > admin.pw
-ADMIN_PW_FILE=admin.pw bash $S/mi.sh create           # returns at once
-bash $S/mi.sh wait                                    # in the background (watch-progress); hours
-bash $S/mi.sh endpoint                                # <name>.public.<zone>.database.windows.net,3342
-bash $S/mi.sh stop                                    # pause compute between test runs; start to resume
+ADMIN_PW_FILE=admin.pw python3 $S/mi.py create           # returns at once
+python3 $S/mi.py wait                                    # in the background (watch-progress); hours
+python3 $S/mi.py endpoint                                # <name>.public.<zone>.database.windows.net,3342
+python3 $S/mi.py stop                                    # pause compute between test runs; start to resume
 ```
 
-Then copy the shared NSG's sources into it for port 3342: **lfc-source-firewall**'s `scripts/nsg-copy.sh <shared-nsg> <subnet>-nsg 3342 --apply` (rerun after the shared NSG is synced). `PRICING=Freemium` uses the free offer (one instance per subscription). Details and the private endpoint path: [azure-sql-mi.md](references/azure-sql-mi.md), [mi-networking.md](references/mi-networking.md).
+Then copy the shared NSG's sources into it for port 3342: **lfc-source-firewall**'s `scripts/nsg-copy.py <shared-nsg> <subnet>-nsg 3342 --apply` (rerun after the shared NSG is synced). `PRICING=Freemium` uses the free offer (one instance per subscription). Details and the private endpoint path: [azure-sql-mi.md](references/azure-sql-mi.md), [mi-networking.md](references/mi-networking.md).
 
 ## Configure for LFC
 
@@ -147,7 +147,7 @@ unset LFC_PASSWORD
 
 **Host and port:**
 - **SQL Database:** `<pfx>-mssql-<location>-<epoch>.database.windows.net:1433`
-- **SQL MI (public endpoint):** `<public_fqdn>:3342`, the host `mi.sh endpoint` prints (`<name>.public.<dns zone>.database.windows.net`)
+- **SQL MI (public endpoint):** `<public_fqdn>:3342`, the host `mi.py endpoint` prints (`<name>.public.<dns zone>.database.windows.net`)
 
 ## Verify connectivity
 
@@ -188,7 +188,7 @@ See [azure-sql-lifecycle.md](references/azure-sql-lifecycle.md):
 ## Top gotchas
 
 1. **MI provisioning is slow:** 4–6 hours for first MI in a new subnet.
-2. **SQL Database CDC tier required:** Not available on `Basic` or `S0`–`S2`; the serverless `GP_S_Gen5` database `sqldb.sh` makes has it.
+2. **SQL Database CDC tier required:** Not available on `Basic` or `S0`–`S2`; the serverless `GP_S_Gen5` database `sqldb.py` makes has it.
 3. **Password complexity:** three of upper, lower, digits, symbols; no spaces; and no part of the login's name (error 40632).
 4. **LFC user grants:** Must have `db_owner` and `db_ddladmin` roles.
 5. **Collation is fixed at creation:** Changing collation later requires migration. Specify at database creation time if you need case-sensitive.

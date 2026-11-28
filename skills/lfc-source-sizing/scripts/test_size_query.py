@@ -1,4 +1,4 @@
-"""size_query.remote_query: the statement size.sh and a notebook run (offline)."""
+"""size_query.remote_query: the statement size.py and a notebook run (offline)."""
 import os
 import sys
 import unittest

@@ -1,6 +1,6 @@
 # Oracle
 
-**Status: the fill planners are tested** (Oracle Database 23ai Free, `gvenzl/oracle-free`, 2 CPUs, on an Azure VM in Podman): [`scripts/oracle/`](../scripts/oracle/) `cast.sql` (the shared PL/SQL declarations), `plan-insert.sql`, `plan-status.sql`, `skipped.sql`, run by `fill.sh ora`. TPC-B filled in 4 s and TPC-H SF 1 (8,660,030 rows, foreign keys enforced) in 585 s; on a MacBook in Lima on arm64 (**lfc-source-podman**), 320 s, every table at its target. Tested types: `NUMBER`, `VARCHAR2`, `CHAR`, `DATE`, `TIMESTAMP`; the other casts below are in `cast.sql` but not run yet, nor are the delete, DDL, and audit planners (not ported).
+**Status: the fill planners are tested** (Oracle Database 23ai Free, `gvenzl/oracle-free`, 2 CPUs, on an Azure VM in Podman): [`scripts/oracle/`](../scripts/oracle/) `cast.sql` (the shared PL/SQL declarations), `plan-insert.sql`, `plan-status.sql`, `skipped.sql`, run by `fill.py ora` (client mode). TPC-B filled in 4 s and TPC-H SF 1 (8,660,030 rows, foreign keys enforced) in 585 s; on a MacBook in Lima on arm64 (**lfc-source-podman**), 320 s, every table at its target. Tested types: `NUMBER`, `VARCHAR2`, `CHAR`, `DATE`, `TIMESTAMP`; the other casts below are in `cast.sql` but not run yet, nor are the delete, DDL, and audit planners (not ported).
 
 ## Fill (tested)
 
@@ -10,12 +10,12 @@ cat > sq <<'Q'
 { echo "SET FEEDBACK OFF"; echo "CONNECT <user>@//<host>/<pdb>"; cat; } | sqlplus -s /nolog   # password: an Oracle wallet, or the prompt
 Q
 chmod 700 sq
-ORACLE=./sq DIR=scripts/oracle bash scripts/fill.sh ora tpch        # the schema (user) whose tables to fill
+ORACLE=./sq python3 scripts/python/fill.py ora tpch        # the schema (user) whose tables to fill
 ```
 
 - Rows come from `INSERT /*+ APPEND */ ... SELECT ... FROM (...) b, (SELECT LEVEL AS i FROM DUAL CONNECT BY LEVEL <= <rows>) g WHERE g.i <= b.need`: 1M rows in 5.3 s (a seed-table cross join took 6.1 s). Each statement commits (`SET AUTOCOMMIT ON`): a session must commit a direct-path insert before it reads the table again.
 - The lfc tags live in `LFC_TAGS (tbl, col, tag CLOB)` in the schema (`col` is `-` for the table's own tags), which statschema's `ddl.py --dialect oracle` fills: a comment holds 4,000 bytes and TPC tags reach 14 KB.
-- The planners print with `DBMS_OUTPUT`, a statement over several lines broken at spaces outside string literals: SQL*Plus reads lines of at most 2,499 characters (4,999 in 23ai). `fill.sh` treats a statement as a record from its `/* lfc level N */` line to the next.
+- The planners print with `DBMS_OUTPUT`, a statement over several lines broken at spaces outside string literals: SQL*Plus reads lines of at most 2,499 characters (4,999 in 23ai). `fill.py` (client mode) treats a statement as a record from its `/* lfc level N */` line to the next.
 
 ## Gotchas (tested)
 
@@ -26,7 +26,7 @@ ORACLE=./sq DIR=scripts/oracle bash scripts/fill.sh ora tpch        # the schema
 | `SP2-0027: Input is too long (> 4999 characters) - line ignored`; a tag silently missing | a long string literal on one line | `ddl.py` writes long tags as `TO_CLOB('...') \|\|` pieces, one per line |
 | The planner prints nothing; no error | `DBMS_LOB.SUBSTR(clob, 32767)` **in SQL** returns at most 4,000 bytes and raised an error a `WHEN OTHERS` swallowed | Read the CLOB in PL/SQL; catch only the exception you mean (`ORA-00942`) |
 | `PLS-00231: function 'G' may not be used in SQL` | a function declared in the block, called inside a SQL statement | Assign it to a variable first |
-| `Enter value for defense:` then `SP2-0546`, and no rows added | a value list with `&` (TPC-E's `'... & defense'`): SQL*Plus substitutes `&name` | `SET DEFINE OFF` when running the statements (`fill.sh` does); the planners themselves need it on, for their parameters |
+| `Enter value for defense:` then `SP2-0546`, and no rows added | a value list with `&` (TPC-E's `'... & defense'`): SQL*Plus substitutes `&name` | `SET DEFINE OFF` when running the statements (`fill.py` does); the planners themselves need it on, for their parameters |
 | `ORA-03405: End of query reached` | anything after the `;` on the line (a comment, a second statement) | One statement per line |
 | `DROP USER` fails with `ORA-00054` after a fill was stopped | the sessions of `podman exec ... sqlplus` outlive the stopped unit: they run in the container, not the unit's cgroup | `ALTER SYSTEM KILL SESSION` for the sessions holding locks on the schema's objects |
 

@@ -1,13 +1,13 @@
-"""Offline tests of lfc_source_datagen.tpc_schema: the text is what tpc-schema.sh wrote before it ran this (sha-256 of
+"""Offline tests of lfc_source_datagen.tpc_schema: the text is what the shell version wrote (sha-256 of
 its output, taken from the shell version at TPC-H 0.1 and 3, TPC-B 1, and TPC-B 2 with 777 history rows), but for
 TPC-B history's lfc:n, which now reads the row number from h_time (so a signal can rewrite h_delta), and the
-lfc:sf_rows tags; tpc-schema.sh still prints the same; the scale-factor floor; an unknown model.
+lfc:sf_rows tags; tpc/tpc-schema.py prints the same; the scale-factor floor; an unknown model.
 
-  python3 -m unittest test_tpc_schema.py
+  python3 -I test_tpc_schema.py
 """
 import hashlib
-import re
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -44,8 +44,8 @@ class TpcSchema(unittest.TestCase):
         self.assertEqual(len(re.findall(r"lfc:sf_rows=", h)), 6)          # all but region and nation, which don't scale
         self.assertNotRegex(h, r"lfc:rows=(5|25) lfc:sf_rows")
 
-    def test_tpc_schema_sh_runs_it(self):
-        out = subprocess.run(["bash", os.path.join(HERE, "tpc", "tpc-schema.sh"), "tpch", "0.1"], capture_output=True,
+    def test_tpc_schema_py_runs_it(self):
+        out = subprocess.run([sys.executable, "-I", os.path.join(HERE, "tpc", "tpc-schema.py"), "tpch", "0.1"], capture_output=True,
                              text=True, check=True).stdout
         self.assertEqual(sha(out), SHELL[("tpch", 0.1, None)])
 
@@ -54,9 +54,10 @@ class TpcSchema(unittest.TestCase):
             tpc_schema("tpch", 0.01)
         with self.assertRaisesRegex(ValueError, "tpcb or tpch"):
             tpc_schema("tpcc", 1)
-        r = subprocess.run(["bash", os.path.join(HERE, "tpc", "tpc-schema.sh"), "tpch", "0.01"], capture_output=True, text=True, check=False)
+        r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "tpc", "tpc-schema.py"), "tpch", "0.01"], capture_output=True,
+                           text=True, check=False)
         self.assertEqual((r.returncode, r.stderr.strip()),
-                         (1, "tpc-schema.sh: TPC-H needs scale factor 0.03 or more (230 suppliers); got 0.01"))
+                         (1, "tpc-schema.py: TPC-H needs scale factor 0.03 or more (230 suppliers); got 0.01"))
 
 
 if __name__ == "__main__":

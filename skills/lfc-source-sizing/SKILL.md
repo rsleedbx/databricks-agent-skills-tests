@@ -12,16 +12,16 @@ It reads the database's own catalog **through the UC connection** with `remote_q
 
 ```bash
 S=skills/lfc-source-sizing/scripts
-bash $S/size.sh <PROFILE> <connection> postgres  --database <database>
-bash $S/size.sh <PROFILE> <connection> mysql                                   # every user database at once
-bash $S/size.sh <PROFILE> <connection> sqlserver --database <database>
-bash $S/size.sh <PROFILE> <connection> mariadb                                 # a MYSQL connection to MariaDB; every database
-bash $S/size.sh <PROFILE> <connection> cockroachdb --database <database>       # a POSTGRESQL connection
-bash $S/size.sh <PROFILE> <connection> yugabytedb --database <database>        # a POSTGRESQL connection
-bash $S/size.sh <PROFILE> <pdb-connection> oracle --service <PDB>              # a connection whose service is the PDB
+python3 $S/size.py <PROFILE> <connection> postgres  --database <database>
+python3 $S/size.py <PROFILE> <connection> mysql                                   # every user database at once
+python3 $S/size.py <PROFILE> <connection> sqlserver --database <database>
+python3 $S/size.py <PROFILE> <connection> mariadb                                 # a MYSQL connection to MariaDB; every database
+python3 $S/size.py <PROFILE> <connection> cockroachdb --database <database>       # a POSTGRESQL connection
+python3 $S/size.py <PROFILE> <connection> yugabytedb --database <database>        # a POSTGRESQL connection
+python3 $S/size.py <PROFILE> <pdb-connection> oracle --service <PDB>              # a connection whose service is the PDB
 ```
 
-**In a notebook or Genie Code** (the CLI doesn't run there): the same query from [`size_query.py`](scripts/size_query.py), which `size.sh` uses too, run with `spark.sql`; one row per table, the columns of `tables.csv`:
+**In a notebook or Genie Code**: the same query from [`size_query.py`](scripts/size_query.py), which `size.py` uses too, run with `spark.sql`; one row per table, the columns of `tables.csv`:
 
 ```python
 import sys; sys.path.insert(0, "<skills folder>/lfc-source-sizing/scripts")
@@ -29,7 +29,7 @@ from size_query import remote_query
 display(spark.sql(remote_query("<connection>", "postgres", database="<database>")))   # or "oracle", service="<PDB>"; "mysql"
 ```
 
-[`size.sh`](scripts/size.sh) runs the engine's query ([`postgres.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/postgres.sql), [`mysql.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/mysql.sql) / [`mysql-process.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/mysql-process.sql), [`sqlserver.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/sqlserver.sql), [`oracle.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/oracle.sql), [`yugabytedb.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/yugabytedb.sql), [`cockroachdb.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/cockroachdb.sql)), keeps one row per table in `tables.csv`, and prints, with DuckDB:
+[`size.py`](scripts/size.py) runs the engine's query ([`postgres.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/postgres.sql), [`mysql.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/mysql.sql) / [`mysql-process.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/mysql-process.sql), [`sqlserver.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/sqlserver.sql), [`oracle.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/oracle.sql), [`yugabytedb.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/yugabytedb.sql), [`cockroachdb.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/cockroachdb.sql)), keeps one row per table in `tables.csv`, and prints, with DuckDB:
 
 | Line | For | What it counts |
 |---|---|---|
@@ -44,12 +44,12 @@ Then the largest tables, and every table whose row sources disagree or that has 
 
 ## When statistics are wrong
 
-Bytes always come from storage (file, page, or segment sizes), which is always current. Row counts come from statistics, which can be stale (rows added since the last `ANALYZE`) or missing (never gathered). So each engine has a second source that goes stale differently, and `size.sh` uses it and flags the table when they disagree by more than 1.5x:
+Bytes always come from storage (file, page, or segment sizes), which is always current. Row counts come from statistics, which can be stale (rows added since the last `ANALYZE`) or missing (never gathered). So each engine has a second source that goes stale differently, and `size.py` uses it and flags the table when they disagree by more than 1.5x:
 
 | Engine | From statistics | Second source | Third |
 |---|---|---|---|
 | PostgreSQL | `pg_class.reltuples` (last `ANALYZE`) | `n_live_tup`: the statistics collector counts every insert and delete, no `ANALYZE` needed | rows per page at the last `ANALYZE` x the file's current pages (the planner's own extrapolation) |
-| MySQL | `table_rows` (InnoDB's sampled estimate, cached a day: `information_schema_stats_expiry`) | `mysql.innodb_table_stats.n_rows` with its own `last_update` | current tablespace file size / average row length (needs `PROCESS`; `size.sh` falls back without it and says so) |
+| MySQL | `table_rows` (InnoDB's sampled estimate, cached a day: `information_schema_stats_expiry`) | `mysql.innodb_table_stats.n_rows` with its own `last_update` | current tablespace file size / average row length (needs `PROCESS`; `size.py` falls back without it and says so) |
 | SQL Server | `sys.dm_db_partition_stats.row_count`, kept by the engine on every change: near exact without statistics | | |
 | Oracle | `num_rows` (last `DBMS_STATS` run) | `num_rows` + inserts - deletes since then (`DBA_TAB_MODIFICATIONS`) | segment bytes / `avg_row_len` |
 
@@ -65,7 +65,7 @@ Tested: a Postgres table with 2,000,000 rows whose statistics said 1,000,000 (ha
 - **MariaDB:** the MySQL query, with no `PROCESS` variant (MariaDB has no `innodb_tablespaces`). Tested on MariaDB 11.4: 3,207 rows estimated for a table of 3,245 (InnoDB's sampled estimate, as on MySQL), 58,695 for 60,000.
 - **YugabyteDB:** `yugabytedb.sql`, not `postgres.sql`: the rows live in DocDB, so `postgres.sql` reads 0 for a table's own file and NULL for the database size. Here a table's data is one figure (no TOAST split), indexes are separate. Tested on YugabyteDB 2026.1: 20,000 and 60,000 rows exact after `ANALYZE`.
 - **CockroachDB:** `cockroachdb.sql`: rows from `crdb_internal.table_row_statistics` (per database: needs statistics), bytes from `SHOW RANGES`. A range holding two tables counts for the first, so per-table bytes are approximate; the database total is the sum of the ranges. Tested on v25.4: rows exact; the database total 24.5 MB for 2 tables.
-- **Db2 and Informix:** no Unity Catalog connection type, so `size.sh` doesn't run them. [`db2.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/db2.sql) (`SYSCAT.TABLES`, `SYSCAT.INDEXES`, `SYSIBMADM.TBSP_UTILIZATION`) and [`informix.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/informix.sql) (`systables`, `sysmaster:sysptnhdr`) are the catalog queries to run with the engine's client: `db2 -x -t -s -f db2.sql` after `CONNECT TO <db>`, or `dbaccess <db> informix.sql`. Tested on Db2 11.5.9 (RUNSTATS: 60,000 and 20,000 rows, exact) and Informix 14.10 (UPDATE STATISTICS: the same two counts).
+- **Db2 and Informix:** no Unity Catalog connection type, so `size.py` doesn't run them. [`db2.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/db2.sql) (`SYSCAT.TABLES`, `SYSCAT.INDEXES`, `SYSIBMADM.TBSP_UTILIZATION`) and [`informix.sql`](../lfc-introspection/scripts/lfc_introspection/sql/size/informix.sql) (`systables`, `sysmaster:sysptnhdr`) are the catalog queries to run with the engine's client: `db2 -x -t -s -f db2.sql` after `CONNECT TO <db>`, or `dbaccess <db> informix.sql`. Tested on Db2 11.5.9 (RUNSTATS: 60,000 and 20,000 rows, exact) and Informix 14.10 (UPDATE STATISTICS: the same two counts).
 - **Oracle:** a connection whose `service_name` is the **PDB**: a connection on the CDB service (as integrated CDC needs) puts `remote_query` in `CDB$ROOT`, where the PDB's tables don't exist, whatever `service_name =>` argument you pass (tested). Needs `SELECT` on the `DBA_` views (the Databricks Oracle setup package grants it).
 
 ## Is it possible? Documented limits

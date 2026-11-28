@@ -44,7 +44,7 @@ One line per skill: what it does, which decides its layer.
 | `skill-token-budget` | common | How to write any skill so it loads few tokens; the rule applies to every layer. Its check commands are repo tooling (baseline). |
 | `git-topic-branches` | common | The branch rule for contributors; a workflow, no code. |
 | `lfc-source-statschema` | shape | Builds a source shaped like a customer's or a TPC schema from statschema's format; engine-agnostic. |
-| `lfc-source-datagen` | shape | Fills any database with generated rows, from the database itself; engine SQL only. Its `workload.sh` writes a model's workload file (`workload.json`) for the tests. |
+| `lfc-source-datagen` | shape | Fills any database with generated rows, from the database itself; engine SQL only. Its `workload.py` writes a model's workload file (`workload.json`) for the tests. |
 | `lfc-source-contract` | contract | The contract between a source and its consumers. |
 | `lfc-workload-contract` | contract | The contract between a model (statschema's format) and the tests that build its tables: the model file's format and the workload file. A validator and an export script; no database. |
 | `lfc-source-podman` | sources | Runs source databases in Podman containers. |
@@ -145,7 +145,7 @@ What the internal tool would change, when the split happens (it calls this repo 
 |---|---|---|
 | `skills/account-token-fallback/scripts/ws-token.sh` | common | the shared repo |
 | `skills/lfc-source-cloud-vm/scripts` (copied to the VM) | sources | the sources repo; its path setting moves to that repo |
-| `skills/lfc-source-log-state/scripts/sqlserver-log-state.sh` (in its contributor skill) | lakeflow | the lakeflow repo |
+| `skills/lfc-source-log-state/scripts/sqlserver-log-state.py` (in its contributor skill) | lakeflow | the lakeflow repo |
 | `skills/lfc-schema-change-test/scripts/lib.sh` (in its docs) | lakeflow | the lakeflow repo |
 | `$T/skills/skill-token-budget`, `$T/skills/public-skill-conventions` (in its docs; these live under `.claude/skills/` here) | repo | the repo that keeps them; also fix the path in its docs |
 | the repo list in its layout and plugin-repos scripts | all | one entry per new repo, with its own variable |

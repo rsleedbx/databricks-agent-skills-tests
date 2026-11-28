@@ -26,13 +26,13 @@ Fedora CoreOS (the `podman machine` VM) has no `iostat`, so the script reads `/p
 
 Inside the database's VM (`podman machine ssh`, the Lima VM, or the cloud VM), with the engine's cast and insert planners from [postgres.md](postgres.md) or [mysql.md](mysql.md) in `/tmp` as `pg-cast.sql` / `pg-plan-insert.sql` or `my-cast.sql` / `my-plan-insert.sql`, a `cal` schema (database) of 8 tables made with `make-dataset`, and a seed table at least as large as the biggest statement size. Containers are named `dg-pg` and `dg-my`; change `SQL=` for others.
 
-Copy [`scripts/calib.sh`](../scripts/calib.sh) and the engine's planner directory to the VM, then (with `DIR` set to it):
+Copy [`scripts/calib.py`](../scripts/calib.py) and the engine's planner directory to the VM, then (with `DIR` set to it):
 
 ```bash
-sudo DIR=/tmp/postgres bash /tmp/calib.sh pg size                                     # Postgres: 250k ... 4M rows per statement
-sudo DIR=/tmp/mysql SIZES="25000 50000 100000 250000" TOTAL=1000000 bash /tmp/calib.sh my size   # MySQL: start small
-sudo DIR=/tmp/postgres B=1000000 PER=2000000 bash /tmp/calib.sh pg sessions           # then sessions at the winning size
-sudo DIR=/tmp/mysql B=100000 PER=1000000 bash /tmp/calib.sh my sessions
+sudo DIR=/tmp/postgres python3 /tmp/calib.py pg size                                     # Postgres: 250k ... 4M rows per statement
+sudo DIR=/tmp/mysql SIZES="25000 50000 100000 250000" TOTAL=1000000 python3 /tmp/calib.py my size   # MySQL: start small
+sudo DIR=/tmp/postgres B=1000000 PER=2000000 python3 /tmp/calib.py pg sessions           # then sessions at the winning size
+sudo DIR=/tmp/mysql B=100000 PER=1000000 python3 /tmp/calib.py my sessions
 ```
 
 `DEV` is the data disk's name in `/proc/diskstats` (`vda` in `podman machine`; `sdc` or `nvme1n1` on a cloud VM: check `lsblk`).

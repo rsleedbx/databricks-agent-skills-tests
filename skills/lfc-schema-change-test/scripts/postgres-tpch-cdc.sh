@@ -25,7 +25,7 @@
 set -uo pipefail
 ENGINE=postgres
 : "${WORKLOAD_JSON:?set WORKLOAD_JSON (lfc-source-datagen workload.sh --model tpch --dialect postgres --spec writes one)}"
-WE=$("${LFC_WORKLOAD_ENV:-$(dirname "$0")/../../lfc-workload-contract/scripts/workload-env.sh}" "$WORKLOAD_JSON") || exit 2
+WE=$(python3 "${LFC_WORKLOAD_ENV:-$(dirname "$0")/../../lfc-workload-contract/scripts/workload_env.py}" "$WORKLOAD_JSON") || exit 2
 eval "$WE"
 [ "$WL_MODEL" = tpch ] && [ "$WL_DIALECT" = postgres ] && [ -n "${WL_VERIFY:-}" ] \
   || { echo "WORKLOAD_JSON: needs TPC-H on postgres with its verify file (workload.sh --spec); got $WL_MODEL, $WL_DIALECT"; exit 2; }

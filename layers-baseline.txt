@@ -30,5 +30,3 @@ skill-token-budget -> bin/scripts_index.py: .claude/skills/skill-token-budget/SK
 skill-token-budget -> bin/test_scripts.sh: .claude/skills/skill-token-budget/SKILL.md:bin/test_scripts.sh
 zerobus-debezium-test -> lfc-source-cloud-vm: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-cloud-vm/scripts/cloud-links.sh
 zerobus-debezium-test -> lfc-source-podman: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-podman
-zerobus-debezium-test -> lfc-source-podman: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-podman/scripts/ensure-lima-podman.sh
-zerobus-debezium-test -> lfc-source-podman: skills/zerobus-debezium-test/scripts/run-all.sh:lfc-source-podman/scripts/ensure-podman-socket.sh

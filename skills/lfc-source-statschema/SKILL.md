@@ -82,7 +82,7 @@ $PY $S/to-canonical.py raw.json schema.yaml stats.yaml
 $PY $S/shape.py schema.yaml --stats stats.yaml --scale 0.01 > shaped.yaml                   # also writes expected.json
 $PY $S/ddl.py shaped.yaml --dialect postgres --source-dialect postgres > schema.sql          # or mysql, tsql, oracle, db2, informix, databricks
 psql -v ON_ERROR_STOP=1 -c "CREATE SCHEMA sales_s" -c "SET search_path = sales_s" -f schema.sql
-DIR=skills/lfc-source-datagen/scripts/postgres bash skills/lfc-source-datagen/scripts/fill.sh pg sales_s
+DIR=skills/lfc-source-datagen/scripts/postgres PSQL=psql python3 skills/lfc-source-datagen/scripts/python/fill.py pg sales_s
 psql -c ANALYZE && psql -X -At -v schema=sales_s -v values=ranges -f $S/collect-postgres.sql > got.json
 duckdb -c "SET VARIABLE expected = 'expected.json'; SET VARIABLE actual = 'got.json';" -c ".read $S/compare.sql"
 $PY $S/replay.py explain queries.json --dialect postgres > explain.sql

@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from statschema.tools import ddl, ddl_to_schema
 
-TPC = os.path.join(HERE, "..", "..", "lfc-source-datagen", "scripts", "tpc", "tpc-schema.sh")
+TPC = os.path.join(HERE, "..", "..", "lfc-source-datagen", "scripts", "tpc", "tpc-schema.py")
 
 
 def cli(script, *args, stdin=""):
@@ -31,7 +31,7 @@ def cli(script, *args, stdin=""):
 class Tools(unittest.TestCase):
     def test_same_as_the_wrappers(self):
         for w in ("tpcb", "tpch"):
-            my = subprocess.run(["bash", TPC, w, "1"], capture_output=True, text=True, check=True).stdout
+            my = subprocess.run([sys.executable, TPC, w, "1"], capture_output=True, text=True, check=True).stdout
             y = ddl_to_schema(my, "mysql")
             self.assertEqual(y, cli("ddl-to-schema.py", "--dialect", "mysql", stdin=my), w)
             with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:

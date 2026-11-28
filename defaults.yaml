@@ -26,7 +26,7 @@ defaults:
     in:
       - {file: skills/lfc-source-firewall/SKILL.md, has: "Never open `0.0.0.0/0`"}
       - {file: skills/lfc-source-firewall/references/azure.md, has: "PORTS=30000-30063"}
-      - {file: skills/lfc-source-firewall/scripts/serverless-egress.sh, has: "refresh at least monthly"}
+      - {file: skills/lfc-source-firewall/scripts/serverless-egress.py, has: "refresh at least monthly"}
     forbid:
       - {in: [skills], pattern: "all 0.0.0.0/0 md5"}
   - id: workspace
@@ -54,7 +54,7 @@ defaults:
     why: "A subscription allows only so many groups; az group create on an existing one replaces its tags"
     in:
       - {file: skills/lfc-source-setup/SKILL.md, has: "Never create, re-tag or delete a group"}
-      - {file: skills/lfc-source-eventhubs/scripts/eventhubs.sh, has: "never creates one"}
+      - {file: skills/lfc-source-eventhubs/scripts/eventhubs.py, has: "never creates one"}
   - id: credentials
     area: Passwords and TLS
     value: "Passwords are generated (Lfc1 and 24 hex digits) into 0600 files or the OS keyring, never printed; connections use TLS with the server's certificate trusted, never TLS off"
@@ -72,10 +72,9 @@ defaults:
     why: "Shared subscriptions and workspaces: never delete someone else's resource"
     in:
       - {file: skills/lfc-test-settings/scripts/settings.sh, has: "remove-after)"}
-      - {file: skills/lfc-source-azure-sql/scripts/sqldb.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
-      - {file: skills/lfc-source-azure-sql/scripts/mi.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
-      - {file: skills/lfc-source-azure-flexserver/scripts/flex.sh, has: 'RemoveAfter="$(bash "$ST" remove-after)"'}
-      - {file: skills/lfc-source-eventhubs/scripts/eventhubs.sh, has: "CreatedBy=$MINE"}
+      - {file: skills/lfc-source-azure-sql/scripts/lfc_azure.py, has: "RemoveAfter={remove_after()}"}
+      - {file: skills/lfc-source-azure-sql/scripts/lfc_azure.py, has: 'bash", SETTINGS, "remove-after"'}
+      - {file: skills/lfc-source-eventhubs/scripts/eventhubs.py, has: "CreatedBy={MINE}"}
     forbid:
       - {in: [skills], pattern: "removal_date"}
   - id: approval
@@ -96,8 +95,8 @@ defaults:
     value: "Generated inside the database: 1,000,000 rows a table on PostgreSQL, 100,000 on MySQL (ROWS), TPC models at scale factor 1"
     why: "Only SQL travels; MySQL's inserts are slower, so its default is smaller"
     in:
-      - {file: skills/lfc-source-datagen/scripts/fill.sh, has: "ROWS=${ROWS:-1000000}"}
-      - {file: skills/lfc-source-datagen/scripts/fill.sh, has: "ROWS=${ROWS:-100000}"}
+      - {file: skills/lfc-source-datagen/scripts/python/fill.py, has: '"postgres", 1000000'}
+      - {file: skills/lfc-source-datagen/scripts/python/fill.py, has: '"mysql", 100000'}
 exceptions:   # stated, not defaults: where a script differs on purpose, until it changes
-  - "SQL Server Always On (lfc-source-podman ag-up.sh) publishes 1533/1534 by default; on a VM pass PORT_P and PORT_S from 30000-30063, the range its NSG opens"
+  - "SQL Server Always On (lfc-source-podman ag-up.py) publishes 1533/1534 by default; on a VM pass PORT_P and PORT_S from 30000-30063, the range its NSG opens"
   - "The Zerobus harness (zerobus-debezium-test) runs its CockroachDB container --insecure (no TLS, no password); its PostgreSQL, YugabyteDB and SQL Server containers use TLS and generated passwords (changed without a run: the next run on a VM shows whether they connect)"

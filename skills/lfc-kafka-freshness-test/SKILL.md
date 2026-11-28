@@ -30,7 +30,7 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
    prints the spec; give it to **lfc-pipeline-diagram**'s `pipeline-diagram.py --pipeline-json` with a `KAFKA`
    connection JSON. The probe needs a SQL warehouse: create a Small serverless one if the workspace has none (tagged,
    auto-stop), and delete it at the end.
-1. **Broker:** a source contract for it: on Azure, **lfc-source-eventhubs** (`eventhubs.sh up ... --apply` writes
+1. **Broker:** a source contract for it: on Azure, **lfc-source-eventhubs** (`eventhubs.py up ... --apply` writes
    `<namespace>.source.json`; size it for the burst there). `export SOURCE_JSON=<that file>`.
 2. **Connection:** `connection.sh <PROFILE> <name> --apply` (the bootstrap, user and password file from `SOURCE_JSON`).
 3. **Pipeline:** create the schema first, then
@@ -59,7 +59,7 @@ Run any script with no arguments for its usage. Any Kafka broker with SASL PLAIN
 
 6. **Tear down only what this run made**, after recording (step 7): stop and delete the pipeline (it runs until
    stopped), drop the schema, delete the connection and the probe's warehouse if the run created it, then the broker
-   with its own skill (**lfc-source-eventhubs**: `eventhubs.sh down`, which checks the `CreatedBy` tag), and the
+   with its own skill (**lfc-source-eventhubs**: `eventhubs.py down`, which checks the `CreatedBy` tag), and the
    password file.
 7. **Record** with **lfc-test-results** `record.py`: `test: load`, `setup.route: lfc-kafka`, `compute` as for any
    pipeline test, and the runtime from `bin/lfc-runtime.sh --summary <PROFILE> <pipeline-id>`.

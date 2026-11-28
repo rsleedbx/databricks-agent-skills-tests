@@ -36,7 +36,7 @@ DIRTY=$(git status --porcelain -- skills/zerobus-debezium-test skills/zerobus-wo
 if [ -n "$DIRTY" ] && [ "${ALLOW_DIRTY:-0}" != 1 ]; then
   echo "uncommitted changes in the skills; commit them, or run from a clean checkout (git worktree add <dir> HEAD):"; echo "$DIRTY"; exit 2; fi
 if [ -n "${LIMA:-}" ]; then
-  bash skills/lfc-source-podman/scripts/ensure-lima-podman.sh "$LIMA" | tee "$RESULTS/lima.txt" || { echo "the Lima VM isn't ready"; exit 2; }
+  python3 skills/lfc-source-podman/scripts/ensure-lima-podman.py "$LIMA" | tee "$RESULTS/lima.txt" || { echo "the Lima VM isn't ready"; exit 2; }
   FROM="limactl shell $LIMA --"; WHERE_HOST="Laptop, Lima \`$LIMA\`, no cloud storage"
 else
   ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "$VM_USER@$VM_IP" true 2>/dev/null \
@@ -44,7 +44,7 @@ else
   FROM="ssh -i $SSH_KEY -o BatchMode=yes $VM_USER@$VM_IP"; WHERE_HOST="Cloud VM"
   # links to the VM and its network rules and disks, in whichever cloud has it (not fatal: the CLI may not be logged in)
   bash skills/lfc-source-cloud-vm/scripts/cloud-links.sh "$VM_IP" > "$RESULTS/cloud-links.txt" 2>&1; grep '^LINK' "$RESULTS/cloud-links.txt"
-  bash skills/lfc-source-podman/scripts/ensure-podman-socket.sh --on "$FROM" | tee "$RESULTS/host.txt" || { echo "the VM isn't ready: rootful Podman through the socket"; exit 2; }
+  python3 skills/lfc-source-podman/scripts/ensure-podman-socket.py --on "$FROM" | tee "$RESULTS/host.txt" || { echo "the VM isn't ready: rootful Podman through the socket"; exit 2; }
 fi
 [ "${SWEEP:-0}" = 1 ] && bash skills/zerobus-debezium-test/scripts/sweep.sh --apply | tee "$RESULTS/sweep.txt"
 echo "commit $COMMIT${DIRTY:+ with uncommitted changes}; results in $RESULTS"

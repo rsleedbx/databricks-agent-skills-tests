@@ -5,12 +5,12 @@ description: Read where a SQL Server source's change tracking and CDC stand righ
 
 # Source log state: SQL Server change tracking and CDC
 
-`scripts/sqlserver-log-state.sh <database>` runs `scripts/sqlserver-log-state.sql` in one round trip and prints one JSON line. Pipe it to `jq`.
+`scripts/sqlserver-log-state.py <database>` runs `scripts/sqlserver-log-state.sql` in one round trip and prints one JSON line. Pipe it to `jq`.
 
 ```bash
-SQLCMDSERVER=<host>,<port> SQLCMDUSER=<login> SQLCMDPASSWORD=<pw> scripts/sqlserver-log-state.sh <database> | jq .
+SQLCMDSERVER=<host>,<port> SQLCMDUSER=<login> SQLCMDPASSWORD=<pw> scripts/sqlserver-log-state.py <database> | jq .
 # a container on this machine:
-SQL_CMD='podman exec -i <container> /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$SA_PW"' scripts/sqlserver-log-state.sh <database>
+SQL_CMD='podman exec -i <container> /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$SA_PW"' scripts/sqlserver-log-state.py <database>
 ```
 
 `SQL_CMD` is any command that reads T-SQL on stdin and takes sqlcmd's `-d`, `-v`, `-y` and `-b` flags (it runs through `bash -c`, so it can hold quotes). `--no-per-table` skips the per-table reads, for a source with many large tables.

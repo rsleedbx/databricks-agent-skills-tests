@@ -11,12 +11,12 @@
   ```
 
 - **VNet-injected (Azure) or customer-managed VPC (AWS, GCP):** it's the customer's NAT; ask the user.
-- **Not in an account you can read:** ask Databricks. [`scripts/classic-egress.sh`](../scripts/classic-egress.sh) has two methods, and both print a `CLASSIC=` line for `fw.env`:
+- **Not in an account you can read:** ask Databricks. [`scripts/classic-egress.py`](../scripts/classic-egress.py) has two methods, and both print a `CLASSIC=` line for `fw.env`:
   1. **The audit log, first.** API calls from classic cluster drivers (user agent `Databricks-Service/driver`) record the public IP they came from, so `--warehouse <id>` reads every NAT IP used in the last 7 days (`--days N`) in seconds, without starting anything. It needs `SELECT` on `system.access.audit` and a SQL warehouse. It finds nothing on a workspace with no classic activity in the window. Private addresses (internal paths) are dropped.
   2. **A one-off single-node notebook job**, when the audit log isn't readable or is empty. The job reports the address it leaves from, then the notebook is deleted. It takes 5-10 minutes while the cluster starts. `--runs 3` keeps every distinct IP, since a cluster in another subnet can leave from a second NAT IP.
   ```bash
-  skills/lfc-source-firewall/scripts/classic-egress.sh <PROFILE> --warehouse <WAREHOUSE_ID> | tail -1 | tee -a fw.env   # CLASSIC='<ip>/32'
-  skills/lfc-source-firewall/scripts/classic-egress.sh <PROFILE> | tail -1 | tee -a fw.env                               # the job
+  python3 skills/lfc-source-firewall/scripts/classic-egress.py <PROFILE> --warehouse <WAREHOUSE_ID> | tail -1 | tee -a fw.env   # CLASSIC='<ip>/32'
+  python3 skills/lfc-source-firewall/scripts/classic-egress.py <PROFILE> | tail -1 | tee -a fw.env                               # the job
   ```
   Both were tested on an AWS classic workspace and gave the same IP; with it allowed, the gateway connected.
 - **Can't determine it:** add the laptop and serverless IPs anyway, and **warn the user** that any part of the pipeline that runs on classic compute (for example a standard CDC gateway) may not be able to reach the database until its egress IP is added. Serverless parts will still work.

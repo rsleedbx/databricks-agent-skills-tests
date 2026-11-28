@@ -51,7 +51,7 @@ target that workspace. Sessions run with `--verbose --output-format stream-json`
 
 ## Script tests
 
-The skills' scripts (planners, `fill.sh`, the statschema pipeline, the firewall DuckDB queries) have their own regression tests:
+The skills' scripts (planners, `python/fill.py`, the statschema pipeline, the firewall DuckDB queries) have their own regression tests:
 
 ```bash
 bin/test_scripts.sh                    # offline: syntax, links, the six TPC schemas through shape.py and ddl.py, round trips

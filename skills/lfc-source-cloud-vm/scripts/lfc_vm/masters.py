@@ -434,7 +434,7 @@ class Build:
         def load(x, log):
             return (self.sh(pg, f"CREATE SCHEMA {x}; SET search_path = {x};\n" + Path(self.ddl, f"{x}-postgres.sql")
                             .read_text(), out=log) == 0
-                    and self.sh(f"bash {self.dg}/fill.sh pg {x}", env={"PSQL": f"podman exec -i {self.c} psql -U postgres "
+                    and self.sh(f"{self.py} {self.dg}/python/fill.py pg {x}", env={"PSQL": f"podman exec -i {self.c} psql -U postgres "
                                 "-d postgres", "DIR": f"{self.dg}/postgres", "SRC": "series", "SESSIONS": self.sessions},
                                 out=log) == 0)
 
@@ -476,7 +476,7 @@ class Build:
                 return self.sh(f"{self.py} {self.dg}/python/fill.py pg {x} --database lfc --host 127.0.0.1 --port "
                                f"{self.crp} --user root --password-file {empty} --sessions {self.sessions} --rows "
                                f"{os.environ.get('CRDB_ROWS') or 50000}", out=log) == 0
-            return self.sh(f"bash {self.dg}/fill.sh pg {x}", env={"PSQL": f"{pgcmd} -d lfc", "DIR": f"{self.dg}/postgres",
+            return self.sh(f"{self.py} {self.dg}/python/fill.py pg {x}", env={"PSQL": f"{pgcmd} -d lfc", "DIR": f"{self.dg}/postgres",
                                                                   "SRC": "series", "SESSIONS": self.sessions},
                            out=log) == 0
 
@@ -512,7 +512,7 @@ class Build:
         def load(x, log):
             return (self.sh(my, f"CREATE DATABASE {x}; USE {x};\n" + Path(self.ddl, f"{x}-mysql.sql").read_text(),
                             out=log) == 0
-                    and self.sh(f"bash {self.dg}/fill.sh my {x}", env={"MYSQL": my, "DIR": f"{self.dg}/mysql",
+                    and self.sh(f"{self.py} {self.dg}/python/fill.py my {x}", env={"MYSQL": my, "DIR": f"{self.dg}/mysql",
                                 "SESSIONS": os.environ.get("MY_SESSIONS") or "2"}, out=log) == 0)
 
         def finish():
@@ -540,7 +540,7 @@ class Build:
             if r.returncode or not self.ddl_ok(x, r.stdout):
                 return False
             sqx = self.script(w, f"sq-{x}", f"#!/bin/bash\nexec {sq} {x}\n")
-            return self.sh(f"bash {self.dg}/fill.sh ms dbo", env={"MSSQL": sqx, "DIR": f"{self.dg}/sqlserver",
+            return self.sh(f"{self.py} {self.dg}/python/fill.py ms dbo", env={"MSSQL": sqx, "DIR": f"{self.dg}/sqlserver",
                                                                   "SESSIONS": self.sessions}, out=log) == 0
 
         def finish():
@@ -566,7 +566,7 @@ class Build:
                                Path(self.ddl, f"{x}-oracle.sql").read_text(), capture_output=True, text=True, check=False)
             if not self.ddl_ok(x, r.stdout):
                 return False
-            return self.sh(f"bash {self.dg}/fill.sh ora {s}", env={"ORACLE": sq, "DIR": f"{self.dg}/oracle",
+            return self.sh(f"{self.py} {self.dg}/python/fill.py ora {s}", env={"ORACLE": sq, "DIR": f"{self.dg}/oracle",
                                                                    "SESSIONS": self.sessions}, out=log) == 0
 
         def finish():

@@ -1,6 +1,6 @@
 # SQL Server
 
-**Status: the fill planners are tested** (SQL Server 2022 CU, compatibility level 160, on an Azure VM in Podman): [`scripts/sqlserver/`](../scripts/sqlserver/) `cast.sql`, `plan-insert.sql`, `plan-status.sql`, `skipped.sql`, run by `fill.sh ms`. TPC-B filled in 6 s and TPC-H SF 1 (8,660,030 rows, every foreign key enforced) in 179 s; on a MacBook in Lima under Rosetta (**lfc-source-podman**), 202 s, 4 sessions, 1M rows per statement, every table at its target. Tested types: the integer, `numeric`, `varchar`, `char`, `date`, `datetime2` casts the TPC schemas use; the other casts below are in `cast.sql` but not run yet, nor are the delete, DDL, and audit planners (not ported).
+**Status: the fill planners are tested** (SQL Server 2022 CU, compatibility level 160, on an Azure VM in Podman): [`scripts/sqlserver/`](../scripts/sqlserver/) `cast.sql`, `plan-insert.sql`, `plan-status.sql`, `skipped.sql`, run by `fill.py ms` (client mode). TPC-B filled in 6 s and TPC-H SF 1 (8,660,030 rows, every foreign key enforced) in 179 s; on a MacBook in Lima under Rosetta (**lfc-source-podman**), 202 s, 4 sessions, 1M rows per statement, every table at its target. Tested types: the integer, `numeric`, `varchar`, `char`, `date`, `datetime2` casts the TPC schemas use; the other casts below are in `cast.sql` but not run yet, nor are the delete, DDL, and audit planners (not ported).
 
 ## Fill (tested)
 
@@ -11,7 +11,7 @@ cat > sq <<'Q'
 f=$(mktemp); cat > $f; sqlcmd -C -S <host> -U <user> -d <database> -y 0 -i $f; r=$?; rm -f $f; exit $r
 Q
 chmod 700 sq      # password from SQLCMDPASSWORD in the environment, never on the command line
-MSSQL=./sq DIR=scripts/sqlserver bash scripts/fill.sh ms dbo
+MSSQL=./sq python3 scripts/python/fill.py ms dbo
 ```
 
 - Rows come from `INSERT ... WITH (TABLOCK) SELECT ... FROM ... CROSS APPLY GENERATE_SERIES(CAST(1 AS bigint), CAST(need AS bigint), CAST(1 AS bigint))`. Give the step: with start > stop and no step, `GENERATE_SERIES` counts down.
@@ -23,7 +23,7 @@ MSSQL=./sq DIR=scripts/sqlserver bash scripts/fill.sh ms dbo
 | Symptom | Cause | Fix |
 |---|---|---|
 | A long statement or tag has newlines in the middle of a word or string | `sqlcmd` splits **stdin** lines every 4,096 bytes, even inside a string literal | Give sqlcmd a file: `-i <file>` reads long lines whole |
-| `The -h and the -y 0 options are mutually exclusive` | `-y 0` (no width limit for `max` types) can't drop the header | Use `-y 0` and filter the header lines (blank and dashes); `fill.sh` does |
+| `The -h and the -y 0 options are mutually exclusive` | `-y 0` (no width limit for `max` types) can't drop the header | Use `-y 0` and filter the header lines (blank and dashes); `fill.py` does |
 | `Msg 8632 ... expression services limit has been reached` | `CASE (CASE WHEN ... 150 branches END) WHEN 0 THEN ...`: a simple CASE is expanded into one comparison per WHEN, each with a copy of the inner CASE | `ddl.py` folds it into one searched CASE for T-SQL |
 | `The round function requires 2 to 3 arguments` | MySQL's `ROUND(x)` | `ddl.py` writes `ROUND(x, 0)` |
 | A zipf column all 0 or 1 | `POWER` returns its base's type: `POWER(150001, -0.2)` on an int is 0 | `ddl.py` casts the base to `FLOAT` |

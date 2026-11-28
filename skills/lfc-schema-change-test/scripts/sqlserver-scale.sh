@@ -24,7 +24,7 @@ set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 COPIES=${COPIES:-10}; OBJECTS=${OBJECTS:-schema}; FILLS=${FILLS:-4}
 : "${WORKLOAD_JSON:?set WORKLOAD_JSON to a workload file (the workload.sh of lfc-source-datagen writes one)}"
-WE=$("${LFC_WORKLOAD_ENV:-$LIB/../../lfc-workload-contract/scripts/workload-env.sh}" "$WORKLOAD_JSON") || exit 2
+WE=$(python3 "${LFC_WORKLOAD_ENV:-$LIB/../../lfc-workload-contract/scripts/workload_env.py}" "$WORKLOAD_JSON") || exit 2
 eval "$WE"
 MODEL=$WL_MODEL; SF=$WL_SCALE
 lfc_init scale

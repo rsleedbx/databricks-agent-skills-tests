@@ -28,7 +28,7 @@ Counts are from `ip-ranges.json` at the time of writing; recount with the comman
 
 **On Azure, keep one shared NSG per region** and attach every test VM (and the subnets of the shared VNet) to it: the rules are synced once and every new VM reuses them, including all Podman engines on the VM's port range `30000-30063`. The NSG can't front a Flexible Server or Azure SQL that serverless must reach: those need public access and their own server firewall rules, synced from the same IP lists. See [references/azure.md](references/azure.md).
 
-**An NSG that can't be the shared one** (a SQL Managed Instance subnet's: MI adds its own rules to it) gets the shared NSG's sources for its one port: `RG=<resource-group> bash scripts/nsg-copy.sh <shared-nsg> <subnet-nsg> 3342 [--apply]`. It copies every inbound Allow rule's source list (serverless, VPN, workspace egress, known hosts) under the same name and priority, TCP to that port only; rerun it after the shared NSG is synced.
+**An NSG that can't be the shared one** (a SQL Managed Instance subnet's: MI adds its own rules to it) gets the shared NSG's sources for its one port: `RG=<resource-group> python3 scripts/nsg-copy.py <shared-nsg> <subnet-nsg> 3342 [--apply]`. It copies every inbound Allow rule's source list (serverless, VPN, workspace egress, known hosts) under the same name and priority, TCP to that port only; rerun it after the shared NSG is synced.
 
 **Azure SQL Database and Flexible Server** take start-end rules, capped at 128 (SQL Database), 500 (MySQL) and 500 (Postgres), and the shared NSG's every-region lists merge to about 1,200 ranges. `RG=<resource-group> python3 scripts/server-fw.py sql|pg|mysql <server> --nsg <shared-nsg> --regions <cloud>:<region>,... [--profiles <p>,...] [--cidrs <classic egress>] [--apply]` takes the shared NSG's other sources (VPN, office, known hosts), the serverless ranges of each named workspace's region, the extra CIDRs and this machine's IP, merges them, checks the cap, and syncs only its own `lfc-<n>` rules. Three regions came to about 60 rules. A Flexible Server adds a rule in about a minute, so put the test workspaces and this machine on first: `--skip . --profiles <test workspaces> --no-drop --apply` (`--skip .` leaves out the shared NSG's rules; `--no-drop` keeps `lfc-` rules outside the list instead of deleting them), then the full list later with `--no-drop`.
 
@@ -102,7 +102,7 @@ If `SERVERLESS` is empty, the region isn't in the file: stop and tell the user, 
 
 Classic clusters leave the workspace through its own NAT / egress IP, which isn't in `ip-ranges.json`. It differs per workspace and is often set by hand when the workspace is created.
 
-Finding the classic compute egress IP (the user, the Azure NAT gateway, `scripts/classic-egress.sh`), what to do when it can't be found, and the fixes for a pipeline on classic that can't reach the source: [references/classic-egress.md](references/classic-egress.md).
+Finding the classic compute egress IP (the user, the Azure NAT gateway, `scripts/classic-egress.py`), what to do when it can't be found, and the fixes for a pipeline on classic that can't reach the source: [references/classic-egress.md](references/classic-egress.md).
 
 Private paths instead of allowlisting (the Azure private network gateway and AWS PrivateLink; not tested yet): [references/private-paths.md](references/private-paths.md).
 

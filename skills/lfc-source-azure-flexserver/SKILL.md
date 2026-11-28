@@ -28,8 +28,8 @@ Provision a managed MySQL or PostgreSQL Flexible Server instance on Azure and co
 | Azure region | `eastus`, `westeurope` | `AZ_REGION` (saved): the workspace's region |
 | Resource group | `<resource-group>` | `AZ_RESOURCE_GROUP` (saved): an existing group the user picked; never created, re-tagged or deleted |
 | Engine | `mysql` or `postgres` | Binlog (MySQL) or logical replication (PostgreSQL) |
-| Version | MySQL `8.0.21` / PostgreSQL `16` (flex.sh's defaults) | Use LTS for stability |
-| SKU | `Standard_B1ms` (flex.sh's default; `Standard_B2ms` for more) | Compute size; verify availability in region |
+| Version | MySQL `8.0.21` / PostgreSQL `16` (flex.py's defaults) | Use LTS for stability |
+| SKU | `Standard_B1ms` (flex.py's default; `Standard_B2ms` for more) | Compute size; verify availability in region |
 | Storage (GB) | `32` (minimum) | Scales automatically if enabled |
 | Access type | `public` or `private-endpoint` | Default: public firewall rules; private endpoint alternative |
 
@@ -43,23 +43,23 @@ Confirm with the user what will be created (Flexible Server, VNet, firewall/PE r
 
 ### Quick start (core steps)
 
-[`scripts/flex.sh`](scripts/flex.sh) `pg|mysql create` makes the server (Burstable `Standard_B1ms`, 32 GB) with public access and **no firewall rules**, the database, and the CDC parameters (next section), restarting once if one changed. [`scripts/lfc-setup.sh`](scripts/lfc-setup.sh) then adds the test user and the seed tables, and **lfc-source-firewall**'s `server-fw.py` opens the server to the same sources as every other source, scoped to fit its cap (MySQL 250 rules, Postgres 500).
+[`scripts/flex.py`](scripts/flex.py) `pg|mysql create` makes the server (Burstable `Standard_B1ms`, 32 GB) with public access and **no firewall rules**, the database, and the CDC parameters (next section), restarting once if one changed. [`scripts/lfc-setup.py`](scripts/lfc-setup.py) then adds the test user and the seed tables, and **lfc-source-firewall**'s `server-fw.py` opens the server to the same sources as every other source, scoped to fit its cap (MySQL 250 rules, Postgres 500).
 
 ```bash
 export RG=<resource-group> LOCATION=<location> SERVER=<pfx>-<engine>-<loc>-<epoch> DB=<database>
 S=skills/lfc-source-azure-flexserver/scripts
-bash $S/flex.sh pg plan                                     # or mysql
-ADMIN_PW_FILE=admin.pw bash $S/flex.sh pg create            # 5-10 minutes
+python3 $S/flex.py pg plan                                     # or mysql
+ADMIN_PW_FILE=admin.pw python3 $S/flex.py pg create            # 5-10 minutes
 python3 skills/lfc-source-firewall/scripts/server-fw.py pg $SERVER --nsg <shared-nsg> --regions <cloud>:<region>,... --apply
-HOST=<fqdn> ADMIN_PW_FILE=admin.pw LOGIN_PW_FILE=lfc_user.pw bash $S/lfc-setup.sh pg
-bash $S/flex.sh pg stop                                     # between test runs; start to resume
+HOST=<fqdn> ADMIN_PW_FILE=admin.pw LOGIN_PW_FILE=lfc_user.pw python3 $S/lfc-setup.py pg
+python3 $S/flex.py pg stop                                     # between test runs; start to resume
 ```
 
 - **Public access with no rules** is `--public-access Enabled` for Postgres (its `None` turns public access off, and then firewall rules are refused: "Firewall rule operations are not supported for a server without public access enabled") and `--public-access None` for MySQL.
 - **Firewall rules go on one at a time:** about a minute each on a Flexible Server, so 60 rules take about an hour. Keep the list scoped (`server-fw.py --regions`).
 - **Stopped servers start again by themselves after 7 days.** A stopped server costs storage only.
-- **MySQL:** Azure's default `sql_generate_invisible_primary_key=ON` gives a keyless table a hidden primary key; `flex.sh` turns it off so `dtix` stays keyless.
-- **Postgres:** `lfc-setup.sh` makes the test user the owner of the seed tables, with `REPLICATION`. The publication and the slot are yours to create, as the test user, one pair per gateway, and the pipeline names them; without them the gateway reports they don't exist and nothing loads (tested 2026-10-26):
+- **MySQL:** Azure's default `sql_generate_invisible_primary_key=ON` gives a keyless table a hidden primary key; `flex.py` turns it off so `dtix` stays keyless.
+- **Postgres:** `lfc-setup.py` makes the test user the owner of the seed tables, with `REPLICATION`. The publication and the slot are yours to create, as the test user, one pair per gateway, and the pipeline names them; without them the gateway reports they don't exist and nothing loads (tested 2026-10-26):
   ```sql
   CREATE PUBLICATION <pub> FOR TABLE public.<t1>, public.<t2>;
   SELECT pg_create_logical_replication_slot('<slot>', 'pgoutput');
@@ -72,7 +72,7 @@ bash $S/flex.sh pg stop                                     # between test runs;
           slot_config: {slot_name: <slot>, publication_name: <pub>}
   ```
   Drop both after the pipeline is deleted (`SELECT pg_drop_replication_slot('<slot>'); DROP PUBLICATION <pub>;`): a slot left behind keeps WAL on the server.
-- **MySQL:** the test user gets `caching_sha2_password` (`lfc-setup.sh` sets it): the CDC gateway refuses `mysql_native_password`, Azure's default, with `CDC_NOT_ENABLED`. The UC connection needs `trustServerCertificate: "true"` (or the server's CA in `userProvidedServerCertificate`): without either a CDC gateway fails with `INGESTION_GATEWAY_CONNECTION_ERROR.TLS_VALIDATION_FAILURE` (`require_secure_transport=ON`). Query-based ingestion works without it.
+- **MySQL:** the test user gets `caching_sha2_password` (`lfc-setup.py` sets it): the CDC gateway refuses `mysql_native_password`, Azure's default, with `CDC_NOT_ENABLED`. The UC connection needs `trustServerCertificate: "true"` (or the server's CA in `userProvidedServerCertificate`): without either a CDC gateway fails with `INGESTION_GATEWAY_CONNECTION_ERROR.TLS_VALIDATION_FAILURE` (`require_secure_transport=ON`). Query-based ingestion works without it.
 
 ## Server parameters for LFC
 
@@ -82,7 +82,7 @@ Run the commands in [flexserver-parameters.md](references/flexserver-parameters.
 - **MySQL:** `binlog_row_image=FULL`, `binlog_expire_logs_seconds` at least 604800 (7 days), `sql_generate_invisible_primary_key=OFF`. Row binlog format is Azure's default. `require_secure_transport` stays `ON`: the UC connection uses TLS.
 - **PostgreSQL:** `wal_level=logical` (a restart), `max_replication_slots` and `max_wal_senders` at least 10.
 
-`flex.sh create` sets these and restarts once when one changed.
+`flex.py create` sets these and restarts once when one changed.
 
 ## Networking
 

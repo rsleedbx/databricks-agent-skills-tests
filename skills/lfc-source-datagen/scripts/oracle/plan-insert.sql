@@ -1,11 +1,11 @@
--- { echo "DEFINE schema = 'TPCH' ..."; cat cast.sql plan-insert.sql; } | sqlplus -s ... > inserts.sql   (fill.sh does this)
+-- { echo "DEFINE schema = 'TPCH' ..."; cat cast.sql plan-insert.sql; } | sqlplus -s ... > inserts.sql   (fill.py's client mode does this)
 -- Emits one INSERT per table in the schema that has a usable one-column primary key or an lfc:n tag (cast.sql):
 --   mode = append: add rows rows above the current max key.
 --   mode = fill: top the table up to its target (lfc:rows), at most rows per statement; rerun until status shows every
 --     table at its target.
 -- Rows come from CONNECT BY LEVEL on DUAL (INSERT ... SELECT, nothing else crosses the network); /*+ APPEND */ is a
 -- direct-path insert, above the high-water mark (Oracle uses a conventional insert instead while the table has enabled
--- foreign keys). Commit after each statement (fill.sh runs them with AUTOCOMMIT ON): a session must commit a
+-- foreign keys). Commit after each statement (fill.py's client mode runs them with AUTOCOMMIT ON): a session must commit a
 -- direct-path insert before it reads the table again.
 -- order = random (default, by ORA_HASH of n) | asc | desc; data = seq | scramble | random, plain_every, block: as in the
 -- Postgres and MySQL planners (key, UNIQUE, foreign-key, lfc:v and lfc:e columns always keep their own value).

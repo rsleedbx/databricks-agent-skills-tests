@@ -18,7 +18,7 @@ It makes everything the connector needs, each step kept when already done:
   4. the Unity Catalog POSTGRESQL connection C from it (an existing one is updated, not recreated, so a gateway that
      names it keeps the same name);
   5. with --contract, the source contract (contract 1) for the tests: host, login, database, connection, and
-     lakebase-sql.sh as its sql_cmd (needs --profile; a job run has no CLI profile, so no sql_cmd then).
+     lakebase_sql.py as its sql_cmd (needs --profile; a job run has no CLI profile, so no sql_cmd then).
 
 The password goes only into the login and the connection; it is never printed or written to the contract. Who may read
 through the connection is its USE CONNECTION grant. It runs from a laptop (--profile) or as a serverless job (the job's
@@ -220,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--jdbc-connection", help="also a TYPE JDBC connection for writes, holding --writer, on --database")
     x = a.parse_args(argv)
     if x.contract and not x.profile:
-        a.error("--contract needs --profile (its sql_cmd runs lakebase-sql.sh with that profile)")
+        a.error("--contract needs --profile (its sql_cmd runs lakebase_sql.py with that profile)")
     try:
         r = setup(x.project, x.role, x.connection, x.branch, x.profile, x.create_project, x.pg_version,
                   database=x.database if x.jdbc_connection else None, writer=x.writer, jdbc_connection=x.jdbc_connection,
@@ -230,9 +230,9 @@ def main(argv: list[str] | None = None) -> int:
         return e.code
 
     if x.contract:
-        sql_sh = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lakebase-sql.sh")
+        sql_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lakebase_sql.py")
         if not os.path.exists(sql_sh):
-            print("lakebase-source: --contract needs a checkout (its sql_cmd is the checkout's lakebase-sql.sh)",
+            print("lakebase-source: --contract needs a checkout (its sql_cmd is the checkout's lakebase_sql.py)",
                   file=sys.stderr)
             return 2
         env = f"env LB_PROJECT={x.project} LB_PROFILE={x.profile}"
