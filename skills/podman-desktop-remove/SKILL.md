@@ -16,9 +16,9 @@ The tests run their databases in a Lima VM (**lfc-source-podman**) and drive it 
 
 ```bash
 S=skills/podman-desktop-remove/scripts
-bash $S/remove-podman-desktop.sh                     # report only: changes nothing
-bash $S/remove-podman-desktop.sh --yes               # quit the app, brew uninstall --cask --zap, delete its files
-bash $S/remove-podman-desktop.sh --yes --machines    # also stop and remove every podman machine, and the VM image caches
+python3 $S/remove_podman_desktop.py                     # report only: changes nothing
+python3 $S/remove_podman_desktop.py --yes               # quit the app, brew uninstall --cask --zap, delete its files
+python3 $S/remove_podman_desktop.py --yes --machines    # also stop and remove every podman machine, and the VM image caches
 ```
 
 The report lists the app if it's running, the cask, any Brewfile that lists it, each leftover file with its size, the podman machines and their disk images, `vfkit`/`krunkit` processes running with no machine, and VM disk files that were deleted while still open (`lsof +L1`). It prints free space before and after.

@@ -8,20 +8,20 @@ parent: cli-setup
 
 A test that creates resources needs the same answers each time: which subscription, which region, which workspace.
 They go in one file per user, outside the repo (a plugin update replaces the repo's copy):
-`~/.lfc/tests/settings.env` (or `$LFC_TESTS_SETTINGS`), mode 600. [`scripts/settings.sh`](scripts/settings.sh) reads
+`~/.lfc/tests/settings.env` (or `$LFC_TESTS_SETTINGS`), mode 600. [`scripts/settings.py`](scripts/settings.py) reads
 and writes it; run it with no arguments for its usage.
-[`scripts/test-settings.sh`](scripts/test-settings.sh) checks it offline with fake `databricks` and `az`.
+[`tests/test_settings.py`](tests/test_settings.py) checks it offline with fake `databricks`, `az`, `aws` and `gcloud`: `python3 -m unittest -q tests/test_settings.py`.
 
 ## The first run: setup, then fast
 
 What changes rarely (the Azure and AWS accounts, the shared workspaces, local Podman or a VM) is found once:
-`bash scripts/settings.sh setup` lists it all in one parallel pass (about 6 s): the Azure subscriptions, the AWS
+`python3 scripts/settings.py setup` lists it all in one parallel pass (about 6 s): the Azure subscriptions, the AWS
 profiles and their accounts and the GCP configurations (from the configs, no network), every Databricks profile and
 whether its login works, and local Podman, next to what's saved. Ask every missing question at once, with a recommendation for each, `set` the
-answers, then `settings.sh checked`.
+answers, then `settings.py checked`.
 
 Every later run only reads the file: `require` makes no CLI call and asks nothing. Look a value up again only when a
-command using it fails (a subscription gone, a workspace deleted: **account-token-fallback**'s `ws-token.sh` exits 3
+command using it fails (a subscription gone, a workspace deleted: **account-token-fallback**'s `ws_token.py` exits 3
 for a workspace that no longer exists, 4 for a host that doesn't resolve: check the network first), then `set` the new one and `checked`. `require` notes when the settings were
 last checked over 30 days ago.
 
@@ -31,25 +31,25 @@ What the skills do unless the user says otherwise is in the repo's [`defaults.ya
 of their own), which cloud and region (the workspace's; Azure when there's a choice), how the firewall is opened (the
 laptop's /32 and the workspace's serverless egress, the database ports only), which workspace and catalog, compute
 (serverless in tests), passwords and TLS, tags and cleanup, the approval before creating, the pipeline channel, test
-data, and the exceptions. `settings.sh defaults` prints them, one line each, and `setup` shows them first: tell the
+data, and the exceptions. `settings.py defaults` prints them, one line each, and `setup` shows them first: tell the
 user before the first test and ask what to change, then save the answers as settings. The repo's tests
 fail when a script or page no longer matches a default, so a change updates both.
 
 ## At the start of a test
 
-1. **Check what's missing** for the keys the test uses: `bash scripts/settings.sh require AZ_SUBSCRIPTION AZ_REGION DATABRICKS_PROFILE`.
+1. **Check what's missing** for the keys the test uses: `python3 scripts/settings.py require AZ_SUBSCRIPTION AZ_REGION DATABRICKS_PROFILE`.
    It prints the missing keys only, and exits 1 if there are any. Many missing (a first run): `setup` first.
 2. **For each missing key, show what's there and recommend one**, then ask once. Don't ask an open question:
-   - `AZ_SUBSCRIPTION`, `AZ_TENANT`: `settings.sh azure` lists the subscriptions this `az` login reaches, with the CLI's
+   - `AZ_SUBSCRIPTION`, `AZ_TENANT`: `settings.py azure` lists the subscriptions this `az` login reaches, with the CLI's
      default marked. Recommend the one the user's earlier resources were made in (their records), not the CLI default.
      A subscription in a tenant the login doesn't reach needs `az login --tenant <tenant id>`.
    - `AWS_PROFILE`, `AWS_REGION`: `aws configure list-profiles`; `aws sts get-caller-identity --profile <p>` for the account.
      `AWS_VPC` only for RDS or Aurora outside the default VPC.
    - `GCP_PROJECT`, `GCP_REGION`: `setup` lists the gcloud configurations (project, region, which is active).
-   - `DATABRICKS_PROFILE`, `WORKSPACES`: show `settings.sh workspaces` (the user's `databricks auth profiles`, numbered by
+   - `DATABRICKS_PROFILE`, `WORKSPACES`: show `settings.py workspaces` (the user's `databricks auth profiles`, numbered by
      cloud, with each login's state) and ask which ones they work in often; save those as `WORKSPACES` and the one used
      most as `DATABRICKS_PROFILE`. Don't pick for them from other records. A profile whose login expired often still works
-     through **account-token-fallback** (`ws-token.sh`: the Azure CLI on Azure, or the account login); ask for a login
+     through **account-token-fallback** (`ws_token.py`: the Azure CLI on Azure, or the account login); ask for a login
      only when that fails, and then for the account's login first (it covers every workspace in the account).
    - `SOURCE_HOST`: `vm` (recommended: a cloud VM of their own in the workspace's cloud, **lfc-source-cloud-vm**; serverless
      can reach it) or `podman` (local, **lfc-source-podman**: laptop-only tests), and `SOURCE_VM`
@@ -59,12 +59,12 @@ fail when a script or page no longer matches a default, so a change updates both
    - `AZ_RESOURCE_GROUP`: the one existing group every Azure test resource goes in. `setup` suggests the user's own
      groups in the subscription (tagged with them as Owner or Creator); ask which one, and save it. A subscription
      allows only so many groups, so skills never create, re-tag or delete one.
-3. **Save the answers**: `bash scripts/settings.sh set AZ_SUBSCRIPTION=<id> AZ_TENANT=<id> AZ_REGION=centralus ...`.
+3. **Save the answers**: `python3 scripts/settings.py set AZ_SUBSCRIPTION=<id> AZ_TENANT=<id> AZ_REGION=centralus ...`.
 4. **Read them** for every command, and pass the identity explicitly (`--subscription "$AZ_SUBSCRIPTION"`,
    `--profile "$DATABRICKS_PROFILE"`): never rely on the CLI's current default, which is whatever was set last.
 
    ```bash
-   eval "$(bash scripts/settings.sh env)"
+   eval "$(python3 scripts/settings.py env)"
    az eventhubs namespace list --subscription "$AZ_SUBSCRIPTION" -g "$AZ_RESOURCE_GROUP" -o table
    ```
 
@@ -91,6 +91,6 @@ keys stay in their own 0600 files, named by a setting if needed (`KAFKA_PASSWORD
 | `LFC_CATALOG` | the target catalog there | `<catalog>` |
 | `OWNER` | the owner tag and name prefix | `<firstname>.<lastname>` |
 | `REMOVE_AFTER_DAYS` | days until a test resource's `RemoveAfter` tag | `7` |
-| `SETTINGS_CHECKED` | when `setup` last ran (`settings.sh checked`) | `2026-11-02` |
+| `SETTINGS_CHECKED` | when `setup` last ran (`settings.py checked`) | `2026-11-02` |
 
 A skill that needs another key documents it here and uses the same file.

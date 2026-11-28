@@ -31,7 +31,7 @@ The workflow is manual so you control every step and understand the configuratio
 
 ## Inputs to collect
 
-**Saved settings first** (**lfc-test-settings**): the cloud identity and region (`AZ_SUBSCRIPTION`, `AZ_REGION`, `AZ_RESOURCE_GROUP`, or `GCP_PROJECT`, `GCP_REGION`), `OWNER`, and an existing VM to reuse (`SOURCE_HOST=vm`, `SOURCE_VM`) come from `settings.sh env`; `settings.sh require <keys>` lists only what to ask. The rest below is per VM.
+**Saved settings first** (**lfc-test-settings**): the cloud identity and region (`AZ_SUBSCRIPTION`, `AZ_REGION`, `AZ_RESOURCE_GROUP`, or `GCP_PROJECT`, `GCP_REGION`), `OWNER`, and an existing VM to reuse (`SOURCE_HOST=vm`, `SOURCE_VM`) come from `settings.py env`; `settings.py require <keys>` lists only what to ask. The rest below is per VM.
 
 | Input | Choices | Example | Notes |
 |-------|---------|---------|-------|
@@ -54,7 +54,7 @@ About to create on <CLOUD>:
     Estimated cost: ~$60–80/month
   - Public IP: {IP_NAME}
   - Firewall rules (allow {DB_PORT} from your IP / Databricks CIDR)
-  - Tags: purpose=lfc-test, owner={prefix}, RemoveAfter=YYYY-MM-DD (GCP labels are lowercase: remove_after); the date from lfc-test-settings `settings.sh remove-after`
+  - Tags: purpose=lfc-test, owner={prefix}, RemoveAfter=YYYY-MM-DD (GCP labels are lowercase: remove_after); the date from lfc-test-settings `settings.py remove-after`
 
 Proceed? (yes/no)
 ```
@@ -63,7 +63,7 @@ Wait for explicit confirmation before calling cloud APIs.
 
 ## Prerequisites
 
-- **Tools**: see **lfc-source-setup** "Tools" (`check-tools.sh azure` or `gcp`)
+- **Tools**: see **lfc-source-setup** "Tools" (`check_tools.py azure` or `gcp`)
 - **Cloud CLI**: `az login` (Azure) or `gcloud auth login` (GCP)
 - **SSH key**: `ssh-keygen -t rsa -b 4096 -f ~/.ssh/lfc_test_rsa -N ""`
 - **Quotas**: Check regional vCPU limits

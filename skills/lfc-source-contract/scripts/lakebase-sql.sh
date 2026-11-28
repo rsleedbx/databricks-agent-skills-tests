@@ -8,13 +8,13 @@
 #   Arguments after the database go to psql after these, so a caller can change them (lfc-source-datagen's fill.sh,
 #   which reads | between fields: PSQL="lakebase-sql.sh <db> -F |").
 #   Each call renews an expired workspace login from your account login when it can (account-token-fallback
-#   ws-token.sh, about 1.6 s; nothing when the profile's own login works), so a run longer than the token's hour goes on.
+#   ws_token.py, about 1.6 s; nothing when the profile's own login works), so a run longer than the token's hour goes on.
 #   In a contract: "sql_cmd": "env LB_PROJECT=lfc-demo LB_PROFILE=<profile> /abs/path/lakebase-sql.sh"
 set -uo pipefail
 : "${LB_PROJECT:?set LB_PROJECT to the Lakebase project id}" "${LB_PROFILE:?set LB_PROFILE to the workspace profile}"
 DB=${1:-databricks_postgres}; [ "$DB" = postgres ] && DB=databricks_postgres
-WS=$(cd "$(dirname "$0")/../../account-token-fallback/scripts" 2>/dev/null && pwd)/ws-token.sh
-if [ -x "$WS" ] || [ -f "$WS" ]; then CFG=$(bash "$WS" "$LB_PROFILE" 2>/dev/null) && [ -n "$CFG" ] && export DATABRICKS_CONFIG_FILE=$CFG; fi
+WS=$(cd "$(dirname "$0")/../../account-token-fallback/scripts" 2>/dev/null && pwd)/ws_token.py
+if [ -x "$WS" ] || [ -f "$WS" ]; then CFG=$(python3 "$WS" "$LB_PROFILE" 2>/dev/null) && [ -n "$CFG" ] && export DATABRICKS_CONFIG_FILE=$CFG; fi
 BR=()
 [ -n "${LB_BRANCH:-}" ] && BR=(--branch "$LB_BRANCH")
 # the CLI's own lines (which project, branch, endpoint; "Error: exit status N") go; SQL errors stay on stderr

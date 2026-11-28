@@ -26,7 +26,7 @@ Provision a source database on AWS RDS for Lakeflow Connect (LFC) using the AWS 
 
 ## Inputs to collect
 
-**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.sh env`; `settings.sh require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. Before creating, collect the rest:
+**Saved settings first** (**lfc-test-settings**): `AWS_PROFILE`, `AWS_REGION`, `AWS_VPC` (unset: the default VPC) and `OWNER` come from `settings.py env`; `settings.py require AWS_PROFILE AWS_REGION OWNER` lists only what to ask. Before creating, collect the rest:
 
 | Input | Purpose | Example |
 |-------|---------|---------|

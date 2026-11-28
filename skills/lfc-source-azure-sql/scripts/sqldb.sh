@@ -26,8 +26,8 @@ esac
 az_require "$SUBSCRIPTION" "${TENANT_ID:-}" || exit 1
 A=(--resource-group "$RG" --subscription "$SUBSCRIPTION")
 # what create tags, and the only thing delete removes (lfc-test-settings: OWNER, REMOVE_AFTER_DAYS)
-MINE=lfc-source-azure-sql; ST=$(cd "$(dirname "$0")" && pwd)/../../lfc-test-settings/scripts/settings.sh
-TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)" CreatedBy=$MINE RemoveAfter="$(bash "$ST" remove-after)")
+MINE=lfc-source-azure-sql; ST=$(cd "$(dirname "$0")" && pwd)/../../lfc-test-settings/scripts/settings.py
+TAGS=(owner="${OWNER:-$USER}" purpose=lfc-test created="$(date -u +%Y-%m-%d)" CreatedBy=$MINE RemoveAfter="$(python3 "$ST" remove-after)")
 ours() {   # ours "<az show command>": 0 when its CreatedBy tag is this skill's; with no CreatedBy (made before it), purpose=lfc-test and this owner
   local t; t=$($1 "${A[@]}" -n "$SERVER" --query tags -o json 2> "${TMPDIR:-/tmp}/ours.$$") || {
     grep -q ResourceNotFound "${TMPDIR:-/tmp}/ours.$$" && { echo "$SERVER not found: nothing to delete"; rm -f "${TMPDIR:-/tmp}/ours.$$"; return 3; }

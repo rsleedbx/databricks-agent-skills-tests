@@ -26,7 +26,7 @@ Most questions have several answers. The one that gets built first is often the 
 | Script | Use |
 |---|---|
 | [scripts/options.py](scripts/options.py) | `render` one options.yaml as a ranked table with the pick; `check` files; `index` all of them |
-| [scripts/test-options.sh](scripts/test-options.sh) | Checks options.py on a sample file |
+| [tests/test_options.py](tests/test_options.py) | Checks options.py on a sample file |
 
 Ranking: usable status first (`tested`, `partly-tested`, `docs`, `untested`, `not-supported` last), then setup plus operate effort, then the number of break events. The pick is the first `tested` or `docs` option.
 
