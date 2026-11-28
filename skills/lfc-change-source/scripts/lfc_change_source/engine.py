@@ -115,7 +115,8 @@ class Warehouse:
                 time.sleep(5)
         return out
 
-    def sql(self, query: str, args: dict | None = None) -> _Result:
+    def sql(self, query: str, args: dict | None = None, raw: bool = False) -> _Result:
+        """raw: each value as the API's text (None for NULL), not converted by its type."""
         params = [{"name": k, "value": None if v is None else str(v)} for k, v in (args or {}).items()] or None
         # wait_timeout 0s: the POST returns at once and the statement is polled; a POST held open longer than the
         # client's read timeout (60 s, a statement with a long plan) was retried, and a retried POST can start it again
@@ -146,4 +147,6 @@ class Warehouse:
         while chunk.get("next_chunk_index") is not None:
             chunk = self.api.get(f"/api/2.0/sql/statements/{sid}/result/chunks/{chunk['next_chunk_index']}")
             data += chunk.get("data_array") or []
+        if raw:
+            return _Result([make(row) for row in data], sid)
         return _Result([make(value(x, t) for x, t in zip(row, types)) for row in data], sid)

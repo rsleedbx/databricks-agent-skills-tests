@@ -8,7 +8,7 @@
 #   #5  DROP and recreate the table (with its tracking set up again): what does the pipeline do, and does a full refresh
 #       of that table recover it?
 #
-#   Needs and options: as sqlserver-add-column.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
+#   Needs and options: as lib.sh (PROFILE CONNECTION CATALOG SRC_SQL CONN_USER; SRC_ENV, MODE, KEEP, OUT)
 #
 # Prints one row per claim (PASS / FAIL / OBSERVED with what was seen) and exits 1 if any claim failed.
 set -uo pipefail

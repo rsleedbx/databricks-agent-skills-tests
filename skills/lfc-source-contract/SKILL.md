@@ -7,7 +7,7 @@ description: "The source contract for Lakeflow Connect tests: one small versione
 
 A Lakeflow Connect test takes its source database only through a contract file: `SOURCE_JSON=<file>` on the script. Set it in place of `SRC_SQL`, `CONN_USER` and `CONNECTION`; the environment variables still work when it isn't set.
 
-Scripts that accept it: **lfc-schema-change-test** (`lib.sh` and the scripts that use it, `sqlserver-add-column.sh`, `integrated-scd2-ct.sh`, `parallel.sh` through a `- json:<file>` slot line), and **lfc-downstream-history**'s `sqlserver-history-snapshot.sh`; for a broker, **lfc-kafka-freshness-test**'s `connection.sh` and `pipeline.sh` (`--source-json`). The zerobus scripts build their own source containers, so they have no database for a contract to name.
+Scripts that accept it: **lfc-schema-change-test** (`lib.sh` and the scripts that use it, its Python scenarios, `integrated-scd2-ct.sh`, `parallel.sh` through a `- json:<file>` slot line), and **lfc-downstream-history**'s `sqlserver-history-snapshot.sh`; for a broker, **lfc-kafka-freshness-test**'s `connection.sh` and `pipeline.sh` (`--source-json`). The zerobus scripts build their own source containers, so they have no database for a contract to name.
 
 ## The file
 
@@ -119,7 +119,7 @@ cat > source.json <<'EOF'
 {"contract": 1, "engine": "sqlserver", "host": "203.0.113.10", "port": 1433, "user": "lfc_user",
  "sql_cmd": "env SLOT_HOST=203.0.113.10 SLOT_NAME=ss1 python3 -I /abs/path/slot.py sql"}
 EOF
-SOURCE_JSON="$PWD/source.json" PROFILE=<cli-profile> CATALOG=<catalog> bash sqlserver-add-column.sh   # a test script of lfc-schema-change-test
+SOURCE_JSON="$PWD/source.json" PROFILE=<cli-profile> CATALOG=<catalog> <a scenario of lfc-schema-change-test>   # its SKILL.md: Run
 ```
 
 Check a file before a run, and what it exports, without printing a password:

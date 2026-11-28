@@ -102,6 +102,7 @@ check "docs/lakeflow-connect-database.md table matches results/runs" python3 "$S
 check "secret-handling scripts on a fake secret" sh -c "'$SK/secret-handling/scripts/test-secret-scripts.sh' > /dev/null"
 check "keep_catalogs.py: connection + its foreign catalogs, never earlier, month out, failures go on (fake REST)" python3 -m pytest -q "$SK/lfc-workspace-setup/tests/test_keep_catalogs.py"
 check "postgres-tpch-cdc.sh verify(): rule counts, a failed or empty verify query is an error (stub client)" sh -c "'$SK/lfc-schema-change-test/scripts/test-tpch-verify.sh' > /dev/null"
+check "lfc_schema_change: pre-flight, pipeline specs, the update chain (retry, refused start, deadline, early stop), errors per table, the kept record, deletion; SQL Server set-up retries (fake workspace and source)" python3 -I "$SK/lfc-schema-change-test/tests/test_scenario.py"
 check "lib.sh keep at exit and kept-sweep.sh on a fake CLI" sh -c "'$SK/lfc-schema-change-test/scripts/test-kept.sh' > /dev/null"
 check "lfc-slot (lfc_vm zipapp) limits and --park on a fake podman" sh -c "'$SK/lfc-source-cloud-vm/scripts/test-slot-limits.sh' > /dev/null"
 check "lfc_vm masters: the SAS file, the engine beside a master, the staging wait, a build's refusals" python3 -I "$SK/lfc-source-cloud-vm/scripts/tests/test_masters.py"
