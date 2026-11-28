@@ -20,6 +20,14 @@ import sys
 from pathlib import Path
 
 
+def sdk_missing() -> bool:
+    """True when the databricks-sdk package can't be found (find_spec raises when the parent package is absent)."""
+    try:
+        return importlib.util.find_spec("databricks.sdk") is None
+    except ModuleNotFoundError:
+        return True
+
+
 def main(argv: list[str]) -> int:
     here = Path(__file__).resolve().parent.parent
     env_file = os.environ.get("CLAUDE_ENV_FILE")
@@ -35,7 +43,7 @@ def main(argv: list[str]) -> int:
         print(f'lfc-tests plugin: missing for local tests: {gone}. Before the first test, run bash '
               '"$LFC_TESTS/skills/cli-setup/scripts/check-tools.sh" local and give the user its install commands; '
               "install nothing without asking.")
-    if importlib.util.find_spec("databricks.sdk") is None:   # lfc_rest signs in through it, in every converted tool
+    if sdk_missing():   # lfc_rest signs in through it, in every converted tool
         print("lfc-tests plugin: missing for the workspace calls: the Python package databricks-sdk (pip install "
               "databricks-sdk). The CLI alone doesn't serve the scripts (they call REST through lfc_rest).")
     settings_script = here / "skills/lfc-test-settings/scripts/settings.sh"

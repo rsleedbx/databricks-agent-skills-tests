@@ -128,6 +128,12 @@ class Hook(Env):
         self.assertIn('"$PATH"', exports)
         self.assertIn("no test settings saved yet", out.getvalue())
 
+    def test_missing_sdk_is_reported_not_raised(self):
+        from unittest import mock
+        with mock.patch("importlib.util.find_spec", side_effect=ModuleNotFoundError("databricks")):
+            self.assertTrue(plugin_session.sdk_missing())
+        self.assertIsInstance(plugin_session.sdk_missing(), bool)
+
     def test_saved_settings_name_their_keys(self):
         settings = self.tmp / "settings.env"
         settings.write_text("REGION=eastus\nSETTINGS_CHECKED=2026-11-01\n")
