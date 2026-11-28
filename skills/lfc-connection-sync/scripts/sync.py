@@ -97,6 +97,9 @@ def sync_row(api: Rest, row: dict) -> str:
     res = subprocess.run([sys.executable, "-I", KEEP_CATALOGS, row["profile"], "--connection", row["name"]],
                          capture_output=True, text=True, check=False)
     out += ["  " + line for line in res.stdout.splitlines()]
+    if res.returncode:   # untagged catalogs get deleted by the cleanup bot: a failed tagging must be seen
+        out += ["  " + line for line in (res.stderr or "").strip().splitlines()[-5:]]
+        out.append(f"  keep_catalogs FAILED (exit {res.returncode}): the connection's catalogs may not be kept")
     return "\n".join(out)
 
 
